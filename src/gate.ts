@@ -1,8 +1,7 @@
 // gate.ts - obtain ONE independent second-chief decision. The entry is
 // bin/ac-gate.sh (a shim that starts this file through bin/ac-bun.sh); THIS
-// header is the authoritative spec, and the bash original it replaced stays
-// frozen at tests/fixtures/ac-gate.sh as the oracle the differential leg of
-// tests/sh/ac-gate.test.sh holds this module to.
+// header is the authoritative spec, and tests/sh/ac-gate.test.sh is its
+// contract test.
 //
 // Interfaces:
 //   ac-gate.sh <family> <spec|architecture|plan|design> [--round 1|2]
@@ -273,22 +272,8 @@
 // environment failure from a malformed body, because the operator debugging a
 // stalled Learning loop must be told which one happened.
 //
-// ESCAPE HATCH. A broken gate stalls every staged design gate (roomchiefs,
-// both fleets) and Learning/Curate's auto-apply, whose callers already fail
-// soft into "no judgment, cadence stays due". If a landed change breaks this
-// module, run the frozen original from a scratch bin/ at a physical path:
-//   o=$(cd "$(mktemp -d)" && pwd -P); mkdir "$o/bin"; cp bin/*.sh "$o/bin/"
-//   ln -s "$PWD/src" "$o/src"; ln -s "$PWD/dashboard" "$o/dashboard"
-//   cp tests/fixtures/ac-gate.sh "$o/bin/ac-gate.sh"
-//   cp tests/fixtures/ac-qa-lib.sh tests/fixtures/ac-pipeline-lib.sh "$o/bin/"
-//   cat tests/fixtures/ac-maintenance-retired.sh >>"$o/bin/ac-maintenance-lib.sh"
-// then "$o/bin/ac-gate.sh" <family> <stage> ... for a chief, and
-// AC_GATE="$o/bin/ac-gate.sh" bin/ac-learn.sh run (or bin/ac-curate.sh run)
-// for maintenance. Nothing the gate writes bakes its bin root - the board's
-// launch line names "$o/bin/ac-gate-watch.sh", a shim reaching "$o/src" - so
-// nothing needs rewriting. The captain's revert of the land is the last resort.
-//
-// AT PARITY (each pinned in the leg until its own fix lands):
+// AT PARITY with the bash original, and deliberately left unasserted by the
+// contract test (each until its own fix lands):
 // - W2: one line of the pane agent's stdout jq cannot parse, before or after
 //   the done event, ends the run with jq's status (5), nothing on stderr, no
 //   raw log, no turn reaped.
@@ -315,50 +300,37 @@
 // - The labelled board's retire by label at the family's last exit lists and
 //   closes herdr panes through RAW herdr even on an orca fleet.
 //
-// DIVERGENCES from the original (the leg names each one a row can show):
+// ALSO:
 // - W9 (EXCLUSIVE TEMPS): the context, the review, the canonical copy and the
 //   decision land through temps created exclusively (<name>.tmp.<pid>, then
 //   .<n> past a name taken), so a link planted at a temp is never written
-//   through and a directory planted there is skipped, where the original
-//   wrote through it and published the link (or the directory) itself.
-// - W12: --subject is read per its text, [A-Za-z0-9._-] under any locale,
-//   where bash's brackets under a UTF-8 locale let `café` through to the
-//   plan's own refusal.
+//   through and a directory planted there is skipped.
+// - W12: --subject is read per its text, [A-Za-z0-9._-] under any locale.
 // - THE WIDENED BOARD MATCH: a board whose cmdline is the bun module
-//   (`bun --no-env-file <root>/src/gate-watch.ts ...`) is live and reused,
-//   where the original read it dead, closed it and opened another.
+//   (`bun --no-env-file <root>/src/gate-watch.ts ...`) is live and reused.
 // - HOME RESOLUTION: an AC_HOME cd cannot enter is `ERROR: AC_HOME is not a
 //   readable directory: <h>`, and a relative --run, manifest or plan is
-//   resolved without CDPATH, where the shell printed cd's own lines.
-// - SHELL-OWN STDERR is not reproduced, the status kept: a redirect that
-//   cannot write (`<script>: line N: <path>: Permission denied`), the busy
-//   bound's arithmetic error (W5's line) and its unbound variable.
-// - SIGNAL TIMING: a signal is acted on at the checkpoints above. The shell
-//   deferred one only while a command substitution's child ran (the judge's
-//   turn, the marker's stamp) and otherwise ran its exit at once, the child
-//   left running: so a run signalled while it waits on the family lock waits
-//   that out first; one signalled at the marker's stamp keeps the prompt it
-//   then writes, where the shell wrote none; and one signalled inside a
-//   publish write lets that write land, where the shell's exit removed the
-//   write's source first (the child then failed, or a copy left a stray
-//   temp). The run then EXITS 128+n, where bash, its trap done, re-raised the
-//   signal: the shell's `$?` reads the same, a parent reading the wait status
-//   sees an exit, not a signal.
+//   resolved without CDPATH.
+// - SHELL-OWN STDERR is not printed, the status kept: a redirect that cannot
+//   write (`<script>: line N: <path>: Permission denied`), the busy bound's
+//   arithmetic error (W5's line) and its unbound variable.
+// - SIGNAL TIMING: a signal is acted on at the checkpoints above, so a run
+//   signalled while it waits on the family lock waits that out first; one
+//   signalled at the marker's stamp keeps the prompt it then writes; and one
+//   signalled inside a publish write lets that write land. The run then
+//   EXITS 128+n: a parent reading the wait status sees an exit, not a signal.
 // - TIMEOUT ARITHMETIC: an AC_GATE_TIMEOUT that is a whole expression (`5*2`)
 //   skips the declaration, and one naming a variable the gate itself sets
-//   (`round`) ends the run 0, where bash evaluated either.
+//   (`round`) ends the run 0.
 // - A BACKEND FLIPPED MID-RUN: config/backend is read when the board opens;
-//   turned invalid by then it ends the run 1 (the original went on boardless),
-//   and turned orca by the exit the run's own board is still closed (the
-//   original's guarded close exited 1 inside its EXIT trap).
-// - LOCK GRACE: a pid-less lock's age is read from the clock, where the
-//   original spawned `date +%s`.
+//   turned invalid by then it ends the run 1, and turned orca by the exit the
+//   run's own board is still closed.
+// - LOCK GRACE: a pid-less lock's age is read from the clock.
 // - BYTES: argv arrives decoded, so a family or path byte that is no UTF-8
 //   reaches the files and the children as U+FFFD; a room's own bytes are read
 //   as bytes, and a receipt's reach jq's argv decoded.
 // - BUN: without bun the shim refuses `ERROR: required tool not found: bun`
-//   before usage, where the original passed usage, inputs and receipts and
-//   died at the panes.gate resolution with W4's line.
+//   before usage.
 // - A caller whose cwd has no name resolves no relative --repo, --run,
 //   --manifest or --plan.
 //

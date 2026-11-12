@@ -4,23 +4,22 @@
 // the own-family skip, awk's numeric reading of the epoch and the family, a
 // header line, a path with spaces, the empty-family record that shifts the
 // read, the 7-day prune), the record's exclusive temp past a planted symlink,
-// knowledgeWarn against ac_knowledge_warn, and qaGateOk against a direct bash
-// call of ac_qa_gate_ok along one fixture (tests/ts/qa-gate.test.ts holds the
-// gate's whole matrix). The bash runs as the entry ran these helpers - bare,
-// under `set -euo pipefail`.
-// The CLI contract itself is tests/sh/ac-merge-local.test.sh's, whose
-// differential leg runs the frozen bash original beside the shim.
+// and knowledgeWarn against ac_knowledge_warn - the bash run as the entry ran
+// these helpers, bare, under `set -euo pipefail`; and qaGateOk along one
+// fixture against the answers src/lib-qa-gate.ts states
+// (tests/ts/qa-gate.test.ts holds the gate's whole matrix).
+// The CLI contract itself is tests/sh/ac-merge-local.test.sh's.
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { landingRecord } from "../../src/lib.ts";
-import { retiredBin } from "./retired-bin.ts";
+import { landingRecord } from "../../src/lib-merge-local.ts";
 
 const ROOT = realpathSync(join(import.meta.dir, "..", ".."));
 const binDir = join(ROOT, "bin");
-const RBIN = retiredBin();
 const LIB = join(ROOT, "src", "lib.ts");
+const LIBM = join(ROOT, "src", "lib-merge-local.ts");
+const LIBQ = join(ROOT, "src", "lib-qa-gate.ts");
 const NOW = 1767225600;
 const made: string[] = [];
 afterAll(() => {
@@ -48,7 +47,7 @@ function bash(home: string, libs: string, script: string, args: string[]): Run {
 // The twin in a bun child started in the distro root, as bin/ac-bun.sh starts
 // a module (STARTED_BIN is <root>/bin), so its fd 2 and its exit are captured.
 function twin(home: string, body: string): Run {
-  const src = `import * as L from ${JSON.stringify(LIB)};\nconst A = JSON.parse(process.env.TWIN_ARGS ?? "[]");\ntry { ${body} } catch (e) { const s = (e as { status?: number }).status; if (s === undefined) throw e; process.exit(s); }\n`;
+  const src = `const L = { ...await import(${JSON.stringify(LIB)}), ...await import(${JSON.stringify(LIBM)}), ...await import(${JSON.stringify(LIBQ)}) };\nconst A = JSON.parse(process.env.TWIN_ARGS ?? "[]");\ntry { ${body} } catch (e) { const s = (e as { status?: number }).status; if (s === undefined) throw e; process.exit(s); }\n`;
   return read(Bun.spawnSync([process.execPath, "-e", src], { env: { ...envFor(home), TWIN_ARGS: JSON.stringify(twinArgs) }, cwd: ROOT, stdout: "pipe", stderr: "pipe" }));
 }
 let twinArgs: string[] = [];
@@ -197,7 +196,7 @@ test("knowledgeWarn flags what ac_knowledge_warn flags: no record, a sibling's e
   );
 });
 
-test("qaGateOk answers as ac_qa_gate_ok sourced by hand: not required, flat refusal, scoped pass, the matrix, and the RETIRED die as an exit", () => {
+test("qaGateOk: not required, flat refusal, scoped pass, the matrix, and the RETIRED die as an exit", () => {
   const h = freshHome();
   const repo = join(h, "projects", "gproj");
   gitRepo(repo);
@@ -207,9 +206,14 @@ test("qaGateOk answers as ac_qa_gate_ok sourced by hand: not required, flat refu
   mkdirSync(passed, { recursive: true });
   const marker = (scope: string, app: string, key: string): string =>
     `schema=agentcrew.qa-attestation/v2\noutcome=passed\nrun=r\ntask=t\ncompleted_at=2026-07-24T00:00:00Z\nsource_sha=${sha}\nprofile_key=${key}\nprofile_sha256=p\nconfig_sha256=c\ncases_passed=1\ncases_total=1\nscope=${scope}\napp=${app}\n`;
-  const steps: [string, () => void][] = [
-    ["not required", () => {}],
-    ["flat, no marker", () => writeFileSync(yaml, "qa:\n  require_for_ship: true\n")],
+  const short = sha.slice(0, 12);
+  const steps: [string, () => void, Run][] = [
+    ["not required", () => {}, { out: "#0", err: "", rc: 0 }],
+    [
+      "flat, no marker",
+      () => writeFileSync(yaml, "qa:\n  require_for_ship: true\n"),
+      { out: "#1", err: `WARN: qa.require_for_ship: no passing crew-qa run recorded for ${short} - run crew-qa on this head before merging\n`, rc: 0 },
+    ],
     [
       "scoped pass",
       () => {
@@ -218,12 +222,18 @@ test("qaGateOk answers as ac_qa_gate_ok sourced by hand: not required, flat refu
         writeFileSync(join(h, "records", "repo-knowledge", "gproj.md"), "- scope orchid = orchid-service | src: cmd:true | at: d 2026-07-21 | by: f\n");
         writeFileSync(join(passed, `${sha}.orchid.orchid-service`), marker("orchid", "orchid-service", "gproj/orchid/orchid-service"));
       },
+      { out: `qa: passed profiles for ${short}: orchid/orchid-service\n#0`, err: "", rc: 0 },
     ],
     [
       "matrix, one of two",
       () => {
         mkdirSync(join(h, "data", "t1", "qa"), { recursive: true });
         writeFileSync(join(h, "data", "t1", "qa", "manifest.json"), '{"required_profiles":[{"profile_key":"gproj/orchid/orchid-service"},{"profile_key":"gproj/cedar/cedar-service"}]}\n');
+      },
+      {
+        out: "#1",
+        err: `WARN: qa.require_for_ship: required profile 'gproj/cedar/cedar-service' has no passing crew-qa attestation for ${short} - run crew-qa for EVERY required profile at this head before merging\n`,
+        rc: 0,
       },
     ],
     [
@@ -232,12 +242,16 @@ test("qaGateOk answers as ac_qa_gate_ok sourced by hand: not required, flat refu
         mkdirSync(join(h, "config", "projects"), { recursive: true });
         writeFileSync(join(h, "config", "projects", "gproj.yaml"), "qa:\n  require_for_ship: true\n");
       },
+      {
+        out: "",
+        err: `ERROR: project config for 'gproj' found at the RETIRED legacy path (${h}/config/projects/gproj.yaml), which is no longer read - move it: mv "${h}/config/projects/gproj.yaml" "${h}/projects/gproj.yaml" (or delete it if ${h}/projects/gproj.yaml is already authoritative)\n`,
+        rc: 1,
+      },
     ],
   ];
   twinArgs = [repo, sha, "t1"];
-  for (const [name, seed] of steps) {
+  for (const [name, seed, want] of steps) {
     seed();
-    const want = bash(h, `. "${RBIN}/ac-pipeline-lib.sh"; . "${RBIN}/ac-qa-lib.sh"; `,'ac_qa_gate_ok "$@" && rc=0 || rc=$?; printf "#%s" "$rc"', twinArgs);
     const got = twin(h, 'process.stdout.write("#" + (L.qaGateOk(A[0], A[1], A[2]) ? 0 : 1));');
     expect({ name, ...got }).toEqual({ name, ...want });
   }

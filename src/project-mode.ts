@@ -1,10 +1,9 @@
 // project-mode.ts - resolve a project's YOLO flag from records/projects.md.
 // The entry is bin/ac-project-mode.sh (a shim that starts this file through
-// bin/ac-bun.sh); THIS header is the authoritative spec, and the bash original
-// it replaced stays frozen at tests/fixtures/ac-project-mode.sh as the oracle
-// the differential leg of tests/sh/ac-project-mode.test.sh holds this module
-// to. The ac-lib.sh helper the original wrapped, ac_project_mode, had no other
-// caller and was retired with the port; the read lives here whole.
+// bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-project-mode.test.sh is its contract test. The ac-lib.sh helper
+// the bash original wrapped, ac_project_mode, had no other caller and was
+// retired with the port; the read lives here whole.
 //
 //   ac-project-mode.sh <project-name>
 //
@@ -23,7 +22,7 @@
 // default). A legacy `[<mode>]` bracket on a registry line is tolerated and
 // IGNORED so old registries keep resolving yolo without a migration.
 //
-// The read, exactly the original's: the row is the FIRST line of
+// The read: the row is the FIRST line of
 // `grep -E "^- <name> \[" <records>/projects.md` (the name is operator text
 // in that ERE, so `a.b` answers for a row `- aXb [...]` and `a|gamma` reads
 // `^- a` OR `gamma \[`; an ERE grep refuses, or an unreadable registry, is a
@@ -40,28 +39,24 @@
 //   leaves the earlier rows matching;
 // - a byte that is not valid UTF-8 on the MATCHED row under a UTF-8 locale
 //   aborts BSD sed (`sed: RE error: illegal byte sequence` on stderr) and the
-//   run exits with sed's status (1) and NO answer, as the original did; under
-//   LC_ALL=C the row answers normally;
-// - a NAME carrying such a byte is a named divergence: Bun's argv decodes it
-//   to U+FFFD, so the grep pattern can never match the row's bytes and the
-//   answer is off where the original's was on.
+//   run exits with sed's status (1) and NO answer; under LC_ALL=C the row
+//   answers normally;
+// - a NAME carrying such a byte never matches: Bun's argv decodes it to
+//   U+FFFD, so the grep pattern cannot carry the row's bytes and the answer is
+//   off.
 // No registry file (or a directory there), an empty file, no row: off. The
 // records/ dir is minted by the read with the same spawned `mkdir -p`, so a
-// records that is a regular file prints mkdir's own line and, as the dying
-// `$(ac_records_dir)` did, leaves `/projects.md` to read: off.
+// records that is a regular file prints mkdir's own line and leaves
+// `/projects.md` to read: off.
 //
-// Without AC_HOME the original printed ac_home's refusal (`ERROR: AC_HOME is
-// not set - ...`) and went on: the dying `$(ac_records_dir)` left the path
-// `/projects.md`, read as any registry, and the run answered off with exit 0
-// - kept here, including the path. An AC_HOME that cannot be entered reads
-// the same path silently (the original's stderr there was bash's own `cd:`
-// line, not reproduced). The home is entered as physicalDir enters it, the
-// twin every port binds its home by; the two artifacts of the original's
-// `$(cd "$AC_HOME" && pwd -P)` are named divergences, not reproduced: a home
-// directory whose NAME ends in LF lost that LF to the substitution and the
-// original read the SIBLING without it, and an exported CDPATH made a relative
-// AC_HOME's `cd` echo its destination into the captured path so no registry
-// was found - the port reads the directory AC_HOME names in both.
+// Without AC_HOME the run prints ac_home's refusal (`ERROR: AC_HOME is not set
+// - ...`) and goes on: the path left to read is `/projects.md`, read as any
+// registry, and the run answers off with exit 0 - the bash original's reading,
+// kept, including the path. An AC_HOME that cannot be entered reads the same
+// path silently. The home is entered as physicalDir enters it, the twin every
+// port binds its home by, so it is the directory AC_HOME names: one whose NAME
+// ends in LF is never its sibling without the LF, and a relative one is
+// entered without CDPATH.
 //
 // The one caller, bin/ac-spawn.sh, already defaults `|| printf 'yolo=off\n'`
 // and drops stderr, so nothing there changed with the port.

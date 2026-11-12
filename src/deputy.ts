@@ -2,9 +2,7 @@
 // it strictly, answer a routed order back to the parent, and hand queued
 // backlog items over to a deputy. The entry is bin/ac-deputy.sh (a shim that
 // starts this file through bin/ac-bun.sh); THIS header is the authoritative
-// spec, and the bash original it replaced stays frozen at
-// tests/fixtures/ac-deputy.sh as the oracle the differential leg of
-// tests/sh/ac-deputy.test.sh holds this module to.
+// spec, and tests/sh/ac-deputy.test.sh is its contract test.
 //
 // Usage: ac-deputy.sh list
 //        ac-deputy.sh validate
@@ -226,39 +224,29 @@
 // for the one pipe each `<parse> | <reader>` pair runs on (a private temp
 // dir; with none to be had the pair runs one after the other).
 //
-// DIVERGENCES from the original, named in the differential leg:
+// ALSO:
 // - THE LEDGER LOCKS (W8 of the domain dossier, fixed): handoff holds the
-//   parent's and then the deputy's
-//   records/.backlog.md.lock to the exit; the original took neither. So a
-//   deputy records/ that cannot be written refuses before any write, where
-//   the original stranded the rows in neither ledger (W17, for that cause). A
-//   backup taken inside the parent's lock carries the lock dir.
+//   parent's and then the deputy's records/.backlog.md.lock to the exit. So a
+//   deputy records/ that cannot be written refuses before any write (W17,
+//   for that cause). A backup taken inside the parent's lock carries the lock
+//   dir.
 // - EXCLUSIVE TEMPS (W16): <file>.moving.<pid> and <file>.tmp.<pid> are
 //   created exclusively (the next .<n> past a name already taken) and the
-//   ledger temps take the ledger's mode; the original wrote through whatever
-//   sat at the predictable name and left a 0600 ledger 0644.
+//   ledger temps take the ledger's mode.
 // - Bytes: argv arrives decoded, so a text byte that is not UTF-8 is U+FFFD
-//   in the status line and the payload - under UTF-8 the original's tr
-//   aborted on it (W7: exit 1, the status line written, no wake) where the
-//   port publishes. A registry path that is not UTF-8 reaches a spawned
-//   child's argv as U+FFFD; such a byte of a probed meta's backend= is U+FFFD
-//   in AC_BACKEND, and so in the route's refusal.
-// - A DRIVER THAT FAILED TO LOAD: the original's probe returned bash's 127
-//   (UNOBSERVABLE); the port's probe is native and has no driver to lose.
-// - THE PROBE'S STDIN: the original's probe ran inside the read loop, its
-//   stdin the registry heredoc - an orca CLI reading stdin would have
-//   swallowed the records after it; the port's driver children read
-//   /dev/null.
-// - The dependents check runs in-process, so the original's parser-failure
-//   arm (a bun that cannot start: `ERROR: required tool not found: bun`,
-//   `ERROR: the backlog parser failed on <f>`, then the refusal) is
-//   unreachable - without bun the shim never starts.
-// - The HOME RESOLUTION ruling: an AC_HOME that cannot be entered names the
-//   variable (`ERROR: AC_HOME is not a readable directory: <h>`) wherever the
-//   shell printed cd's own lines; exits and stdout alike.
-// - Shell-own stderr is not reproduced: a failed redirection's
-//   `Permission denied` line (an unwritable status log), `command not
-//   found` - the exit statuses are.
+//   in the status line and the payload, and publishes under any locale. A
+//   registry path that is not UTF-8 reaches a spawned child's argv as
+//   U+FFFD; such a byte of a probed meta's backend= is U+FFFD in AC_BACKEND,
+//   and so in the route's refusal.
+// - The probe is native and has no driver to fail to load; its driver
+//   children read /dev/null.
+// - The dependents check runs in-process: without bun the shim never starts
+//   (`ERROR: required tool not found: bun`).
+// - An AC_HOME that cannot be entered names the variable (`ERROR: AC_HOME is
+//   not a readable directory: <h>`).
+// - Shell-own stderr is not printed: a failed redirection's `Permission
+//   denied` line (an unwritable status log), `command not found` - the exit
+//   statuses are kept.
 //
 // CALLERS: bin/ac-session-start.sh prints `list` under `-- crewdeputies
 // (routing table) --` and, since list needs bun, degrades to a WARN naming
@@ -300,8 +288,7 @@ import {
 const REGISTRY_LABEL = "records/crewdeputies.md";
 const US = "\x1f";
 
-// The spawned programs, byte for byte as tests/fixtures/ac-deputy.sh holds
-// them (tests/ts/deputy.test.ts lifts each one out of it).
+// The spawned programs, byte for byte as the bash original spawned them.
 const REPORT_LOOKUP_AWK = `$1 != "INVALID" && $2 == i { found = 1 } END { exit !found }`;
 const HANDOFF_LOOKUP_AWK = `$1 != "INVALID" && $2 == i { print $3; exit }`;
 const FOUND_AWK = String.raw`

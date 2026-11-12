@@ -23,7 +23,6 @@
 # armed and $AC_HOME is the operator's REAL fleet home - abort instead.
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
-RBIN="$(make_retired_bin)"
 
 # The dashboard auto-open is NOT under test here, and `start` would otherwise
 # reach a REAL herdr server when one is running on the dev box - creating a
@@ -735,28 +734,21 @@ deleted file mode 100755
 -false
 EOF
 assert_fails "$QA" regression-proposal "$TMP/production-delete.patch"
-# qa_pgid_alive answers no for every value whose negation is not a group of
-# its own - 0 and 00 (the caller's group), 1 (-1 is every process of the
-# user) - and finish asks it before the group TERM. Run with a kill spy, so
-# no value here can reach a real signal even through a broken guard. The bash
-# original's function is lifted from its frozen copy; the port's qaPgidAlive
-# is driven with the same refused values below.
-{
-  printf 'kill() { printf "%%s\\n" "$*" >>"$QPA_LOG"; return 0; }\n'
-  sed -n '/^qa_pgid_alive() {/,/^}/p' "$ROOT/tests/fixtures/ac-qa.sh"
-  printf 'qa_pgid_alive "$1" && echo alive || echo dead\n'
-} >"$TMP/qpa.sh"
-qpa() { QPA_LOG="$TMP/qpa.kills" bash "$TMP/qpa.sh" "$1"; }
+# qaPgidAlive answers no for every value whose negation is not a group of its
+# own - 0 and 00 (the caller's group), 1 (-1 is every process of the user) -
+# and finish asks it before the group TERM. It runs under a process.kill spy,
+# so no value here can reach a real signal even through a broken guard.
+cat >"$TMP/qpa.ts" <<'TS'
+const { qaPgidAlive } = await import(`${process.env.ROOT}/src/qa.ts`);
+const kills: string[] = [];
+process.kill = ((pid: number, sig?: string | number) => { kills.push(`${pid} ${sig}`); return true; }) as typeof process.kill;
+console.log(`${qaPgidAlive(process.argv[2] ?? "") ? "alive" : "dead"}:${kills.join(",")}`);
+TS
+qpa() { ROOT="$ROOT" bun --no-env-file "$TMP/qpa.ts" "$1"; }
 for v in '' abc -5 0 00 1; do
-  assert_eq "$(qpa "$v")" dead "qa_pgid_alive refuses '$v'"
+  assert_eq "$(qpa "$v")" "dead:" "qaPgidAlive refuses '$v' without a kill of any kind"
 done
-assert_no_file "$TMP/qpa.kills" "qa_pgid_alive refuses them without a kill of any kind"
-assert_eq "$(qpa 4242)" alive "a decimal above 1 is probed (the spy answers yes)"
-assert_eq "$(cat "$TMP/qpa.kills")" "-0 -- -4242" "it is probed as its group, by signal 0"
-for v in '' abc -5 0 00 1; do
-  assert_eq "$(QPA_V="$v" bun -e 'import { qaPgidAlive } from "'"$ROOT"'/src/qa.ts"; console.log(qaPgidAlive(process.env.QPA_V ?? "") ? "alive" : "dead")')" dead \
-    "src/qa.ts qaPgidAlive refuses '$v'"
-done
+assert_eq "$(qpa 4242)" "alive:-4242 0" "a decimal above 1 is probed as its group, by signal 0"
 # finish ends the recorded serve GROUP even once its leader is gone: the
 # member that outlived it is TERMed with the group.
 set -m
@@ -772,6 +764,40 @@ i=0
 while kill -0 "$qa_member" 2>/dev/null && [ "$i" -lt 25 ]; do sleep 0.2; i=$((i + 1)); done
 if kill -0 "$qa_member" 2>/dev/null; then kill "$qa_member"; fail "finish must TERM the recorded group's surviving member"; fi
 assert_no_file "$reuse_run/serve.pid" "finish retires the serve.pid"
+
+# finish's grace: a group that EXITS on SIGTERM lets finish return well
+# under the 10s grace - the poll returns as soon as the group is gone,
+# instead of always spinning out the full window.
+set -m
+bash -c 'exec sleep 30' &
+qa_fast=$!
+set +m
+kill -0 "$qa_fast" 2>/dev/null || fail "fixture broken: the fast group must start alive"
+printf '%s\n' "$qa_fast" >"$reuse_run/serve.pid"
+SECONDS=0
+"$QA" finish failed </dev/null >/dev/null
+fast_elapsed=$SECONDS
+if kill -0 "$qa_fast" 2>/dev/null; then kill -9 "$qa_fast"; fail "finish must leave a SIGTERM-honoring group dead"; fi
+[ "$fast_elapsed" -le 4 ] || fail "finish waited ${fast_elapsed}s for a group that died on SIGTERM - the grace poll must return as soon as the group is gone, not spin to the full 10s"
+assert_no_file "$reuse_run/serve.pid" "finish retires the serve.pid (fast exit)"
+
+# finish's grace: a group that IGNORES SIGTERM (trap '' TERM, a SIG_IGN
+# disposition inherited across exec into the real command) still dies - the
+# grace poll exhausts its 10s, then finish escalates to SIGKILL before
+# dropping serve.pid.
+set -m
+bash -c 'trap "" TERM; exec sleep 30' &
+qa_ignorer=$!
+set +m
+kill -0 "$qa_ignorer" 2>/dev/null || fail "fixture broken: the SIGTERM-ignoring group must start alive"
+printf '%s\n' "$qa_ignorer" >"$reuse_run/serve.pid"
+SECONDS=0
+"$QA" finish failed </dev/null >/dev/null
+slow_elapsed=$SECONDS
+if kill -0 "$qa_ignorer" 2>/dev/null; then kill -9 "$qa_ignorer"; fail "finish must SIGKILL a group that outlives the grace"; fi
+[ "$slow_elapsed" -ge 9 ] || fail "finish killed a SIGTERM-ignoring group after only ${slow_elapsed}s - the 10s grace must run before escalating"
+assert_no_file "$reuse_run/serve.pid" "finish retires the serve.pid (after escalation)"
+
 assert_fails "$QA" curation failed
 "$QA" curation completed >/dev/null
 cd "$repo" || fail "cd back from qareuse"
@@ -1129,9 +1155,12 @@ printf 'Exercise the acceptance criteria.\n' >"$qa_brief"
 qa_evidence="$TMP/qa-agent-evidence"
 export QA_VERIFY_LOG="$TMP/qa-verify.log"
 export QA_BRIEF_CAPTURE="$TMP/qa-agent-charter.md"
+export QA_VERIFY_HOME_LOG="$TMP/qa-verify-home.log"
 cat >"$TMP/stub/ac-verify" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+printf 'AC_HOME=%s\n' "${AC_HOME:-<unset>}" >>"$QA_VERIFY_HOME_LOG"
+[ -n "${AC_HOME:-}" ] || { echo "ERROR: AC_HOME is not set" >&2; exit 1; }
 printf '%s\n' "$*" >>"$QA_VERIFY_LOG"
 [ "$1" = qa ] || exit 2
 shift
@@ -1215,6 +1244,15 @@ call="$(tail -n 1 "$QA_VERIFY_LOG")"
 assert_contains "$call" "--history $repo/.crew/qa/agent-ag-1-r1.json" "later QA carries structured history"
 assert_contains "$call" "--profile $repo/.crew/qa/agent-ag-1-r2.profile/profile.json" "each round freezes its own profile"
 case "$call" in *--resume*|*--replace-pane*) fail "QA adapter must not own pane/session lifecycle" ;; esac
+
+# Regression: `--home` alone, with no AC_HOME in the caller's env, must still
+# reach the spawned verifier - cmd_agent threads AC_HOME=<resolved home> into
+# that child itself.
+rm -f "$QA_VERIFY_HOME_LOG"
+out="$(env -u AC_HOME AC_CREW_ID=qa-flow-implement AC_FLEET_SCOPE=qa-flow AC_VERIFY_BIN="$TMP/stub/ac-verify" \
+  "$QA" agent --target HEAD --task ag-home --home "$AC_HOME" --brief "$qa_brief" --evidence "$TMP/qa-agent-home-evidence")"
+assert_contains "$out" "verdict: passed" "--home threads AC_HOME to the verifier with no AC_HOME in the caller's env"
+assert_eq "$(cat "$QA_VERIFY_HOME_LOG")" "AC_HOME=$AC_HOME" "the spawned verifier receives the --home-resolved AC_HOME"
 
 # Routed panes.qa is an explicit execution-caller decision. Omission or a bad
 # selector fails before the verifier stub is invoked; a valid selection is
@@ -1666,19 +1704,14 @@ assert_contains "$("$W" --repo "$repo" --once)" "run finished: passed" "dashboar
 
 # --- qa.require_for_ship merge gate -------------------------------------------
 # finish passed writes a durable pass attestation keyed by the verified sha;
-# ac_qa_gate_ok enforces it only when the fleet-home config requires it.
-# Every probe below sources ac-pipeline-lib.sh ALONGSIDE ac-lib.sh, exactly as
-# the real merge helpers do: the gate reads the project yaml through
-# ac_yaml_has, which lives there. Source only ac-lib.sh and the call is
-# unbound - and it degrades SILENTLY, leaving the yaml side empty so the gate
-# reaches the FLAT arm and is right for the wrong reason. That is the layering
-# bug shipping green inside the suite meant to catch it.
+# the merge gate both merge helpers call, src/lib-qa-gate.ts's qaGateOk,
+# enforces it only when the fleet-home config requires it.
+qgate() { (cd "$ROOT" && bun --no-env-file -e "const G = await import('./src/lib-qa-gate.ts'); process.exit(G.qaGateOk(process.argv[1], process.argv[2]) ? 0 : 1);" "$1" "$2"); }
 sha="$(git -C "$repo" rev-parse HEAD)"
 # (1) gate NOT enforced (no qa: require_for_ship in the home config).
 # shellcheck disable=SC1091
 . "$BIN/ac-lib.sh"
-. "$RBIN/ac-qa-lib.sh"
-ac_qa_gate_ok "$repo" "$sha" || fail "gate must pass when not required"
+qgate "$repo" "$sha" || fail "gate must pass when not required"
 # (2) require it, but no passing run recorded yet -> blocked.
 cat >"$qa_cfg" << 'EOF'
 qa:
@@ -1692,7 +1725,8 @@ EOF
 printf 'gate change\n' >>"$repo/file.txt"
 git -C "$repo" add file.txt && git -C "$repo" commit -qm "gate target"
 sha="$(git -C "$repo" rev-parse HEAD)"
-assert_fails bash -c ". '$BIN/ac-lib.sh'; . '$RBIN/ac-pipeline-lib.sh'; . '$RBIN/ac-qa-lib.sh'; ac_qa_gate_ok '$repo' '$sha'"
+out="$(qgate "$repo" "$sha" 2>&1)" && fail "gate must refuse a head with no passing run"
+assert_contains "$out" "no passing crew-qa run recorded for ${sha:0:12}" "the refusal names the head"
 # (3) a passing crew-qa run on that sha writes the attestation -> gate opens.
 stage_runtime_bundle "$repo" "$qa_cfg" proj "" ""
 printf 'unexpected\n' >"$repo/.crew/qa/profile-runtime/extra.txt"
@@ -1708,15 +1742,21 @@ mk_png "$TMP/gate.png"
 prepare_pass
 "$QA" finish passed >/dev/null
 assert_file "$repo/.crew/qa/passed/$sha"
-bash -c ". '$BIN/ac-lib.sh'; . '$RBIN/ac-pipeline-lib.sh'; . '$RBIN/ac-qa-lib.sh'; ac_qa_gate_ok '$repo' '$sha'" || fail "gate opens after a passing run for the sha"
+qgate "$repo" "$sha" || fail "gate opens after a passing run for the sha"
 # (4) a different sha stays blocked (stale qa never satisfies a new head).
-assert_fails bash -c ". '$BIN/ac-lib.sh'; . '$RBIN/ac-pipeline-lib.sh'; . '$RBIN/ac-qa-lib.sh'; ac_qa_gate_ok '$repo' '0000000000000000000000000000000000000000'"
+assert_fails qgate "$repo" 0000000000000000000000000000000000000000
 
-# ac_qa_receipt_path_ok compares CANONICAL parents, resolved with python's
-# os.path.realpath semantics. <rc>:<stderr>, because a crash exits non-zero too.
+# src/qa-lib.ts's qaReceiptPathOk compares CANONICAL parents, resolved with
+# python's os.path.realpath semantics. <rc>:<stderr>, because a crash exits
+# non-zero too.
+cat >"$TMP/receipt-path.ts" <<'TS'
+const { qaReceiptPathOk } = await import(`${process.env.ROOT}/src/qa-lib.ts`);
+const b8 = (s: string): string => Buffer.from(s, "utf8").toString("latin1");
+process.exit(qaReceiptPathOk(b8(process.argv[2] ?? ""), b8(process.argv[3] ?? ""), b8(process.argv[4] ?? "")) ? 0 : 1);
+TS
 pc_receipt() {
   local err rc=0
-  err="$(ac_qa_receipt_path_ok "$@" 2>&1 >/dev/null)" || rc=$?
+  err="$(ROOT="$ROOT" bun --no-env-file "$TMP/receipt-path.ts" "$@" 2>&1 >/dev/null)" || rc=$?
   printf '%s:%s' "$rc" "$err"
 }
 pcr="$TMP/pcr"
@@ -2022,7 +2062,7 @@ assert_eq "$("$QA" store-dir)" "$sdir" "store-dir is stable across calls"
 # its sourced siblings alongside it.
 fake="$TMP/fakecheckout"
 mkdir -p "$fake/bin"
-cp "$BIN/ac-qa.sh" "$BIN/ac-lib.sh" "$BIN/ac-harness.sh" "$RBIN/ac-pipeline-lib.sh" "$RBIN/ac-qa-lib.sh" "$BIN/ac-bun.sh" "$BIN/ac-backend.sh" "$BIN/ac-backend-orca.sh" "$fake/bin/"
+cp "$BIN/ac-qa.sh" "$BIN/ac-lib.sh" "$BIN/ac-harness.sh" "$BIN/ac-bun.sh" "$BIN/ac-backend.sh" "$BIN/ac-backend-orca.sh" "$fake/bin/"
 # The entry is a shim over src/qa.ts, found at <bin>/../src.
 ln -s "$ROOT/src" "$fake/src"
 ln -s "$ROOT/dashboard" "$fake/dashboard"
@@ -2222,6 +2262,93 @@ assert_contains "$("$QA" status)" "target=$sha_A" \
   "untracked + .crew/ artifacts do not block a clean checkout"
 "$QA" finish cancelled >/dev/null
 rm -f "$bindrepo/untracked.txt"
+
+# --- target-checkout binding: ac-verify's own context-neutralization stubs
+# are exempt from the dirty-tree refusal - EXACTLY the paths this round's
+# manifest names, and ONLY while their bytes are still the recorded stub.
+neutrepo="$(make_repo neutr)"
+printf 'qa:\n  serve: "echo neutr-serve; sleep 30"\n  health: "true"\n  health_timeout: 5\n' \
+  >"$AC_HOME/projects/neutr.yaml"
+printf 'o\n' >"$neutrepo/other.txt"
+printf 'project instructions\n' >"$neutrepo/CLAUDE.md"
+printf 'agent instructions\n' >"$neutrepo/AGENTS.md"
+git -C "$neutrepo" add -A && git -C "$neutrepo" commit -qm 'instruction files'
+nsha="$(git -C "$neutrepo" rev-parse HEAD)"
+cd "$neutrepo" || fail "cd neutrepo"
+nstub="# Neutralized by ac-verify: project instruction files must not steer the independent verifier. True content: git show $nsha:<path>"
+
+# neutr_stub_all - emulate ac-verify's own CONTEXT NEUTRALIZATION for THIS
+# round, byte for byte: both instruction files overwritten with the exact
+# stub text src/verify.ts writes, and the in-lease manifest + stub recorded
+# exactly as that one producer records them; this fixture only plays back
+# its known output.
+neutr_stub_all() {
+  printf '%s\n' "$nstub" >"$neutrepo/CLAUDE.md"
+  printf '%s\n' "$nstub" >"$neutrepo/AGENTS.md"
+  mkdir -p "$neutrepo/.crew/qa"
+  printf '%s\n' "$nstub" >"$neutrepo/.crew/qa/neutralized-stub"
+  printf '%s\0%s\0' "$neutrepo/CLAUDE.md" "$neutrepo/AGENTS.md" >"$neutrepo/.crew/qa/neutralized-manifest"
+}
+
+# (F) start passes with both instruction files neutralized, and finish passed
+#     RE-PROVES the same exemption instead of refusing its own stub.
+neutr_stub_all
+"$QA" start --target "$nsha" --task neutr-ok >/dev/null \
+  || fail "start must exempt ac-verify's own neutralization stub"
+qa_case N-1 pass api --grade A >/dev/null
+mk_png "$TMP/neutr-ok.png"
+"$QA" visual "$TMP/neutr-ok.png" --case N-1 >/dev/null
+prepare_pass
+"$QA" finish passed >/dev/null \
+  || fail "finish passed must re-prove the binding with the same exemption"
+
+# (G) a REAL edit of a neutralized path (content no longer the recorded
+#     stub) is a real change and still refuses - at start, and when it lands
+#     mid-round, before finish passed mints anything.
+neutr_stub_all
+printf 'captain edit\n' >"$neutrepo/CLAUDE.md"
+assert_fails_with CLAUDE.md -- "$QA" start --target "$nsha" --task neutr-nonstub-start
+neutr_stub_all
+"$QA" start --target "$nsha" --task neutr-nonstub-finish >/dev/null
+qa_case N-2 pass api --grade A >/dev/null
+mk_png "$TMP/neutr-nonstub.png"
+"$QA" visual "$TMP/neutr-nonstub.png" --case N-2 >/dev/null
+prepare_pass
+printf 'captain edit after start\n' >"$neutrepo/CLAUDE.md"   # drifts off the recorded stub mid-round
+assert_fails_with CLAUDE.md -- "$QA" finish passed
+"$QA" finish cancelled >/dev/null
+
+# (H) an edit to an UNLISTED tracked file still refuses even while a valid
+#     manifest exempts the instruction files, and the refusal names only the
+#     real edit - never the exempted paths.
+neutr_stub_all
+printf 'o2\n' >>"$neutrepo/other.txt"
+out_h="$("$QA" start --target "$nsha" --task neutr-other-start 2>&1 1>/dev/null || true)"
+assert_contains "$out_h" "other.txt" "an edit outside the manifest still refuses"
+case "$out_h" in
+  *CLAUDE.md*|*AGENTS.md*) fail "an exempted instruction file must not appear in the residual refusal: $out_h" ;;
+esac
+git -C "$neutrepo" checkout -q -- other.txt
+neutr_stub_all
+"$QA" start --target "$nsha" --task neutr-other-finish >/dev/null
+qa_case N-3 pass api --grade A >/dev/null
+mk_png "$TMP/neutr-other.png"
+"$QA" visual "$TMP/neutr-other.png" --case N-3 >/dev/null
+prepare_pass
+printf 'o3\n' >>"$neutrepo/other.txt"
+assert_fails_with other.txt -- "$QA" finish passed
+git -C "$neutrepo" checkout -q -- other.txt
+"$QA" finish cancelled >/dev/null
+
+# (I) FAIL CLOSED: the exact stub bytes with NO manifest recorded for this
+#     round (ac-verify never ran here) still refuse - content alone never
+#     proves a path was neutralized THIS round.
+rm -rf "$neutrepo/.crew/qa"
+printf '%s\n' "$nstub" >"$neutrepo/CLAUDE.md"
+printf 'agent instructions\n' >"$neutrepo/AGENTS.md"
+assert_fails_with CLAUDE.md -- "$QA" start --target "$nsha" --task neutr-nomanifest
+git -C "$neutrepo" checkout -q -- CLAUDE.md AGENTS.md
+cd "$repo" || fail "cd back from neutrepo"
 
 # --- config-proposal: the config self-discovery renderer, HOME-targeted -------------
 # The agent composes the FULL proposed config on stdin; the verb diffs it vs
@@ -3201,15 +3328,26 @@ esac
 
 cd "$repo" || fail "cd back from bpolicy"
 
-# --- differential: src/qa.ts against the frozen bash original -----------------
-# DISPUTED: the implementation (tests/fixtures/ac-qa.sh under bash, sourcing the frozen tests/fixtures/ac-qa-lib.sh and ac-pipeline-lib.sh, vs src/qa.ts through bin/ac-qa.sh)
-# HELD-CONSTANT: ONE world path ($XW) rebuilt by the row's own setup before each pass - a home (projects/repo.yaml, config/, data/, records/repo-knowledge/), a repo at $XW/repo made under one git identity and one commit date so every sha matches, a task data dir at $XW/data/fam-qa holding the test plan; argv, env (AC_HOME=$XW/home, AC_QA_WATCH=off, AC_VERIFY_BIN the leg's verifier, TMPDIR=$XW/tmp, XSTUB=$XW/stub, unless a row names others); cwd ($XW/repo unless a row names another); stdin (/dev/null unless a call names a file); LC_ALL=C unless a row names en_US.UTF-8; PATH stubs on both sides - date answering one instant per format and an advancing epoch, sleep logging each call and returning at once, docker logging every call and answering `ps` and `compose port` from the world, curl logging every call and answering the world's status, gh answering only `auth token`, a logging herdr, a scripted verifier writing the round the world names - plus a row's own; the live bin/ beside each entry (the oracle bin also links .agents for the compose template). Every call's exit, stdout and stderr compared whole once normalised (STAMP for the date-pid names, ROOT for either bin root, N for pids, process groups, the free QA_PORT, the health duration and the runtime receipt's hash, X for a mktemp suffix), then the world: every path under the repo's .crew/, home/, data/, tmp/ and stub/ with mode and bytes (a link: its target), and the repo's info/exclude. A row naming a shell-own line compares the exit and stdout only (XNOERR).
+# --- the qa verbs end to end, row by row, in one rebuilt world -----------------
+# One world path ($XW), rebuilt by the row's own setup before each row: a home
+# (projects/repo.yaml, config/, data/, records/repo-knowledge/), a repo at
+# $XW/repo made under one git identity and one commit date, a task data dir at
+# $XW/data/fam-qa holding the test plan. The env: AC_HOME=$XW/home,
+# AC_QA_WATCH=off, AC_VERIFY_BIN the leg's verifier, TMPDIR=$XW/tmp,
+# XSTUB=$XW/stub, unless a row names others; cwd $XW/repo unless a row names
+# another; stdin /dev/null unless a call names a file; LC_ALL=C; PATH stubs -
+# date answering one instant per format and an advancing epoch, sleep logging
+# each call and returning at once, docker logging every call and answering `ps`
+# and `compose port` from the world, curl logging every call and answering the
+# world's status, gh answering only `auth token`, a logging herdr, a scripted
+# verifier writing the round the world names - plus a row's own. Every call's
+# exit, stdout and stderr land in one transcript, and the world in one listing:
+# every path under the repo's .crew/, home/, data/, tmp/ and stub/ with mode
+# and bytes (a link: its target). Both are normalised: STAMP for the date-pid
+# names, ROOT for the bin root, N for pids, process groups, the free QA_PORT
+# and the health duration, H for the runtime receipt's hash, X for a mktemp
+# suffix.
 cd "$TMP" || fail "cd TMP"
-xobin="$(make_oracle_bin ac-qa)"
-cmp -s "$xobin/ac-qa.sh" "$ROOT/tests/fixtures/ac-qa.sh" || fail "the oracle bin holds the frozen original"
-ln -s "$ROOT/.agents" "$xobin/../.agents"
-# XDRY=1 runs the oracle on both sides: a dry run of the leg itself.
-xnbin="$BIN"; [ -z "${XDRY:-}" ] || xnbin="$xobin"
 XW="$TMP/xw"; XSTUBS="$TMP/xstubs"; mkdir -p "$XSTUBS"
 printf '[user]\n\tname = t\n\temail = t@t\n[init]\n\tdefaultBranch = main\n' >"$TMP/xgitconfig"
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$TMP/xgitconfig" \
@@ -3317,25 +3455,23 @@ xput() { mkdir -p "$(dirname "$XW/$1")"; printf '%b' "$2" >"$XW/$1"; }   # xput 
 xcfg() { printf '%b' "$1" >"$XW/home/projects/repo.yaml"; }   # xcfg <printf %b yaml> - the installed config
 xrd() { printf '%s/repo/.crew/qa/%s' "$XW" "$(readlink "$XW/repo/.crew/qa/current")"; }   # the current run dir
 xin() { printf '%b' "$1" >"$XW/stub/in"; XIN="$XW/stub/in"; }   # xin <printf %b bytes> - the next calls' stdin
-XLC=C; XENV=(); XCWD=repo; XIN=/dev/null; XWATCH=off; XHOME=1; XPASS=o; XALT=(o); XCALL=0; XNOERR=""; XPATH=""
-xcmd() {  # xcmd <args...> - XCMD: the next qa call by this pass's side for the call
-  local side bin="$xnbin" x path="$XSTUBS:$PATH"
-  side="${XALT[$((XCALL % ${#XALT[@]}))]}"; XCALL=$((XCALL + 1))
-  [ "$side" = n ] || bin="$xobin"
+XENV=(); XCWD=repo; XIN=/dev/null; XHOME=1; XPATH=""
+xcmd() {  # xcmd <args...> - XCMD: the next qa call
+  local x path="$XSTUBS:$PATH"
   [ -z "$XPATH" ] || path="$XPATH"
-  local e=("LC_ALL=$XLC" "PATH=$path" "TMPDIR=$XW/tmp" "XSTUB=$XW/stub" "AC_QA_WATCH=$XWATCH" "AC_VERIFY_BIN=$XSTUBS/verify")
+  local e=("LC_ALL=C" "PATH=$path" "TMPDIR=$XW/tmp" "XSTUB=$XW/stub" "AC_QA_WATCH=off" "AC_VERIFY_BIN=$XSTUBS/verify")
   [ -z "$XHOME" ] || e+=("AC_HOME=$XW/home")
   for x in ${XENV[@]+"${XENV[@]}"}; do e+=("$x"); done
   XCMD=(env -u AC_HOME -u AC_FLEET_STATE -u AC_SCOPE -u AC_SOLO -u AC_FLEET_SCOPE -u AC_CREW_ID -u AC_HERDR_SESSION
     -u AC_BACKEND -u CDPATH -u AC_FINDINGS_ROUND -u AC_FINDINGS_DELTA -u AC_FINDINGS_PRIOR_OPEN -u AC_LOCK_STALE_GRACE
-    -u GH_TOKEN -u GITHUB_TOKEN -u AC_TEST_HOOKS -u AC_QA_PROFILE_RECHECK_HOOK "${e[@]}" "$bin/ac-qa.sh" "$@")
+    -u GH_TOKEN -u GITHUB_TOKEN -u AC_TEST_HOOKS -u AC_QA_PROFILE_RECHECK_HOOK "${e[@]}" "$BIN/ac-qa.sh" "$@")
 }
-xlog() {  # xlog <rc> <args...> - the call's transcript appended
+xlog() {  # xlog <rc> <args...> - the call's transcript appended, its stderr closed by a newline
   local rc="$1"; shift
-  { printf '== %s\nrc=%s\n-- out\n' "$*" "$rc"; cat "$TMP/x.out"
-    if [ -z "$XNOERR" ]; then printf '%s\n' '-- err'; cat "$TMP/x.err"; fi; } >>"$TMP/xt.$XPASS"
+  { printf '== %s\nrc=%s\n-- out\n' "$*" "$rc"; cat "$TMP/x.out"; printf '%s\n' '-- err'; cat "$TMP/x.err"
+    [ ! -s "$TMP/x.err" ] || [ "$(tail -c 1 "$TMP/x.err" | wc -l)" -eq 1 ] || printf '\n'; } >>"$TMP/xt"
 }
-xc() {  # xc <args...> - one qa call in the world by this pass's side for the call, its transcript appended
+xc() {  # xc <args...> - one qa call in the world, its transcript appended
   local rc=0
   xcmd "$@"
   (cd "$XW/$XCWD" && exec "${XCMD[@]}") <"$XIN" >"$TMP/x.out" 2>"$TMP/x.err" || rc=$?
@@ -3352,47 +3488,41 @@ xsig() {  # xsig <signal> <args...> - one call in the background; once the world
   rm -f "$XW/stub/started" "$XW/stub/done"
   xlog "$rc" "$sig" "$@"
 }
-xnorm() {  # xnorm <file> - STAMP, ROOT, N and X for what differs by pid, port, time or mktemp
-  LC_ALL=C sed -E -e "s#$TMP/oracle-ac-qa#ROOT#g" -e "s#$ROOT#ROOT#g" \
+xnorm() {  # xnorm <file> - STAMP, ROOT, N, H and X for what differs by pid, port, time, hash or mktemp
+  LC_ALL=C sed -E -e "s#$ROOT#ROOT#g" \
     -e 's/20260101-000000-[0-9]+/STAMP/g' -e 's/\.![0-9]+!/.!N!/g' \
     -e 's/(QA_PORT=|127\.0\.0\.1:|pid=|pid |process_group=|process group |\(process group |healthy after |pgid )[0-9]+/\1N/g' \
     -e 's/runtime_receipt_sha256=[0-9a-f]{64}/runtime_receipt_sha256=H/g' \
     -e 's#(/\.[a-z-]+(\.tsv|\.receipt|-current|-curation|-manifest|-amend|-amendments|-candidates|\.curation)?)\.[A-Za-z0-9]{6}#\1.X#g' \
     -e 's#(\.tmp)\.[0-9]+#\1.PID#g' -e 's#/tmp\.[A-Za-z0-9]{8,}#/tmp.X#g' -e 's#(profile\.tmp)\.[A-Za-z0-9]{6}#\1.X#g' "$1"
 }
-xsnap() {  # xsnap <pass> - the world as one listing
-  local n f
-  (cd "$XW" && find repo/.crew home data tmp stub -print 2>/dev/null || true) >"$TMP/xnames"
-  xnorm "$TMP/xnames" | paste - "$TMP/xnames" | LC_ALL=C sort | while IFS=$'\t' read -r n f; do
-    if [ -L "$XW/$f" ]; then printf '== %s -> %s\n' "$n" "$(readlink "$XW/$f")"; continue; fi
-    printf '== %s %s\n' "$n" "$(stat -f %Sp "$XW/$f")"
-    case "$f" in */serve.pid|*/epoch) printf 'N\n'; continue ;; esac
+xsnap() {  # xsnap - the world as one listing
+  local f
+  (cd "$XW" && find repo/.crew home data tmp stub -print 2>/dev/null || true) | LC_ALL=C sort | while IFS= read -r f; do
+    if [ -L "$XW/$f" ]; then printf '== %s -> %s\n' "$f" "$(readlink "$XW/$f")"; continue; fi
+    printf '== %s %s\n' "$f" "$(stat -f %Sp "$XW/$f")"
     [ -d "$XW/$f" ] || { cat "$XW/$f" 2>/dev/null || printf '<unreadable>'; printf '\n'; }
-  done >"$TMP/xw.$1"
-  { printf -- '-- exclude\n'; cat "$XW/repo/.git/info/exclude" 2>/dev/null || true; } >>"$TMP/xw.$1"
+  done >"$TMP/xlist"
 }
-xkill() {  # xkill - end every serve group a pass left running
+xkill() {  # xkill - end every serve group a row left running
   local p
   for p in "$XW"/repo/.crew/qa/*/serve.pid; do [ -f "$p" ] && kill -TERM -- "-$(cat "$p")" 2>/dev/null; done
   return 0
 }
-xpass() {  # xpass <pass> <setup> <body> <side>... - rebuild the world, then the body's calls by the sides in turn
-  XPASS="$1"; : >"$TMP/xt.$1"; XCALL=0; XALT=("${@:4}")
-  $2; $3; xkill; xsnap "$1"
-  xnorm "$TMP/xt.$1" >"$TMP/xt2.$1"; xnorm "$TMP/xw.$1" >"$TMP/xw2.$1"
+xrun() {  # xrun <setup> <body> - rebuild the world, then the body's calls
+  : >"$TMP/xt"
+  $1; $2; xkill; xsnap
+  xnorm "$TMP/xt" >"$TMP/xt2"; xnorm "$TMP/xlist" >"$TMP/xw2"
 }
-xrow() { printf '%s' "${BASH_LINENO[${#BASH_LINENO[@]}-2]}"; }   # the leg's own line that started this comparison
-xcmp() {  # xcmp <pass> <pass> - transcripts and worlds identical
-  cmp -s "$TMP/xt2.$1" "$TMP/xt2.$2" || fail "qa differential calls differ ($1 vs $2) at line $(xrow): $(diff -a "$TMP/xt2.$1" "$TMP/xt2.$2" | head -n 14)"
-  cmp -s "$TMP/xw2.$1" "$TMP/xw2.$2" || fail "qa differential world differs ($1 vs $2) at line $(xrow): $(diff -a "$TMP/xw2.$1" "$TMP/xw2.$2" | head -n 14)"
-}
-xsame() { xpass o "$1" "$2" o; xpass n "$1" "$2" n; xcmp o n; }   # xsame <setup> <body> - the oracle alone, then the port alone
-xcont() {  # xcont <setup> <body> - the oracle alone, then the two sides alternating call by call, either side first
-  xpass o "$1" "$2" o; xpass a "$1" "$2" o n; xpass b "$1" "$2" n o; xcmp o a; xcmp o b
-}
-xt() { cat "$TMP/xt2.${1:-n}"; }
-xhas() { assert_contains "$(xt "${2:-n}")" "$1" "qa differential at line $(xrow)"; }   # xhas <text> [<pass>]
-xwhas() { assert_contains "$(cat "$TMP/xw2.${2:-n}")" "$1" "qa differential world at line $(xrow)"; }
+xrow() { printf '%s' "${BASH_LINENO[${#BASH_LINENO[@]}-2]}"; }   # the suite's own line that started this row
+xt() { cat "$TMP/xt2"; }
+xw() { cat "$TMP/xw2"; }
+xneedle() { XN="$(printf '%s.' "$1" | xnorm /dev/stdin)"; XN="${XN%.}"; }   # xneedle <text> - XN: <text> normalised as the transcript is
+xhas() { xneedle "$1"; assert_contains "$(xt)" "$XN" "qa row at line $(xrow)"; }   # xhas <text> - the normalised transcript holds <text>
+xlacks() { xneedle "$1"; case "$(xt)" in *"$XN"*) fail "qa row at line $(xrow): '$XN' found" ;; esac; }
+xwhas() { xneedle "$1"; assert_contains "$(xw)" "$XN" "qa row world at line $(xrow)"; }
+xwlacks() { xneedle "$1"; case "$(xw)" in *"$XN"*) fail "qa row world at line $(xrow): '$XN' found" ;; esac; }
+xexits() { assert_eq "$(awk '/^== / { h = 1 } h && /^rc=/ { printf "%s%s", s, substr($0, 4); s = " "; h = 0 }' "$TMP/xt2")" "$1" "qa row at line $(xrow): the exits in call order"; }
 xstart() { xc start --target HEAD --task fam-qa --evidence "$XW/data/fam-qa/evidence"; }   # xstart - a homed flat run
 xready() { xstart; xc step pin completed; xc step testplan completed; }   # xready - a run whose test plan is frozen
 xbooted() {  # xbooted - a ready run with its deliverable booted and its runtime receipt published
@@ -3402,43 +3532,71 @@ xcase() {  # xcase - one api case driven through its boundary and recorded
   xc boundary-run --case C-1 --boundary http --evidence "$XW/data/fam-qa/evidence/c1.txt" -- printf ok
   xc case C-1 pass --tier api --grade A --evidence c1.txt --boundary http --receipt "$(ls "$(xrd)"/boundaries/C-1/*.env | head -n 1)"
 }
+XRUN="$XW/repo/.crew/qa/STAMP"   # the current run dir as the world listing spells it
 
 # -- leg 1: the preamble -----------------------------------------------------------
 x_pre() { xc; xc bogus; XCWD=tmp; xc status; XCWD=repo; XENV=(AC_BACKEND=tmux); xc status; XENV=(); }
-xsame xworld x_pre
+xrun xworld x_pre
+xexits "1 1 1 1"
+xhas $'== \nrc=1\n-- out\n-- err\nERROR: usage: ac-qa.sh <start|step|case|'
+xhas $'== bogus\nrc=1\n-- out\n-- err\nERROR: usage: ac-qa.sh <start|'
+xhas $'-- err\nERROR: not inside a git repo\n'
+xhas "ERROR: unsupported backend 'tmux' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)"
 
 # -- leg 2: start --------------------------------------------------------------------
 x_start() { xstart; xc status; xc start --target HEAD --task fam-qa --scope s; xc evidence-dir; }
-xsame xworld x_start
+xrun xworld x_start
+xexits "0 0 1 0"
+xhas $'rc=0\n-- out\nstarted qa run STAMP target=HEAD task=fam-qa\n-- err\n== status'
+xhas "  task=fam-qa
+  evidence=$XW/data/fam-qa/evidence
+"
+xhas "  config_source=$XW/home/projects/repo.yaml"
+xhas $'  outcome=running\n  steps:\n    pin        pending\n    testplan   pending\n'
+xhas '  visuals: none - finish passed will refuse'
+xhas "ERROR: this project declares no scopes, so --scope/--app select nothing (got --scope s)."
+xhas "== evidence-dir
+rc=0
+-- out
+$XW/data/fam-qa/evidence
+-- err"
+xwhas $'== repo/.crew/qa/current -> STAMP\n'
+xwhas $'== repo/.crew/qa/STAMP/config.yaml -rw-r--r--\nqa:\n  serve: "/bin/sleep 30"\n'
 x_start_refuse() {
   xc start; xc start --target HEAD --store rel; xc start --target nope; xc start --target HEAD --skip x
   xc start --target HEAD --bogus; xc start --target HEAD --scope a --scope b; xc status
 }
-xsame xworld x_start_refuse
+xrun xworld x_start_refuse
+xexits "1 1 1 1 1 1 1"
+xhas 'ERROR: --target is required (branch/ref/commit under verification)'
+xhas "ERROR: --store must be an ABSOLUTE path (got 'rel')"
+xhas 'ERROR: target does not resolve to a commit: nope'
+xhas "ERROR: start --skip was removed: record the durable reason after start with 'ac-qa.sh step <name> skipped --note <reason>'"
+xhas 'ERROR: unknown flag: --bogus'
+xhas "ERROR: --scope given twice ('a' then 'b') - name one scope, or the run silently takes the last"
+xhas 'ERROR: no active qa run; ac-qa.sh start first'
+xwlacks '== repo/.crew/qa'
 x_dirty() { printf 'x\n' >>"$XW/repo/f.txt"; xc start --target HEAD --task t; xc status; }
-xsame xworld x_dirty
+xrun xworld x_dirty
+xexits "1 1"
+xhas "ERROR: target-checkout DIRTY: uncommitted changes to tracked files, so the exercised code is not commit $(git -C "$XW/repo" rev-parse HEAD):"
+xwlacks '== repo/.crew/qa'
 x_homeless() { XHOME=""; xc start --target HEAD --task fam-qa; xc evidence-dir; xc store-dir; xc config qa.serve; XHOME=1; }
-xsame xworld x_homeless
-# W15 (named): a value flag with no value - the exit and stdout, not the shell's own line.
-x_w15() { XNOERR=1; xc start --target; xc start --target HEAD --task; xc infra up --services; xc agent --target; XNOERR=""; }
-xsame xworld x_w15
-xscoped() {
-  xworld
-  printf -- '- scope s1 = app1, app2 | src: x\n' >"$XW/home/records/repo-knowledge/repo.md"
-  xcfg 'qa:\n  scopes:\n    s1:\n      seed: "echo s"\n      apps:\n        app1:\n          serve: "/bin/sleep 30"\n          health: "true"\n'
-}
-x_scoped() {
-  xc start --target HEAD --task t1; xc start --target HEAD --task t2 --scope s9; xc start --target HEAD --task t3 --scope s1
-  xc start --target HEAD --task t4 --scope s1 --app app9; xc start --target HEAD --task t5 --scope s1 --app app2
-  xc start --target HEAD --task t6 --scope s1 --app app1; xc config qa.serve; xc config qa.seed; xc config qa.health_timeout; xc status
-}
-xsame xscoped x_scoped
-xmismatch() { xworld; xcfg 'qa:\n  scopes:\n'; }
-x_mismatch() { xc start --target HEAD --task t1; xc agent --target HEAD --task t1 --brief "$XW/data/fam-qa/testplan.md"; }
-xsame xmismatch x_mismatch
-xambiguous() { xworld; printf -- '- scope s1 = a\n- scope s1 = b\n' >"$XW/home/records/repo-knowledge/repo.md"; }
-x_ambiguous() { xc start --target HEAD --task t1; xc status; }
-xsame xambiguous x_ambiguous
+xrun xworld x_homeless
+xexits "0 0 1 1"
+xhas 'notice: no fleet home named (--home) and none in the environment - freezing an EMPTY project config and an EMPTY scope map'
+xhas "== evidence-dir
+rc=0
+-- out
+$XRUN/evidence
+-- err"
+xhas 'ERROR: qa knowledge store unresolvable: no run recorded a store= path and this env has no AC_HOME.'
+xwhas 'config_source=none'
+# W15: a value flag with no value exits 1 and starts nothing.
+x_w15() { xc start --target; xc start --target HEAD --task; xc infra up --services; xc agent --target; }
+xrun xworld x_w15
+xexits "1 1 1 1"
+xwlacks '== repo/.crew/qa'
 
 # -- leg 3: steps and the frozen test plan -------------------------------------------
 x_step() {
@@ -3447,30 +3605,64 @@ line"; xc step bogus completed; xc step pin bogus; xc step pin; xc step pin comp
   xc step baseline completed; xc step serve completed; xc step e2e skipped; xc step e2e skipped --note why
   xc step evidence completed; xc step testplan completed; xc step testplan fixing; xc step testplan fixing; xc status
 }
-xsame xworld x_step
+xrun xworld x_step
+xexits "0 0 0 1 1 1 1 1 1 1 0 1 0 0 0 0"
+xhas 'ERROR: unknown step: bogus'
+xhas 'ERROR: unknown status: bogus'
+xhas 'ERROR: usage: ac-qa.sh step <name> <status> [--note <text>]'
+xhas "ERROR: step baseline completed is refused: 'ac-qa.sh baseline' owns this transition"
+xhas "ERROR: step serve completed is refused: 'ac-qa.sh serve' owns this transition"
+xhas "ERROR: step e2e skipped requires --note '<reason>' so the non-applicability decision is durable"
+xhas "ERROR: evidence step has no visual artifact: register one with 'ac-qa.sh visual <path>'"
+xhas $'    pin        completed\n    testplan   fixing (rounds 2)\n'
+xwhas $'pin\tcompleted\t0\ta tab line\ntestplan\tfixing\t2\t-\n'
+xwhas $'e2e\tskipped\t0\twhy\n'
+xwhas 'step=pin status=completed note=a tab line'
 x_plan() {
   xready; printf '\n' >>"$XW/data/fam-qa/testplan.md"; xc step testplan completed
   xc testplan-amend --case C-1 --authority "spec.md:3" --reason "fix"; xc testplan-amend --case C-1 --authority "source code" --reason r
   xc testplan-amend --case "a b" --authority a --reason r; xc testplan-amend --authority a; xc testplan-amend --case C-1 --authority a --reason r
   xc status
 }
-xsame xworld x_plan
+xrun xworld x_plan
+xexits "0 0 0 1 0 1 1 1 1 0"
+xplan_old="$(printf '%s' "$XPLAN" | shasum -a 256 | cut -d' ' -f1)"
+xplan_new="$({ printf '%s' "$XPLAN"; printf '\n'; } | shasum -a 256 | cut -d' ' -f1)"
+xhas "ERROR: testplan was already frozen at $xplan_old and now hashes to $xplan_new"
+xhas "testplan amended: $xplan_old -> $xplan_new cases=C-1"
+xhas 'ERROR: source implementation alone cannot redefine the oracle; record the case unverifiable or raise an ask-user finding'
+xhas 'ERROR: testplan-amend --case must be [A-Za-z0-9_.-]'
+xhas 'ERROR: testplan-amend requires at least one --case'
+xhas 'ERROR: testplan-amend requires an actual test-plan content change'
+xhas "  testplan_sha256=$xplan_new"
+xwhas "{\"schema\":\"agentcrew.qa-oracle-amendment/v1\",\"old_sha256\":\"$xplan_old\",\"new_sha256\":\"$xplan_new\",\"cases\":[\"C-1\"],\"authority\":\"spec.md:3\",\"reason\":\"fix\",\"recorded_at\":\"2026-01-01T00:00:00Z\"}"
 xbadplan() { xworld; printf '## Coverage\ncoverage: AC-1 | it\n\n## Full Flow\nfull-flow: C-1\n' >"$XW/data/fam-qa/testplan.md"; }
 x_badplan() { xstart; xc step testplan completed; rm -f "$XW/data/fam-qa/testplan.md"; xc step testplan completed; xc status; }
-xsame xbadplan x_badplan
-# SHELL-OWN (named): a staged manifest the render cannot write refuses before anything is published - the exit, stdout and world, not the shell's own lines.
+xrun xbadplan x_badplan
+xexits "0 1 1 0"
+xhas 'ERROR: testplan completed refused: coverage declaration needs four exact fields at line 2'
+xhas "ERROR: testplan completed requires the durable plan beside the evidence directory: $XW/data/fam-qa/testplan.md"
+xhas '    testplan   pending'
+xwlacks 'testplan-manifest.json'
+# A staged manifest the render cannot write refuses before anything is published.
 xroplan() {  # xroplan - a world whose mktemp hands each staged test-plan manifest back read-only
   xworld; mkdir -p "$XW/stub/ro"
   printf '#!/bin/sh\nt="$(/usr/bin/mktemp "$@")" || exit\ncase "$t" in */.testplan-manifest*) chmod 0400 "$t" ;; esac\nprintf "%%s\\n" "$t"\n' >"$XW/stub/ro/mktemp"
   chmod +x "$XW/stub/ro/mktemp"
 }
 x_roplan() {
-  xstart; xc step pin completed; XPATH="$XW/stub/ro:$XSTUBS:$PATH"; XNOERR=1; xc step testplan completed; XPATH=""; XNOERR=""
+  xstart; xc step pin completed; XPATH="$XW/stub/ro:$XSTUBS:$PATH"; xc step testplan completed; XPATH=""
   xc step testplan completed; printf '\n' >>"$XW/data/fam-qa/testplan.md"
-  XPATH="$XW/stub/ro:$XSTUBS:$PATH"; XNOERR=1; xc testplan-amend --case C-1 --authority "spec.md:3" --reason fix; XPATH=""; XNOERR=""; xc status
+  XPATH="$XW/stub/ro:$XSTUBS:$PATH"; xc testplan-amend --case C-1 --authority "spec.md:3" --reason fix; XPATH=""; xc status
 }
-xsame xroplan x_roplan
-# SHELL-OWN (named): a run.meta temp the run dir refuses to create (an ACL denying add_file once the ledger entry is built) refuses with every temp removed and the lock released - the exit, stdout and world; the port's stderr is the refusal alone.
+xrun xroplan x_roplan
+xexits "0 0 1 0 1 0"
+xhas $'== step testplan completed\nrc=1\n-- out\n-- err\n== step testplan completed\nrc=0\n-- out\ntestplan -> completed\n'
+xhas $'== testplan-amend --case C-1 --authority spec.md:3 --reason fix\nrc=1\n-- out\n-- err\n== status'
+xhas "  testplan_sha256=$xplan_old"
+xwlacks 'oracle-amendments'
+xwlacks '== repo/.crew/qa/STAMP/.testplan-manifest'
+# A run.meta temp the run dir refuses to create (an ACL denying add_file once the ledger entry is built) refuses with every temp removed and the lock released.
 xdenyplan() {
   xworld; mkdir -p "$XW/stub/deny"
   printf '#!/bin/sh\ncase "$*" in *qa-oracle-amendment/v1*) /bin/chmod +a "user:$(id -un) deny add_file" "$XDENY" ;; esac\nexec %s "$@"\n' "$(command -v jq)" >"$XW/stub/deny/jq"
@@ -3478,15 +3670,13 @@ xdenyplan() {
 }
 x_denyplan() {
   xready; printf '\n' >>"$XW/data/fam-qa/testplan.md"
-  XPATH="$XW/stub/deny:$XSTUBS:$PATH"; XENV=("XDENY=$(xrd)"); XNOERR=1; xc testplan-amend --case C-1 --authority "spec.md:3" --reason fix
-  XPATH=""; XENV=(); XNOERR=""; cp "$TMP/x.err" "$TMP/xerr.$XPASS"
+  XPATH="$XW/stub/deny:$XSTUBS:$PATH"; XENV=("XDENY=$(xrd)"); xc testplan-amend --case C-1 --authority "spec.md:3" --reason fix
+  XPATH=""; XENV=()
   /bin/chmod -a "user:$(id -un) deny add_file" "$(xrd)" || fail "the deny stub never ran"; xc status
 }
-xsame xdenyplan x_denyplan
-xhas "--reason fix
-rc=1"
-case "$(cat "$TMP/xw2.n")" in *testplan-amend.lock*|*oracle-amendments*|*manifest-amend*|*run.meta.amend*) fail "a refused amend leaves its lock or a temp: $(cat "$TMP/xw2.n")" ;; esac
-assert_eq "$(cat "$TMP/xerr.n")" "ERROR: testplan-amend refused: could not rewrite run.meta (the run is unchanged)" "the refused amend prints its refusal alone"
+xrun xdenyplan x_denyplan
+xhas $'--reason fix\nrc=1\n-- out\n-- err\nERROR: testplan-amend refused: could not rewrite run.meta (the run is unchanged)\n== status'
+case "$(xw)" in *testplan-amend.lock*|*oracle-amendments*|*manifest-amend*|*run.meta.amend*) fail "a refused amend leaves its lock or a temp: $(xw)" ;; esac
 
 # -- leg 4: cases, visuals, findings, harnesses ---------------------------------------
 x_case_refuse() {
@@ -3497,7 +3687,22 @@ x_case_refuse() {
   xc case C-1 unverifiable --tier api --note "no	boundary"; xc case C-2 unverifiable --tier db --classification environment --confidence ""
   xc case C-1 unverifiable --tier api --evidence "a	b"; xc case C-1 pass --tier api --bogus x; xc status; xc fix-report
 }
-xsame xworld x_case_refuse
+xrun xworld x_case_refuse
+xexits "0 1 0 0 1 1 1 1 1 1 1 1 0 0 1 1 0 0"
+xhas 'ERROR: case C-1 refused: a completed testplan step and frozen coverage manifest are required before QA case execution'
+xhas 'ERROR: case C-1 pass needs --boundary <http|grpc|client-cli|workflow|queue|schedule|web|e2e>'
+xhas "ERROR: case C-1 pass needs --receipt <path>: drive it with 'ac-qa.sh boundary-run'"
+xhas "ERROR: case id must be [a-zA-Z0-9_.-] and never '.' or contain '..': 'bad..id'"
+xhas 'ERROR: unknown case status: maybe'
+xhas 'ERROR: --tier must be one of: api db workflow web'
+xhas "ERROR: case C-1 fail --classification defect needs --authority <file:line | URL | 'captain <date>'>"
+xhas "ERROR: case C-1 fail --classification defect needs --repro <path to an executable repro-C-1.sh declaring '# DISPUTED:' and '# HELD-CONSTANT:'>"
+xhas 'ERROR: --grade must be A|B|C|D (evidence ladder)'
+xhas 'case C-1: unverifiable (tier=api)'
+xhas 'case C-2: unverifiable (tier=db class=environment)'
+xhas 'ERROR: --evidence must not contain a tab: a	b'
+xhas $'## Failed cases\n\n| id | tier | classification | evidence |\n|---|---|---|---|\n\n'
+xwhas $'C-1\tapi\tunverifiable\t-\t-\t-\t-\tno boundary\t-\t-\t-\t-\nC-2\tdb\tunverifiable\tenvironment\t\t-\t-\t-\t-\t-\t-\t-\n'
 x_defect() {
   xbooted
   xc boundary-run --case C-1 --boundary http --evidence "$XW/data/fam-qa/evidence/c1.txt" -- sh -c 'echo bad; exit 3'
@@ -3509,21 +3714,56 @@ x_defect() {
   xc case C-1 pass --tier api --boundary http --receipt "$XW/data/repro.sh"
   xc fix-report; xc finish failed; xc relay-report
 }
-xsame xworld x_defect
+xrun xworld x_defect
+xexits "0 0 0 0 0 0 0 3 1 0 1 1 0 0 0"
+xhas "== boundary-run --case C-1 --boundary http --evidence $XW/data/fam-qa/evidence/c1.txt -- sh -c echo bad; exit 3
+rc=3
+-- out
+$XRUN/boundaries/C-1/STAMP.env
+-- err
+bad"
+xhas "ERROR: --repro $XW/data/norepro.sh: missing or empty '# DISPUTED: <the one variable under dispute>' header"
+xhas 'case C-1: fail (tier=api class=defect)'
+xhas "ERROR: case C-1: --boundary grpc contradicts the receipt's boundary http"
+xhas "ERROR: case C-1: --receipt must be a regular file this run published under $XRUN/boundaries/C-1/"
+xhas '| C-1 | api | defect | - |'
+xhas $'QA_VERDICT=failed\n'
+xhas $'QA_TOTAL=1\nQA_PASSED=0\nQA_FAILED=1\n'
+xhas 'Verdict: **failed** | Target: HEAD | Full flow: `C-1`'
+xwhas $'C-1\tapi\tfail\tdefect\t-\t-\t-\t-\tspec.md:3\t'"$XW/data/repro.sh"$'\thttp\t'"$XRUN/boundaries/C-1/STAMP.env"
+xwhas 'outcome=failed'
 x_visual() {
   xstart; xput data/notimg.png 'hello'; xput data/empty.png ''
   xc visual "$XW/data/notimg.png"; xc visual "$XW/data/empty.png"; xc visual "$XW/data/none.png"; xc visual shot.png
   xc visual "$XW/data/fam-qa/evidence/shot.png" --case C-9; xc visual "$XW/data/fam-qa/evidence/shot.png" --note "n	1"
   xc visual "$XW/data/fam-qa/evidence/shot.png"; xc visual; xc visual x --bogus y; xc status
 }
-xsame xworld x_visual
+xrun xworld x_visual
+xexits "0 1 1 1 0 1 0 0 1 1 0"
+xhas "ERROR: not an image: $XW/data/notimg.png - the extension is never trusted; its magic bytes are not png/jpeg/gif/webp"
+xhas "ERROR: visual is empty: $XW/data/empty.png (a capture that wrote nothing is not evidence)"
+xhas "ERROR: visual not found: $XW/data/none.png"
+xhas "== visual shot.png
+rc=0
+-- out
+visual png registered: $XW/data/fam-qa/evidence/shot.png (16 bytes)"
+xhas 'ERROR: --case C-9 is not in the ledger: record the case first (ac-qa.sh case C-9 ...)'
+xhas 'ERROR: usage: ac-qa.sh visual <path> [--case <id>] [--note <text>]'
+xwhas $'== repo/.crew/qa/STAMP/visuals.tsv -rw-------\n'"$XW/data/fam-qa/evidence/shot.png"$'\tpng\t16\t-\t2026-01-01T00:00:00Z\t-\n\n'
 x_findings() {
   xstart
   xin '[{"id":"f1","action":"fix","description":"d","authority_class":"internal","authority":"a"},{"id":"q1","action":"maybe"}]'; xc findings cases
   XIN=/dev/null; xc findings cases --show; xc findings bogus; xc findings cases --bad; xc findings verdict --show
   xin '{}'; xc findings verdict; XIN=/dev/null; xc status
 }
-xsame xworld x_findings
+xrun xworld x_findings
+xexits "0 0 0 1 1 1 1 0"
+xhas $'== findings cases\nrc=0\n-- out\nask-user=1 fix=1\n'
+xhas $'    "id": "q1",\n    "action": "ask-user",'
+xhas 'ERROR: usage: ac-qa.sh findings <step> [--show]'
+xhas 'ERROR: no findings recorded for step verdict'
+xhas 'ERROR: findings must be a JSON array'
+xwlacks 'findings/verdict.json'
 x_harness() {
   xstart; xput data/fam-qa/evidence/harness/h.sh '#!/bin/sh\n'; chmod +x "$XW/data/fam-qa/evidence/harness/h.sh"
   xc harness-classify "$XW/data/fam-qa/evidence/harness/h.sh" --classification repo-regression --target tests/h --invariant "inv	x" --evidence c1.txt
@@ -3535,22 +3775,50 @@ x_harness() {
   xput data/e.patch 'nothing\n'; xc regression-proposal "$XW/data/e.patch"; xc regression-proposal
   xc curation completed; xc fixture p1 --selector s --case C-1; xc fixture; xc fixture p1 --selector "a b" --case C-1
 }
-xsame xworld x_harness
-# An inherited object key is no declared flag: an otherwise valid call naming one is the original's unknown-flag refusal.
+xrun xworld x_harness
+xexits "0 0 1 1 1 1 0 1 1 1 1 1 1 1"
+xhas "harness classified: $XW/data/fam-qa/evidence/harness/h.sh -> repo-regression"
+xhas 'ERROR: harness classification must be repo-regression|e2e-regression|fixture-pack|evidence-only|retire'
+xhas 'ERROR: harness-classify evidence is missing, broken, or outside the declared evidence root: ../../outside'
+xhas 'ERROR: usage: ac-qa.sh harness-classify <path> --classification <kind> --target <target> --invariant <text> --evidence <path>'
+xhas 'ERROR: --target needs a value'
+xhas "== regression-proposal $XW/data/t.patch
+rc=0
+-- out
+$XW/data/fam-qa/evidence/regression-proposal.patch"
+xhas 'ERROR: regression proposal touches a production path: src/x.ts'
+xhas 'ERROR: regression proposal contains no file changes'
+xhas 'ERROR: usage: ac-qa.sh regression-proposal <test-only.patch>'
+xhas 'ERROR: curation is valid only after a terminal QA outcome'
+xhas 'ERROR: fixture refused: a completed testplan step and frozen coverage manifest are required before QA case execution'
+xhas 'ERROR: usage: ac-qa.sh fixture <pack-id> --selector <name> --case <id> [--case <id> ...]'
+xhas "ERROR: fixture selector must be [A-Za-z0-9_.-]: 'a b'"
+xwhas "$XW/data/fam-qa/evidence/harness/h.sh"$'\trepo-regression\ttests/h\tinv x\t'"$XW/data/fam-qa/evidence/c1.txt"
+xwhas $'== data/fam-qa/evidence/regression-proposal.patch -rw-------\n--- a/tests/x.test.ts\n'
+# An inherited object key is no declared flag: an otherwise valid call naming one is the unknown-flag refusal.
 x_proto_case() {
   xbooted; xc boundary-run --case C-1 --boundary http --evidence "$XW/data/fam-qa/evidence/c1.txt" -- printf ok
   local r; r="$(ls "$(xrd)"/boundaries/C-1/*.env | head -n 1)"
   xc case C-1 pass --tier api --grade A --evidence c1.txt --boundary http --receipt "$r" constructor x
   xc case C-1 pass --tier api --grade A --evidence c1.txt --boundary http --receipt "$r" __proto__ x; xc status; xc finish cancelled
 }
-xsame xworld x_proto_case
+xrun xworld x_proto_case
+xexits "0 0 0 0 0 0 0 0 1 1 0 0"
+xhas 'ERROR: unknown flag: constructor'
+xhas 'ERROR: unknown flag: __proto__'
+xhas $'QA_VERDICT=cancelled\n'
+xhas $'QA_TOTAL=0\n'
 x_proto_harness() {
   local h="$XW/data/fam-qa/evidence/harness/h.sh"
   xstart; xput data/fam-qa/evidence/harness/h.sh '#!/bin/sh\n'; chmod +x "$h"
   xc harness-classify "$h" --classification repo-regression --target tests/h --invariant i --evidence c1.txt constructor x
   xc harness-classify "$h" --classification repo-regression --target tests/h --invariant i --evidence c1.txt __proto__ x
 }
-xsame xworld x_proto_harness
+xrun xworld x_proto_harness
+xexits "0 1 1"
+xhas 'ERROR: unknown harness-classify flag: constructor'
+xhas 'ERROR: unknown harness-classify flag: __proto__'
+xwlacks 'repo-regression'
 
 # -- leg 5: infra with the docker stub ----------------------------------------------
 x_infra() {
@@ -3560,19 +3828,46 @@ x_infra() {
   xc infra down --task fam-qa; xc infra bogus; xc infra; xc infra up --bogus x
   XENV=(DOCKER_DOWN_RC=7); xc infra down --task other; XENV=()
 }
-xsame xworld x_infra
+xrun xworld x_infra
+xexits "0 0 0 1 1 0 0 0 0 1 1 1 7"
+xhas $'== infra detect\nrc=0\n-- out\npostgres,redis\n'
+xhas 'infra up: crew-qa-repo-fam-qa (postgres redis)'
+xhas "ERROR: infra up refused: this run declared 'postgres redis' and temporal is outside it."
+xhas 'ERROR: unknown qa service(s): mongo (known: postgres redis temporal wiremock)'
+xhas 'infra up: crew-qa-repo-fam-qa (postgres)'
+xhas '(no crew-qa containers for this repo)'
+xhas 'ERROR: usage: ac-qa.sh infra <detect|up|down|status|reap>'
+xhas $'== infra down --task other\nrc=7\n-- out\ninfra down: crew-qa-repo-other\n'
+xwhas $'== repo/.crew/qa/STAMP/infra.declared -rw-r--r--\npostgres redis\n'
+xwhas 'docker compose -p crew-qa-repo-fam-qa -f ROOT/.agents/skills/crew-qa/assets/compose.yaml --profile postgres --profile redis up -d --wait'
+xwhas $'docker compose -p crew-qa-repo-fam-qa down -v --remove-orphans\ndocker compose -p crew-qa-repo-fam-qa down -v --remove-orphans\ndocker compose -p crew-qa-repo-other down -v --remove-orphans\n'
+xwlacks '--profile temporal'
+xwhas 'QA_PG_PORT=15432'
 x_infra_none() { xstart; xc infra up; xc infra up --services postgres; xc finish cancelled; }
-xsame xworld x_infra_none
+xrun xworld x_infra_none
+xexits "0 0 1 0"
+xhas 'infra up: no backend services (service needs none)'
+xhas "ERROR: infra up refused: this run declared '(none)' and postgres is outside it."
+xwlacks ' up -d'
 xlintworld() { xworld; xcfg 'qa:\n  mocks_compose: mocks.yml\n'; printf 'services:\n  m:\n    privileged: true\n' >"$XW/repo/mocks.yml"; }
 x_lint() { xstart; xc infra up --services wiremock; XENV=(DOCKER_UP_RC=1); xc infra up --services wiremock; XENV=(); }
-xsame xlintworld x_lint
+xrun xlintworld x_lint
+xexits "0 1 1"
+xhas $'ERROR: qa.mocks_compose fails the safety lint (captain must review):\n3:    privileged: true\n'
+xwlacks 'stub/docker.log'
 x_reap() {
   xstart; git -C "$XW/repo" worktree add -q --detach "$XW/wt" HEAD
   XCWD=wt; xc start --target HEAD --task live-1; XCWD=repo
   printf 'crew-qa-repo-fam-qa\ncrew-qa-repo-live-1\ncrew-qa-repo-dead-1\nother-project\n' >"$XW/stub/ps.list"
   xc infra reap; : >"$XW/stub/ps.list"; xc infra reap; XPATH="$PATH"; xc infra reap; XPATH=""
 }
-xsame xworld x_reap
+xrun xworld x_reap
+xexits "0 0 0 0 0"
+xhas $'== infra reap\nrc=0\n-- out\nreaped crew-qa-repo-dead-1\n'
+xhas 'reap: nothing to reap'
+xhas 'reap: docker absent, nothing to do'
+assert_eq "$(grep -c ' down ' "$XW/stub/docker.log")" "1" "reap takes down only the stack no live run in any worktree owns"
+xwhas 'docker compose -p crew-qa-repo-dead-1 down -v --remove-orphans'
 # A worktree list git cannot give is a failed read, never "no worktrees": the reap refuses before any stack goes down.
 xblindworld() {
   xworld; mkdir -p "$XW/stub/blind"
@@ -3580,13 +3875,12 @@ xblindworld() {
   chmod +x "$XW/stub/blind/git"
 }
 x_reapblind() { xstart; printf 'crew-qa-repo-dead-1\n' >"$XW/stub/ps.list"; XPATH="$XW/stub/blind:$XSTUBS:$PATH"; xc infra reap; XPATH=""; }
-xsame xblindworld x_reapblind
+xrun xblindworld x_reapblind
 xhas "rc=1
 -- out
 -- err
-ERROR: reap: cannot list the worktrees of "
-xhas "/xw/repo - nothing reaped"
-case "$(cat "$TMP/xw2.n")" in *" down "*) fail "a blind reap must take no stack down: $(cat "$TMP/xw2.n")" ;; esac
+ERROR: reap: cannot list the worktrees of $XW/repo - nothing reaped"
+xwlacks ' down '
 
 # -- leg 6: serve, health, seed, baseline ---------------------------------------------
 x_live() {
@@ -3595,67 +3889,101 @@ x_live() {
   xc boundary-run --case C-1 --boundary http --evidence nope -- true; xc boundary-run --case C-1 --boundary http --evidence c1.txt
   xc baseline; xc step baseline completed; xc status; xc finish cancelled; xc serve
 }
-xsame xworld x_live
+xrun xworld x_live
+xexits "0 0 0 0 0 0 1 0 0 1 1 1 0 1 0 0 1"
+xhas $'== health\nrc=0\n-- out\nhealthy after Ns\n-- err\nnotice: no recorded serve launch - probing only, no runtime receipt published (a passing run needs "ac-qa.sh serve" first)\n'
+xhas $'== seed\nrc=0\n-- out\nseeded\n'
+xhas "serving (pid N, log $XRUN/logs/serve.log)"
+xhas 'ERROR: serve already running (pid N)'
+xhas $'healthy after Ns\nruntime receipt published (process group N)\n'
+xhas $'== health\nrc=0\n-- out\nhealthy after Ns\n-- err\n== boundary-run'
+xhas 'ERROR: boundary-run drives shell clients only: --boundary must be http|grpc|client-cli|workflow|queue|schedule'
+xhas 'ERROR: boundary-run --evidence nope: no such file or directory'
+xhas 'ERROR: usage: ac-qa.sh boundary-run --case <id> --boundary <http|grpc|client-cli|workflow|queue|schedule> --evidence <path> -- <command> [args...]'
+xhas 'baseline: ship test receipt not-qualifies:absent (receipt check only; the suite was NOT re-run; UT coverage requires qualification)'
+xhas '    baseline   completed'
+xhas 'ERROR: serve refused: this round already published a runtime boot receipt, and there is no re-issue path inside one round'
+xwhas $'== repo/.crew/qa/STAMP/runtime/receipt.env -rw-------\nschema=agentcrew.qa-runtime-receipt/v1\n'
+xwlacks 'serve.pid'
 # Leading empty driver arguments add no stimulus separator (the receipt's stimulus_sha256).
 x_stimulus() { xbooted; xc boundary-run --case C-1 --boundary http --evidence "$XW/data/fam-qa/evidence/c1.txt" -- "" "" printf a; xc finish cancelled; }
-xsame xworld x_stimulus
-xwhas "stimulus_sha256="
+xrun xworld x_stimulus
+xwhas "stimulus_sha256=$(printf 'printf\na' | shasum -a 256 | cut -d' ' -f1)"
 xnoconf() { xworld; xcfg 'qa:\n  other: x\n'; }
-# SHELL-OWN (named): `config` with no key - the exit and stdout, not the shell's own line.
-x_noconf() { xstart; xc serve; xc health; xc seed; xc config qa.serve; XNOERR=1; xc config; XNOERR=""; xc cmd e2e --cases C-1; }
-xsame xnoconf x_noconf
-xslowhealth() { xworld; xcfg 'qa:\n  serve: "/bin/sleep 30"\n  health: "false"\n  health_timeout: 3\n'; }
+x_noconf() { xstart; xc serve; xc health; xc seed; xc config qa.serve; xc config; xc cmd e2e --cases C-1; }
+xrun xnoconf x_noconf
+xexits "0 4 4 4 1 1 1"
+xhas $'== serve\nrc=4\n-- out\n-- err\n(no qa.serve configured)\n'
+xhas $'== health\nrc=4\n-- out\n-- err\n(no qa.health configured)\n'
+xhas $'== seed\nrc=4\n-- out\n-- err\n(no qa.seed configured)\n'
+xhas 'ERROR: cmd e2e refused: a completed testplan step and frozen coverage manifest are required before QA case execution'
+xwlacks 'serve.pid'
+# LAST PROBE: a wait that times out names the last probe's exit and the last
+# line it wrote on stderr.
+xslowhealth() { xworld; xcfg 'qa:\n  serve: "/bin/sleep 30"\n  health: "echo first >&2; echo refused >&2; exit 7"\n  health_timeout: 3\n'; }
 x_slowhealth() { xready; xc serve; xc health; xc finish cancelled; }
-xsame xslowhealth x_slowhealth
-# W7 (at parity): health_timeout read raw into the arithmetic - abc, 1m and 08 end it on the shell's own line (the exit and stdout, not that line); 010 is 8 s, and a deadline past the signed 64-bit limit wraps to one already gone, each on the entry's own refusal.
-for xw7v in abc 1m 08 010 9223372036854775807; do
-  eval "xw7_$xw7v() { xworld; xcfg 'qa:\n  health: \"false\"\n  health_timeout: $xw7v\n'; }"
-  case "$xw7v" in abc|1m|08) xw7err=1 ;; *) xw7err="" ;; esac
-  x_w7() { xstart; XNOERR="$xw7err"; xc health; XNOERR=""; }
-  xsame "xw7_$xw7v" x_w7
-done
-# EXPRESSIONS (named): a timeout that is a whole expression, or names a variable the original had set - bash evaluated it into the deadline; the port ends at once, exit 1, no line.
-xw7expr() { xworld; xcfg "qa:\n  health: \"false\"\n  health_timeout: $xw7v\n"; }
+xrun xslowhealth x_slowhealth
+xexits "0 0 0 0 1 0"
+xhas $'== health\nrc=1\n-- out\n-- err\nERROR: health probe never passed within 3s (last probe: exit 7: refused)\n== finish'
+xwlacks 'runtime/receipt.env'
+# EXPRESSIONS: a timeout that is a whole expression, or names a variable,
+# ends health at once, exit 1, with no probe run.
+xw7expr() { xworld; xcfg "qa:\n  health: \"touch $XW/stub/probed; false\"\n  health_timeout: $xw7v\n"; }
 x_w7expr() { xstart; xc health; }
 for xw7v in 1+1 OPTIND; do
-  xpass o xw7expr x_w7expr o; xpass n xw7expr x_w7expr n
-  xhas "ERROR: health probe never passed within ${xw7v}s" o
-  assert_eq "$(tail -n 4 "$TMP/xt2.n")" $'== health\nrc=1\n-- out\n-- err' "EXPRESSIONS: the port ends at once on $xw7v"
+  xrun xw7expr x_w7expr
+  xexits "0 1"
+  xlacks 'never passed'
+  xwlacks '== stub/probed'
 done
 xdeadserve() { xworld; xcfg 'qa:\n  serve: "exit 0"\n  health: "false"\n'; }
 x_deadserve() { xready; xc serve; xc health; xc finish failed; }
-xsame xdeadserve x_deadserve
+xrun xdeadserve x_deadserve
+xexits "0 0 0 0 1 0"
+xhas "ERROR: serve process died during health wait (see $XRUN/logs/serve.log)"
+xwlacks 'runtime/receipt.env'
 
 # -- leg 7: finish ---------------------------------------------------------------------
 x_finish() {
   xstart; xc finish bogus; xc finish passed; xc finish unverifiable --retry-reason context-limit
   xc finish unverifiable --retry-reason x; xc finish failed --retry-reason tool-limit; xc finish cancelled --bogus
-  xc status; xc finish cancelled; xc finish cancelled; xc relay-report
+  xc status; xc relay-report
 }
-xsame xworld x_finish
+xrun xworld x_finish
+xexits "0 1 1 0 1 1 1 0 0"
+xhas $'== finish bogus\nrc=1\n-- out\n-- err\nERROR: usage: ac-qa.sh finish <passed|failed|unverifiable|cancelled>\n'
+xhas 'ERROR: finish passed refused: non-terminal steps: pin=pending, testplan=pending, baseline=pending, infra=pending, serve=pending, cases=pending, e2e=pending, evidence=pending, verdict=pending'
+xhas $'== finish unverifiable --retry-reason context-limit\nrc=0\n-- out\nQA_VERDICT=unverifiable\n'
+xhas "ERROR: invalid --retry-reason 'x' (expected context-limit|tool-limit|capability-limit)"
+xhas "ERROR: --retry-reason is valid only with 'finish unverifiable'"
+xhas 'ERROR: usage: ac-qa.sh finish <passed|failed|unverifiable|cancelled> [--retry-reason <context-limit|tool-limit|capability-limit>]'
+xhas '  outcome=unverifiable'
+xhas 'Verdict: **unverifiable** | Target: HEAD | Full flow: `-`'
 x_flow() {
   xbooted; xcase; xc visual "$XW/data/fam-qa/evidence/shot.png" --case C-1; xc step cases completed
   xc step e2e skipped --note "no e2e"; xc step evidence completed; xc step verdict completed; xc status
   xc finish passed; xc relay-report; xc fix-report; xc curation completed; xc curation skipped --note "n"; xc status
 }
-xsame xworld x_flow
-xcont xworld x_flow
+xrun xworld x_flow
+xexits "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0"
+xhas 'visual png registered: '"$XW"'/data/fam-qa/evidence/shot.png (16 bytes, case C-1)'
+xhas $'QA_VERDICT=passed\n'
+xhas $'QA_TOTAL=1\nQA_PASSED=1\nQA_FAILED=0\nQA_UNVERIFIABLE=0\nQA_FLAKY=0\nQA_VISUALS=1\n'
+xhas 'Verdict: **passed** | Target: HEAD | Full flow: `C-1`'
+xhas 'curation=completed note=-'
+xhas 'curation=skipped note=n'
+xhas '  outcome=passed'
+xwhas 'finish outcome=passed'
+xwlacks 'serve.pid'
 x_gate() {
   xbooted; xc step cases completed; xc step e2e skipped --note n; xc step evidence skipped --note n; xc step verdict completed
   xc finish passed; xcase; xc finish passed; xc visual "$XW/data/fam-qa/evidence/shot.png"; xc finish passed
-  xin '[{"id":"f1","action":"fix","description":"d","authority_class":"internal","authority":"a"}]'; xc findings cases; XIN=/dev/null; xc finish passed
-  xc finish cancelled
 }
-xsame xworld x_gate
-# W4 (at parity): under a UTF-8 locale a non-UTF-8 byte in run.meta fails both seds.
-x_w4() {
-  xstart; LC_ALL=C sed -i '' -e "s/^task=.*/task=$(printf 'caf\351')/" "$(xrd)/run.meta"
-  XLC=en_US.UTF-8; XNOERR=1; xc finish failed; XNOERR=""; XLC=C; xc finish cancelled
-}
-xsame xworld x_w4
-xboard() { xworld; XWATCH=auto; }
-x_board() { XENV=(AC_BACKEND=herdr); xstart; xc step pin running; xc finish cancelled; XENV=(); XWATCH=off; }
-xsame xboard x_board
+xrun xworld x_gate
+xexits "0 0 0 0 0 0 0 0 0 0 0 1 0 0 1 0 0"
+xhas 'ERROR: finish passed refused: the case ledger is EMPTY - a run that recorded no case verified nothing'
+xhas "ERROR: finish passed refused: no visual artifact on record - register one with 'ac-qa.sh visual <path>'"
+xhas $'QA_VERDICT=passed\n'
 
 # -- leg 8: agent ------------------------------------------------------------------------
 xagentworld() { xworld; xput data/charter.md '# charter\n'; }
@@ -3670,12 +3998,36 @@ x_agent() {
   printf 'failed' >"$XW/stub/verdict"; xc agent --target HEAD --task fam-qa --brief "$b"
   printf 1 >"$XW/stub/verify.rc"; xc agent --target HEAD --task fam-qa --brief "$b"; XENV=()
 }
-xsame xagentworld x_agent
+xrun xagentworld x_agent
+xexits "1 1 1 1 1 1 0 0 1 1 0 1"
+xhas 'ERROR: usage: ac-qa.sh agent --target <ref> --task <id> [--evidence <dir>] [--brief <path>] [--qa-rule <number|default>]'
+xhas 'ERROR: qa agent requires the durable QA charter via --brief <path>'
+xhas 'ERROR: target does not resolve to a commit: nope'
+xhas "ERROR: qa agent needs AC_CREW_ID from ac-spawn (got 'Bad')"
+xhas "ERROR: verifier facade is not executable: $XW/none"
+xhas $'rc=1\n-- out\nQA_PROFILE_STATUS=needs-profile\nprofile-status: needs-profile\nprofile-key: repo\nprofile-detail: no fleet home named (--home) and none in the environment'
+xhas "verdict: passed
+QA_VERDICT=passed
+QA_VERIFIED_REF=$(git -C "$XW/repo" rev-parse HEAD)
+QA_REPORT=$XW/data/report.md
+"
+xhas 'ERROR: this project declares no scopes, so --scope/--app select nothing (got --scope s).'
+xhas 'ERROR: --qa-rule is valid only when config/crew-dispatch.json defines routed panes.qa.rules[]'
+xhas $'verdict: failed\nQA_VERDICT=failed\n'
+xhas "ERROR: independent QA round 4 failed; inspect verifier state and $XW/repo/.crew/qa/agent-fam-qa-r4.json"
+assert_eq "$(grep -c '^verify qa ' "$XW/stub/verify.log")" "4" "only the four rounds that reached the verifier ran it"
+assert_eq "$(sed -n 2p "$XW/stub/verify.log" | sed 's/.* --history //')" "$XW/repo/.crew/qa/agent-fam-qa-r1.json" "round 2 carries round 1 as its history"
+xwhas "--caller fam-implement --brief $XW/repo/.crew/qa/agent-fam-qa-r1.brief.md --output $XW/repo/.crew/qa/agent-fam-qa-r1.json --evidence-dir $XW/repo/.crew/qa/agent-fam-qa-evidence --profile $XW/repo/.crew/qa/agent-fam-qa-r1.profile/profile.json --report $XW/data/report.md"
+xwlacks '== repo/.crew/qa/agent-fam-qa-r4.json'
 x_proto_agent() {
   XENV=(AC_CREW_ID=fam-implement); xc agent --target HEAD --task fam-qa --brief "$XW/data/charter.md" constructor x
   xc agent --target HEAD --task fam-qa --brief "$XW/data/charter.md" __proto__ x; XENV=()
 }
-xsame xagentworld x_proto_agent
+xrun xagentworld x_proto_agent
+xexits "1 1"
+xhas 'ERROR: unknown flag: constructor'
+xhas 'ERROR: unknown flag: __proto__'
+xwlacks 'agent-fam-qa-r1'
 x_agent_profile() {
   local b="$XW/data/charter.md"
   XENV=(AC_CREW_ID=fam-implement); rm -f "$XW/home/projects/repo.yaml"; xc agent --target HEAD --task fam-qa --brief "$b"
@@ -3686,13 +4038,33 @@ x_agent_profile() {
   printf '{"panes":{"qa":{"rules":[]}}}' >"$XW/home/config/crew-dispatch.json"; xc agent --target HEAD --task fam-qa --brief "$b"
   XENV=()
 }
-xsame xagentworld x_agent_profile
+xrun xagentworld x_agent_profile
+xexits "1 1 1 1 1 1"
+xhas 'profile-detail: no project config at the canonical home path ($AC_HOME/projects/repo.yaml)'
+xhas 'profile-detail: the flat project config is missing the service contract (need qa.serve and qa.health)'
+xhas $'QA_PROFILE_STATUS=ask-user\nprofile-status: ask-user\nprofile-key: repo\nprofile-question: Secret resolver \'vault\' is declared for repo but no authorized fixture profile is named (qa.fixtures.profile).'
+xhas "profile-detail: qa.e2e.repo 'nowhere' does not resolve to a local git repository"
+xhas "ERROR: invalid JSON in QA dispatch config: $XW/home/config/crew-dispatch.json"
+xhas 'ERROR: routed panes.qa is invalid: ERROR: panes.qa must be either one static harness/model/effort profile or routed rules'
+xwlacks 'stub/verify.log'
 x_profiled() {
   : >"$XW/stub/publish"; XENV=(AC_CREW_ID=fam-implement); xc agent --target HEAD --task fam-qa --brief "$XW/data/charter.md" --ship-run r1; XENV=()
   rm -f "$XW/stub/publish"; xstart; xc status; xc store-dir; xc config qa.serve; xc baseline
   xc fixture p1 --selector s --case C-1; xc finish cancelled
 }
-xsame xagentworld x_profiled
+xrun xagentworld x_profiled
+xexits "0 0 0 0 0 0 1 0"
+xhas "  store=$XRUN/profile/store"
+xhas '  profile_key=repo'
+xhas '  config_source=profile/config.yaml'
+xhas "== store-dir
+rc=0
+-- out
+$XRUN/profile/store
+"
+xhas $'== config qa.serve\nrc=0\n-- out\n/bin/sleep 30\n'
+xwhas '== repo/.crew/qa/STAMP/profile/profile.json '
+xwlacks '== repo/.crew/qa/profile-runtime'
 
 # -- leg 9: the out-of-run verbs -------------------------------------------------------
 x_proposal() {
@@ -3701,22 +4073,40 @@ x_proposal() {
   xc config-install p1; xc config-install p1; xc config-install; xc config-install "bad/id"; xc config-install p9
   XHOME=""; xc config-proposal --id p4; XHOME=1
 }
-xsame xworld x_proposal
-# SHELL-OWN (named): a staged draft the proposal dir refuses to create (an ACL denying add_file once mkdir made it) exits 1 with the dir left - the exit, stdout and world; the port prints nothing.
+xrun xworld x_proposal
+xexits "0 1 1 1 1 1 0 1 1 1 1 1"
+xhas "proposal_id: p1
+proposal written:
+  $XW/repo/.crew/config-proposals/p1/proposal.patch"
+xhas 'ERROR: config-proposal: id already exists: p1'
+xhas 'ERROR: config-proposal: empty draft on stdin - compose the full proposed config first'
+xhas 'ERROR: config-proposal: draft is identical to the resolved config - nothing to propose'
+xhas 'ERROR: invalid proposal id: a b'
+xhas 'ERROR: usage: ac-qa.sh config-proposal [--id <proposal-id>]'
+xhas "installed proposal p1: $XW/repo/.crew/config-proposals/p1/proposed.yaml -> $XW/home/projects/repo.yaml"
+xhas 'ERROR: config-install: proposal p1 conflicts with a newer installed config (base='
+xhas 'ERROR: usage: ac-qa.sh config-install <proposal-id>'
+xhas 'ERROR: invalid proposal id: bad/id'
+xhas "ERROR: config-install: no staged proposal p9 at $XW/repo/.crew/config-proposals/p9"
+xhas $'== config-proposal --id p4\nrc=1\n-- out\n-- err\nERROR: AC_HOME is not set'
+xwhas $'== home/projects/repo.yaml -rw-------\nqa:\n  serve: "y"\n'
+xwhas $'== home/projects/repo.yaml.prev -rw-r--r--\nqa:\n  serve: "/bin/sleep 30"\n'
+xwlacks 'config-proposals/p2'
+xwlacks 'config-proposals/p4'
+# A staged draft the proposal dir refuses to create (an ACL denying add_file once mkdir made it) exits 1, prints nothing, with the dir left.
 xdenyprop() {
   xworld; mkdir -p "$XW/stub/deny"
   printf '#!/bin/sh\n/bin/mkdir "$@" || exit\ncase "$1" in */config-proposals/*) /bin/chmod +a "user:$(id -un) deny add_file" "$1" ;; esac\n' >"$XW/stub/deny/mkdir"
   chmod +x "$XW/stub/deny/mkdir"
 }
 x_denyprop() {
-  xin 'qa:\n  serve: "y"\n'; XPATH="$XW/stub/deny:$XSTUBS:$PATH"; XNOERR=1; xc config-proposal --id p1
-  XIN=/dev/null; XPATH=""; XNOERR=""; cp "$TMP/x.err" "$TMP/xerr.$XPASS"
+  xin 'qa:\n  serve: "y"\n'; XPATH="$XW/stub/deny:$XSTUBS:$PATH"; xc config-proposal --id p1
+  XIN=/dev/null; XPATH=""
   /bin/chmod -a "user:$(id -un) deny add_file" "$XW/repo/.crew/config-proposals/p1" || fail "the deny stub never ran"
 }
-xsame xdenyprop x_denyprop
-xhas "--id p1
-rc=1"
-assert_eq "$(cat "$TMP/xerr.n")" "" "the refused draft prints no stack trace"
+xrun xdenyprop x_denyprop
+assert_eq "$(xt)" $'== config-proposal --id p1\nrc=1\n-- out\n-- err' "the refused draft exits 1 and prints nothing"
+xwhas $'== repo/.crew/config-proposals/p1 drwxr-xr-x\n== stub '
 x_store() {
   xstart; xc store-dir; xc store-label C-1 --run abc confirmed; xc store-label C-1 --run abc not-a-defect --by cap; xc store-label C-1
   xc store-label C-1 --run; xc store-calibration
@@ -3726,18 +4116,53 @@ x_store() {
   printf 'case\n' >"$XW/data/cand/store/c.md"; xc store-install "$XW/data/cand"; xc store-install "$XW/data/cand"; xc store-install
   XHOME=""; xc store-install "$XW/data/cand"; xc store-label C-1 --run abc confirmed; xc store-calibration; XHOME=1
 }
-xsame xworld x_store
+xrun xworld x_store
+xexits "0 0 0 0 1 1 0 0 1 1 0 1 1 1 1 1"
+xhas "== store-dir
+rc=0
+-- out
+$XW/home/data/qa-store/repo
+"
+xhas "labelled C-1@abc confirmed ($XW/home/data/qa-store/repo.labels.tsv)"
+xhas "labelled C-1@abc not-a-defect ($XW/home/data/qa-store/repo.labels.tsv)"
+xhas 'ERROR: store-label needs --run <sha> and one of confirmed|not-a-defect'
+xhas 'ERROR: --run needs a value'
+xhas '{"n":0,"agreement":null,"kappa":null,"computed_at":"2026-01-01T00:00:00Z"}'
+xhas "QA-STORE-CURATED: history=+0 promoted=0 reverified=0 store=$XW/data/cand/store"
+xhas 'ERROR: --promote-after must be a positive integer'
+xhas 'ERROR: store-curate needs --candidate <dir> carrying store/ (the candidate the curation step writes)'
+xhas "QA-STORE-INSTALLED: $XW/home/data/qa-store/repo base=$(cat "$XW/data/cand/base-manifest.sha256")"
+xhas "ERROR: store-install conflict: candidate base=$(cat "$XW/data/cand/base-manifest.sha256") current="
+xhas 'ERROR: usage: ac-qa.sh store-install <candidate-dir-with-store-and-base-manifest.sha256>'
+xhas 'ERROR: store-install is chief-only and requires the canonical fleet AC_HOME'
+xhas 'ERROR: store-label is chief-side and needs AC_HOME (the labels sit beside the fleet'
+xhas 'ERROR: store-calibration is chief-side and needs AC_HOME'
+xwhas $'== home/data/qa-store/repo/c.md -rw-r--r--\ncase\n'
+xwlacks 'store.lock'
 x_relay() {
   xstart; xc relay-report; xc finish cancelled; git init -q "$XW/data/caller"
   XCWD=data/caller; xc relay-report --repo "$XW/repo"; xc relay-report --repo "$XW/nope"; xc relay-report --bogus; XCWD=repo
 }
-xsame xworld x_relay
+xrun xworld x_relay
+xexits "0 1 0 0 1 1"
+xhas 'ERROR: nothing to relay yet: ac-qa.sh finish first'
+xhas $'== relay-report --repo '"$XW"$'/repo\nrc=0\n-- out\n# QA relay contract (run STAMP)\n\nVerdict: **cancelled** | Target: HEAD'
+xhas "ERROR: not a git repo: $XW/nope"
+xhas $'== relay-report --bogus\nrc=1\n-- out\n-- err\nERROR: unknown flag: --bogus'
 x_fetch() {
   xc fetch-check; xc fetch-check https://e/a.png; printf 404 >"$XW/stub/curl.code"; xc fetch-check https://e/b.png https://e/c.png
   rm -f "$XW/stub/curl.code"; XENV=(GH_STUB_TOKEN=t1); xc fetch-check https://e/d.png; XENV=(GH_TOKEN=t2); xc fetch-check https://e/e.png
   XENV=(CURL_RC=7); xc fetch-check https://e/f.png; XENV=()
 }
-xsame xworld x_fetch
+xrun xworld x_fetch
+xexits "1 0 1 0 0 1"
+xhas 'ERROR: usage: ac-qa.sh fetch-check <url>...'
+xhas 'ERROR: fetch-check: https://e/b.png returned 404 (non-200 can also mean not authenticated for a private repo)'
+xhas 'ERROR: fetch-check: https://e/f.png returned no response (non-200 can also mean not authenticated for a private repo)'
+assert_eq "$(grep -c 'e/c.png' "$XW/stub/curl.log")" "0" "fetch-check stops at the first non-200"
+assert_contains "$(grep 'e/d.png' "$XW/stub/curl.log")" "Authorization: token t1" "the token gh answers reaches curl"
+assert_contains "$(grep 'e/e.png' "$XW/stub/curl.log")" "Authorization: token t2" "a GH_TOKEN in the env reaches curl"
+case "$(grep 'e/a.png' "$XW/stub/curl.log")" in *Authorization*) fail "no token sends no auth header" ;; esac
 xe2eworld() { xworld; xcfg 'qa:\n  serve: "/bin/sleep 30"\n  health: "true"\n  e2e:\n    command: "echo e2e-ran"\n'; }
 x_e2e() {
   xbooted; xcase; xc cmd e2e --cases C-1,C-1; xc cmd e2e --cases nope; xc cmd e2e --cases 'a;b'; xc cmd bogus; xc cmd e2e
@@ -3747,14 +4172,28 @@ x_e2e() {
   xc boundary-register --case C-1 --boundary e2e --upstream-receipt "$XW/data/t.json" --evidence "$XW/data/t.json"
   xc boundary-register --case C-1 --boundary bogus; xc boundary-register --boundary web; xc status; xc finish cancelled
 }
-xsame xe2eworld x_e2e
+xrun xe2eworld x_e2e
+xexits "0 0 0 0 0 0 0 0 0 0 1 1 1 1 0 0 1 1 1 0 0"
+xhas $'== cmd e2e --cases C-1,C-1\nrc=0\n-- out\ne2e-ran\n'
+xhas "ERROR: cmd e2e refused: selected case 'nope' is not in the current behavioral ledger"
+xhas 'ERROR: cmd e2e --cases accepts comma-separated case ids only: a;b'
+xhas 'ERROR: usage: ac-qa.sh cmd e2e --cases <case-id>[,<case-id>...]'
+xhas 'ERROR: cmd e2e requires --cases <case-id>[,<case-id>...]'
+xhas 'ERROR: boundary-register: upstream receipt has the wrong schema'
+xhas "ERROR: boundary-register --boundary must be web or e2e (shell-driven boundaries run through 'ac-qa.sh boundary-run')"
+xhas 'ERROR: boundary-register requires --case <id>'
+xwhas 'boundary=web'
+xwhas 'boundary=e2e'
 
 # -- leg 10: signals ---------------------------------------------------------------------
-# TERM and HUP to the pid alone end both at once (143, 129) while the health
+# TERM and HUP to the pid alone end it at once (143, 129) while the health
 # probe runs, the probe orphaned and finishing on its own; no receipt.
 xsigworld() { xworld; xcfg "qa:\n  serve: \"/bin/sleep 30\"\n  health: \"touch $XW/stub/started; /bin/sleep 1; touch $XW/stub/done; false\"\n"; }
 x_sig() { xready; xc serve; xsig TERM health; xsig HUP health; xc status; xc finish cancelled; }
-xsame xsigworld x_sig
+xrun xsigworld x_sig
+xexits "0 0 0 0 143 129 0 0"
+xhas $'== TERM health\nrc=143\n-- out\n-- err\n== HUP health\nrc=129\n-- out\n-- err\n== status'
+xwlacks 'runtime/receipt.env'
 # TERM and HUP to store-install's pid alone while its cp copies the candidate:
 # 143 and 129, the stage copied but the store never replaced, the lock
 # released - the next install finds no store to keep as previous.
@@ -3775,11 +4214,11 @@ x_storesig() {
   XPATH="$TMP/xcpstubs:$XSTUBS:$PATH"; xsig TERM store-install "$XW/data/cand"; xsig HUP store-install "$XW/data/cand"; XPATH=""
   xc store-install "$XW/data/cand"
 }
-xsame xstoreworld x_storesig
-xhas "/xw/data/cand
-rc=143"
-xhas "/xw/data/cand
-rc=129"
-case "$(xt)" in *previous=*) fail "a signalled store-install must not replace the store: $(xt)" ;; esac
+xrun xstoreworld x_storesig
+xexits "143 129 0"
+xhas "QA-STORE-INSTALLED: $XW/home/data/qa-store/repo base="
+xlacks 'previous='
+xwlacks 'store.lock'
+xwhas $'== home/data/qa-store/repo/c.md -rw-r--r--\ncase\n'
 
 pass

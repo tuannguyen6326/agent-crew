@@ -1,12 +1,10 @@
-// domain.test.ts - what src/domain.ts brought into src/lib.ts, held to the
+// domain.test.ts - what src/domain.ts brought into src/lib-domain.ts, held to the
 // bash it twins: domainParse's program against ac_domain_parse in the live
 // bin/ac-lib.sh (lifted text and output, under C and UTF-8), domainRegistry,
 // domainNameOk, backlogIdOk, domainViewEntry, domainQaRepo and domainTally
 // against ac_domain_registry, ac_domain_name_ok, ac_backlog_id_ok,
-// ac_domain_view_entry, ac_domain_qa_repo and ac_domain_tally; and the awk
-// programs src/domain.ts spawns against the frozen tests/fixtures/ac-domain.sh.
-// The CLI contract itself is tests/sh/ac-domain.test.sh's, whose differential
-// leg runs the frozen bash original beside the shim.
+// ac_domain_view_entry, ac_domain_qa_repo and ac_domain_tally. The CLI
+// contract itself is tests/sh/ac-domain.test.sh's.
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,6 +13,7 @@ import { join } from "node:path";
 const ROOT = join(import.meta.dir, "..", "..");
 const BIN = join(ROOT, "bin");
 const LIB = join(ROOT, "src", "lib.ts");
+const LIBD = join(ROOT, "src", "lib-domain.ts");
 const W = realpathSync(mkdtempSync(join(tmpdir(), "ac-domain-ts-")));
 afterAll(() => rmSync(W, { recursive: true, force: true }));
 
@@ -32,7 +31,7 @@ function bash(script: string, env: Record<string, string>, args: string[] = []):
 
 function twin(body: string, env: Record<string, string>): Run {
   const r = Bun.spawnSync(
-    [process.execPath, "-e", `const L = await import(${JSON.stringify(LIB)}); const say = (s) => process.stdout.write(Buffer.from(String(s), "latin1")); ${body}`],
+    [process.execPath, "-e", `const L = { ...await import(${JSON.stringify(LIB)}), ...await import(${JSON.stringify(LIBD)}) }; const say = (s) => process.stdout.write(Buffer.from(String(s), "latin1")); ${body}`],
     { cwd: ROOT, env: { PATH: process.env.PATH!, LC_ALL: "C", ...env }, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 30000 },
   );
   return { code: r.exitCode, out: r.stdout.toString("latin1"), err: r.stderr.toString("latin1") };
@@ -262,20 +261,4 @@ test("domainTally over a ledger it cannot read is null with the parser's own ref
   expect(got.err).toBe(`ERROR: cannot read ${t}/records/backlog.md\n`);
   expect(want.out).toBe("rc=2");
   expect(want.err).toContain("can't open file");
-});
-
-test("the awk programs src/domain.ts spawns are the frozen original's, byte for byte", () => {
-  const fx = readFileSync(join(ROOT, "tests", "fixtures", "ac-domain.sh"), "latin1");
-  const mod = readFileSync(join(ROOT, "src", "domain.ts"), "latin1");
-  const constant = (name: string): string => {
-    const m = new RegExp(`const ${name} = (?:String\\.raw)?\`([^\`]*)\`;`).exec(mod);
-    expect(m).not.toBeNull();
-    expect(m![1]).not.toContain("${");
-    if (!mod.includes(`const ${name} = String.raw`)) expect(m![1]).not.toContain("\\");
-    return m![1]!;
-  };
-  expect(constant("HOLDS_AWK")).toBe(quoted(fx, `awk -v n="$2" '`));
-  expect(constant("ROW_OF_AWK")).toBe(quoted(fx, `LC_ALL=C awk -v id="$1" '`));
-  expect(constant("STAMP_AWK")).toBe(quoted(fx, `awk -v n="$2" \\\n    '`));
-  expect(constant("RETIRE_AWK")).toBe(quoted(fx, `  awk -v n="$name" '`));
 });

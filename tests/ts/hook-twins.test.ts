@@ -4,7 +4,7 @@
 // `$(jq -r <filter> <<<"$payload" 2>/dev/null || true)` and hookCapture
 // against `$(<cmd> 2>/dev/null || true)`, and hookTrace against
 // ac_hook_trace itself. Each ported hook's own contract is its tests/sh
-// suite, whose differential leg runs the frozen bash original.
+// suite.
 //
 // DISPUTED: the implementation of each read (the bash idiom vs src/lib.ts's hook twins)
 // HELD-CONSTANT: the stdin bytes, the filter or command, PATH (the host's jq and cat; the no-jq rows drop jq alone; the trace rows a date stub first), LC_ALL=C, HOME, the cwd (a scratch dir), the trace rows' AC_HOME seeded alike per side

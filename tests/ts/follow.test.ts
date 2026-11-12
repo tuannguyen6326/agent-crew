@@ -1,8 +1,7 @@
 // follow.test.ts - Bun unit tests for src/follow.ts's pure layer: the places
 // where python's semantics differ from plain JS and a naive port would drift,
 // and the lib.ts twin the entry resolves its transcript directory through.
-// The CLI contract stays owned by tests/sh/ac-follow.test.sh, whose
-// differential leg runs the frozen original beside the shim. Run through
+// The CLI contract stays owned by tests/sh/ac-follow.test.sh. Run through
 // tests/sh/src.test.sh.
 
 import { afterAll, test, expect } from "bun:test";

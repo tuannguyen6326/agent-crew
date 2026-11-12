@@ -4,8 +4,7 @@
 // against the ac-lib.sh / ac-backend.sh / ac-wake-lib.sh functions they twin,
 // roomPending against ac_room_pending, and backendCall against a direct bash
 // call of the same driver through a fake herdr. The CLI contract
-// itself is tests/sh/ac-room.test.sh's, whose differential leg runs the frozen
-// bash original beside the shim.
+// itself is tests/sh/ac-room.test.sh's.
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

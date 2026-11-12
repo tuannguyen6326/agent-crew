@@ -194,7 +194,6 @@ assert_contains "$out" "kind=roomchief" "kind"
 assert_contains "$out" "scope=fam1" "scope printed"
 assert_eq "$(awk -F= '$1=="kind"{print $2}' "$AC_HOME/state/fam1-chief.meta")" "roomchief" "meta kind"
 assert_contains "$(cat "$AC_HOME/data/fam1/room.md")" "PROMOTED" "room receipt"
-[ -d "$AC_HOME/projects" ] && [ -z "$(ls "$AC_HOME/projects" 2>/dev/null)" ] || true
 
 # FILE-DELIVERED KICKOFF: the pane buffer carries the launch line plus a
 # short pointer; the full charter sits in the task dir's kickoff.md, so

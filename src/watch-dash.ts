@@ -4,11 +4,9 @@
 // entry: the two entries bin/ac-ship-watch.sh and bin/ac-qa-watch.sh stay real
 // paths (shims) because a herdr `pane run` string and the tests both embed
 // them, and each entry's header states its role's auto-open/auto-close
-// contract. THIS header is the authoritative spec of the shared body; the bash
-// body it replaced stays frozen at tests/fixtures/ac-watch-dash.sh, sourced by
-// the frozen entries tests/fixtures/ac-ship-watch.sh and ac-qa-watch.sh, the
-// oracles of the differential legs of tests/sh/ac-watch-dash.test.sh,
-// ac-ship-watch.test.sh and ac-qa-watch.test.sh.
+// contract. THIS header is the authoritative spec of the shared body;
+// tests/sh/ac-watch-dash.test.sh, ac-ship-watch.test.sh and ac-qa-watch.test.sh
+// hold it through the two boards.
 //
 // An entry calls watchDashArgs, builds its Role (the run base, the step-table
 // status width, the findings/log separator lines, the step statuses counted
@@ -96,7 +94,7 @@
 // SIGNALS: the live loop restores the cursor on HUP, INT and TERM and exits
 // 128+n; --once registers no handler.
 //
-// AT PARITY (each pinned in the legs until its own fix lands):
+// AT PARITY with the bash original (each until its own fix lands):
 // - WD1: `--repo` naming no repo refuses with an empty name.
 // - WD2: the log cut counts bytes and may split a character before `…`.
 // - WD4: an interval sleep refuses (`abc`, `0`) spins the loop while a run is
@@ -106,37 +104,25 @@
 // - The 4-column steps.tsv fold, the step table's TAB-run collapse beside the
 //   awk readers' single-TAB fields, a non-integer idle limit never idling.
 //
-// DIVERGENCES from the frozen original (the legs name each one a row can show):
-// - FAIL-PATH (WD6): under a UTF-8 locale the original's paint `sed` stopped at
-//   the first frame line holding a byte that is no UTF-8 (WD2's cut, a byte cut
-//   of a role header) - `sed: RE error: illegal byte sequence`, the pane cut
-//   there every refresh; the port paints the whole frame.
-// - FINDINGS ORDER: the findings files are walked in byte order, where bash's
-//   glob collated them under a UTF-8 locale.
-// - SIGNALS: a SIGINT to the board's pid ALONE ends it 130 with the cursor
-//   restored, where bash swallowed it while its sleep child ran (WD3); ctrl-c,
-//   which reaches both, ends both. The board EXITS 128+n where bash re-raised
-//   the signal after its EXIT trap: the same `$?`, a different wait status.
-//   The handlers are installed even when INT was ignored at entry.
-// - SHELL-OWN STDERR is not reproduced, the status kept: `${2:?}`'s `parameter
-//   null or not set` (the port names the flag, exit 1 both); cd's line for a
-//   --repo it cannot enter; the redirection's line for a steps.tsv that cannot
-//   be read; the interval's arithmetic and unbound-variable lines; `[`'s
-//   `integer expression expected` for a non-integer idle limit;
-//   `sleep: command not found`.
-// - INTERVAL ARITHMETIC: an interval that is a whole expression (`1+1`) or
-//   names a variable holding a number ends the board at its first no-run tick,
-//   where bash evaluated it.
-// - HOME RESOLUTION: an AC_HOME cd cannot enter is the session default with
-//   nothing printed, where the shell printed cd's line; a relative --repo is
-//   resolved without CDPATH.
-// - BYTES: argv arrives decoded and config/herdr-session is read as UTF-8, so
-//   a --repo, interval or pane id byte that is no UTF-8 is U+FFFD.
-// - BUN IN THE PANE: the board's pane runs bun; without it the shim's `ERROR:
-//   required tool not found: bun` is all the pane shows until the run's finish
-//   closes it, where the original needed bash, jq and the BSD tools.
-// - A caller whose cwd has no name is `ERROR: not a git repo: ` with no
-//   --repo, as bash's `cd "$PWD"` failed there.
+// ALSO:
+// - A frame line holding a byte that is no UTF-8 (WD2's cut, a byte cut of a
+//   role header) is painted whole under every locale (WD6).
+// - The findings files are walked in byte order under every locale.
+// - A SIGINT to the board's pid ALONE ends it 130 with the cursor restored
+//   (WD3). The board EXITS 128+n; the handlers are installed even when INT was
+//   ignored at entry.
+// - Nothing is printed on stderr for a --repo that cannot be entered, a
+//   steps.tsv that cannot be read beyond awk's own line, an interval that is no
+//   operand, a non-integer idle limit, or a missing `sleep`.
+// - An interval that is a whole expression (`1+1`) or names a variable holding
+//   a number ends the board at its first no-run tick.
+// - An AC_HOME that cannot be entered is the session default with nothing
+//   printed; a relative --repo is resolved without CDPATH.
+// - argv arrives decoded and config/herdr-session is read as UTF-8, so a
+//   --repo, interval or pane id byte that is no UTF-8 is U+FFFD.
+// - The board's pane runs bun; without it the shim's `ERROR: required tool not
+//   found: bun` is all the pane shows until the run's finish closes it.
+// - A caller whose cwd has no name is `ERROR: not a git repo: ` with no --repo.
 import { readFileSync, readdirSync, readlinkSync, lstatSync, statSync, writeSync } from "node:fs";
 import { isatty } from "node:tty";
 import { arithValue, commandV, configReadSoft, die, fileMtime, metaGet, nowRaw, physicalDir, shellStatus, spawnShell, spawnShellSync, tabFields, testInt } from "./lib.ts";

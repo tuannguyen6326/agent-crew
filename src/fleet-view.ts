@@ -1,8 +1,7 @@
 // fleet-view.ts - render the fleet as one TAB-separated line per crewmate.
 // The entry is bin/ac-fleet-view.sh (a shim that starts this file through
-// bin/ac-bun.sh); THIS header is the authoritative spec, and the bash original
-// it replaced stays frozen at tests/fixtures/ac-fleet-view.sh as the oracle the
-// differential leg of tests/sh/ac-fleet-view.test.sh holds this module to.
+// bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-fleet-view.test.sh its contract test.
 //
 // Usage: ac-fleet-view.sh
 //   Arguments are never read (`ac-fleet-view.sh -h extra` renders the fleet).
@@ -68,24 +67,16 @@
 // drives its own crew-state, as the original's `cd "$(dirname "$0")" && pwd
 // -P` did.
 //
-// NAMED DIVERGENCES from the frozen original, each in the leg:
-//   W9 ORDER: byte order under every locale, where the original's glob
-//      followed libc collation under a UTF-8 locale (`_u A2 b1`; C: `A2 _u b1`).
-//   An AC_HOME that cannot be entered names the variable where the shell
-//      printed its own `cd:` line (exit 1 both; the HOME RESOLUTION ruling).
+// ALSO:
+//   W9 ORDER: byte order under every locale.
 //   A relative AC_HOME from a caller cwd that has no name is refused, exit 1,
-//      never resolved inside the distro root bun was started in; the original
-//      resolved it in the deleted directory (`rel`: exit 1 alike; `.`: the
-//      shell's getcwd lines and an empty view, exit 0). A relative W6 half is
-//      read from the distro root there, where the original's open failed.
-//   A W6 half led by `-` is a row of its own, exit 0, where the original's
-//      basename read it as an option: basename's own lines on stderr, exit
-//      1, every later row lost.
+//      never resolved inside the distro root bun was started in. A relative W6
+//      half is read from the distro root there.
+//   A W6 half led by `-` is a row of its own, exit 0.
 //   A meta name that is not UTF-8 reaches readdir as U+FFFD: its path does not
 //      exist, so it is a kind-less `unknown` row (as the FIRST entry: no rows,
-//      the W1 arm) where the original read the file.
-//   An awk that cannot start lists nothing without the shell's own
-//      `awk: command not found` line.
+//      the W1 arm).
+//   An awk that cannot start lists nothing, silently.
 //
 // CALLERS: bin/ac-session-start.sh prints the view under `-- fleet --` and,
 // since the view needs bun, degrades to `WARN: fleet view unavailable ...

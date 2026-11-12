@@ -1,8 +1,7 @@
 // brief.ts - scaffold one crewmate brief. The entry is bin/ac-brief.sh (a
 // shim that starts this file through bin/ac-bun.sh); THIS header is the
-// authoritative spec, the task-data layout included, and the bash original
-// it replaced stays frozen at tests/fixtures/ac-brief.sh as the oracle the
-// differential leg of tests/sh/ac-brief.test.sh holds this module to.
+// authoritative spec, the task-data layout included, and
+// tests/sh/ac-brief.test.sh is its contract test.
 //
 // Usage: ac-brief.sh <id> <project-name> [--scout | --stage <spec|architecture|plan|implement|design|qa>]
 //                    [--mode <crew-ship|direct-pr|local-only|feature-pr>] [--review <yes|no>]
@@ -49,6 +48,22 @@
 //   a prefix guess would nest an unrelated top-level id that merely extends
 //   another row's name; unscoped scaffolds stay flat, and pre-existing flat
 //   fan-out dirs stay readable forever (taskDir's tasks/ probe, src/lib.ts).
+//   A scoped id carrying the scope's OWN canonical stage suffix with no
+//   --stage (the qa verifier a roomchief briefs as a <family>-qa scout)
+//   scaffolds at that stage dir, data/<family>/<stage>[-rN]/brief.md - the
+//   dir the resolver already reads for the suffix - never flat beside the
+//   family; a stage id of another family (<scope>-x-qa) and a bare direct
+//   revision (<scope>-rN, the flat dir ac_task_dir falls back to) stay flat.
+//   This departs from the bash original, which nested only free slugs.
+// - a STORY of an epic (its ledger row carries epic:<e> and <e> has a row of
+//   its own bracketed [EPIC]) has its whole family dir at data/<e>/<story>/
+//   instead of data/<story>/ - every shape above hangs off it unchanged - and
+//   that dir carries an empty `.family` marker, which is how a reader tells a
+//   story from a crewmate's own subdir once the row is pruned (famDir /
+//   ac_fam_dir resolve it, famDirMint / ac_fam_dir_mint create it). A story
+//   whose flat dir already exists stays flat forever, and a story archives
+//   WITH its epic (src/archive.ts moves the epic dir whole). The bash
+//   original knew no stories and scaffolded them flat.
 // - staged-flow tasks (--stage <s>): data/<family>/<stage>[-rN]/brief.md,
 //   nested under the family dir with the SHORT stage names
 //   (spec, arch, plan, implement, design, qa). Historical review/ship dirs remain
@@ -87,21 +102,8 @@
 // orchestrator edits the scaffold to fill in the actual task (and stage
 // inputs) before spawning.
 //
-// ESCAPE HATCH. Every chief-side task on both fleets
-// starts here, and a WRONG brief is worse than a refusal - spawn trusts its
-// Mode:/Review: lines and the crewmate runs its baked lines. If a landed
-// change breaks this module, run the frozen original from a scratch bin/
-// whose path is physical (mktemp's /var is /private/var to the copy's root):
-//   o=$(cd "$(mktemp -d)" && pwd -P); mkdir "$o/bin"; cp bin/*.sh "$o/bin/"
-//   ln -s "$PWD/src" "$o/src"; ln -s "$PWD/dashboard" "$o/dashboard"
-//   cp tests/fixtures/ac-brief.sh "$o/bin/ac-brief.sh"
-//   cp tests/fixtures/ac-qa-lib.sh tests/fixtures/ac-pipeline-lib.sh "$o/bin/"
-// then "$o/bin/ac-brief.sh" <id> <project> [flags], and since the copy bakes
-// ITS OWN root into the crewmate's runnable lines (ac-done.sh, ac-know.sh,
-// ac-qa.sh, ac-verify.sh, docs/staged-design-flow-spec.md), end with
-//   sed -i '' "s#$o#$(pwd -P)#g" <brief>
-// Spawn reads only the Mode:/Review: lines, so a hand-written brief is the
-// last resort before the captain's revert of the land.
+// A WRONG brief is worse than a refusal: spawn trusts its Mode:/Review: lines
+// and the crewmate runs its baked lines.
 //
 // --- the run, in order (AUTHORITATIVE) ---
 // Every ERROR is one line on stderr, exit 1; stdin is never read and every
@@ -187,7 +189,9 @@
 // token, or --captain-requested declares it for this call - an accident
 // guard, not a security boundary). The row's contract tokens, split on
 // blanks, last `flow:`/`mode:`/`rev:`/`qa:` winning; --scout spends nothing.
-// Unauthorized, in order: staged ` flow:staged`, crew-ship ` mode:crew-ship`,
+// Unauthorized, in order: staged ` flow:staged` (a `flow:sdlc` pin authorizes
+// the same stages - the sdlc flow runs them - and is then what the Escalation
+// line spends), crew-ship ` mode:crew-ship`,
 // a profile ` qa:yes`, a staged epic story's review ` rev:yes` - `ERROR:
 // time-expensive mode(s) not confirmed:<list> - the captain's rule: confirm
 // BEFORE using staged/crew-ship/qa/independent review. Put ONE ask to the
@@ -223,7 +227,11 @@
 // THE TEMPLATES join their blocks as `$(...)` joined them: each block loses
 // its trailing LFs, an empty one leaves a blank line. Head: `# <Scout|Spec|
 // Architecture|Plan|Design|Crew|QA> brief: <id>`, blank, `Project: <project as
-// given>`, `Kind: ...`, design and implement add `Mode:` and `Review:`, then
+// given>`, `Kind: ...`, design and implement add `Mode:` and `Review:` (and, on
+// a row pinned `flow:sdlc`, `Flow: sdlc` plus a `## SDLC artifact chain` block
+// in the body - the design one tells the crewmate to write each artifact
+// beside its report, the execution one to commit the accepted chain before
+// any code; the `sdlc` skill and docs/sdlc-flow.md own the detail), then
 // the Escalation: line where one is due (not scout, not qa), then `Captain:`.
 // The blocks: signals (the done/blocked/needs-decision/paused lines and the
 // push `<root>/bin/ac-done.sh <id> '<the exact line you printed>'`, a crew-ship
@@ -233,7 +241,9 @@
 // full, re-check and record lines, baking <root>/bin/ac-know.sh, --home <home>
 // and --family <family> unquoted, and the record (knowledgeFile, src/lib.ts);
 // the design report contract (<root>/docs/staged-design-flow-spec.md - spec,
-// architecture, plan and design only); the FLEET STANDING RULES - every block
+// architecture, plan and design only); the FLEET STANDING RULES - first the
+// distro's own hard rules, every `- HARD RULE - ` line of <root>/AGENTS.md
+// byte-for-byte, then every block
 // of records/captain.md (a `- ` line and the lines after it that start with
 // space or TAB) holding the token STANDING between non-[A-Za-z-] bytes and no
 // `STANDING (domain:` (that block reaches its domainchief at intake, ac-spawn's
@@ -264,41 +274,36 @@
 // <path> (<n> profile(s))`.
 // Last, stdout `brief scaffolded: <brief> (stage: <stage as given>)`, exit 0.
 //
-// AT PARITY (each pinned in the leg): W2, W7,
-// W8, W9, W10, W11, W13 and W14 above. Reproduced too: W3 (the cwd shadows
-// a project name), W16 (config/captain's bytes, an unreadable one naming no
-// one), and `--stage scout` ending the run past the stage check.
+// AT PARITY with the bash original, and deliberately left unasserted by the
+// contract test: W2, W7, W8, W9, W10, W11, W13 and W14 above, W3 (the cwd
+// shadows a project name), W16 (an unreadable config/captain naming no one),
+// and `--stage scout` ending the run past the stage check.
 //
-// DIVERGENCES from the original (the leg names each one a row can show):
-// - W1: ac-qa.sh is resolved from this module's bin/,
-//   where the original's `$(dirname "$0")` ran after its cd into the clone,
-//   so a relative invocation (bin/ac-brief.sh from the home) lost the store.
-// - IN-PROCESS LEDGER: the ledger is read once, as a file - awk's `can't
-//   open file` pair and the parser's own lines are not printed (the ERROR
-//   line and exit are), the bun-missing parse failure has no equivalent, and
-//   no later read can fail after an earlier one passed, where the original
-//   parsed it 2-5 times through a bun child (W17).
-// - BUN: without bun the shim refuses `ERROR: required tool not found: bun`,
-//   where the original scaffolded a home with no ledger.
-// - EXCLUSIVE WRITES: a dangling symlink at the brief is
-//   refused, never written through (W15); the manifest goes through an
-//   exclusive temp, so jq that cannot run or a full disk leaves the old one
-//   whole where the original emptied it (W6), exit statuses kept.
+// ALSO:
+// - W1: ac-qa.sh is resolved from this module's bin/, so a relative
+//   invocation (bin/ac-brief.sh from the home) still names the store.
+// - IN-PROCESS LEDGER: the ledger is read once, as a file - an unreadable one
+//   is the ERROR line and exit, and no later read can fail after an earlier
+//   one passed (W17).
+// - BUN: without bun the shim refuses `ERROR: required tool not found: bun`.
+// - EXCLUSIVE WRITES: a dangling symlink at the brief is refused, never
+//   written through (W15); the manifest goes through an exclusive temp, so jq
+//   that cannot run or a full disk leaves the old one whole (W6).
 // - W4/W5 (FAIL-PATH): captain.md is read as bytes, so a byte that is not
-//   UTF-8 under a UTF-8 locale drops no rule, where the original's awk
-//   aborted past it; no temp is made, so an unusable TMPDIR loses nothing.
-// - W12: a profile key outside [A-Za-z0-9/_-] is refused under any locale,
-//   where bash's bracket under a UTF-8 locale also took `Ä/x/y`.
-// - SHELL-OWN STDERR is not reproduced: `line N: <brief>: Permission denied`
-//   (a brief or a manifest temp that cannot be created), `jq: command not
-//   found`, `short: unbound variable` (--stage scout), `cd:`'s own line (the HOME
-//   RESOLUTION ruling names the variable instead); exit statuses are kept.
-// - MINTING: data/, records/ and projects/ are minted silently, where the
-//   original printed mkdir's line at each mint it could not make and went on
-//   - the task dir's spawned mkdir -p prints its own and ends the run.
+//   UTF-8 under a UTF-8 locale drops no rule; no temp is made, so an unusable
+//   TMPDIR loses nothing.
+// - W12: a profile key outside [A-Za-z0-9/_-] is refused under any locale.
+// - No shell-own stderr: a brief or a manifest temp that cannot be created,
+//   jq that cannot start and `--stage scout` end the run with their exit
+//   status and nothing on stderr; an AC_HOME cd cannot enter is named (the
+//   HOME RESOLUTION ruling).
+// - MINTING: data/, records/ and projects/ are minted silently - the task
+//   dir's spawned mkdir -p prints its own line and ends the run.
 // - A caller whose cwd has no name resolves no relative path: a relative
 //   AC_HOME is refused and a project name is looked up only under projects/.
 // - Bytes: argv arrives decoded (U+FFFD for a byte that is not UTF-8).
+// - HARD RULES: `## Fleet standing rules` opens with the distro's own
+//   `- HARD RULE - ` lines from <root>/AGENTS.md.
 //
 // CALLERS: none executes it from code - the crewchief, roomchiefs and solo
 // chiefs before every spawn (the task-lifecycle and intake-triage skills),
@@ -312,7 +317,7 @@
 // (bin/ac-lib.sh) resolve for every task-dir reader.
 
 import { accessSync, closeSync, constants, fchmodSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { acDoneline, records } from "./backlog.ts";
 import {
   NO_HOME,
@@ -326,6 +331,8 @@ import {
   epicBaseFor,
   exclusiveTemp,
   familyOfId,
+  famDir,
+  famDirMint,
   knowledgeFile,
   type Ledger,
   ledgerRead,
@@ -474,7 +481,18 @@ function main(): void {
   const recordsDir = (): string => mint(`${home}/records`);
   const root = b8(STARTED_BIN.slice(0, -"/bin".length));
 
+  // Every family path below goes through famDir over THIS data dir (brief's
+  // physical spelling), so a story lands inside its epic's dir.
+  const famd = (fam: string): string => {
+    try {
+      return famDir(fam, dataDir);
+    } catch (e) {
+      return fail((e as Error).message);
+    }
+  };
+  const stageOf = (s: string): string => `${famd(s.slice(0, s.indexOf("/")))}/${s.slice(s.indexOf("/") + 1)}`;
   let taskDir: string;
+  let famRoot = id;
   let sub = "";
   if (staged) {
     sub = stageDirForId(id);
@@ -484,29 +502,39 @@ function main(): void {
     if (sub !== "") {
       const part = sub.slice(sub.indexOf("/") + 1);
       if (part !== short && !new RegExp(`^${short}-r[0-9]`).test(part)) fail(`id suffix of '${id}' maps to stage dir '${part}' but --stage ${stage} wants '${short}'`);
-      taskDir = `${dataDir}/${sub}`;
-    } else if (short === "implement") taskDir = `${dataDir}/${id}/implement`;
+      famRoot = sub.slice(0, sub.indexOf("/"));
+      taskDir = stageOf(sub);
+    } else if (short === "implement") taskDir = `${famd(id)}/implement`;
     else fail(`--stage ${stage} needs the canonical id form <task>-${short}[-rN] (got '${id}')`);
   } else {
-    taskDir = `${dataDir}/${id}`;
+    taskDir = famd(id);
     const scope = b8(process.env.AC_SCOPE ?? "");
-    if (scope !== "" && stageDirForId(id) === "" && id.startsWith(`${scope}-`) && id.length > scope.length + 1) taskDir = `${dataDir}/${scope}/tasks/${id.slice(scope.length + 1)}`;
+    if (scope !== "" && id.startsWith(`${scope}-`) && id.length > scope.length + 1) {
+      const stageSub = stageDirForId(id);
+      if (stageSub === "") {
+        famRoot = scope;
+        taskDir = `${famd(scope)}/tasks/${id.slice(scope.length + 1)}`;
+      } else if (stageSub.slice(0, stageSub.indexOf("/")) === scope && !stageSub.endsWith(`/implement${id.slice(scope.length)}`)) {
+        famRoot = scope;
+        taskDir = stageOf(stageSub);
+      }
+    }
   }
   const brief = `${taskDir}/brief.md`;
   if (exists(brief)) fail(`brief already exists: ${brief}`);
 
   let other = "";
-  if (staged) other = `${dataDir}/${id}/brief.md`;
+  if (staged) other = `${famd(id)}/brief.md`;
   else {
     const osub = stageDirForId(id);
-    if (osub !== "") other = `${dataDir}/${osub}/brief.md`;
-    else if (isFile(`${dataDir}/${id}/implement/brief.md`)) other = `${dataDir}/${id}/implement/brief.md`;
+    if (osub !== "" && taskDir !== stageOf(osub)) other = `${stageOf(osub)}/brief.md`;
+    else if (osub === "" && isFile(`${famd(id)}/implement/brief.md`)) other = `${famd(id)}/implement/brief.md`;
     if (other === "") {
-      if (taskDir !== `${dataDir}/${id}`) other = `${dataDir}/${id}/brief.md`;
+      if (taskDir !== famd(id)) other = `${famd(id)}/brief.md`;
       else {
         for (let base = id; base.lastIndexOf("-") !== -1; ) {
           base = base.slice(0, base.lastIndexOf("-"));
-          const twin = `${dataDir}/${base}/tasks/${id.slice(base.length + 1)}/brief.md`;
+          const twin = `${famd(base)}/tasks/${id.slice(base.length + 1)}/brief.md`;
           if (isFile(twin)) {
             other = twin;
             break;
@@ -553,13 +581,28 @@ function main(): void {
       `mode:feature-pr for '${id}' resolves no integration-branch record - token the row 'feature:<name>', write data/<name>/branches ('${project} <branch> [target=<t>] push=deferred', the captain's word receipted DECIDED: to the room), and cut it with ac-feature.sh create <name> ${project}`,
     );
 
+  const rowContract = rowContractForId(u8(id), readLedger()) ?? contractUnread();
+  let pinFlow = "";
+  let pinMode = "";
+  let pinRev = "";
+  let pinQa = "";
+  for (const tok of rowContract.split(/[ \t\n]+/)) {
+    if (tok.startsWith("flow:")) pinFlow = tok.slice(5);
+    else if (tok.startsWith("mode:")) pinMode = tok.slice(5);
+    else if (tok.startsWith("rev:")) pinRev = tok.slice(4);
+    else if (tok.startsWith("qa:")) pinQa = tok.slice(3);
+  }
+  // A flow:sdlc row is staged work whatever the call's layout flags: the
+  // execution brief of an unsuffixed id scaffolds with no --stage, and its
+  // review obligation must not depend on that.
+  const sdlc = pinFlow === "sdlc";
   let review: string;
   let reviewLine = "";
-  if (staged && epicBranch !== "") {
+  if ((staged || sdlc) && epicBranch !== "") {
     review = reviewFlag || "no";
     reviewLine = review === "yes" ? "yes (the captain's word: a rev:yes pin or --captain-requested, checked by the escalation gate)" : "no (epic gate owns the review round - captain ruling 2026-08-19)";
-  } else if (staged) {
-    if (reviewFlag === "no") fail("staged flow requires review=yes; --review no is not allowed");
+  } else if (staged || sdlc) {
+    if (reviewFlag === "no") fail(`${sdlc ? "sdlc" : "staged"} flow requires review=yes; --review no is not allowed`);
     review = "yes";
   } else if (mode === "crew-ship") {
     if (reviewFlag === "no") fail("crew-ship requires review=yes; --review no is not allowed");
@@ -591,23 +634,12 @@ function main(): void {
   }
   reviewLine ||= review;
 
-  const rowContract = rowContractForId(u8(id), readLedger()) ?? contractUnread();
-  let pinFlow = "";
-  let pinMode = "";
-  let pinRev = "";
-  let pinQa = "";
-  for (const tok of rowContract.split(/[ \t\n]+/)) {
-    if (tok.startsWith("flow:")) pinFlow = tok.slice(5);
-    else if (tok.startsWith("mode:")) pinMode = tok.slice(5);
-    else if (tok.startsWith("rev:")) pinRev = tok.slice(4);
-    else if (tok.startsWith("qa:")) pinQa = tok.slice(3);
-  }
   let unauthorized = "";
   let wantsAny = false;
   if (stage !== "scout") {
-    if (staged) {
+    if (staged || sdlc) {
       wantsAny = true;
-      if (pinFlow !== "staged" && !declared) unauthorized += " flow:staged";
+      if (pinFlow !== "staged" && pinFlow !== "sdlc" && !declared) unauthorized += " flow:staged";
     }
     if (mode === "crew-ship") {
       wantsAny = true;
@@ -619,8 +651,8 @@ function main(): void {
     }
     // A discretionary review is spent here; one staged or crew-ship mandates
     // rides that token's own authority.
-    if (review === "yes" && !staged && mode !== "crew-ship") wantsAny = true;
-    if (review === "yes" && staged && epicBranch !== "") {
+    if (review === "yes" && !staged && !sdlc && mode !== "crew-ship") wantsAny = true;
+    if (review === "yes" && (staged || sdlc) && epicBranch !== "") {
       wantsAny = true;
       if (pinRev !== "yes" && !declared) unauthorized += " rev:yes";
     }
@@ -644,14 +676,58 @@ function main(): void {
   let escalation = "";
   if (declared && wantsAny) {
     let spent = "";
-    if (staged) spent += " flow:staged";
+    if (staged || sdlc) spent += sdlc ? " flow:sdlc" : " flow:staged";
     if (mode === "crew-ship") spent += " mode:crew-ship";
     if (profiles.length > 0) spent += " qa:yes";
     if (review === "yes") spent += " rev:yes";
     escalation = `Escalation:${spent} - captain-requested: ${ref} - reason: ${reason}`;
   }
   const esc = escalation === "" ? "" : `\n${escalation}`;
+  const flowLine = sdlc ? "\nFlow: sdlc" : "";
+  const sdlcDesign = (): string =>
+    sdlc
+      ? `
 
+## SDLC artifact chain
+
+This family is a \`flow:sdlc\` change: its accepted record is committed into the
+main repository, and \`${root}/docs/sdlc-flow.md\` is the contract. Beside each
+stage report you write the artifact that report produces - \`spec.md\` (plus
+\`contracts/\`) at the spec stage; \`plan.md\`, one \`plan.<repository>.md\` per
+participating repository and \`test-plan.md\` at the plan stage - from the
+templates of the \`sdlc\` skill seeded in this worktree, in the same pass as
+the report, and the report's \`## Artifacts\` section lists each one with its
+sha256, so the report hash the gate binds covers the artifact. You commit
+nothing: the execution crewmate commits the accepted chain. An artifact states
+facts of the change and carries no local path, fleet path or digest command -
+the skill's check runs before you announce a report. The accepted \`intent.md\`
+linked under \`## Inputs\` names the feature, the main repository and the
+participating repositories - never infer them.`
+      : "";
+  const sdlcExec = (): string =>
+    sdlc
+      ? `
+
+## SDLC artifact chain
+
+This family is a \`flow:sdlc\` change (\`${root}/docs/sdlc-flow.md\` is the
+contract; the \`sdlc\` skill seeded in this worktree owns the templates, paths
+and order). Before any code, verify every accepted artifact linked under
+\`## Inputs\` against the sha256 its accepted report lists (a mismatch is a
+\`needs-decision:\`, never a copy) and run the skill's local-fact check on the
+snapshot (a hit is a \`needs-decision:\` for a design revision), copy it into
+\`docs/features/<feature>/changes/<change>/\` of THIS repository and commit the
+chain in order on \`${branch}\`, one commit per artifact - in a repository that
+is not the main repository, only its own \`plan.md\`. A departure from the plan updates
+\`plan.md\` in the same commit. The review round reads \`intent.md\`, \`spec.md\`
+and this repository's \`plan.md\` as the expected behavior.`
+      : "";
+
+  // An unwritable data dir is reported by mkdir below in its own words, as the
+  // bash original did; the mint's own failure would only pre-empt that line.
+  try {
+    famDirMint(famRoot, dataDir);
+  } catch {}
   mkdirP(taskDir);
   const branch = b8(crewBranch(u8(id)));
   const captain = captainRead();
@@ -771,8 +847,16 @@ earliest affected stage.`;
   // into the selector - prose merely mentioning it is no rule.
   const standingRules = (): string => {
     const src = `${recordsDir()}/captain.md`;
+    // The distro's own hard rules ride along byte-for-byte: a chief copying
+    // them by hand shortened both under a heading that promised "verbatim".
+    const hardRules = readFileSync(resolve(import.meta.dir, "..", "AGENTS.md"), "utf8")
+      .split("\n").filter((l) => l.startsWith("- HARD RULE - ")).join("\n");
     let s = `
 ## Fleet standing rules
+
+The fleet's hard rules, verbatim from the distro's AGENTS.md section 1:
+
+${hardRules}
 
 Every STANDING-marked rule block in ${src} (fleet-wide only - a domain-scoped
 \`STANDING (domain:<name>):\` block is delivered to that domain's roomchief
@@ -936,7 +1020,7 @@ ${signals()}
 
 Project: ${project}
 Kind: scout stage: design - the admitted spec/architecture/plan stages in ONE session, gated per report (report only - NEVER change code, push, or open a PR)
-Mode: ${mode}
+Mode: ${mode}${flowLine}
 Review: ${reviewLine}${esc}
 Captain: ${captain}
 
@@ -972,7 +1056,7 @@ session, then announce it again the same way.
 Ground every claim in the real code (cite file:line). Anything you cannot
 resolve from the code is a \`needs-decision: <question>\` - never invent
 product behavior.
-${designContract()}
+${designContract()}${sdlcDesign()}
 ${primaryAccident()}
 ${poolRule()}
 ${knowledge()}
@@ -1006,7 +1090,7 @@ ${signals()}
 
 Project: ${project}
 Kind: execution (IMPLEMENT + DELIVERY)
-Mode: ${mode}
+Mode: ${mode}${flowLine}
 Review: ${reviewLine}${esc}
 Captain: ${captain}
 
@@ -1051,7 +1135,7 @@ Only when no applicable plugin exists, manually self-review the full diff.
 Do not run a second manual full-diff review after the plugin.
 Repair its findings, rerun affected focused checks, then commit.
 The implementer owns repairs from
-verification; the verifier only reports findings and may suggest a fix.
+verification; the verifier only reports findings and may suggest a fix.${sdlcExec()}
 
 ## Delivery
 

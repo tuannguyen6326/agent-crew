@@ -6,8 +6,7 @@
 // later meta counted, an LF-named meta splitting in two), and crewState
 // against `$(<root>/bin/ac-crew-state.sh <id> 2>/dev/null || printf unknown)`
 // over the `unknown` suffix shapes and both stdin modes. The CLI contract
-// itself is tests/sh/ac-fleet-view.test.sh's, whose differential leg runs the
-// frozen bash original beside the shim.
+// itself is tests/sh/ac-fleet-view.test.sh's.
 import { afterEach, expect, test } from "bun:test";
 import { chmodSync, closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

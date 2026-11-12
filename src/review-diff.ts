@@ -1,12 +1,10 @@
 // review-diff.ts - show a crewmate's change as a diff against the authoritative
 // base (merge-base with the LOCAL-ONLY-aware default branch, epic-branch
 // aware). The entry is bin/ac-review-diff.sh (a shim that starts this file
-// through bin/ac-bun.sh); THIS header is the authoritative spec, and the bash
-// original it replaced stays frozen at tests/fixtures/ac-review-diff.sh as the
-// oracle the differential leg of tests/sh/ac-review-diff.test.sh holds this
-// module to. Read-only over the repo (`git add -N` deliberately avoided); its
-// one side effect is the bin/ac-guard.sh advisory it spawns, which stamps
-// state/.guard-stamp.
+// through bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-review-diff.test.sh is its contract test. Read-only over the
+// repo (`git add -N` deliberately avoided); its one side effect is the
+// bin/ac-guard.sh advisory it spawns, which stamps state/.guard-stamp.
 //
 //   ac-review-diff.sh <id> [--stat | --live | --uncommitted | --untracked | --graph | --graph-data
 //                          | --commit <sha> | --ref <branch>] [--tree <worktree>] [--no-guard]

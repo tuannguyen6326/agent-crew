@@ -1,8 +1,7 @@
 // fleet-new.ts - create a new top-level FLEET home under the homes container.
 // The entry is bin/ac-fleet-new.sh (a shim that starts this file through
-// bin/ac-bun.sh); THIS header is the authoritative spec, and the bash original
-// it replaced stays frozen at tests/fixtures/ac-fleet-new.sh as the oracle the
-// differential leg of tests/sh/ac-fleet-new.test.sh holds this module to.
+// bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-fleet-new.test.sh its contract test.
 //
 //   ac-fleet-new.sh [<name>] [--container <dir>]
 //   ac-fleet-new.sh -h | --help
@@ -39,13 +38,11 @@
 //
 // Before the first knob question, in order:
 //   name   a given name must match [a-zA-Z0-9_-] per the TEXT, else `ERROR:
-//          name must be [a-zA-Z0-9_-]: <name>` exit 1 (NAMED DIVERGENCE: bash
-//          3.2's `[!a-zA-Z0-9_-]` under a UTF-8 locale accepts `é`, `ü`, `ñ`
-//          by range collation and minted such a fleet; under LC_ALL=C both
-//          refuse). No name: `fleet name` is asked until a valid one arrives -
-//          `a fleet needs a name` for an empty answer, `name must be
-//          [a-zA-Z0-9_-]: <answer>` for a bad one, each on stderr, then the
-//          prompt again.
+//          name must be [a-zA-Z0-9_-]: <name>` exit 1 (`é`, `ü`, `ñ` are
+//          refused under every locale). No name: `fleet name` is asked until
+//          a valid one arrives - `a fleet needs a name` for an empty answer,
+//          `name must be [a-zA-Z0-9_-]: <answer>` for a bad one, each on
+//          stderr, then the prompt again.
 //   container  `--container`, else the answer to `homes container [<default>]`
 //          where <default> is $AC_HOMES_CONTAINER when non-empty, else
 //          $HOME/Work/ac-homes; an empty answer takes <default>. A leading `~`
@@ -103,11 +100,10 @@
 //      absence IS that default and config/ holds exactly what was chosen.
 //   e. records/projects.md := `# Projects\n\n`; records/backlog.md :=
 //      `# Backlog\n\n## In flight\n\n## Queued\n\n## Done\n`
-//   f. seedRuntimeLinks: bin CLAUDE.md .claude AGENTS.md linked to the distro
+//   f. seedRuntimeLinks: bin CLAUDE.md .claude AGENTS.md .agents linked to the distro
 //      root (`ln -sfn`; a REAL entry left alone) so the chief runs with cwd =
-//      home. Its bash original ac_seed_runtime_links is RETIRED with this port
-//      (this entry was its last caller) and frozen at
-//      tests/fixtures/ac-seed-runtime-links.sh for the oracles.
+//      home. The home's per-harness AC_HOME carriers are NOT laid here: the
+//      first session start does (src/home-carriers.ts).
 //   g. <root>/docs/examples/CREWMATE.md copied to <home>/CREWMATE.md by `cp`
 //      when the last answer was `yes` - a per-fleet CREWMATE.md WINS over the
 //      container-wide .claude/CLAUDE.md (ac-spawn.sh owns that order), so it

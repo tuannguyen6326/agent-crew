@@ -16,12 +16,11 @@
 # twin <expr> [<arg>...] - <expr> over src/lib.ts (L) and
 # src/maintenance-receipt.ts (M), its arguments A, in one bun process: the code
 # the fleet runs where a bash helper retired once src/learn.ts took its last
-# caller (the bash one is frozen at tests/fixtures/ac-maintenance-retired.sh,
-# and tests/ts holds each twin to it). A string answer is printed; the status
-# is a number answer, else 1 for false or null and 0 for anything else.
+# caller. A string answer is printed; the status is a number answer, else 1
+# for false or null and 0 for anything else.
 twin() {
   local expr="$1"; shift
-  (cd "$ROOT" && bun --no-env-file -e "const L = await import('./src/lib.ts'); const M = await import('./src/maintenance-receipt.ts'); const A = process.argv.slice(1); const v = await (async () => ($expr))(); if (typeof v === 'string') process.stdout.write(v); process.exit(typeof v === 'number' ? v : v === false || v === null ? 1 : 0);" "$@")
+  (cd "$ROOT" && bun --no-env-file -e "const L = { ...await import('./src/lib.ts'), ...await import('./src/lib-learn.ts') }; const M = await import('./src/maintenance-receipt.ts'); const A = process.argv.slice(1); const v = await (async () => ($expr))(); if (typeof v === 'string') process.stdout.write(v); process.exit(typeof v === 'number' ? v : v === false || v === null ? 1 : 0);" "$@")
 }
 
 make_home
@@ -368,7 +367,7 @@ assert_eq "$(grep -F -e 'use skill ship-run' -e 'use skill pr-bot' -e 'use skill
 grep -qxF '## shortens-too' "$cml" || fail "... and still lands its entry"
 
 # --- no-silent-loss guard: a rewrite dropping an entry is refused ------------
-# The guard (crewmateLearnedNoLoss, src/lib.ts) is the property every
+# The guard (crewmateLearnedNoLoss, src/lib-learn.ts) is the property every
 # CREWMATE-learned.md rewriter must pass: every '## <slug>' present before and
 # absent after must be accounted retired, else the rewrite refuses.
 printf '# F\n\n## keep-me\n\nbody.\n\n## drop-me\n\nbody.\n' >"$TMP/nl-live.md"
@@ -1060,7 +1059,7 @@ STUB4
   # tarred it (a PATH `tar` that does so after the real one), so the retro
   # window's read is the first that cannot read it (skipped under root, which
   # reads it). The parser child's own `the backlog parser failed on <ledger>`
-  # line is unreachable there, on the frozen original too (its awk cannot open
+  # line is unreachable there, on the bash original too (its awk cannot open
   # the file, so the binding never starts the parser).
   if [ "$(id -u)" != 0 ]; then
     lockledger="$TMP/lockledger"
@@ -1084,7 +1083,7 @@ STUB4
   fi
 
   # --- a BUSY cadence lock is not a newer generation, and never an abort -------
-  # The reset (learnReset, src/lib.ts) warns only for a busy lock, never for a
+  # The reset (learnReset, src/lib-learn.ts) warns only for a busy lock, never for a
   # newer generation, so the run must not then claim a newer generation. Each lock is held by THIS live process.
   printf 'debriefs=9\ngeneration=4\nlast_run=%s\n' "$old_anchor" >"$AC_HOME/state/.learn.meta"
   rm -rf "${AC_HOME:?}"/data/learning-*

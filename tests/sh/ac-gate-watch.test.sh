@@ -81,6 +81,17 @@ printf 'family=.hidden\nstage=spec\nround=1\nengine=codex\nmodel=\nat=x\nobserve
 out="$("$W" --once 2>&1)" || fail "watch must not crash on a dot-prefixed dir"
 case "$out" in *hidden*) fail "a dot-prefixed dir must not appear as a family: $out" ;; esac
 
+# 5b. a story's dir one level down, marked .family (src/brief.ts's header owns
+#     the layout), is a family of its own: its gate shows under the story's name.
+mkdir -p "$AC_HOME/data/ep/story"
+: >"$AC_HOME/data/ep/story/.family"
+mk_active ep/story plan 1 codex 9 "PROMPT-STORY-PLAN" "emit-live-story"
+out="$("$W" --once 2>&1)" || fail "watch --once must exit 0 with a nested story's gate"
+case "$out" in *"3 active"*) ;; *) fail "the story's gate should count as active: $out" ;; esac
+case "$out" in *story*) ;; *) fail "the story's gate is not shown: $out" ;; esac
+case "$out" in *"ep/story"*) fail "the story is named by itself, never by its path: $out" ;; esac
+rm -rf "$AC_HOME/data/ep"
+
 # 6. --tail follows the newest active gate's EXACT prompt (once) + real output.
 #    --tail is an endless follow loop (no --once), so bound it: run it briefly in
 #    the background, then stop it and inspect what it emitted. No timeout(1) on
@@ -207,19 +218,14 @@ assert_eq "$(board_state 3 2>/dev/null)" "open" "a live gate keeps the board ope
 rm -f "$AC_HOME"/data/*/.gate-running*
 assert_eq "$(board_state 5 2>/dev/null)" "closed" "with no active gate the board closes after AC_GATE_WATCH_IDLE"
 
-# --- differential leg: src/gate-watch.ts against the frozen bash original ----
-# The frozen original (tests/fixtures/ac-gate-watch.sh, run from an oracle bin
-# beside the live scripts) and the shim answer each row in a world rebuilt from
-# nothing before each side. Both sides spawn `sleep` from PATH once a tick, so
-# every loop row is driven by the leg's sleep stub: it logs each call, runs the
-# row's hook for that call, and from call XKILL on signals its parent and waits
-# for it to go - a row ends after an exact number of ticks, never on a wall
-# clock. A divergence the port keeps on purpose is asserted on both sides,
-# where it is.
-# DISPUTED: the implementation (tests/fixtures/ac-gate-watch.sh under bash vs src/gate-watch.ts through bin/ac-gate-watch.sh)
-# HELD-CONSTANT: one world path ($XW: home/ with data/ and config/, cwd/, log/, hooks/) rebuilt by the row's world function before each side, markers touch -t stamped and owned by this suite's own live pid; argv; env (AC_HOME=$XW/home unless the row is homeless, TERM=xterm unless the row unsets it, LC_ALL=C unless the row names en_US.UTF-8, XW/XKILL/XSIG for the stub; AC_HERDR_SESSION, AC_GATE_WATCH_IDLE, AC_FLEET_NAME, LANG, LC_CTYPE, COLUMNS, LINES and CDPATH unset unless the row sets one); PATH the leg's stubs (sleep, a logging herdr) before this suite's; cwd ($XW/cwd); stdin (/dev/null); exit status, stdout and stderr compared whole, then the stub logs (sleep's argv per call, herdr's argv).
-xobin="$(make_oracle_bin ac-gate-watch)"
-cmp -s "$xobin/ac-gate-watch.sh" "$ROOT/tests/fixtures/ac-gate-watch.sh" || fail "the oracle bin holds the frozen original"
+# --- the board, row by row -----------------------------------------------------
+# Each row runs the shim in a world rebuilt from nothing ($XW: home/ with data/
+# and config/, cwd/, log/, hooks/), markers touch -t stamped and owned by this
+# suite's own live pid, under TERM=xterm and LC_ALL=C unless the row says
+# otherwise. The board spawns `sleep` from PATH once a tick, so every loop row
+# is driven by the leg's sleep stub: it logs each call, runs the row's hook for
+# that call, and from call XKILL on signals its parent and waits for it to go -
+# a row ends after an exact number of ticks, never on a wall clock.
 XW="$TMP/xw"; XS="$TMP/xstubs"
 mkdir -p "$XS"
 cat >"$XS/sleep" <<'STUB'
@@ -240,7 +246,7 @@ printf '%s\n' "$*" >>"$XW/log/herdr.log"
 exit 0
 STUB
 # A job a non-interactive shell starts may hold SIGINT ignored, which bash
-# cannot trap; a SIGINT row runs each side with INT at its default first.
+# cannot trap; a SIGINT row runs the board with INT at its default first.
 cat >"$XS/int-default" <<'STUB'
 #!/usr/bin/env python3
 import os, signal, sys
@@ -250,9 +256,9 @@ STUB
 chmod +x "$XS/sleep" "$XS/herdr" "$XS/int-default"
 
 XLC=C; XTERMV=xterm; XHOMELESS=0; XE=""; XPATH=""; XWRAP=""; XTTY=0; XKILL=999; XSIG=TERM; XRC=0
-xside() {  # xside <bin> <prefix> <args...> - one side in the current world (XTTY=1: on a pty, stderr in stdout), SIGKILLed past 30 s
-  local bin="$1" p="$2" path x dog rc=0
-  shift 2
+xrun() {  # xrun <world fn> <args...> - the shim in a fresh world (XTTY=1: on a pty, stderr in stdout), SIGKILLed past 30 s; sets XRC
+  local p=xn path x dog rc=0
+  "$1"; shift
   path="$XS:$PATH"; [ -z "$XPATH" ] || path="$XPATH"
   local e=("PATH=$path" "XW=$XW" "XKILL=$XKILL" "XSIG=$XSIG" "LC_ALL=$XLC")
   [ "$XTERMV" = unset ] || e+=("TERM=$XTERMV")
@@ -270,13 +276,13 @@ xside() {  # xside <bin> <prefix> <args...> - one side in the current world (XTT
   dog=$!
   if [ "$XTTY" = 1 ]; then
     (cd "$XW/cwd" && run_on_tty /bin/sh -c 'printf %s "$$" >"$0"; exec "$@"' "$TMP/$p.pid" \
-      env "${u[@]}" "${e[@]}" "$bin/ac-gate-watch.sh" ${@+"$@"}) >"$TMP/$p.out" 2>&1 || rc=$?
+      env "${u[@]}" "${e[@]}" "$BIN/ac-gate-watch.sh" ${@+"$@"}) >"$TMP/$p.out" 2>&1 || rc=$?
     : >"$TMP/$p.err"
   else
-    # The braces' stderr takes the shell's own job notice for a side a signal
+    # The braces' stderr takes the shell's own job notice for a board a signal
     # ended; the status is kept.
     { (cd "$XW/cwd" && exec $XWRAP /bin/sh -c 'printf %s "$$" >"$0"; exec "$@"' "$TMP/$p.pid" \
-      env "${u[@]}" "${e[@]}" "$bin/ac-gate-watch.sh" ${@+"$@"}) </dev/null >"$TMP/$p.out" 2>"$TMP/$p.err"; } 2>/dev/null || rc=$?
+      env "${u[@]}" "${e[@]}" "$BIN/ac-gate-watch.sh" ${@+"$@"}) </dev/null >"$TMP/$p.out" 2>"$TMP/$p.err"; } 2>/dev/null || rc=$?
   fi
   : >"$TMP/$p.done"
   wait "$dog" 2>/dev/null || true
@@ -284,32 +290,16 @@ xside() {  # xside <bin> <prefix> <args...> - one side in the current world (XTT
   cat "$XW/log/herdr.log" >"$TMP/$p.herdr" 2>/dev/null || : >"$TMP/$p.herdr"
   XRC=$rc
 }
-XO_RC=0; XN_RC=0
-xpair() {  # xpair <world fn> <args...> - each side in its own fresh world, nothing compared yet
-  local wf="$1"; shift
-  "$wf"; xside "$xobin" xo ${@+"$@"}; XO_RC=$XRC
-  "$wf"; xside "$BIN" xn ${@+"$@"}; XN_RC=$XRC
-}
-xline() { printf '%s' "${BASH_LINENO[${#BASH_LINENO[@]}-2]}"; }   # the leg's own line that started this comparison
-xsame() {  # xsame <world fn> <args...> - exit, stdout, stderr and both stub logs alike
-  xpair "$@"
-  local at; at="$(xline)"
-  assert_eq "$XN_RC" "$XO_RC" "gate-watch differential exit for '$*' at line $at"
-  cmp -s "$TMP/xo.out" "$TMP/xn.out" || fail "gate-watch differential stdout differs for '$*' at line $at: $(diff "$TMP/xo.out" "$TMP/xn.out" | head -n 8)"
-  cmp -s "$TMP/xo.err" "$TMP/xn.err" || fail "gate-watch differential stderr differs for '$*' at line $at: $(diff "$TMP/xo.err" "$TMP/xn.err" | head -n 6)"
-  cmp -s "$TMP/xo.sleep" "$TMP/xn.sleep" || fail "gate-watch differential sleep calls differ for '$*' at line $at: $(diff "$TMP/xo.sleep" "$TMP/xn.sleep" | head -n 6)"
-  cmp -s "$TMP/xo.herdr" "$TMP/xn.herdr" || fail "gate-watch differential herdr calls differ for '$*' at line $at: $(diff "$TMP/xo.herdr" "$TMP/xn.herdr" | head -n 6)"
-}
-xrefuse() {  # xrefuse <stderr> <world fn> <args...> - both sides refuse alike: exit 1, no stdout, exactly <stderr>
+xok() { xrun "$@"; assert_eq "$XRC" "0" "gate-watch exit for '$*'"; }
+xkilled() { xrun "$@"; assert_eq "$XRC" "143" "gate-watch runs to the stub's TERM for '$*'"; }
+xrefuse() {  # xrefuse <stderr> <world fn> <args...> - exit 1, no stdout, exactly <stderr>
   local want="$1"; shift
-  xsame "$@"
-  assert_eq "$XN_RC:$(xout):$(xerr)" "1::$want" "gate-watch refusal for '$*' at line $(xline)"
+  xrun "$@"
+  assert_eq "$XRC:$(xout):$(xerr)" "1::$want" "gate-watch refusal for '$*'"
 }
 xout() { cat "$TMP/xn.out"; }
-xoout() { cat "$TMP/xo.out"; }
 xerr() { cat "$TMP/xn.err"; }
-xoerr() { cat "$TMP/xo.err"; }
-xrows() { awk '$1 == ">" { printf "%s ", $2 }' "$TMP/$1.out"; }   # xrows <xo|xn> - the row families, in order
+xrows() { awk '$1 == ">" { printf "%s ", $2 }' "$TMP/xn.out"; }   # the row families, in order
 xcount() {  # xcount <needle> <file> - how many times <needle> occurs in <file>
   local rest n=0
   rest="$(cat "$2")"
@@ -363,63 +353,60 @@ for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27
 # 1. --once on an empty home, and on one holding only a SETTLED review.
 w_empty() { xseed; }
 w_settled() { xseed; mkdir -p "$XW/home/data/settled/spec"; printf -- '---\ndecision: continue\n---\n# Second-Chief Decision\n' >"$XW/home/data/settled/spec/second-chief.md"; }
-xsame w_empty --once
+xok w_empty --once
 assert_eq "$(xout)" "ac-gate home  0 active
 
 (no gate running)" "row 1: the empty board, byte for byte"
-xsame w_settled --once
+xok w_settled --once
 assert_eq "$(xout)" "ac-gate home  0 active
 
 (no gate running)" "row 1: a settled review is no row"
 
 # 2. one marker (codex, r1, no model): the exact frame under C (a 20-BYTE cut
 #    of the activity, TERM=xterm answering 80 columns), the 20-CHARACTER cut
-#    under UTF-8, and the 123-byte cut with TERM unset (tput fails: 200).
+#    under UTF-8, and the 123-byte cut with TERM unset or empty (tput fails:
+#    200).
 w_one() { xseed; xgate fam1 1 6 spec 1 codex '' 'PROMPT ONE\n' "line one\n$XLONG\n" ''; }
-xsame w_one --once
+xok w_one --once
 assert_eq "$(xout)" "ac-gate home  1 active
 
 $XHEAD
 $(printf ' > %-22s %-8s %-5s %-20s %s %s' fam1 spec r1 codex 09:06:00 'last activity héllo')
 
 $XTRAILER" "row 2: one gate, byte for byte"
-XLC=en_US.UTF-8 xsame w_one --once
+XLC=en_US.UTF-8 xok w_one --once
 assert_contains "$(xout)" "$(printf ' > %-22s %-8s %-5s %-20s %s %s' fam1 spec r1 codex 09:06:00 'last activity héllo ')
 " "row 2: under UTF-8 the cut counts characters"
-XTERMV=unset xsame w_one --once
-xact="$(awk '$1 == ">" { sub(/^.*09:06:00 /, ""); print }' "$TMP/xn.out")"
-assert_eq "$(printf '%s' "$xact" | LC_ALL=C wc -c | tr -d ' ')" "123" "row 2: TERM unset leaves 200 columns, a 123-byte cut"
-XTERMV= xsame w_one --once
+for xt in unset ''; do
+  XTERMV="$xt" xok w_one --once
+  xact="$(awk '$1 == ">" { sub(/^.*09:06:00 /, ""); print }' "$TMP/xn.out")"
+  assert_eq "$(printf '%s' "$xact" | LC_ALL=C wc -c | tr -d ' ')" "123" "row 2: TERM '$xt' leaves 200 columns, a 123-byte cut"
+done
 
 # 3. order and pins: newest first by marker mtime; a tie by the whole line in
-#    reverse BYTE order under C; --round, --stage and --family pins; --round 3.
+#    reverse BYTE order under every locale; --round, --stage and --family pins; --round 3.
 w_two() { xseed; xgate widget 1 6 spec 1 codex '' 'P1\n' 'widget-act\n' ''; xgate gizmo 2 8 plan 2 claude '' 'P2\n' 'gizmo-act\n' ''; }
-xsame w_two --once
-assert_eq "$(xrows xn)" "gizmo widget " "row 3: the newer marker first"
+xok w_two --once
+assert_eq "$(xrows)" "gizmo widget " "row 3: the newer marker first"
 w_tie() { xseed; for f in Zz ab a-b a_b; do xgate "$f" 1 5 spec 1 codex '' '' '' ''; done; }
-xsame w_tie --once
-assert_eq "$(xrows xn)" "ab a_b a-b Zz " "row 3: a tie in reverse byte order"
-xsame w_two --round 2 --once
-assert_eq "$(xrows xn)" "gizmo " "row 3: --round 2"
-xsame w_two --stage spec --once
-assert_eq "$(xrows xn)" "widget " "row 3: --stage spec"
-xsame w_two --family widget --once
-assert_eq "$(xrows xn)" "widget " "row 3: --family widget"
-xsame w_two --family nosuch --once
+xok w_tie --once
+assert_eq "$(xrows)" "ab a_b a-b Zz " "row 3: a tie in reverse byte order"
+xok w_two --round 2 --once
+assert_eq "$(xrows)" "gizmo " "row 3: --round 2"
+xok w_two --stage spec --once
+assert_eq "$(xrows)" "widget " "row 3: --stage spec"
+xok w_two --family widget --once
+assert_eq "$(xrows)" "widget " "row 3: --family widget"
+xok w_two --family nosuch --once
 assert_contains "$(xout)" "0 active" "row 3: a pin nothing matches"
 xrefuse "ERROR: --round must be 1 or 2" w_two --round 3 --once
-# TIE ORDER, named: under UTF-8 the original's sort collated the tie.
-w_tie2() { xseed; for f in Zz ab; do xgate "$f" 1 5 spec 1 codex '' '' '' ''; done; }
-XLC=en_US.UTF-8 xpair w_tie2 --once
-assert_eq "$XO_RC:$XN_RC" "0:0" "TIE ORDER: both render"
-assert_eq "$(xrows xo)" "Zz ab " "TIE ORDER: the original collated the tie under UTF-8"
-assert_eq "$(xrows xn)" "ab Zz " "TIE ORDER: the port keeps byte order under every locale"
+XLC=en_US.UTF-8 xok w_tie --once
+assert_eq "$(xrows)" "ab a_b a-b Zz " "row 3: the tie keeps byte order under UTF-8"
 
 # 4. marker fields and shapes: a model, at=now, an empty observe, no
-#    stage/round/at, pid 0 (live - GW4), a leading-zero pid, pid abc, a dead
-#    pid, a pid past pid_t, the empty suffix with no engine, a directory
-#    marker, a dot-dir, a plain file in data/, a TAB inside a value, a repeated
-#    key with an empty last value, CRLF values, a linked marker (its own mtime)
+#    stage/round/at, a leading-zero pid, pid abc, a dead pid, a pid past
+#    pid_t, the empty suffix with no engine, a directory marker, a dot-dir, a
+#    plain file in data/, a repeated key with an empty last value, CRLF values, a linked marker (its own mtime)
 #    and a linked family dir; pid 1 (EPERM: dead) when not root.
 w_fields() {
   xseed
@@ -427,7 +414,6 @@ w_fields() {
   xmark nowat 2 2 "stage=spec\nround=1\nengine=codex\nat=now\npid=$$\n"
   xmark noobs 3 3 "stage=plan\nround=2\nengine=codex\nat=2026-07-23T09:03:00Z\nobserve=\npid=$$\n"
   xmark bare 4 4 "engine=pi\npid=$$\n"
-  xmark zero 5 5 "stage=spec\nround=1\nengine=codex\npid=0\n"
   xmark lead 6 6 "stage=spec\nround=1\nengine=codex\npid=0$$\n"
   xmark abc 7 7 "stage=spec\nround=1\nengine=codex\npid=abc\n"
   xmark gone 8 8 "stage=spec\nround=1\nengine=codex\npid=99999999\n"
@@ -436,7 +422,6 @@ w_fields() {
   mkdir -p "$XW/home/data/dirmark/.gate-running.1"
   mkdir -p "$XW/home/data/.dot"; printf 'stage=spec\npid=%s\n' "$$" >"$XW/home/data/.dot/.gate-running.1"
   : >"$XW/home/data/plainfile"
-  xmark tabbed 11 11 "stage=a\tb\nround=1\nengine=codex\npid=$$\n"
   xmark lastwins 12 12 "stage=old\nstage=new\nround=1\nround=\nengine=e\npid=$$\n"
   xmark crlf 13 13 "stage=spec\r\nround=1\nengine=codex\npid=$$\r\n"
   xmark crlf2 14 14 "stage=spec\r\nround=1\r\nengine=codex\r\nat=2026-07-23T09:14:00Z\r\npid=$$\n"
@@ -447,39 +432,31 @@ w_fields() {
   ln -s "$XW/home/data/real" "$XW/home/data/alias"
   if [ "$(id -u)" != 0 ]; then xmark init 17 17 "stage=spec\nround=1\nengine=codex\npid=1\n"; fi
 }
-xsame w_fields --once
-for f in full nowat noobs bare zero lead nosuffix tabbed lastwins crlf2 real linked alias; do
-  case " $(xrows xn)" in *" $f "*) ;; *) fail "row 4: $f is a live row: $(xrows xn)" ;; esac
+xok w_fields --once
+for f in full nowat noobs bare lead nosuffix lastwins crlf2 real linked alias; do
+  case " $(xrows)" in *" $f "*) ;; *) fail "row 4: $f is a live row: $(xrows)" ;; esac
 done
 for f in abc gone huge dirmark .dot plainfile crlf init; do
-  case " $(xrows xn)" in *" $f "*) fail "row 4: $f is no live row: $(xrows xn)" ;; esac
+  case " $(xrows)" in *" $f "*) fail "row 4: $f is no live row: $(xrows)" ;; esac
 done
 assert_contains "$(xout)" "$(printf ' > %-22s %-8s %-5s %-20s %s ' full spec r1 claude/opus 09:01:00)full-act" "row 4: engine/model and the activity"
 assert_contains "$(xout)" "$(printf ' > %-22s %-8s %-5s %-20s %s ' bare - - pi -)" "row 4: no stage, round or at"
 assert_contains "$(xout)" "$(printf ' > %-22s %-8s %-5s %-20s %s ' nosuffix design r1 -/m 09:10:00)" "row 4: the empty suffix, no engine, an at with no Z"
 assert_contains "$(xout)" "$(printf ' > %-22s %-8s %-5s %-20s %s ' lastwins new - e -)" "row 4: the last key wins, an empty last value is absent"
-# GW4 at parity: pid 0 is the board's own process group, live on both sides.
-assert_contains "$(xout)" "$(printf ' > %-22s %-8s %-5s %-20s %s ' zero spec r1 codex -)" "row 4: GW4 - pid 0 counts as live"
-# Unreadable markers (not as root): metaGet's WARN at every read, no row; two
-# of them warn in byte order of their paths under C.
+# Unreadable markers (not as root): metaGet's WARN, no row; two of them warn
+# in byte order of their paths under every locale.
 if [ "$(id -u)" != 0 ]; then
   w_locked() {
     xseed
     xgate live 1 5 spec 1 codex '' '' 'live-act\n' ''
     for f in a B; do xmark "$f" 1 1 "pid=$$\n"; chmod 000 "$XW/home/data/$f/.gate-running.1"; done
   }
-  xsame w_locked --once
-  assert_eq "$(xerr)" "WARN: cannot read meta file $XW/home/data/B/.gate-running.1
-WARN: cannot read meta file $XW/home/data/a/.gate-running.1" "row 4: one WARN per unreadable marker, in byte order"
-  assert_eq "$(xrows xn)" "live " "row 4: an unreadable marker is no row"
-  # WARN ORDER, named: under UTF-8 the original's glob collated the paths.
-  XLC=en_US.UTF-8 xpair w_locked --once
-  assert_eq "$XO_RC:$XN_RC" "0:0" "WARN ORDER: both render"
-  cmp -s "$TMP/xo.out" "$TMP/xn.out" || fail "WARN ORDER: the frames agree"
-  assert_eq "$(xoerr)" "WARN: cannot read meta file $XW/home/data/a/.gate-running.1
-WARN: cannot read meta file $XW/home/data/B/.gate-running.1" "WARN ORDER: the original's glob collated under UTF-8"
-  assert_eq "$(xerr)" "WARN: cannot read meta file $XW/home/data/B/.gate-running.1
-WARN: cannot read meta file $XW/home/data/a/.gate-running.1" "WARN ORDER: the port walks byte order under every locale"
+  for xl in C en_US.UTF-8; do
+    XLC="$xl" xok w_locked --once
+    assert_eq "$(xerr)" "WARN: cannot read meta file $XW/home/data/B/.gate-running.1
+WARN: cannot read meta file $XW/home/data/a/.gate-running.1" "row 4: one WARN per unreadable marker, in byte order under $xl"
+    assert_eq "$(xrows)" "live " "row 4: an unreadable marker is no row"
+  done
 fi
 
 # 5. descriptor forms: a partial last line, not JSON, a null out, an empty
@@ -503,7 +480,7 @@ w_desc() {
   xdesc nul 12 '{"out":"@D/o"}'; printf 'a\000b\n' >"$d/nul/o"
   xdesc relative 13 '{"out":"rel-out"}'; printf 'relative-to-cwd\n' >"$XW/cwd/rel-out"
 }
-xsame w_desc --once
+xok w_desc --once
 for want in 'valid last-line' 'nullout err-wins' 'emptylast err-after-empty-line' 'emptyfile err-after-empty-file' \
   'absent err-after-absent' 'number cwd-file-five' 'nul ab' 'relative relative-to-cwd'; do
   assert_contains "$(xout)" "$(printf ' > %-22s %-8s %-5s %-20s %s ' "${want%% *}" spec r1 codex -)${want#* }
@@ -514,113 +491,52 @@ for f in notjson twovals array dirdesc; do
 " "row 5: $f has no activity"
 done
 assert_contains "$(xout)" "$(printf ' > %-22s %-8s %-5s %-20s %s ' ctrl spec r1 codex -)tab"$'\there\r' "row 5: TAB and CR are activity bytes"
-# GW5 at parity: an empty observe is the placeholder `-`, and with a cwd file
-# of that name jq is handed `-` and reads its stdin - in the dashboard the
-# rows loop's here-string, each of its two reads swallowing the next row line
-# (counted, never drawn); in --tail the board's own stdin (here /dev/null).
-w_dash() {
-  local i
-  xseed
-  for i in 1 2 3 4; do xgate "r$i" 1 "$i" spec 1 codex '' '' "act-$i\n" ''; done
-  xmark dash 1 9 "stage=spec\nround=1\nengine=codex\nobserve=\npid=$$\n"
-  printf '{"out":"%s"}\n' "$XW/cwd/dash-out" >"$XW/cwd/-"; printf 'never-read\n' >"$XW/cwd/dash-out"
-}
-xsame w_dash --once
-assert_contains "$(xout)" "5 active" "GW5: n counts every row"
-assert_eq "$(xrows xn)" "dash r2 r1 " "GW5: the two row lines after the dash row went to its jq calls"
-assert_contains "$(xout)" "$(printf ' > %-22s %-8s %-5s %-20s %s ' dash spec r1 codex -)
-" "GW5: jq answered nothing from the rows it read"
-XKILL=2 xsame w_dash --tail --interval 1
-assert_eq "$(xout)" "ac-gate home - following the active second-chief run (Ctrl-C to quit)
-
-== dash / spec / r1  [codex] ==" "GW5: --tail's jq read the board's own stdin"
-# An invalid UTF-8 byte in the last line: under C the cut counts bytes on
-# both sides.
+# An invalid UTF-8 byte in the last line: the cut counts bytes under C, and
+# the byte as one character under UTF-8.
 w_badact() { xseed; xgate w6 1 6 spec 1 codex '' '' "last activity h"$'\351'"llo world and more\n" ''; }
-xsame w_badact --once
+xok w_badact --once
 assert_contains "$(xout)" "09:06:00 last activity h"$'\351'"llo "$'\n' "row 5: a 20-byte cut under C"
-# FAIL-PATH (GW6), named: under UTF-8 the original's cut stopped at the byte
-# and said so; the port counts it as one character.
-XLC=en_US.UTF-8 xpair w_badact --once
-assert_eq "$XO_RC:$XN_RC" "0:0" "GW6: both render"
-assert_contains "$(xoout)" "09:06:00 last activity h
-" "GW6: the original's cut stopped at the invalid byte"
-assert_eq "$(xoerr)" "cut: stdin: Illegal byte sequence" "GW6: and cut said so"
-assert_contains "$(xout)" "09:06:00 last activity h"$'\351'"llo "$'\n' "GW6: the port cuts 20 characters, the byte one of them"
-assert_eq "$(xerr)" "" "GW6: the port prints nothing on stderr"
-# FAIL-PATH (GW10), named: a marker value holding such a byte made the
-# original's sort drop EVERY row under UTF-8 - the board read 0 active and
-# idled out under a live gate, closing its pane.
+XLC=en_US.UTF-8 xok w_badact --once
+assert_contains "$(xout)" "09:06:00 last activity h"$'\351'"llo "$'\n' "row 5: 20 characters under UTF-8, the byte one of them"
+assert_eq "$(xerr)" "" "row 5: nothing on stderr for the byte"
+# A marker value holding such a byte: the rows are ordered by bytes and both
+# shown, and the board stays open while the gate runs.
 w_badval() { xseed; xmark f 1 5 "stage=spec\nround=1\nengine=c"$'\351'"x\npid=$$\n"; xgate other 2 6 spec 1 codex '' '' 'other-act\n' ''; }
-XLC=en_US.UTF-8 xpair w_badval --once
-assert_eq "$XO_RC:$XN_RC" "0:0" "GW10: both render"
-assert_contains "$(xoout)" "0 active" "GW10: the original's sort dropped every row"
-assert_eq "$(xoerr)" "sort: Illegal byte sequence" "GW10: and sort said so"
-assert_contains "$(xout)" "2 active" "GW10: the port orders the rows by bytes and shows both"
-assert_contains "$(xout)" "$(printf ' > %-22s %-8s %-5s ' f spec r1)c"$'\351'"x" "GW10: the byte reaches the frame"
-assert_eq "$(xerr)" "" "GW10: nothing on the port's stderr"
-XLC=en_US.UTF-8 XE=AC_GATE_WATCH_IDLE=1 XKILL=3 xpair w_badval --interval 1 --self-pane pZ
-assert_eq "$XO_RC:$(cat "$TMP/xo.herdr")" "0:--session default pane close pZ" "GW10: the original idled out and closed its pane under a live gate"
-assert_eq "$XN_RC:$(cat "$TMP/xn.sleep" | tr '\n' ' ')" "143:1 1 1 " "GW10: the port's board stays open while the gate runs"
-assert_eq "$(cat "$TMP/xn.herdr")" "" "GW10: and closes nothing"
-XLC=C xsame w_badval --once
-assert_eq "$(xrows xn)" "other f " "GW10: under C both sides show both rows"
+XLC=en_US.UTF-8 xok w_badval --once
+assert_contains "$(xout)" "2 active" "row 5: a byte that is no UTF-8 in a marker value drops no row"
+assert_eq "$(xrows)" "other f " "row 5: ... and the rows keep their order"
+assert_contains "$(xout)" "$(printf ' > %-22s %-8s %-5s ' f spec r1)c"$'\351'"x" "row 5: the byte reaches the frame"
+assert_eq "$(xerr)" "" "row 5: nothing on stderr for it"
+XLC=en_US.UTF-8 XE=AC_GATE_WATCH_IDLE=1 XKILL=3 xkilled w_badval --interval 1 --self-pane pZ
+assert_eq "$(tr '\n' ' ' <"$TMP/xn.sleep"):$(cat "$TMP/xn.herdr")" "1 1 1 :" "row 5: the board stays open while that gate runs, closing nothing"
 
 # 6. arguments: a positional interval, the refusals in scan order, a value
-#    flag with no value or an empty one (SHELL-OWN STDERR, named: bash's own
-#    `parameter null or not set`, the port's `<flag> needs a value`, exit 1
-#    both), and --once --tail (tail wins).
-xsame w_one 5abc --once
-xsame w_one 00 --once
+#    flag with no value or an empty one, and --once --tail (tail wins).
+for iv in 5abc 00; do
+  xok w_one "$iv" --once
+  assert_contains "$(xout)" "1 active" "row 6: '$iv' is taken as the interval"
+done
 xrefuse "ERROR: unknown arg: --bogus" w_one --bogus
 xrefuse "ERROR: unknown arg: -h" w_one -h
 xrefuse "ERROR: unknown arg: " w_one ''
 xrefuse "ERROR: unknown arg: --bogus" w_one --round 3 --bogus
 xrefuse "ERROR: unknown arg: x" w_one --family f --once x
 for f in --family --stage --round --self-pane --interval; do
-  for v in none empty; do
-    if [ "$v" = none ]; then xpair w_one --once "$f"; else xpair w_one "$f" '' --once; fi
-    assert_eq "$XO_RC:$XN_RC:$(xoout)$(xout)" "1:1:" "SHELL-OWN $f ($v): exit 1, nothing on stdout, both"
-    assert_contains "$(xoerr)" "2: parameter null or not set" "SHELL-OWN $f ($v): bash's own line on the original"
-    assert_eq "$(xerr)" "ERROR: $f needs a value" "SHELL-OWN $f ($v): the port names the flag"
-  done
+  xrefuse "ERROR: $f needs a value" w_one --once "$f"
+  xrefuse "ERROR: $f needs a value" w_one "$f" '' --once
 done
-XKILL=2 xsame w_two --once --tail
+XKILL=2 xkilled w_two --once --tail
 assert_contains "$(xout)" "following the active second-chief run" "row 6: --tail wins over --once"
 
-# 7. homeless (GW3, at parity - it reads the host's /data, so only where none
-#    exists), AC_FLEET_NAME, a PATH without jq, an AC_HOME cd cannot enter
-#    (HOME RESOLUTION, named), an unreadable herdr-session (head's own line on
-#    both sides) and a PATH without bun (BUN, named).
-if [ ! -e /data ]; then
-  XHOMELESS=1 xsame w_empty --once
-  assert_eq "$XN_RC:$(xout):$(xerr)" "0:ac-gate agent-crew  0 active
-
-(no gate running):$XNOHOME" "GW3: homeless prints the refusal and renders an empty board, exit 0"
-  XHOMELESS=1 XE=AC_FLEET_NAME=fx xsame w_empty --once
-  assert_contains "$(xout)" "ac-gate fx  0 active" "GW3: homeless names AC_FLEET_NAME"
-  XHOMELESS=1 XE="AC_HOME=$XW/nope" xpair w_empty --once
-  assert_eq "$XO_RC:$XN_RC" "0:0" "HOME RESOLUTION: both render, exit 0"
-  cmp -s "$TMP/xo.out" "$TMP/xn.out" || fail "HOME RESOLUTION: the frames agree: $(diff "$TMP/xo.out" "$TMP/xn.out" | head -n 4)"
-  assert_contains "$(xout)" "ac-gate   0 active" "HOME RESOLUTION: an empty fleet name"
-  assert_eq "$(grep -c "cd: $XW/nope: No such file or directory" "$TMP/xo.err")" "3" "HOME RESOLUTION: the original printed cd's own line at each read of the home"
-  assert_eq "$(xerr)" "ERROR: AC_HOME is not a readable directory: $XW/nope" "HOME RESOLUTION: the port names the variable, once"
-fi
+# 7. a PATH without jq, an unreadable herdr-session (the board goes on) and a
+#    PATH without bun.
 XPATH="$(xwithout jq)" xrefuse "ERROR: ac-gate-watch needs jq" w_one --once
-if [ ! -e /data ]; then
-  XPATH="$(xwithout jq)" XHOMELESS=1 xsame w_one --once
-  assert_eq "$XN_RC:$(xerr)" "1:$XNOHOME
-ERROR: ac-gate-watch needs jq" "row 7: homeless and jq-less, the two refusals in order"
-fi
 if [ "$(id -u)" != 0 ]; then
   w_lockedcfg() { w_one; printf 's9\n' >"$XW/home/config/herdr-session"; chmod 000 "$XW/home/config/herdr-session"; }
-  xsame w_lockedcfg --once
-  assert_contains "$(xerr)" "$XW/home/config/herdr-session: Permission denied" "row 7: head's own line for an unreadable session knob"
+  xok w_lockedcfg --once
+  assert_contains "$(xout)" "1 active" "row 7: an unreadable session knob does not stop the board"
 fi
-XPATH="$(xwithout bun)" xpair w_one --once
-assert_eq "$XO_RC:$XN_RC" "0:1" "BUN: the original needs no bun; the shim refuses without it"
-assert_contains "$(xoout)" "1 active" "BUN: the original renders"
-assert_eq "$(xout):$(xerr)" ":ERROR: required tool not found: bun" "BUN: the shim's line"
+XPATH="$(xwithout bun)" xrefuse "ERROR: required tool not found: bun" w_one --once
 
 # 8. --tail, driven tick by tick: the newest gate followed (prompt with no
 #    trailing LF, err before out); a --family pin on the OLDER family, with
@@ -633,8 +549,8 @@ w_tail() {
   xgate old 1 5 spec 1 codex '' 'PROMPT OLD\nline two' 'out-a\nout-b\n' 'err-x\n'
   xgate new 2 7 plan 2 claude opus 'PROMPT NEW\n' 'new-out\n' ''
 }
-XKILL=3 xsame w_tail --tail --interval 1
-assert_eq "$XN_RC:$(xout)" "143:ac-gate home - following the active second-chief run (Ctrl-C to quit)
+XKILL=3 xkilled w_tail --tail --interval 1
+assert_eq "$XRC:$(xout)" "143:ac-gate home - following the active second-chief run (Ctrl-C to quit)
 
 == new / plan / r2  [claude/opus] ==
 -- prompt --
@@ -651,7 +567,7 @@ w_tailgrow() {
   printf 'more-out\n' >"$d/more-out"; printf 'more-err' >"$d/more-err"
   xhook 1 "cat '$d/more-err' >>'$d/e1'; cat '$d/more-out' >>'$d/o1'"
 }
-XKILL=3 xsame w_tailgrow --tail --family old
+XKILL=3 xkilled w_tailgrow --tail --family old
 assert_eq "$(xout)" "ac-gate home - following the active second-chief run (Ctrl-C to quit)
 
 == old / spec / r1  [codex] ==
@@ -666,11 +582,11 @@ more-errmore-out" "row 8: the pinned older family, its new bytes err first"
 assert_eq "$(cat "$TMP/xn.sleep")" "2
 2
 2" "row 8: the default interval"
-XKILL=3 xsame w_empty --tail --interval 1
+XKILL=3 xkilled w_empty --tail --interval 1
 assert_eq "$(xout)" "ac-gate home - following the active second-chief run (Ctrl-C to quit)
   ... waiting for an active gate ..." "row 8: no gate, the waiting line once"
 w_settle() { w_tail; xhook 1 "rm -f '$XW/home/data/old/.gate-running.1' '$XW/home/data/new/.gate-running.2'"; }
-XKILL=3 xsame w_settle --tail --family old --interval 1
+XKILL=3 xkilled w_settle --tail --family old --interval 1
 assert_contains "$(xout)" "out-b
   (settled - prompt retained at $XW/home/data/old/p1)
   ... waiting for an active gate ..." "row 8: a settled gate names its retained prompt"
@@ -685,7 +601,7 @@ w_late() {
   xhook 2 "cp '$d/obs.ready' '$d/obs'"
   xhook 3 "cp '$d/obs.two' '$d/obs'"
 }
-XKILL=4 xsame w_late --tail --interval 1
+XKILL=4 xkilled w_late --tail --interval 1
 assert_eq "$(xout)" "ac-gate home - following the active second-chief run (Ctrl-C to quit)
 
 == lag / spec / r1  [codex] ==
@@ -706,7 +622,7 @@ w_switch() {
   printf 'family=old\nstage=spec\nround=2\nengine=codex\nmodel=\nat=2026-07-23T09:09:00Z\nobserve=%s\npid=%s\n' "$d/obs9" "$$" >"$d/r2.marker"
   xhook 1 "cp '$d/r2.marker' '$d/.gate-running.9'; touch -t 202607230909 '$d/.gate-running.9'"
 }
-XKILL=3 xsame w_switch --tail --interval 1
+XKILL=3 xkilled w_switch --tail --interval 1
 assert_contains "$(xout)" "== old / spec / r1  [codex] ==" "row 8: R1 first"
 assert_contains "$(xout)" "
 == old / spec / r2  [codex] ==
@@ -723,108 +639,71 @@ w_shrink() {
   xhook 1 "cp '$d/short' '$d/o1'"
   xhook 2 "cp '$d/long' '$d/o1'"
 }
-XKILL=4 xsame w_shrink --tail --interval 1
+XKILL=4 xkilled w_shrink --tail --interval 1
 assert_contains "$(xout)" "0123456789
 lmnop" "row 8: a shrunk stream prints nothing, then resumes from its old offset"
 # Colors on a tty: a --once frame and the tail board through run_on_tty
 # (stdout and stderr share the pty).
-XTTY=1 xsame w_one --once
+XTTY=1 xok w_one --once
 assert_contains "$(xout)" $'\033[1mac-gate\033[0m \033[36mhome\033[0m  \033[2m1 active\033[0m' "row 8: the header's colors on a tty"
-XTTY=1 XKILL=2 xsame w_tail --tail --interval 1
+XTTY=1 XKILL=2 xkilled w_tail --tail --interval 1
 assert_contains "$(xout)" $'\033[32mnew-out' "row 8: out is green on a tty"
-# SHELL-OWN STDERR, named: a stream that cannot be read is `[`'s noise on the
-# original's stderr every tick; nothing on the port's; the same bytes printed.
+# A stream that cannot be read prints nothing, on stdout or stderr.
 if [ "$(id -u)" != 0 ]; then
   w_lockedout() { w_tail; chmod 000 "$XW/home/data/new/o2"; }
-  XKILL=2 xpair w_lockedout --tail --interval 1
-  assert_eq "$XO_RC:$XN_RC" "143:143" "SHELL-OWN: an unreadable stream, both followed to the end"
-  cmp -s "$TMP/xo.out" "$TMP/xn.out" || fail "SHELL-OWN: an unreadable stream prints the same: $(diff "$TMP/xo.out" "$TMP/xn.out" | head -n 4)"
-  assert_contains "$(xoerr)" "integer expression expected" "SHELL-OWN: the original's test noise"
-  assert_eq "$(xerr)" "" "SHELL-OWN: nothing on the port's stderr"
+  XKILL=2 xkilled w_lockedout --tail --interval 1
+  assert_eq "$(xout):$(xerr)" "ac-gate home - following the active second-chief run (Ctrl-C to quit)
+
+== new / plan / r2  [claude/opus] ==
+-- prompt --
+PROMPT NEW
+
+-- activity/output (live emitted bytes) --:" "row 8: an unreadable stream prints nothing"
 fi
-# SIGNALS, named: SIGINT to the --tail board alone - bash swallowed it while
-# its sleep ran and went on to the TERM; the port ends 130 at once.
+# SIGINT to the --tail board alone ends it 130 at once.
 w_tailint() { w_empty; xhook 2 'kill -INT "$PPID"; i=0; while kill -0 "$PPID" 2>/dev/null && [ "$i" -lt 40 ]; do /bin/sleep 0.05; i=$((i + 1)); done'; }
-XWRAP="$XS/int-default" XKILL=4 xpair w_tailint --tail --interval 1
-assert_eq "$XO_RC:$(tr '\n' ' ' <"$TMP/xo.sleep")" "143:1 1 1 1 " "SIGINT alone: the original swallowed it and ran to the TERM"
-assert_eq "$XN_RC:$(tr '\n' ' ' <"$TMP/xn.sleep")" "130:1 1 " "SIGINT alone: the port ends 130 at once"
-cmp -s "$TMP/xo.out" "$TMP/xn.out" || fail "SIGINT alone: the --tail boards printed the same: $(diff "$TMP/xo.out" "$TMP/xn.out" | head -n 4)"
+XWRAP="$XS/int-default" XKILL=4 xrun w_tailint --tail --interval 1
+assert_eq "$XRC:$(tr '\n' ' ' <"$TMP/xn.sleep")" "130:1 1 " "row 8: SIGINT alone ends the --tail board 130 at its second tick"
 
 # 9. the dashboard loop: the prelude, one paint, the idle close through the
 #    raw herdr stub (the default session, AC_HERDR_SESSION, a padded
-#    config/herdr-session, an orca fleet alike), no --self-pane; a paint only
-#    when the frame changes; the interval's arithmetic (010 is 8, 00 never
-#    idles, 5abc with a live gate is only handed to sleep); TERM and HUP
-#    restoring the cursor.
-XE=AC_GATE_WATCH_IDLE=1 xsame w_empty --interval 1 --self-pane pX
-assert_eq "$XN_RC:$(xout)" "0:"$'\033[2J\033[H\033[?25l\033[Hac-gate home  0 active\033[K\n\033[K\n(no gate running)\033[K\033[J\n\nno active gate - closing watch\n\033[?25h' "row 9: the idle close, byte for byte"
+#    config/herdr-session), no --self-pane; a paint only when the frame
+#    changes; the interval's arithmetic (010 is 8); an AC_GATE_WATCH_IDLE that
+#    is no integer (never closes); TERM, HUP and INT restoring the cursor.
+XE=AC_GATE_WATCH_IDLE=1 xok w_empty --interval 1 --self-pane pX
+assert_eq "$XRC:$(xout)" "0:"$'\033[2J\033[H\033[?25l\033[Hac-gate home  0 active\033[K\n\033[K\n(no gate running)\033[K\033[J\n\nno active gate - closing watch\n\033[?25h' "row 9: the idle close, byte for byte"
 assert_eq "$(cat "$TMP/xn.sleep"):$(cat "$TMP/xn.herdr")" "1
 2:--session default pane close pX" "row 9: one tick, the close's sleep 2, the raw herdr close"
-XE="AC_GATE_WATCH_IDLE=1 AC_HERDR_SESSION=s1" xsame w_empty --interval 1 --self-pane pX
+XE="AC_GATE_WATCH_IDLE=1 AC_HERDR_SESSION=s1" xok w_empty --interval 1 --self-pane pX
 assert_eq "$(cat "$TMP/xn.herdr")" "--session s1 pane close pX" "row 9: AC_HERDR_SESSION names the session"
 w_cfgses() { xseed; printf ' s2 \n' >"$XW/home/config/herdr-session"; }
-XE=AC_GATE_WATCH_IDLE=1 xsame w_cfgses --interval 1 --self-pane pX
+XE=AC_GATE_WATCH_IDLE=1 xok w_cfgses --interval 1 --self-pane pX
 assert_eq "$(cat "$TMP/xn.herdr")" "--session s2 pane close pX" "row 9: config/herdr-session, trimmed"
-w_orca() { xseed; printf 'orca\n' >"$XW/home/config/backend"; }
-XE=AC_GATE_WATCH_IDLE=1 xsame w_orca --interval 1 --self-pane pO
-assert_eq "$(cat "$TMP/xn.herdr")" "--session default pane close pO" "row 9: the close is raw herdr on an orca fleet too (at parity)"
-XE=AC_GATE_WATCH_IDLE=1 xsame w_empty --interval 1
-assert_eq "$XN_RC:$(cat "$TMP/xn.herdr")" "0:" "row 9: no --self-pane, no herdr call"
-XE=AC_GATE_WATCH_IDLE=3 xsame w_empty
-assert_eq "$XN_RC:$(tr '\n' ' ' <"$TMP/xn.sleep")" "0:2 2 " "row 9: the default interval 2, past 3 at the second tick, then the close's sleep 2"
+XE=AC_GATE_WATCH_IDLE=1 xok w_empty --interval 1
+assert_eq "$XRC:$(cat "$TMP/xn.herdr")" "0:" "row 9: no --self-pane, no herdr call"
+XE=AC_GATE_WATCH_IDLE=3 xok w_empty
+assert_eq "$XRC:$(tr '\n' ' ' <"$TMP/xn.sleep")" "0:2 2 " "row 9: the default interval 2, past 3 at the second tick, then the close's sleep 2"
 w_live() { local d="$XW/home/data/fam1"; w_one; printf 'second\n' >"$d/more"; xhook 2 "cat '$d/more' >>'$d/o1'"; }
-XKILL=4 xsame w_live --interval 1
-assert_eq "$XN_RC" "143" "row 9: a live gate keeps the board open"
+XKILL=4 xkilled w_live --interval 1
+assert_eq "$XRC" "143" "row 9: a live gate keeps the board open"
 assert_eq "$(xcount $'\033[H' "$TMP/xn.out")" "3" "row 9: the prelude, then a paint only when the frame changed"
 assert_contains "$(xout)" $'09:06:00 second\033[K' "row 9: the repaint shows the new activity"
-assert_eq "${XN_RC}:$(tail -c 6 "$TMP/xn.out" | od -An -c | tr -d ' \n')" "143:033[?25h" "row 9: TERM restores the cursor"
-XE=AC_GATE_WATCH_IDLE=7 xsame w_empty --interval 010
-assert_eq "$XN_RC:$(cat "$TMP/xn.sleep")" "0:2" "row 9: 010 is 8 to the shell's arithmetic, past 7 at once"
-XE=AC_GATE_WATCH_IDLE=1 XKILL=3 xsame w_empty --interval 00
-assert_eq "$XN_RC:$(tr '\n' ' ' <"$TMP/xn.sleep")" "143:00 00 00 " "row 9: 00 never idles out"
-XKILL=3 xsame w_one --interval 5abc
-assert_eq "$XN_RC:$(tr '\n' ' ' <"$TMP/xn.sleep")" "143:5abc 5abc 5abc " "row 9: with a live gate 5abc is only handed to sleep (GW2)"
-XE=AC_GATE_WATCH_IDLE=100 XKILL=2 XSIG=HUP xsame w_empty --interval 1
-assert_eq "$XN_RC:$(tail -c 6 "$TMP/xn.out" | od -An -c | tr -d ' \n')" "129:033[?25h" "row 9: HUP restores the cursor"
-# GW2/GW8 at parity, SHELL-OWN named: an interval that is no arithmetic
-# operand ends the board 1 at its first idle tick, its pane left open, the
-# cursor restored; bash's own arithmetic line is not reproduced.
-for iv in 5abc 0.5 08 abc; do
-  XE=AC_GATE_WATCH_IDLE=7 xpair w_empty --interval "$iv" --self-pane pX
-  assert_eq "$XO_RC:$XN_RC:$(cat "$TMP/xo.herdr" "$TMP/xn.herdr")" "1:1:" "GW2/GW8 $iv: exit 1 at the first idle tick, the pane not closed"
-  cmp -s "$TMP/xo.out" "$TMP/xn.out" || fail "GW2/GW8 $iv: the same paint and restore: $(diff "$TMP/xo.out" "$TMP/xn.out" | head -n 4)"
-  assert_contains "$(xoerr)" "$iv" "GW2/GW8 $iv: the original's own arithmetic line"
-  assert_eq "$(xerr)" "" "GW2/GW8 $iv: nothing on the port's stderr"
-done
-# INTERVAL ARITHMETIC, named: a whole expression - bash evaluated `1+1` and
-# closed after two ticks; the port's operand model ends the board 1.
-XE=AC_GATE_WATCH_IDLE=3 xpair w_empty --interval 1+1
-assert_eq "$XO_RC:$(tr '\n' ' ' <"$TMP/xo.sleep")" "0:1+1 2 " "INTERVAL ARITHMETIC: the original evaluated 1+1"
-assert_eq "$XN_RC:$(cat "$TMP/xn.sleep")" "1:" "INTERVAL ARITHMETIC: the port ends 1 at the first idle tick"
-# SHELL-OWN, named: a non-integer AC_GATE_WATCH_IDLE never closes on either
-# side; the original's `[` noise every tick is not reproduced.
-XE=AC_GATE_WATCH_IDLE=abc XKILL=3 xpair w_empty --interval 1
-assert_eq "$XO_RC:$XN_RC" "143:143" "SHELL-OWN idle abc: never closes"
-cmp -s "$TMP/xo.out" "$TMP/xn.out" || fail "SHELL-OWN idle abc: the same frames"
-assert_contains "$(xoerr)" "integer expression expected" "SHELL-OWN idle abc: the original's test noise"
-assert_eq "$(xerr)" "" "SHELL-OWN idle abc: nothing on the port's stderr"
-# SIGNALS, named: SIGINT to the dashboard alone - bash swallowed it and ran to
-# the TERM; the port restores the cursor and ends 130 at once.
-XWRAP="$XS/int-default" XE=AC_GATE_WATCH_IDLE=100 XKILL=4 xpair w_tailint --interval 1
-assert_eq "$XO_RC:$(tr '\n' ' ' <"$TMP/xo.sleep")" "143:1 1 1 1 " "SIGINT alone (dashboard): the original swallowed it"
-assert_eq "$XN_RC:$(tr '\n' ' ' <"$TMP/xn.sleep")" "130:1 1 " "SIGINT alone (dashboard): the port ends 130"
-cmp -s "$TMP/xo.out" "$TMP/xn.out" || fail "SIGINT alone (dashboard): the same paint and restore: $(diff "$TMP/xo.out" "$TMP/xn.out" | head -n 4)"
-XTTY=1 XE=AC_GATE_WATCH_IDLE=1 xsame w_empty --interval 1 --self-pane pT
+assert_eq "$XRC:$(tail -c 6 "$TMP/xn.out" | od -An -c | tr -d ' \n')" "143:033[?25h" "row 9: TERM restores the cursor"
+XE=AC_GATE_WATCH_IDLE=7 xok w_empty --interval 010
+assert_eq "$XRC:$(cat "$TMP/xn.sleep")" "0:2" "row 9: 010 is 8 to the shell's arithmetic, past 7 at once"
+XE=AC_GATE_WATCH_IDLE=100 XKILL=2 XSIG=HUP xrun w_empty --interval 1
+assert_eq "$XRC:$(tail -c 6 "$TMP/xn.out" | od -An -c | tr -d ' \n')" "129:033[?25h" "row 9: HUP restores the cursor"
+XE=AC_GATE_WATCH_IDLE=abc XKILL=3 xkilled w_empty --interval 1
+assert_eq "$(tr '\n' ' ' <"$TMP/xn.sleep"):$(cat "$TMP/xn.herdr"):$(xerr)" "1 1 1 ::" "row 9: an AC_GATE_WATCH_IDLE that is no integer never closes, silently"
+XWRAP="$XS/int-default" XE=AC_GATE_WATCH_IDLE=100 XKILL=4 xrun w_tailint --interval 1
+assert_eq "$XRC:$(tr '\n' ' ' <"$TMP/xn.sleep"):$(tail -c 6 "$TMP/xn.out" | od -An -c | tr -d ' \n')" "130:1 1 :033[?25h" "row 9: SIGINT alone restores the cursor and ends the dashboard 130"
+XTTY=1 XE=AC_GATE_WATCH_IDLE=1 xok w_empty --interval 1 --self-pane pT
 assert_contains "$(xout)" $'\033[2J\033[H\033[?25l\033[H\033[1mac-gate\033[0m' "row 9: the dashboard's colors on a tty"
-# A closed stdout (>&-): the original ran without errexit, so each failed
-# frame write left it running to its 0 - its printf's `write error` lines are
-# SHELL-OWN; the port's writes land in the /dev/null bun opens over the closed
-# fd (bin/ac-bun.sh leaves this module's closed channels to bun), silently.
+# A closed stdout (>&-): the writes land in the /dev/null bun opens over the
+# closed fd (bin/ac-bun.sh leaves this module's closed channels to bun),
+# silently.
 printf '#!/bin/sh\nexec "$@" >&-\n' >"$XS/stdout-closed"; chmod +x "$XS/stdout-closed"
-XWRAP="$XS/stdout-closed" xpair w_one --once
-assert_eq "$XO_RC:$XN_RC" "0:0" "closed stdout: both run to their 0"
-assert_contains "$(xoerr)" "write error: Bad file descriptor" "closed stdout: the original's printf failed"
-assert_eq "$(LC_ALL=C sed '/write error: Bad file descriptor$/d' "$TMP/xo.err")" "" "closed stdout: ... and said nothing else"
-assert_eq "$(xerr)" "" "closed stdout: nothing on the port's stderr"
+XWRAP="$XS/stdout-closed" xok w_one --once
+assert_eq "$(xerr)" "" "closed stdout: nothing on stderr"
 
 pass

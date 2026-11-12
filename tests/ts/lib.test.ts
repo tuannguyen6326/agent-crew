@@ -244,25 +244,28 @@ test("sha256File throws where ac_sha256_file prints no hash", () => {
 
 const STAGED = "flow:staged with rev:no - staged review is mandatory (AGENTS.md section 5)";
 const CREWSHIP = "mode:crew-ship with rev:no - crew-ship review is mandatory (AGENTS.md section 5)";
-test("contractLint judges each closed vocabulary and the two outlawed combinations", () => {
+const SDLC = "flow:sdlc with rev:no - sdlc review is mandatory (AGENTS.md section 5)";
+test("contractLint judges each closed vocabulary and the three outlawed combinations", () => {
   const cases: [string, string[]][] = [
     ["", []],
     ["src:cap flow:direct mode:local-only rev:no qa:no", []],
     ["mode:feature-pr", []],
     ["promote:no", []],
     ["src:boss", ["src:boss invalid - want cap|chief|mon|gh|crew|learn"]],
-    ["flow:agile", ["flow:agile invalid - want direct|staged"]],
+    ["flow:agile", ["flow:agile invalid - want direct|staged|sdlc"]],
     ["mode:ship", ["mode:ship invalid - want crew-ship|direct-pr|local-only|feature-pr"]],
     ["rev:maybe", ["rev:maybe invalid - want yes|no"]],
     // qa has no `auto`: chief judgment decides it, never a click.
     ["qa:auto", ["qa:auto invalid - want yes|no"]],
     ["promote:yes", ["promote:yes invalid - want no (always is the default and is never written)"]],
     ["flow:staged rev:no", [STAGED]],
+    ["flow:sdlc rev:no", [SDLC]],
+    ["flow:sdlc rev:yes", []],
     ["mode:crew-ship rev:no", [CREWSHIP]],
     ["flow:staged\trev:no\nmode:crew-ship", [STAGED, CREWSHIP]],
     ["flow:staged rev:no flow:direct", []],
     ["noColon a:b:c unknown:key", []],
-    ["flow:x:y", ["flow:x:y invalid - want direct|staged"]],
+    ["flow:x:y", ["flow:x:y invalid - want direct|staged|sdlc"]],
     ["src:", ["src: invalid - want cap|chief|mon|gh|crew|learn"]],
   ];
   for (const [c, want] of cases) expect([c, contractLint(c)]).toEqual([c, want]);
@@ -342,6 +345,31 @@ test("lockAcquire and ac_lock_acquire exclude each other and reclaim alike", asy
     expect([side, existsSync(lock)]).toEqual([side, true]);
     rmSync(lock, { recursive: true, force: true });
   }
+  // A live pid whose process started after the holder wrote the lock is a
+  // reused number, not the holder: stale to both. The `start` file beside
+  // `pid` carries the holder's `ps -o lstart=`; a dir with no start file (an
+  // older writer's) is judged by liveness alone.
+  const me = String(process.pid);
+  const myStart = Bun.spawnSync(["/usr/bin/env", "LC_ALL=C", "ps", "-o", "lstart=", "-p", me]).stdout.toString().trim();
+  expect(myStart).not.toBe("");
+  for (const [start, want] of [["Thu Jan  1 00:00:00 1970", "got"], [myStart, "refused"], ["", "refused"]]) {
+    for (const side of ["ts", "bash"]) {
+      mkdirSync(lock);
+      writeFileSync(join(lock, "pid"), `${me}\n`);
+      if (start !== "") writeFileSync(join(lock, "start"), `${start}\n`);
+      const got = side === "ts" ? (lockAcquire(lock, 0) ? "got" : "refused") : acquire("0");
+      expect([start === myStart ? "own start" : start === "" ? "no start" : "another start", side, got])
+        .toEqual([start === myStart ? "own start" : start === "" ? "no start" : "another start", side, want]);
+      rmSync(lock, { recursive: true, force: true });
+    }
+  }
+  // Both writers record their start beside the pid.
+  expect(lockAcquire(lock, 0)).toBe(true);
+  expect(readFileSync(join(lock, "start"), "utf8").replace(/\n+$/, "")).toBe(myStart);
+  lockRelease(lock);
+  const bashStart = bashLib('ac_lock_acquire "$1" 0 && LC_ALL=C ps -o lstart= -p $$ && cat "$1/start"; ac_lock_release "$1"', lock).stdout.toString().split("\n");
+  expect(bashStart[0]!.trim()).not.toBe("");
+  expect(bashStart[1]).toBe(bashStart[0]!.trim());
 });
 
 test("enterCaller moves to the caller's cwd, its first argument", () => {
@@ -378,26 +406,29 @@ test("bunChild starts a src module the way bin/ac-bun.sh does", () => {
   }
 });
 
-// Bun's process.cwd() drops a trailing backslash from the directory's name, so
-// a name it reports is trusted only once it stats as the directory actually
-// entered - never a same-named sibling.
-test("a home whose name Bun cannot report is refused, never read as its sibling", () => {
+// Bun before 1.4.4 reported a directory whose name ends in a backslash as its
+// backslash-less sibling; the name process.cwd() reports counts only once it
+// stats as the directory entered, so a home spelled that way is answered
+// exactly - never as the sibling.
+test("a home whose name ends in a backslash is answered exactly, never as its sibling", () => {
   const base = tempDir("ac-lib-ts-bs-");
   mkdirSync(join(base, "home\\"));
   mkdirSync(join(base, "home"));
   const r = runLib(`console.log(L.envHome())`, { AC_HOME: join(base, "home\\") });
-  expect(r.stdout).not.toBe(join(base, "home") + "\n");
-  expect(r.code).toBe(1);
+  expect(r.code).toBe(0);
+  expect(r.stdout).toBe(join(base, "home\\") + "\n");
 });
 
-test("a caller cwd Bun cannot report is not entered", () => {
+// A cwd removed after the shim read it is the one name Bun still cannot
+// report: chdir fails, and the module stays where it was.
+test("a caller cwd that is gone is not entered", () => {
   const here = process.cwd();
-  const base = tempDir("ac-lib-ts-bscwd-");
-  mkdirSync(join(base, "wd\\"));
+  const base = tempDir("ac-lib-ts-gonecwd-");
   mkdirSync(join(base, "wd"));
+  rmSync(join(base, "wd"), { recursive: true });
   try {
-    expect(enterCaller([join(base, "wd\\"), "x"])).toEqual({ args: ["x"], atCaller: false });
-    expect(process.cwd()).not.toBe(join(base, "wd"));
+    expect(enterCaller([join(base, "wd"), "x"])).toEqual({ args: ["x"], atCaller: false });
+    expect(process.cwd()).toBe(here);
   } finally {
     process.chdir(here);
   }

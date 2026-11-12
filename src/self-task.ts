@@ -8,9 +8,8 @@
 // Done row would be (soloLandingCheck, src/lib.ts), since the ledger guard
 // fences the backlog from it.
 // The entry is bin/ac-self-task.sh (a shim that starts this file through
-// bin/ac-bun.sh); THIS header is the authoritative spec, and the bash original
-// it replaced stays frozen at tests/fixtures/ac-self-task.sh as the oracle the
-// differential leg of tests/sh/ac-self-task.test.sh holds this module to.
+// bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-self-task.test.sh is its contract test.
 //
 // Usage: ac-self-task.sh start <id> <project-name-or-dir> [--mode <m>] [--harness <h>] [--base-branch <b>]
 //        ac-self-task.sh log <id> '<progress line>'
@@ -65,7 +64,10 @@
 //      leases from - its status is the start's), an orca fleet an
 //      Orca-managed worktree on crew/<id> (orcaWorktreeLease; the meta
 //      records worktree_backend=orca so teardown routes to the release arm) -
-//      and seed the crewmate layer (instructions, settings, skills, the port
+//      then run the project's commands.install in it (the spawn entry's THE
+//      LEASE INSTALL: deps=ok|failed on the meta, a failure only WARNed - with
+//      no kickoff here, that WARN is the slice's whole notice), and seed the
+//      crewmate layer (instructions, settings, skills, the port
 //      slot) into it: work on a worktree follows the crewmate rules, whoever
 //      holds the hands. `--harness <h>` routes the instruction/skills seed to
 //      the file that harness loads (default claude -> .claude/CLAUDE.md;
@@ -137,24 +139,7 @@
 // known to the rollback only once their step has returned, as the original
 // assigned them from `$(...)`.
 //
-// ESCAPE HATCH. This entry is the solo session's own write path - every slice,
-// the one that would fix a broken port included, opens through it. If a
-// landed change breaks this module, run the frozen original from a scratch
-// root at a physical path:
-//   o=$(cd "$(mktemp -d)" && pwd -P); mkdir "$o/bin"; cp bin/*.sh "$o/bin/"
-//   ln -s "$PWD/src" "$o/src"; ln -s "$PWD/dashboard" "$o/dashboard"
-//   ln -s "$PWD/.agents" "$o/.agents"; cp tests/fixtures/ac-self-task.sh "$o/bin/ac-self-task.sh"
-// then AC_HOME=<home> "$o/bin/ac-self-task.sh" start|log ... from the
-// session's own cwd (the recall reads it). Without the .agents link the seed
-// links none of the built-in skills the container's .claude/skills lacks; with
-// it the worktree's skill links point through the copy, so keep the copy until
-// those slices are torn down. The hatch covers a broken module, not a missing
-// bun: the copy's siblings are the live shims over src/, its ac-tree.sh lease
-// among them. It writes the same meta, status and handle formats, so a slice
-// opened by either side is logged, landed and torn down by the other. The
-// captain's revert of the land is the last resort.
-//
-// AT PARITY (each pinned in the leg until its own fix lands):
+// KNOWN DEFECTS, each kept until its own fix lands:
 // - W1: an unknown --harness prints harnessInstructionFile's ERROR and the
 //   start still exits 0; where any layer source exists the layer lands at the
 //   FALLBACK path with the "repo ships its own instruction file" notice
@@ -182,39 +167,21 @@
 //   the herdr tail send) leaves the tab and its handle: the rollback reaps
 //   only a window whose target it read.
 //
-// DIVERGENCES from the original (the leg names each one a row can show):
-// - BUN: every path needs bun now (the shim's `ERROR: required tool not
-//   found: bun`, exit 1, before anything), where the original's `log` ran
-//   without it and its herdr `start` reached the lease before a shim refused.
-// - SIGNALS: the original acted on a signal held by a `$(...)` child as that
-//   child returned - the leg holds its signal rows there - but at once during
-//   a plain child (a seed's cp, mkdir or ln, a herdr RPC, the pane's
-//   subshell, the send and its settle, a meta rewrite), leaving the child
-//   running, and it swallowed an INT there and went on. Here the signal acts
-//   at the turn after the step, which completes first, and INT ends the run
-//   130 like the others. A signal held through `log`'s date ended the
-//   original with nothing appended; here the line lands, then the run ends.
-//   The original re-raised the signal after its trap; this exits 128+n, the
-//   status a shell parent reads either way.
-// - SHELL-OWN STDERR is not reproduced, the status kept: a status file that
-//   is a directory (`<lib>: line N: <path>: Is a directory`, exit 1 - W11),
-//   a closed stdout (`printf: write error`, exit 1) and a meta write's mv a
-//   signal ended (`<lib>: line N: <pid> Terminated: 15 ...` for TERM, exit
-//   128+n).
+// ALSO:
+// - BUN: every path needs bun (the shim's `ERROR: required tool not found:
+//   bun`, exit 1, before anything).
 // - HOME RESOLUTION: an AC_HOME cd cannot enter is `ERROR: AC_HOME is not a
-//   readable directory: <h>`, where the original printed cd's own line.
+//   readable directory: <h>`.
 // - BYTES: argv and the environment arrive decoded - a byte that is no UTF-8
-//   in the id (refused either way), a project path, --mode, --harness or
-//   AC_SCOPE reaches the messages, the metas and the children as U+FFFD, and
-//   `%q` spells the decoded text's bytes.
-// - require reads PATH through Bun.which, which refuses a non-executable git
-//   `command -v` accepted (every port shares it).
+//   in the id (refused), a project path, --mode, --harness or AC_SCOPE
+//   reaches the messages, the metas and the children as U+FFFD, and `%q`
+//   spells the decoded text's bytes.
+// - require reads PATH through Bun.which, which refuses a non-executable git.
 // - A caller whose cwd has no name: a relative project resolves against the
-//   distro root (enterCaller), where the original's `[ -d ]` failed and read
-//   projects/<name>.
+//   distro root (enterCaller).
 // - EXCLUSIVE TEMP: the meta's and the port registry's temps are created
-//   exclusively (metaSet, seedPortsEnv), where the original wrote through a
-//   planted `.tmp.$$`.
+//   exclusively (metaSet, seedPortsEnv), never written through a planted
+//   `.tmp.$$`.
 //
 // CALLERS: no bin/, src/, dashboard/ or hook runs this entry - it is run by
 // hand: by the chief for a small self-edit, a SOLO session per slice and a
@@ -254,10 +221,6 @@ import {
   orcaWorktreeRelease,
   projectDir,
   require,
-  seedCrewSettings,
-  seedCrewSkills,
-  seedCrewmateMd,
-  seedPortsEnv,
   shellQuote,
   shellStatus,
   spawnShellSync,
@@ -267,6 +230,7 @@ import {
   warn,
   writeAll,
 } from "./lib.ts";
+import { leaseInstall, seedCrewSettings, seedCrewSkills, seedCrewmateMd, seedPortsEnv } from "./lib-spawn.ts";
 
 // Decoded strings throughout; the lib's byte (latin1) answers cross over here.
 const b8 = (s: string): string => Buffer.from(s, "utf8").toString("latin1");
@@ -489,6 +453,8 @@ then start again`);
     ee(get.status);
   }
   const wt = S.worktree;
+  const deps = leaseInstall(id, projectDirC, wt);
+  await turn();
 
   // Work on a worktree follows the crewmate layer, whoever holds the hands -
   // the chief, a solo session, or a session the captain opens INSIDE the tree
@@ -598,6 +564,7 @@ then start again`);
   metaSetHard("project_dir", b8(projectDirC));
   metaSetHard("kind", "self");
   metaSetHard("mode", b8(mode));
+  if (deps !== "") metaSetHard("deps", deps);
   // A SOLO CHIEF's slice (a scoped session, AC_SCOPE set) belongs to its
   // family: the scope rides the meta the way a crewmate spawn records it, so
   // fleet views group the slice under the family and the teardown gate knows

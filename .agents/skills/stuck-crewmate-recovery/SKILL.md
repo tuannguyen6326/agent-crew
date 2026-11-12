@@ -1,6 +1,6 @@
 ---
 name: stuck-crewmate-recovery
-description: Crewchief evidence-ladder for recovering a stalled, looping, confused, or exited crewmate using the existing wake, peek, state, send, resume, room, and backlog primitives. Load after a stale wake, a failed steer, an apparently swallowed instruction, an unresponsive pane, a harness exit, or evidence of a loop. Never force-teardown and never discard dirty or unlanded work as recovery. A healthy idle CrewDeputy, declared pause, captain gate, or blocked interactive prompt is not stuck.
+description: Chief evidence-ladder for a stalled, looping, confused or exited crewmate. Load after a stale wake, a failed steer, an unresponsive pane, a harness exit or a loop; never force-teardown, never discard unlanded work.
 ---
 
 # stuck-crewmate-recovery
@@ -16,7 +16,7 @@ Load after a stale wake, a failed steer, repeated confusion, an apparently swall
 Do NOT classify these as stuck - they are healthy states:
 
 - a healthy idle CrewDeputy (a persistent supervisor waiting for work);
-- a declared pause (the crewmate stamped `paused:` itself);
+- a declared pause (the crewmate stamped `paused:` itself) - but only while the job its line names is still running: a declaration holds the stale alarm off indefinitely, re-surfacing only on the AC_PAUSE_RESURFACE cadence (src/watch.ts header, STALE DEFERRAL), so a job that died early can leave the pane idle for a long stretch unreported - check that job (its process, terminal record or CI run) before calling the pane healthy, and if it already ended, steer the crewmate to read the result and resume; a `paused:` line naming its own `until <epoch>` is the one declaration that expires itself;
 - a captain gate (the task is waiting on a decision you owe the captain);
 - a blocked interactive prompt (a real dialog - answer it deliberately, do not "recover" it);
 - a completed-but-awaiting-landing task (the work is done and waiting to merge);

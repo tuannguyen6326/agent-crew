@@ -5,17 +5,19 @@
 // usage-sliding floor - on the fleet's own adapter, knob and shadow log.
 // The entry is bin/ac-compact-advise.sh, the fail-open hook shim that starts
 // this file through bin/ac-bun.sh's ac_bun_exec_hook; THIS header is the
-// authoritative spec, and the bash original it replaced stays frozen at
-// tests/fixtures/ac-compact-advise.sh as the oracle the differential leg of
-// tests/sh/ac-compact-advise.test.sh holds this module to.
+// authoritative spec, and tests/sh/ac-compact-advise.test.sh is its contract
+// test.
 //
 // Usage:
 //   ac-compact-advise.sh <claude-transcript.jsonl> --role chief|crew
+//                        [--auto <id>]   # the watcher's form
 //   ac-compact-advise.sh --hook          # claude Stop hook, payload on stdin
-//   ac-compact-advise.sh --send <id>     # AUTO's sender, detached by --hook
+//   ac-compact-advise.sh --send <id> [--now]   # AUTO's sender, detached
 // The mode is the first argument exactly; the role is the third only when the
 // second is exactly `--role` (crew otherwise), and any role but chief|crew,
 // a transcript that is no regular file, or no jq on PATH is silence, exit 0.
+// `--auto` is the fourth argument exactly and its <id> the fifth, `--now` the
+// third after `--send <id>`; AUTO FOR A CREWMATE owns both.
 //
 // JUDGMENT. Context tokens are the last assistant message's usage (input +
 // cache read + cache creation) in the transcript's last 400 lines (spawned
@@ -77,23 +79,38 @@
 // and the message keeps the hint for that case. On herdr a roomchief stamped
 // captain-wait (its room holds pending asks) never reads idle, so the hint is
 // all it gets until the room clears. The crewchief and a solo session own no
-// meta and keep the hint, crewmates keep the watcher's note. Outcomes land in
+// meta and keep the hint; a crewmate is the next section's. Outcomes land in
 // send.log as `<date -u +%FT%TZ> compact-auto <id>: <not idle - left to the
 // hint | sent (<ac-send's output>) | send failed (<its output>)>`, the output
 // merged in write order with its LFs as spaces. orca cannot prove the composer
 // empty, so a captain typing into that pane in the seconds after its turn ends
 // can get /compact appended to the draft - a risk the captain took.
 //
+// AUTO FOR A CREWMATE. A crewmate's own Stop hook cannot act (HOOK: it has no
+// fleet home to read the knob from), so the watcher names its task instead:
+// under config/compact-auto=on the COMPACT NOTE (src/watch.ts) calls the CLI
+// with `--auto <id>` for a meta that is neither a roomchief's nor a
+// crewdeputy's. An advise verdict at or above config/compact-auto-min - the
+// knob and the arithmetic of AUTO above - then detaches `nohup
+// bin/ac-compact-advise.sh --send <id> --now` (send.log, as above) and prints
+// its line as `compact=auto score=<s> floor=<f> usage=<u>`, which tells the
+// chief reading the wake that the fleet sends /compact itself. `--now` skips
+// the idle wait: the watcher's ended: and stale: arms fire only on a pane it
+// has just read quiet, and its ended: arm stamps the pane captain-wait before
+// the note is built - herdr reads that stamp `blocked` for as long as it
+// stands, so a waiting sender would never reach the pane. bin/ac-send.sh's
+// own fail-closed refusals (src/send.ts) still stand, and land in send.log as
+// `send failed`. Anything short of the act - the knob not `on`, usage under
+// the minimum, a minimum `$(( ))` cannot read, a send.log that cannot be
+// opened - prints the `compact=advise` hint. A compaction drops usage under
+// the minimum, so the next quiet wake's advice is a hint again, never a loop.
+// A chief steering that pane in the seconds the sender is typing can
+// interleave with /compact - the class of risk the captain took above.
+//
 // Exit codes: 0, always, but W1 below; nothing on stdout but the advise line
 // (CLI) or the systemMessage (hook).
 //
-// A BROKEN PORT. The frozen original needs bash, jq and its bin/ siblings
-// (ac-lib.sh, ac-backend.sh, ac-jev.sh, ac-send.sh): copying
-// tests/fixtures/ac-compact-advise.sh over bin/ac-compact-advise.sh in the
-// checkout the fleets run restores it whole until the fix lands; the
-// captain's revert of the land is the last resort.
-//
-// AT PARITY (each pinned in the leg until its own fix lands):
+// AT PARITY with the bash original (each until its own fix lands):
 // - W1: `--send` for a meta whose backend= is no supported backend ends 1
 //   with the backend refusal (the hook shim folds that status to 0);
 // - W2: a leading-zero config/compact-window or compact-auto-min reads
@@ -103,28 +120,21 @@
 //   nothing is advised;
 // - a judgment's mark write that fails ends the hook before its message.
 //
-// DIVERGENCES from the original (the leg names each one a row can show):
-// - BUN: with no bun on PATH the shim exits 0 at once and says nothing, where
-//   the original judged; a module that cannot load is the same silence.
-// - W4: the session_id is [A-Za-z0-9_-] per the text under any locale, where
-//   bash 3.2's bracket under a UTF-8 locale let `é` through.
-// - SEND WAIT: an AC_COMPACT_SEND_WAIT that is an expression (`1+1`) ends the
-//   sender silent, where the original evaluated it; the clock is this
-//   process's whole seconds, as bash's SECONDS counted.
-// - ORDER: the owning meta is the first in byte order, where the original's
-//   glob followed the locale's collation.
-// - SHELL-OWN STDERR: a redirection that cannot write and a missing tool's
-//   `command not found` are not reproduced.
-// - HOME RESOLUTION: an AC_HOME whose name ends in LF is the directory it
-//   names, and a relative one is entered without CDPATH; a caller whose cwd
-//   Bun cannot enter resolves no relative AC_HOME or transcript (silent).
-// - BYTES: argv and the environment arrive decoded (a byte that is not UTF-8
-//   becomes U+FFFD).
+// ALSO: with no bun on PATH the shim exits 0 at once, saying so in one stderr
+// line, and a module that cannot load is the same no-op, said the same way;
+// the session_id is [A-Za-z0-9_-] per the text under any locale; an
+// AC_COMPACT_SEND_WAIT that is an expression (`1+1`) ends the sender silent,
+// and its clock is this process's whole seconds; the owning meta is the first
+// in byte order; an AC_HOME whose name ends in LF is the directory it names,
+// and a relative one is entered without CDPATH; a caller whose cwd Bun cannot
+// enter resolves no relative AC_HOME or transcript (silent); argv and the
+// environment arrive decoded (a byte that is not UTF-8 becomes U+FFFD).
 //
 // CALLERS: the Stop wiring of .claude/settings.json (`--hook`);
 // bin/ac-watch.sh's compact note (`<transcript> --role crew`, through
-// AC_COMPACT_ADVISE for tests), which reads `|| out=''` and logs stderr's
-// first line; the hook itself for `--send`.
+// AC_COMPACT_ADVISE for tests, `--auto <id>` added under
+// config/compact-auto=on), which reads `|| out=''` and logs stderr's first
+// line; the hook itself for `--send`, the CLI's AUTO for `--send <id> --now`.
 
 import { closeSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { arithValue, backendAgentIdle, commandV, configReadSoft, enterCaller, hookPayload, physicalDir, shellStatus, softSubdir, spawnShell, spawnShellSync, STARTED_BIN, taskBackend, testInt } from "./lib.ts";
@@ -224,23 +234,25 @@ function judge(tx: string, role: string, tokens: string): string {
   return run(["jq", "-r", "--arg", "role", role, "--argjson", "u", nat(usage), SCORE_JQ], piped(`${out}\n`), "ignore").out;
 }
 
-// The task whose meta records this session, under config/compact-auto=on at
-// or above config/compact-auto-min percent of the window; "" otherwise; null
-// where `$(( ))` could not read a knob (the original's substitution failed
-// and its ERR trap ended the hook).
-function autoTarget(sid: string, tokens: string): string | null {
-  if (config("compact-auto", "off") !== "on") return "";
+// config/compact-auto=on at or above config/compact-auto-min percent of the
+// window; null where `$(( ))` could not read a knob (the original's
+// substitution failed and its ERR trap ended the hook).
+function autoDue(tokens: string): boolean | null {
+  if (config("compact-auto", "off") !== "on") return false;
   let min = config("compact-auto-min", "50");
   if (min === "" || /[^0-9]/.test(min)) min = "50";
-  let lhs: bigint;
-  let rhs: bigint;
   try {
-    lhs = BigInt.asIntN(64, arithValue(tokens) * 100n);
-    rhs = BigInt.asIntN(64, arithValue(min) * arithValue(windowSize()));
+    return BigInt.asIntN(64, arithValue(tokens) * 100n) >= BigInt.asIntN(64, arithValue(min) * arithValue(windowSize()));
   } catch {
     return null;
   }
-  if (lhs < rhs) return "";
+}
+
+// The task whose meta records this session once AUTO is due; "" otherwise;
+// null as autoDue's.
+function autoTarget(sid: string, tokens: string): string | null {
+  const due = autoDue(tokens);
+  if (due !== true) return due === null ? null : "";
   const sd = softSubdir("state", false);
   let names: string[] = [];
   try {
@@ -255,7 +267,20 @@ function autoTarget(sid: string, tokens: string): string | null {
   return m === "" ? "" : m.slice(m.lastIndexOf("/") + 1).replace(/\.meta$/, "");
 }
 
-function send(id: string): void {
+// The detached sender, its output appended to <dir>/send.log; false when the
+// log cannot be opened or the sender cannot start.
+function detachSend(dir: string, id: string, now: boolean): boolean {
+  try {
+    const log = openSync(`${dir}/send.log`, "a");
+    spawnShell(["nohup", `${STARTED_BIN}/ac-compact-advise.sh`, "--send", id, ...(now ? ["--now"] : [])], { stdin: "ignore", stdout: log, stderr: log }).unref();
+    closeSync(log);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function send(id: string, now: boolean): void {
   if (id === "") process.exit(0);
   process.env.AC_BACKEND = taskBackend(id);
   let wait: bigint;
@@ -267,7 +292,7 @@ function send(id: string): void {
   const seconds = (): bigint => BigInt(Math.floor(Date.now() / 1000) - T0);
   const deadline = seconds() + wait;
   const stamp = (): string => cap(run(["date", "-u", "+%FT%TZ"]).out);
-  for (;;) {
+  while (!now) {
     const idle = backendAgentIdle(id, { stdin: "inherit", stderr: "inherit" });
     if (idle.exited) process.exit(1);
     if (idle.status === 0) break;
@@ -339,11 +364,7 @@ function hook(): void {
   const id = autoTarget(sid, tokens);
   if (id === null) process.exit(0);
   if (id !== "") {
-    try {
-      const log = openSync(`${dir}/send.log`, "a");
-      spawnShell(["nohup", `${STARTED_BIN}/ac-compact-advise.sh`, "--send", nat(id)], { stdin: "ignore", stdout: log, stderr: log }).unref();
-      closeSync(log);
-    } catch {}
+    detachSend(dir, nat(id), false);
     act = `/compact is typed into ${id} if its pane goes idle within ~10s, otherwise run /compact yourself (outcome: state/.compact-advise/send.log)`;
   }
   const msg = run(["jq", "-nc", "--arg", "l", nat(line), "--arg", "a", nat(act), MESSAGE_JQ]);
@@ -352,7 +373,7 @@ function hook(): void {
 }
 
 if (!commandV("jq")) process.exit(0);
-if (args[0] === "--send") send(args[1] ?? "");
+if (args[0] === "--send") send(args[1] ?? "", args[2] === "--now");
 if (args[0] === "--hook") hook();
 
 const tx = args[0] ?? "";
@@ -363,5 +384,10 @@ const tokens = contextTokens(tx);
 if (!/^[0-9]+$/.test(tokens)) process.exit(0);
 const t = testInt(tokens);
 if (t === null || t < MIN_TOKENS) process.exit(0);
-say(1, judge(tx, role, tokens));
+const line = judge(tx, role, tokens);
+const autoId = args[3] === "--auto" ? (args[4] ?? "") : "";
+// softSubdir creates state/, so the default world resolves no directory.
+const sendDir = (): string => `${softSubdir("state", false)}/.compact-advise`;
+const acted = autoId !== "" && cap(line) !== "" && autoDue(tokens) === true && ((d: string) => run(["mkdir", "-p", d], "inherit", "ignore").status === 0 && detachSend(d, autoId, true))(sendDir());
+say(1, acted ? line.replace("compact=advise", "compact=auto") : line);
 process.exit(0);

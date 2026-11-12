@@ -71,6 +71,29 @@ rc="${res%%|*}"; out="${res#*|}"
 assert_eq "$rc" "0" "an all-green fixture dir must exit 0"
 assert_contains "$out" "2/2 passed" "count must match the fixture file count"
 
+# --- a test that outlives AC_TEST_TIMEOUT is killed and reported -------------
+# The sleep is a child of the test, so the bound must reach the whole process
+# group: a TERM to the subshell alone leaves the sleep and the wait behind it.
+hangdir="$TMP/fixture-hang"
+mkdir -p "$hangdir"
+hang_sleep="1234.$$"
+printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\nsleep %s\npass\n' "$ROOT" "$hang_sleep" >"$hangdir/slow.test.sh"
+printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\npass\n' "$ROOT" >"$hangdir/quick.test.sh"
+t0="$(date +%s)"
+set +e
+out="$(AC_TEST_TIMEOUT=2 bash "$RUNNER" "$hangdir" 2>&1)"
+rc=$?
+set -e
+elapsed=$(( $(date +%s) - t0 ))
+assert_eq "$rc" "1" "a timed-out test is a failure"
+assert_contains "$out" "FAIL slow.test.sh (timed out after 2s)" "the timeout names the test and the bound"
+assert_contains "$out" "1/2 passed" "the quick test still passes beside the timed-out one"
+[ "$elapsed" -lt 20 ] || fail "the runner must return once the bound fires, not after the sleep (took ${elapsed}s)"
+if pgrep -f "sleep $hang_sleep" >/dev/null 2>&1; then
+  pkill -f "sleep $hang_sleep" || true
+  fail "the timed-out test's sleep must die with its process group"
+fi
+
 # --- same verdict from a different cwd ---------------------------------------
 
 set +e
@@ -105,7 +128,7 @@ assert_eq "$rc" "2" "a malformed --jobs must refuse (exit 2), never read as gree
 # run-suite-changed-widens-on-any-shared-lib-so-the-ac-lib-split-buys-nothing-yet).
 # bin/ac-util.sh also has its own colocated tests/sh/ac-util.test.sh, mirroring
 # the real repo (every real shared library here - ac-lib.sh,
-# ac-pipeline-lib.sh, ac-backend.sh - has one too): it is part of the
+# ac-backend.sh - has one too): it is part of the
 # selection too, per the same rule.
 # Everything is committed as the baseline HEAD; each scenario below then
 # mutates/adds a file UNCOMMITTED (staged/unstaged/untracked, mirroring
@@ -186,6 +209,45 @@ assert_contains "$out" "4/4 passed" "an unmapped owned file must WIDEN to the fu
 assert_contains "$out" "ac-unmapped.sh has no colocated test" "the widen reason printed must name the NO-COLOCATED-TEST mechanism, not just the filename"
 rm -f "$changedrepo/bin/ac-unmapped.sh"
 
+# --- --changed: the tree-scanning guard suites ride every non-empty changed set
+#     A guard's subject is a whole class of files, so no colocated mapping
+#     reaches it. Its own fixture repo, so the shared one's counts stay put;
+#     grep-q-pipes.test.sh is a real guard_suites name.
+guardrepo="$TMP/fixture-changed-guards"
+setup_changed_fixture "$guardrepo"
+printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\npass\n' "$ROOT" >"$guardrepo/tests/sh/grep-q-pipes.test.sh"
+git -C "$guardrepo" add -A
+git -C "$guardrepo" commit -q -m "a guard suite"
+
+printf '#!/usr/bin/env bash\n# touched\n' >"$guardrepo/bin/ac-foo.sh"
+res="$(run_runner --changed "$guardrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed with a mapped change plus the guards must be green"
+assert_contains "$out" "RUNNING ac-foo.test.sh" "the mapped test still runs beside the guards"
+assert_contains "$out" "RUNNING grep-q-pipes.test.sh" "a mapped change must also select the tree-scanning guard suites"
+assert_contains "$out" "2/2 passed" "the guards add to the mapped selection, never widen it"
+assert_contains "$out" "tree-scanning guard suites" "the runner must say it added the guard suites"
+case "$out" in
+  *"RUNNING ac-bar.test.sh"*) fail "the guard set must not pull in unrelated mapped tests" ;;
+esac
+git -C "$guardrepo" checkout -q -- bin/ac-foo.sh
+
+mkdir -p "$guardrepo/docs"
+printf 'prose\n' >"$guardrepo/docs/x.md"
+res="$(run_runner --changed "$guardrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "a change outside the owned set must run the guards, not exit empty"
+assert_contains "$out" "RUNNING grep-q-pipes.test.sh" "a docs-only change must select the tree-scanning guard suites"
+assert_contains "$out" "1/1 passed" "a docs-only change selects the guards alone"
+rm -rf "$guardrepo/docs"
+
+res="$(run_runner --changed "$guardrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "2" "the guards never turn an empty changed set into a green"
+case "$out" in
+  *"RUNNING "*) fail "a clean committed tree must run nothing, the guards included" ;;
+esac
+
 # --- --changed: a shared-lib change with a sourcer that has NO colocated test
 #     still WIDENS to the full set - clause 2 (unknown blast radius) must
 #     keep firing through the sourcer closure, never let narrowing turn an
@@ -227,7 +289,9 @@ assert_contains "$out" "bin/ac-shared.sh is a shared library with a sourcer that
 # must use those literal names to exercise it. bin/ac-other.sh is an
 # unrelated, ordinarily-mapped file included only to prove the map NARROWS
 # (selects just the mapped split tests) rather than widening (which would
-# also run ac-other.test.sh).
+# also run ac-other.test.sh). Its flag-values.test.sh and
+# ac-config-surface.test.sh stand-ins are guard_suites names, so every count
+# below also carries those two (once, where the arm already names one).
 splitrepo="$TMP/fixture-split-map"
 mkdir -p "$splitrepo/bin" "$splitrepo/tests/sh"
 git -C "$splitrepo" init -q
@@ -250,8 +314,9 @@ printf '#!/usr/bin/env bash\n# fixture ac-watch\n' >"$splitrepo/bin/ac-watch.sh"
 printf '#!/usr/bin/env bash\n# fixture ac-watch-policy-hook\n' >"$splitrepo/bin/ac-watch-policy-hook.sh"
 printf '#!/usr/bin/env bash\n# fixture ac-other, unrelated - proves the map NARROWS instead of widening\n' >"$splitrepo/bin/ac-other.sh"
 printf '#!/usr/bin/env bash\n# fixture ac-maintenance-lib, pinned inside ac-maintenance-core.test.sh\n' >"$splitrepo/bin/ac-maintenance-lib.sh"
+printf '#!/usr/bin/env bash\n# fixture ac-wake-lib, pinned inside the four suites that dot-source it\n' >"$splitrepo/bin/ac-wake-lib.sh"
 printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\npass\n' "$ROOT" >"$splitrepo/tests/sh/ac-other.test.sh"
-for t in ac-spawn-branch-collision ac-spawn-dead-pane ac-spawn-model-effort ac-spawn-teardown ac-teardown ac-qa ac-maintenance-core ac-brief ac-contract ac-know flag-values ac-gate ac-learn-loop ac-curate ac-backlog-sections ac-learning-automation-e2e ac-config-surface ac-gate-watch ac-watch-dash ac-ship-watch ac-qa-watch ac-ship ac-roomchief ac-room-parallel-cap ac-learn ac-learn-autoroom ac-learn-quote ac-pane-agent ac-brain ac-lib ac-watch ac-watch-jev ac-brain-freshen ac-lock ac-remote-wire ac-self-task ac-guard ac-harness-hooks; do
+for t in ac-spawn-branch-collision ac-spawn-dead-pane ac-spawn-model-effort ac-spawn-teardown ac-teardown ac-qa ac-maintenance-core ac-brief ac-contract ac-know flag-values ac-gate ac-learn-loop ac-curate ac-backlog-sections ac-learning-automation-e2e ac-config-surface ac-gate-watch ac-watch-dash ac-ship-watch ac-qa-watch ac-ship ac-roomchief ac-room-parallel-cap ac-learn ac-learn-autoroom ac-learn-quote ac-pane-agent ac-brain ac-lib ac-watch ac-watch-jev ac-brain-freshen ac-lock ac-remote-wire ac-self-task ac-guard ac-harness-hooks ac-room ac-wake-drain; do
   printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\npass\n' "$ROOT" >"$splitrepo/tests/sh/$t.test.sh"
 done
 for t in ac-dashboard-daemon ac-review ac-review-reply; do
@@ -277,7 +342,7 @@ assert_contains "$out" "RUNNING ac-spawn-model-effort.test.sh" "ac-spawn.sh's sp
 assert_contains "$out" "RUNNING ac-spawn-teardown.test.sh" "ac-spawn.sh's split map must select ac-spawn-teardown.test.sh"
 assert_contains "$out" "RUNNING ac-roomchief.test.sh" "ac-spawn.sh's split map must select ac-roomchief.test.sh"
 assert_contains "$out" "RUNNING ac-room-parallel-cap.test.sh" "ac-spawn.sh's split map must select ac-room-parallel-cap.test.sh"
-assert_contains "$out" "6/6 passed" "must select exactly the six mapped tests, not widen to the full fixture set"
+assert_contains "$out" "8/8 passed" "must select exactly the six mapped tests plus the guards, not widen to the full fixture set"
 case "$out" in
   *"RUNNING ac-other.test.sh"*) fail "ac-spawn.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
   *"has no colocated test"*) fail "ac-spawn.sh must not print the false widen reason once its split-name map exists" ;;
@@ -292,8 +357,25 @@ res="$(run_runner --changed "$splitrepo/tests/sh")"
 rc="${res%%|*}"; out="${res#*|}"
 assert_eq "$rc" "0" "--changed narrowed to ac-maintenance-lib.sh's test must still be green"
 assert_contains "$out" "RUNNING ac-maintenance-core.test.sh" "ac-maintenance-lib.sh maps to ac-maintenance-core.test.sh"
-assert_contains "$out" "1/1 passed" "ac-maintenance-lib.sh selects exactly ac-maintenance-core.test.sh"
+assert_contains "$out" "3/3 passed" "ac-maintenance-lib.sh selects exactly ac-maintenance-core.test.sh plus the guards"
 git -C "$splitrepo" checkout -q -- bin/ac-maintenance-lib.sh
+
+# ac-wake-lib.sh has no entry and, since the port, no bin sourcer; its pins
+# live in the four suites that dot-source it inside their own bash -c strings.
+# It also starts src/room.ts, so an unmapped ac-wake-lib.sh widened every
+# src/room.ts - and so every src/lib.ts - change to the full suite.
+printf '#!/usr/bin/env bash\n# touched\n' >"$splitrepo/bin/ac-wake-lib.sh"
+res="$(run_runner --changed "$splitrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed narrowed to ac-wake-lib.sh's tests must still be green"
+for t in ac-lib ac-gate ac-room ac-wake-drain; do
+  assert_contains "$out" "RUNNING $t.test.sh" "ac-wake-lib.sh maps to $t.test.sh"
+done
+assert_contains "$out" "6/6 passed" "ac-wake-lib.sh selects exactly its four consumer tests plus the guards"
+case "$out" in
+  *"has no colocated test"*) fail "ac-wake-lib.sh must not widen once its split-name map exists" ;;
+esac
+git -C "$splitrepo" checkout -q -- bin/ac-wake-lib.sh
 
 # 2) touching bin/ac-teardown.sh alone selects its colocated leg AND its
 #    split-name black-box test - the colocated name must not shadow the split.
@@ -303,7 +385,7 @@ rc="${res%%|*}"; out="${res#*|}"
 assert_eq "$rc" "0" "--changed narrowed to ac-teardown.sh's split test must still be green"
 assert_contains "$out" "RUNNING ac-teardown.test.sh" "ac-teardown.sh's split map must select its own ac-teardown.test.sh"
 assert_contains "$out" "RUNNING ac-spawn-teardown.test.sh" "ac-teardown.sh's split map must select ac-spawn-teardown.test.sh"
-assert_contains "$out" "2/2 passed" "must select exactly the two mapped tests, not widen"
+assert_contains "$out" "4/4 passed" "must select exactly the two mapped tests plus the guards, not widen"
 case "$out" in
   *"RUNNING ac-other.test.sh"*) fail "ac-teardown.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
   *"has no colocated test"*) fail "ac-teardown.sh must not print the false widen reason once its split-name map exists" ;;
@@ -318,7 +400,7 @@ rc="${res%%|*}"; out="${res#*|}"
 assert_eq "$rc" "0" "--changed narrowed to ac-brief.sh's split tests must still be green"
 assert_contains "$out" "RUNNING ac-brief.test.sh" "ac-brief.sh's split map must select its own ac-brief.test.sh"
 assert_contains "$out" "RUNNING ac-contract.test.sh" "ac-brief.sh's split map must select ac-contract.test.sh"
-assert_contains "$out" "2/2 passed" "must select exactly the two mapped tests, not widen"
+assert_contains "$out" "4/4 passed" "must select exactly the two mapped tests plus the guards, not widen"
 case "$out" in
   *"RUNNING ac-other.test.sh"*) fail "ac-brief.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
   *"has no colocated test"*) fail "ac-brief.sh must not print the false widen reason once its split-name map exists" ;;
@@ -333,7 +415,7 @@ rc="${res%%|*}"; out="${res#*|}"
 assert_eq "$rc" "0" "--changed narrowed to ac-know.sh's split tests must still be green"
 assert_contains "$out" "RUNNING ac-know.test.sh" "ac-know.sh's split map must select its own ac-know.test.sh"
 assert_contains "$out" "RUNNING flag-values.test.sh" "ac-know.sh's split map must select flag-values.test.sh"
-assert_contains "$out" "2/2 passed" "must select exactly the two mapped tests, not widen"
+assert_contains "$out" "3/3 passed" "must select exactly the two mapped tests plus the guards, not widen"
 case "$out" in
   *"RUNNING ac-other.test.sh"*) fail "ac-know.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
   *"has no colocated test"*) fail "ac-know.sh must not print the false widen reason once its split-name map exists" ;;
@@ -348,7 +430,7 @@ rc="${res%%|*}"; out="${res#*|}"
 assert_eq "$rc" "0" "--changed narrowed to ac-gate.sh's split tests must still be green"
 assert_contains "$out" "RUNNING ac-gate.test.sh" "ac-gate.sh's split map must select its own ac-gate.test.sh"
 assert_contains "$out" "RUNNING ac-learn-loop.test.sh" "ac-gate.sh's split map must select ac-learn-loop.test.sh"
-assert_contains "$out" "2/2 passed" "must select exactly the two mapped tests, not widen"
+assert_contains "$out" "4/4 passed" "must select exactly the two mapped tests plus the guards, not widen"
 case "$out" in
   *"RUNNING ac-other.test.sh"*) fail "ac-gate.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
   *"has no colocated test"*) fail "ac-gate.sh must not print the false widen reason once its split-name map exists" ;;
@@ -365,7 +447,7 @@ assert_eq "$rc" "0" "--changed narrowed to ac-curate.sh's split tests must still
 for t in ac-curate ac-backlog-sections ac-learning-automation-e2e ac-learn-loop ac-config-surface; do
   assert_contains "$out" "RUNNING $t.test.sh" "ac-curate.sh's split map must select $t.test.sh"
 done
-assert_contains "$out" "5/5 passed" "must select exactly the five mapped tests, not widen"
+assert_contains "$out" "6/6 passed" "must select exactly the five mapped tests plus the guards, not widen"
 case "$out" in
   *"RUNNING ac-other.test.sh"*) fail "ac-curate.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
   *"has no colocated test"*) fail "ac-curate.sh must not print the false widen reason once its split-name map exists" ;;
@@ -382,7 +464,7 @@ assert_eq "$rc" "0" "--changed narrowed to ac-gate-watch.sh's split tests must s
 for t in ac-gate-watch ac-gate ac-watch-dash; do
   assert_contains "$out" "RUNNING $t.test.sh" "ac-gate-watch.sh's split map must select $t.test.sh"
 done
-assert_contains "$out" "3/3 passed" "must select exactly the three mapped tests, not widen"
+assert_contains "$out" "5/5 passed" "must select exactly the three mapped tests plus the guards, not widen"
 case "$out" in
   *"RUNNING ac-other.test.sh"*) fail "ac-gate-watch.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
   *"has no colocated test"*) fail "ac-gate-watch.sh must not print the false widen reason once its split-name map exists" ;;
@@ -400,7 +482,7 @@ for w in ship qa; do
   for t in "ac-$w-watch" ac-watch-dash "ac-$w"; do
     assert_contains "$out" "RUNNING $t.test.sh" "ac-$w-watch.sh's split map must select $t.test.sh"
   done
-  assert_contains "$out" "3/3 passed" "must select exactly the three mapped tests, not widen"
+  assert_contains "$out" "5/5 passed" "must select exactly the three mapped tests plus the guards, not widen"
   case "$out" in
     *"RUNNING ac-other.test.sh"*) fail "ac-$w-watch.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
     *"has no colocated test"*) fail "ac-$w-watch.sh must not print the false widen reason once its split-name map exists" ;;
@@ -418,7 +500,7 @@ assert_eq "$rc" "0" "--changed narrowed to ac-dashboard.sh's split tests must st
 for t in ac-dashboard-daemon ac-review ac-review-reply; do
   assert_contains "$out" "RUNNING $t.test.sh" "ac-dashboard.sh's split map must select $t.test.sh"
 done
-assert_contains "$out" "3/3 passed" "must select exactly the three mapped tests, not widen"
+assert_contains "$out" "5/5 passed" "must select exactly the three mapped tests plus the guards, not widen"
 case "$out" in
   *"RUNNING ac-other.test.sh"*) fail "ac-dashboard.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
   *"has no colocated test"*) fail "ac-dashboard.sh must not print the false widen reason once its split-name map exists" ;;
@@ -434,7 +516,7 @@ assert_eq "$rc" "0" "--changed narrowed to ac-ready.sh's split tests must still 
 for t in ac-ready ac-backlog ac-backlog-sections ac-contract ac-task ac-watch ac-watch-autoarm ac-turnend-guard ac-session-start; do
   assert_contains "$out" "RUNNING $t.test.sh" "ac-ready.sh's split map must select $t.test.sh"
 done
-assert_contains "$out" "9/9 passed" "must select exactly the nine mapped tests, not widen"
+assert_contains "$out" "11/11 passed" "must select exactly the nine mapped tests plus the guards, not widen"
 case "$out" in
   *"RUNNING ac-other.test.sh"*) fail "ac-ready.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
 esac
@@ -450,7 +532,7 @@ assert_eq "$rc" "0" "--changed narrowed to ac-learn.sh's split tests must still 
 for t in ac-learn ac-learn-loop ac-learn-autoroom ac-learn-quote ac-learning-automation-e2e ac-maintenance-core ac-curate ac-self-task ac-teardown ac-config-surface; do
   assert_contains "$out" "RUNNING $t.test.sh" "ac-learn.sh's split map must select $t.test.sh"
 done
-assert_contains "$out" "10/10 passed" "must select exactly the ten mapped tests, not widen"
+assert_contains "$out" "11/11 passed" "must select exactly the ten mapped tests plus the guards, not widen"
 case "$out" in
   *"RUNNING ac-other.test.sh"*) fail "ac-learn.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
   *"has no colocated test"*) fail "ac-learn.sh must not print the false widen reason once its split-name map exists" ;;
@@ -466,7 +548,7 @@ assert_eq "$rc" "0" "--changed narrowed to ac-pane-agent.sh's split tests must s
 for t in ac-pane-agent ac-teardown ac-spawn-teardown ac-brain ac-lib; do
   assert_contains "$out" "RUNNING $t.test.sh" "ac-pane-agent.sh's split map must select $t.test.sh"
 done
-assert_contains "$out" "5/5 passed" "must select exactly the five mapped tests, not widen"
+assert_contains "$out" "7/7 passed" "must select exactly the five mapped tests plus the guards, not widen"
 case "$out" in
   *"RUNNING ac-other.test.sh"*) fail "ac-pane-agent.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
   *"has no colocated test"*) fail "ac-pane-agent.sh must not print the false widen reason once its split-name map exists" ;;
@@ -482,7 +564,7 @@ assert_eq "$rc" "0" "--changed narrowed to ac-watch.sh's split tests must still 
 for t in ac-watch ac-watch-jev ac-brain-freshen ac-lock ac-remote-wire ac-roomchief ac-self-task; do
   assert_contains "$out" "RUNNING $t.test.sh" "ac-watch.sh's split map must select $t.test.sh"
 done
-assert_contains "$out" "7/7 passed" "must select exactly the seven mapped tests, not widen"
+assert_contains "$out" "9/9 passed" "must select exactly the seven mapped tests plus the guards, not widen"
 case "$out" in
   *"RUNNING ac-other.test.sh"*) fail "ac-watch.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
   *"has no colocated test"*) fail "ac-watch.sh must not print the false widen reason once its split-name map exists" ;;
@@ -498,7 +580,7 @@ assert_eq "$rc" "0" "--changed narrowed to ac-watch-policy-hook.sh's split tests
 for t in ac-guard ac-harness-hooks; do
   assert_contains "$out" "RUNNING $t.test.sh" "ac-watch-policy-hook.sh's split map must select $t.test.sh"
 done
-assert_contains "$out" "2/2 passed" "must select exactly the two mapped tests, not widen"
+assert_contains "$out" "4/4 passed" "must select exactly the two mapped tests plus the guards, not widen"
 case "$out" in
   *"RUNNING ac-other.test.sh"*) fail "ac-watch-policy-hook.sh's split map must not widen to the unrelated ac-other.test.sh" ;;
   *"has no colocated test"*) fail "ac-watch-policy-hook.sh must not print the false widen reason once its split-name map exists" ;;
@@ -519,7 +601,7 @@ res="$(run_runner --changed "$splitrepo/tests/sh")"
 rc="${res%%|*}"; out="${res#*|}"
 assert_eq "$rc" "0" "--changed narrowed to ac-spawn.sh's split tests, plus the new one, must still be green"
 assert_contains "$out" "RUNNING ac-spawn-newconcern.test.sh" "a NEW ac-spawn-*.test.sh file must join ac-spawn.sh's split map without anyone adding it by hand"
-assert_contains "$out" "7/7 passed" "must select the six original mapped tests PLUS the new one, not silently miss it"
+assert_contains "$out" "9/9 passed" "must select the six original mapped tests PLUS the new one and the guards, not silently miss it"
 git -C "$splitrepo" checkout -q -- bin/ac-spawn.sh
 
 # --- --changed: TypeScript under src/ maps like bin/*.sh does ------------
@@ -545,6 +627,21 @@ printf '#!/usr/bin/env bash\n# fixture bash lib; its TypeScript twin is src/util
 printf 'import { u } from "./util.ts";\n' >"$tsrepo/src/qux.ts"
 printf 'export const u = 1;\n' >"$tsrepo/src/util.ts"
 printf 'import { u } from "../../src/util.ts";\n' >"$tsrepo/tests/ts/util.test.ts"
+printf 'import { q } from "../../src/qux.ts";\n' >"$tsrepo/tests/ts/qux.test.ts"
+# An import chain three deep: a change at its base reaches leaf.test.ts only
+# through top.ts, whose own changes never mention the base.
+printf 'export const b = 1;\n' >"$tsrepo/src/base.ts"
+printf 'import { b } from "./base.ts";\nexport const m = b;\n' >"$tsrepo/src/mid.ts"
+printf 'import { m } from "./mid.ts";\nexport const t = m;\n' >"$tsrepo/src/top.ts"
+printf 'import { t } from "./top.ts";\nexport const l = t;\n' >"$tsrepo/src/leaf.ts"
+printf 'import { l } from "../../src/leaf.ts";\n' >"$tsrepo/tests/ts/leaf.test.ts"
+# A Bun test reaches its subject through a bin script as often as through an
+# import (a test that drives an entry spawns the shim), so naming ac-check.sh on a
+# non-comment line makes src/pth.ts - the module ac-check.sh starts - its
+# subject. A test naming nothing outside comments has no subject the runner
+# can read, so it rides EVERY src/ change.
+printf 'Bun.spawnSync(["bash", "bin/ac-check.sh"]);\n' >"$tsrepo/tests/ts/check.test.ts"
+printf '// no subject: this src/qux.ts is a comment, not a subject\nexport {};\n' >"$tsrepo/tests/ts/misc.test.ts"
 # src/pth.ts has no entry of its own: two scripts run modes of it.
 printf 'export const p = 1;\n' >"$tsrepo/src/pth.ts"
 # The long tail after the starting line is the bash ac-qa.sh's shape: a pipe that
@@ -556,9 +653,18 @@ printf 'export const p = 1;\n' >"$tsrepo/src/pth.ts"
 } >"$tsrepo/bin/ac-check.sh"
 # shellcheck disable=SC2016 # fixture CONTENT, as above
 printf '#!/usr/bin/env bash\nport="$(ac_bun_exec src/pth.ts free-port)"\n' >"$tsrepo/bin/ac-audit.sh"
-for t in ac-qux src ac-other ac-util ac-check ac-audit; do
+for t in ac-qux ac-other ac-util ac-check ac-audit; do
   printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\npass\n' "$ROOT" >"$tsrepo/tests/sh/$t.test.sh"
 done
+# The wrapper stub records the Bun selection --changed hands it (AC_SRC_TESTS,
+# sorted basenames; empty = every Bun test) instead of running bun.
+cat >"$tsrepo/tests/sh/src.test.sh" <<EOF
+#!/usr/bin/env bash
+. "$ROOT/tests/sh/helpers.sh"
+printf '%s\n' "\${AC_SRC_TESTS-}" >"$TMP/src-env.txt"
+pass
+EOF
+bun_selection() { cat "$TMP/src-env.txt" 2>/dev/null || true; }
 chmod +x "$tsrepo"/bin/*.sh "$tsrepo"/tests/sh/*.test.sh
 git -C "$tsrepo" add -A
 git -C "$tsrepo" commit -q -m baseline
@@ -570,15 +676,63 @@ assert_eq "$rc" "0" "--changed on a src/*.ts change must still be green"
 assert_contains "$out" "RUNNING ac-qux.test.sh" "src/qux.ts must select its entry's black-box test"
 assert_contains "$out" "RUNNING src.test.sh" "src/qux.ts must select the Bun unit-test wrapper"
 assert_contains "$out" "2/2 passed" "src/qux.ts must select exactly its two tests, not widen"
+assert_eq "$(bun_selection)" "misc.test.ts qux.test.ts" "src/qux.ts must narrow the wrapper to the Bun test naming it plus the subject-less test"
 git -C "$tsrepo" checkout -q -- src/qux.ts
 
-printf 'export const v = 2;\n' >>"$tsrepo/src/util.ts"
+printf 'export const u = 2;\n' >"$tsrepo/src/util.ts"
 res="$(run_runner --changed "$tsrepo/tests/sh")"
 rc="${res%%|*}"; out="${res#*|}"
 assert_eq "$rc" "0" "--changed on an imported src module must still be green"
 assert_contains "$out" "RUNNING ac-qux.test.sh" "an imported src module must select its importer's entry test"
 assert_contains "$out" "2/2 passed" "an imported src module must narrow to its importers' tests plus the wrapper"
+assert_eq "$(bun_selection)" "misc.test.ts qux.test.ts util.test.ts" "an imported src module must narrow the wrapper to its own Bun tests, its importers' and the subject-less one"
+assert_contains "$out" "narrows src/util.ts by symbol - changed exports: u; importers: src/qux.ts" "the symbol reading names the changed export and the importer it reaches"
 git -C "$tsrepo" checkout -q -- src/util.ts
+
+# SYMBOL NARROWING: an importer counts only when the change reaches an export
+# it imports. A new export nobody imports, or a comment, reaches no importer -
+# the module's own tests alone run; a private helper carries the export that
+# calls it; a line outside every declaration reads the module whole.
+printf 'export const u = 1;\nexport const v = 2;\n' >"$tsrepo/src/util.ts"
+res="$(run_runner --changed "$tsrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed on an export no importer uses must still be green"
+assert_contains "$out" "1/1 passed" "an export no importer uses must select the module's own wrapper alone, not the importer's test"
+assert_eq "$(bun_selection)" "misc.test.ts util.test.ts" "an export no importer uses must leave the importer's Bun test out of the wrapper's selection"
+assert_contains "$out" "narrows src/util.ts by symbol - changed exports: v; importers:" "the symbol reading names the new export and no importer"
+printf '// a comment on u\nexport const u = 1;\n' >"$tsrepo/src/util.ts"
+res="$(run_runner --changed "$tsrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_contains "$out" "1/1 passed" "a comment-only change must reach no importer"
+assert_eq "$(bun_selection)" "misc.test.ts util.test.ts" "a comment-only change must leave the importer's Bun test out"
+printf 'function h(): number {\n  return `\nfunction notADeclaration() {\n`.length;\n}\nexport const u = h();\n' >"$tsrepo/src/util.ts"
+git -C "$tsrepo" add -A
+git -C "$tsrepo" commit -q -m "u through a private helper holding a col-0 template line"
+printf 'function h(): number {\n  return `\nfunction notADeclaration() {\n`.length + 1;\n}\nexport const u = h();\n' >"$tsrepo/src/util.ts"
+res="$(run_runner --changed "$tsrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_contains "$out" "2/2 passed" "a private helper's change must carry the export calling it to that export's importer"
+assert_contains "$out" "changed exports: u; importers: src/qux.ts" "the helper's change must be attributed through the export, not to the template's col-0 line"
+assert_eq "$(bun_selection)" "misc.test.ts qux.test.ts util.test.ts" "the helper's change must reach the importer's Bun test"
+printf 'void 0;\n' >>"$tsrepo/src/util.ts"
+res="$(run_runner --changed "$tsrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_contains "$out" "2/2 passed" "a changed line outside every declaration must read the module whole - every importer counts"
+assert_contains "$out" "reads src/util.ts whole - line 7 of the tree file is outside every top-level declaration" "the whole-module fallback names the line it could not attribute"
+git -C "$tsrepo" checkout -q -- src/util.ts
+
+# A changed module that imports another changed module, directly or through
+# unchanged ones, is read whole: the other change reaches it through its
+# imports, which its own changed declarations never mention.
+printf 'export const b = 2;\n' >"$tsrepo/src/base.ts"
+printf 'export const z = 0;\n' >>"$tsrepo/src/top.ts"
+res="$(run_runner --changed "$tsrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed on two changed modules on one import chain must still be green"
+assert_contains "$out" "reads src/top.ts whole - it imports src/base.ts, which also changed" "a changed module importing a changed module through an unchanged one must be read whole, naming that module"
+assert_contains "$out" "narrows src/base.ts by symbol - changed exports: b; importers: src/mid.ts" "the chain's base still narrows by symbol"
+assert_eq "$(bun_selection)" "leaf.test.ts misc.test.ts" "the base change must reach the leaf's Bun test through the whole-read top module"
+git -C "$tsrepo" checkout -q -- src/base.ts src/top.ts
 
 printf '// touched\n' >>"$tsrepo/tests/ts/util.test.ts"
 res="$(run_runner --changed "$tsrepo/tests/sh")"
@@ -586,6 +740,7 @@ rc="${res%%|*}"; out="${res#*|}"
 assert_eq "$rc" "0" "--changed on a tests/ts/*.test.ts change must still be green"
 assert_contains "$out" "RUNNING src.test.sh" "a changed Bun unit test must select its wrapper"
 assert_contains "$out" "1/1 passed" "a changed Bun unit test must select only the wrapper"
+assert_eq "$(bun_selection)" "util.test.ts" "a changed Bun unit test must narrow the wrapper to itself alone"
 git -C "$tsrepo" checkout -q -- tests/ts/util.test.ts
 
 printf 'export const q = 2;\n' >>"$tsrepo/src/pth.ts"
@@ -595,6 +750,7 @@ assert_eq "$rc" "0" "--changed on a module other scripts start must still be gre
 assert_contains "$out" "RUNNING ac-check.test.sh" "src/pth.ts must select the test of a script that runs a mode of it"
 assert_contains "$out" "RUNNING ac-audit.test.sh" "src/pth.ts must select EVERY starting script's test"
 assert_contains "$out" "3/3 passed" "src/pth.ts must select exactly the wrapper and its starters' tests, not widen"
+assert_eq "$(bun_selection)" "check.test.ts misc.test.ts" "a module with no importing Bun test must still narrow to the test naming its starter plus the subject-less one"
 git -C "$tsrepo" checkout -q -- src/pth.ts
 
 # A starting script with no colocated test is unknown blast radius: widen,
@@ -610,6 +766,7 @@ rc="${res%%|*}"; out="${res#*|}"
 assert_eq "$rc" "0" "--changed widened by an untested starter must still be green"
 assert_contains "$out" "6/6 passed" "a module started by a script with no colocated test must WIDEN to the full set"
 assert_contains "$out" "src/pth.ts is started by a bin script that has no colocated test" "the widen reason must name the starter mechanism, not claim the module itself lacks a test"
+assert_eq "$(bun_selection)" "" "a widened run must hand the wrapper NO selection - every Bun test runs"
 git -C "$tsrepo" checkout -q -- src/pth.ts
 
 # ...and still widens once another module imports it, making it a shared
@@ -623,6 +780,60 @@ rc="${res%%|*}"; out="${res#*|}"
 assert_contains "$out" "6/6 passed" "an imported module with an untested starter must WIDEN, not narrow to its importers"
 assert_contains "$out" "src/pth.ts is started by a bin script that has no colocated test" "the imported module's widen names the starter mechanism too"
 git -C "$tsrepo" checkout -q -- src/pth.ts
+
+# The real wrapper runs the Bun tests AC_SRC_TESTS names and says how many of
+# the whole it ran; a name it cannot find is a runner defect, refused loudly
+# rather than read as "run everything" or as nothing.
+out="$(AC_SRC_TESTS="home-seed.test.ts" bash "$ROOT/tests/sh/src.test.sh" 2>&1)" && rc=0 || rc=$?
+assert_eq "$rc" "0" "the wrapper narrowed to one real Bun test must be green"
+case "$out" in
+  *"src.test.sh: 1 of "*" Bun tests"*) ;;
+  *) fail "the wrapper must say it ran 1 of N Bun tests, got: $(printf '%s' "$out" | tail -n 3)" ;;
+esac
+out="$(AC_SRC_TESTS="no-such.test.ts" bash "$ROOT/tests/sh/src.test.sh" 2>&1)" && rc=0 || rc=$?
+assert_eq "$rc" "2" "an unknown Bun test name must be refused, not widened or dropped"
+assert_contains "$out" "no-such.test.ts" "the refusal names the unknown test"
+
+# --- --changed: dashboard/*.ts selects the suites that run the dashboard -----
+#
+# The dashboard's Bun tests run through tests/sh/dashboard.test.sh, the real
+# app.ts boots under the ac-dashboard.sh split-map suites, and
+# ac-contract.test.sh runs lib.ts's backlog-contract twin. A changed Bun test
+# beside the modules selects its wrapper alone, as tests/ts/*.test.ts does.
+dashrepo="$TMP/fixture-changed-dashboard"
+mkdir -p "$dashrepo/dashboard" "$dashrepo/tests/sh"
+git -C "$dashrepo" init -q
+git -C "$dashrepo" config user.email test@test
+git -C "$dashrepo" config user.name test
+printf 'export const a = 1;\n' >"$dashrepo/dashboard/app.ts"
+printf 'import { a } from "./app.ts";\n' >"$dashrepo/dashboard/app.test.ts"
+for t in dashboard ac-contract ac-dashboard-daemon ac-review ac-review-reply ac-other; do
+  printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\npass\n' "$ROOT" >"$dashrepo/tests/sh/$t.test.sh"
+done
+chmod +x "$dashrepo"/tests/sh/*.test.sh
+git -C "$dashrepo" add -A
+git -C "$dashrepo" commit -q -m baseline
+
+printf 'export const b = 2;\n' >>"$dashrepo/dashboard/app.ts"
+res="$(run_runner --changed "$dashrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed on a dashboard/*.ts change must still be green"
+for t in dashboard ac-contract ac-dashboard-daemon ac-review ac-review-reply; do
+  assert_contains "$out" "RUNNING $t.test.sh" "a dashboard module change must select $t.test.sh"
+done
+assert_contains "$out" "5/5 passed" "a dashboard module change must select exactly the dashboard's suites"
+case "$out" in
+  *"RUNNING ac-other.test.sh"*) fail "a dashboard module change must not select the unrelated ac-other.test.sh" ;;
+esac
+git -C "$dashrepo" checkout -q -- dashboard/app.ts
+
+printf '// touched\n' >>"$dashrepo/dashboard/app.test.ts"
+res="$(run_runner --changed "$dashrepo/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "0" "--changed on a dashboard/*.test.ts change must still be green"
+assert_contains "$out" "RUNNING dashboard.test.sh" "a changed dashboard Bun test must select its wrapper"
+assert_contains "$out" "1/1 passed" "a changed dashboard Bun test must select only its wrapper"
+git -C "$dashrepo" checkout -q -- dashboard/app.test.ts
 
 # --- --changed: a clean, fully-committed tree exits non-zero, runs nothing --
 #
@@ -825,5 +1036,30 @@ if kill -0 "$ttyjob" 2>/dev/null; then
 fi
 wait "$ttyjob" 2>/dev/null || true
 assert_contains "$(cat "$TMP/tty.typescript")" "1/1 passed" "the suite that read stdin ran to its verdict"
+
+# --- --changed attributes each red to the change or to HEAD ------------------
+# A red the change did not cause (red at HEAD too) and one it did (green at
+# HEAD) must be told apart, or every pre-existing red reads as the change's.
+attrdir="$TMP/fixture-attr"
+setup_changed_fixture "$attrdir"
+printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\nfail "red at HEAD"\n' "$ROOT" >"$attrdir/tests/sh/ac-foo.test.sh"
+git -C "$attrdir" commit -qam "ac-foo red at HEAD"
+printf '# touched\n' >>"$attrdir/tests/sh/ac-foo.test.sh"
+printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\nfail "red by the change"\n' "$ROOT" >"$attrdir/tests/sh/ac-bar.test.sh"
+printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\nfail "new and red"\n' "$ROOT" >"$attrdir/tests/sh/ac-new.test.sh"
+chmod +x "$attrdir/tests/sh/ac-new.test.sh"
+res="$(run_runner --changed "$attrdir/tests/sh")"
+rc="${res%%|*}"; out="${res#*|}"
+assert_eq "$rc" "1" "three red suites are still a red run"
+assert_contains "$out" "0/3 passed" "the three changed suites ran and all failed"
+assert_contains "$out" "run-suite: ac-foo.test.sh is red at HEAD too (pre-existing)" "a suite red before the change is attributed to HEAD"
+assert_contains "$out" "run-suite: ac-bar.test.sh is green at HEAD - the change introduced this red" "a suite the change turned red is attributed to the change"
+assert_contains "$out" "run-suite: ac-new.test.sh has no HEAD version - the change introduced this red" "a new suite is the change's"
+[ "$(git -C "$attrdir" worktree list --porcelain | grep -c '^worktree ')" = 1 ] || fail "the HEAD worktree the attribution used must be removed afterwards"
+res="$(run_runner "$attrdir/tests/sh")"
+out="${res#*|}"
+if grep -E '^run-suite: ac-.*HEAD' <<<"$out" >/dev/null; then
+  fail "attribution runs only under --changed, where HEAD is the base"
+fi
 
 pass

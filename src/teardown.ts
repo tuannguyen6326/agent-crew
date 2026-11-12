@@ -1,10 +1,10 @@
 // teardown.ts - fail-closed teardown of one finished task id. The entry is
 // bin/ac-teardown.sh (a shim that starts this file through bin/ac-bun.sh);
-// THIS header is the authoritative spec, and the bash original it replaced
-// stays frozen at tests/fixtures/ac-teardown.sh as the oracle the
-// differential leg of tests/sh/ac-teardown.test.sh holds this module to.
+// THIS header is the authoritative spec, and tests/sh/ac-teardown.test.sh is
+// its contract test.
 //
 // Usage: ac-teardown.sh <id> [--force] [--pr-ready '<the captain acceptance>']
+//                            [--ci-override '<why CI need not be green>']
 //                            [--no-lesson '<why>'] [--no-fact '<why>']
 //
 // It refuses to destroy evidence of unlanded work. Without --force it
@@ -37,7 +37,15 @@
 // status - lands the task; the merge stays the captain's own act. It requires
 // a recorded PR (ac-pr-check.sh), a clean worktree, a readable ledger, and no
 // OPEN backlog row blocked-by this task: a dependent starts from the merged
-// tree, so a depended-on task lands only by the real merge.
+// tree, so a depended-on task lands only by the real merge. It also requires
+// the recorded ci= to be green or pending, or a key-less meta recorded before
+// this check existed (today's behavior, unchanged) - ciGateRefusal. A
+// none/failing ci= refuses unless --ci-override '<why>' carries the
+// captain's own explicit acknowledgement (the same shape as --pr-ready
+// itself), or, for none alone, the repo's captain-owned
+// projects/<name>.yaml declares `ci: none` (never read from the repo
+// itself) - mirroring no-mistakes' trusted no_ci; a real failure is never
+// excused that way.
 // --force means "the captain explicitly discards this work".
 // A kind=self slice (a chief self task or a SOLO session's slice) also owes
 // its KNOWLEDGE LOOP at landing, and the teardown is the machine behind that
@@ -55,18 +63,6 @@
 // line it prints, WARNing when it fails. --force skips all of it: a discarded
 // slice owes nothing.
 //
-// ESCAPE HATCH. Every landing ends here - the solo
-// session's slices, every crewmate, verifier and chief, on both fleets. If a
-// landed change breaks this module, run the frozen original from a scratch
-// bin/:
-//   o=$(mktemp -d); mkdir "$o/bin"; cp bin/*.sh "$o/bin/"
-//   ln -s "$PWD/src" "$o/src"; ln -s "$PWD/dashboard" "$o/dashboard"
-//   cp tests/fixtures/ac-teardown.sh "$o/bin/ac-teardown.sh"
-// then "$o/bin/ac-teardown.sh" <id> [flags]: its bin dir is $o/bin, so it
-// drives the copy's ac-tree shim (through the src link), ac-learn, ac-room,
-// ac-qa and ac-pane-agent, and its hints name $o/bin. The captain's revert of
-// the land is the last resort.
-//
 // --- the run, in order (AUTHORITATIVE) ---
 // PREAMBLE. The ambient backend ladder is checked first, as sourcing
 // ac-backend.sh did (backendName: an invalid AC_BACKEND or config/backend is
@@ -74,11 +70,14 @@
 // were removed 2026-07-17)`, exit 1), then `ERROR: required tool not found:
 // git`. The FIRST word is always the id: none or '' is `ERROR: usage:
 // ac-teardown.sh <id> [--force] [--pr-ready '<the captain acceptance>']
-// [--no-lesson '<why>'] [--no-fact '<why>']` (one line, exit 1; `-h` is an
-// id). Then --force; --pr-ready/--no-lesson/--no-fact take the next word,
+// [--ci-override '<why CI need not be green>'] [--no-lesson '<why>']
+// [--no-fact '<why>']` (one line, exit 1; `-h` is an id). Then --force;
+// --pr-ready/--ci-override/--no-lesson/--no-fact take the next word,
 // whatever it is (W2), and refuse an absent or empty one: `ERROR: --pr-ready
 // carries the captain's acceptance words - they are the proof, so an empty
-// value is refused`, `ERROR: --no-lesson carries why the slice learned
+// value is refused`, `ERROR: --ci-override carries the captain's
+// acknowledgement that CI did not verify this PR - it is the record, so an
+// empty value is refused`, `ERROR: --no-lesson carries why the slice learned
 // nothing new - it is the record, so an empty value is refused`, `ERROR:
 // --no-fact carries why the slice verified no repo fact - it is the record,
 // so an empty value is refused`; repeats last-wins; any other word is
@@ -87,11 +86,13 @@
 // entered physically and state/ minted. No regular file state/<id>.meta is
 // `ERROR: no crewmate meta for <id>`; an unreadable one is `WARN: cannot read
 // meta file <meta>`, exit 1. Read: kind, worktree, worktree_backend, leases
-// (empty: worktree= is the list), lease_ids, project_dir. With
+// (empty: worktree= is the list), lease_ids, project_dir, lease_base. With
 // worktree_backend=orca the orca worktree leaves leases (the whole list when
 // it is the only one, else its `<wt>:` prefix) and its id slot is popped from
 // lease_ids ONLY when both lists hold as many `:` (a legacy list is one id
-// short and keeps every id). The branch is crew/<family>. AC_BACKEND becomes
+// short and keeps every id). lease_base (spawn.ts: an explicit --base-branch)
+// is absent on every meta that never named one - older tasks and herdr leases
+// read exactly as before. The branch is crew/<family>. AC_BACKEND becomes
 // the meta's backend= (herdr without one) for every child and backend call -
 // validated only at the pane kill (W6). stdin is never read. Every ERROR is
 // on stderr, exit 1; every WARN is on stderr.
@@ -151,7 +152,18 @@
 //   below; one that is gone holds nothing. Then --pr-ready's preconditions,
 //   each its own ERROR:
 //   `--pr-ready with no recorded PR for <id> - record it first
-//   (bin/ac-pr-check.sh <id> <url>)`; `--pr-ready refused: the worktree holds
+//   (bin/ac-pr-check.sh <id> <url>)`; THE CI GATE next, ciGateRefusal -
+//   `--pr-ready refused: no CI
+//   check verified the PR - acknowledge it explicitly with --ci-override
+//   '<why>', or re-record once checks register (bin/ac-pr-check.sh <id>
+//   <url>)` for ci=none (unless the repo's projects/<name>.yaml declares
+//   `ci: none`), or `--pr-ready refused: the recorded CI run failed -
+//   acknowledge it explicitly with --ci-override '<why>', or fix it and
+//   re-record (bin/ac-pr-check.sh <id> <url>)` for ci=failing (the `ci: none`
+//   declaration never excuses this one) - either passed with --ci-override
+//   '<why>'; ci=pending and a meta recorded before this gate existed (no
+//   ci= key at all) are untouched, today's behavior. Then `--pr-ready
+//   refused: the worktree holds
 //   uncommitted work the accepted PR cannot contain - commit and push it
 //   (then re-record the PR head), or discard it deliberately, before the
 //   acceptance lands:` and the status lines (`--pr-ready refused: <the
@@ -185,8 +197,7 @@
 //   (<12>) and nothing landed contains it; move <branch> to it and land that,
 //   or --force to discard`. Each of the three dirty refusals whose porcelain
 //   is all `??` lines adds `untracked only, no tracked edits: <path>, ...`,
-//   at most ten paths then ` (+<n> more)` (UNTRACKED-ONLY, named: the
-//   original said only that the tree is dirty). The branch head is
+//   at most ten paths then ` (+<n> more)`. The branch head is
 //   refs/heads/<branch> in project_dir, else in the worktree (git's own
 //   stderr passes). "Landed", in
 //   order: pr_merged=1 with no pr_merged_head, or a head it contains;
@@ -238,7 +249,7 @@
 //    config/herdr-session>], orca `orca terminal close --terminal <field 1>`
 //    (unreachable, W19) - and `<iso> warn: pane close failed - handle <h>;
 //    close by hand: <cmd>` appended to the ARCHIVED status and the timeline.
-//    TOKEN LEDGER (named: the original recorded no spend), then, for every
+//    TOKEN LEDGER, then, for every
 //    kind but self (no agent ran): rows appended to records/task-tokens.tsv
 //    (a header line `at id kind harness model input cache_creation
 //    cache_read output`, tab-separated, written first when the file is
@@ -273,17 +284,33 @@
 //    port-slot release, then orcaWorktreeRelease, else `WARN: could not
 //    remove orca worktree <wt> (remove by hand: orca worktree rm --worktree
 //    path:<wt> --force)`.
-// 7. BRANCH DROP (the same kinds): with no project_dir recorded (only a
-//    forced run gets here) `WARN: no project_dir recorded for <id> - <branch>
-//    was not looked for; drop it by hand in the repository that holds it`;
-//    else only while refs/heads/<branch> exists in project_dir: `git branch
-//    -d`, or -D when the epic fence names a branch (heads, then origin)
-//    containing it; a fence ledger it cannot read is `WARN: cannot read the
-//    ledger to resolve the epic-branch fence for <id> - <branch> is deleted
-//    only if -d proves it merged`. A refusal is `WARN: kept <branch> in
-//    <project_dir>: <git's whole text> - reclaim: <git branch -D <branch> |
-//    free it from that worktree, then git branch -D <branch>>`, the second
-//    while `worktree list --porcelain` holds `branch refs/heads/<branch>`.
+// 7. BRANCH DROP (the same kinds): with no project_dir recorded (only a forced
+//    run gets here) `WARN: no project_dir recorded for <id> - <branch> was not
+//    looked for; drop it by hand in the repository that holds it`; else only
+//    while refs/heads/<branch> exists in project_dir: with
+//    worktree_backend=orca, worktree set, a release that was attempted and did
+//    NOT fail (skipped because the dir was already gone counts as not-failed
+//    too), and git's OWN `worktree list --porcelain` still naming the path -
+//    directory gone or not, ordering unproven either way (orca worktree rm
+//    --help says only "Remove a worktree from Orca and git") - `git worktree
+//    remove --force <wt>` first (best effort): the task's landed-work gate
+//    already ran, so nothing here is unproven to discard. A release that
+//    attempted and FAILED is left alone - its own WARN already fired, nothing
+//    second-guesses it. Then: `git branch -d`, or -D when the epic fence names a
+//    branch (heads, then origin) containing it, OR - only with NO fence
+//    recorded at all (not even an unreadable ledger) and the meta's lease_base
+//    (an explicit --base-branch) naming a DIFFERENT branch than <branch> itself
+//    - lease_base containing it (heads, then origin): a 0-commit branch cut
+//    from a base the primary's own HEAD never covers is proven merged there
+//    instead, never when it carries a commit the base does not, and never when
+//    the base IS the family's own branch (isAncestor(x,x) is always true, which
+//    would -D a live sibling's unlanded work). A fence ledger it cannot read is
+//    `WARN: cannot read the ledger to resolve the epic-branch fence for <id> -
+//    <branch> is deleted only if -d proves it merged` (true even with a
+//    recorded lease_base). A refusal is `WARN: kept <branch> in <project_dir>:
+//    <git's whole text> - reclaim: <git branch -D <branch> | free it from that
+//    worktree, then git branch -D <branch>>`, the second while `worktree list
+//    --porcelain` holds `branch refs/heads/<branch>`.
 // 8. QA-INFRA SWEEP, when docker is on PATH, in each sweep dir that is a
 //    directory: the task's project_dir; for a roomchief, whose own is the
 //    distro root, each distinct project_dir (byte order) recorded at
@@ -345,75 +372,28 @@
 // already gone (<f>)`; then removed. Every step of the sweep is best-effort -
 // none of them changes the exit status or the gate.
 //
-// AT PARITY (each pinned in the leg): W6 the
-// task backend validated only at the pane kill, after the archive.
-// Reproduced too: W1 (the id is always the first word), W2 (a value flag
-// swallows the next word), W3 (--force --pr-ready records both), W16 (the
-// named member is the first in byte order), W18 (an unreachable herdr reads
-// as a stale handle), W19 (the orca close never fails), W20 (a held registry
-// lock leaves the row, silently), W21.
+// KNOWN WARTS, kept as they are: W1 (the id is always the first word), W2
+// (a value flag swallows the next word), W3 (--force --pr-ready records
+// both), W6 (the task backend validated only at the pane kill, after the
+// archive), W16 (the named member is the first in byte order), W18 (an
+// unreachable herdr reads as a stale handle), W19 (the orca close never
+// fails), W20 (a held registry lock leaves the row, silently), W21 (an
+// ambiguous task dir prints taskDir's ERROR and refuses).
 //
-// DIVERGENCES from the original (the leg names each one a row can show):
-// - READS FAIL CLOSED (the dossier's routed slice): a
-//   worktree or lease git cannot read refuses at the gate, where the
-//   original read it clean and an orca worktree rm then took its files
-//   (W8); a meta with no project_dir refuses, and forced looks for the
-//   branch nowhere, where the original read and dropped the caller's cwd
-//   repo (W7); an unreadable run.meta leaves that run and the sweep goes on,
-//   where the original ended mid-sweep, its lease held and its branch kept
-//   (W13).
-// - A VERIFIER'S WHOLE RECORD (the dossier's routed W11 and W12): a
-//   verifier's status is archived beside its meta and its watcher stamps are
-//   reaped, swept or direct, where the original left the status always and
-//   a swept verifier's stamps too; and a re-archived verifier's LATEST takes
-//   the fixed slot, the prior moved to its stamped dir, where the original
-//   kept the oldest there.
-// - THE REAP'S BACKEND (the dossier's routed W10): a pane file is reaped
-//   when the binary of the backend reap-pane resolves is on PATH, where the
-//   original asked for herdr whatever the backend - an orca task's teardown
-//   without herdr kept every pane open and its record, and one with herdr
-//   but no orca had reap-pane read the unreachable terminal as closed, so
-//   the record was dropped.
-// - THE QA SCOPE (the dossier's routed W14 and W15): a roomchief sweeps in
-//   its family's own projects, where the original swept under the distro
-//   root, a scope its family's stacks never carry, so none went down; and a
-//   crewdeputy sweeps nothing, where the original swept its home and warned
-//   a false docker failure.
-// - THE LOOP'S RECORD (the dossier's routed W4 and W5): the waivers are
-//   written only once the knowledge-loop check passes, where the original
-//   wrote them at every refused attempt too; and the tick's every line is
-//   recorded and its failure WARNed, where the original kept its last line
-//   and dropped its status.
-// - BUN: the shim refuses `ERROR: required tool not found: bun`, exit 1,
-//   before anything durable, where the original archived, killed the pane
-//   and completed with three WARNs (W22).
-// - SHELL-OWN STDERR is not reproduced (`ac-lib.sh: line N: <status>:
-//   Permission denied` and its kin); exit statuses are kept.
-// - EXCLUSIVE TEMPS: incomplete-run.md.tmp.<pid> and port-slots.tsv.tmp.<pid>
-//   are created exclusively (the next .<n> past a name taken) and keep the
-//   record's mode; the original wrote through whatever sat at the name.
-// - ORDER: state/*.meta and the run dirs are walked in byte order; under a
-//   UTF-8 locale the original's glob followed collation (W16).
-// - The epic fence reads the ledger in-process, so the original's bun-missing
-//   arm of it is unreachable.
-// - No eval: the qa sweep's signal evidence names the id as text, where the
-//   original's trap string evaluated it (W17).
-// - THE QA BOUND KILLS THE GROUP: past the bound the sweep's child and
-//   everything it started (the docker client) are TERMed then KILLed, where
-//   the original killed only its subshell and orphaned the grandchild.
-// - stdin: every child reads the caller's stdin, where the original's
-//   children inside its read loops read the loop's input (the remaining lease
-//   list) and its qa subshell, a background job, read /dev/null.
-// - HOME RESOLUTION: an AC_HOME that cannot be entered is `ERROR: AC_HOME is
-//   not a readable directory: <h>`.
-// - A caller whose cwd has no name resolves no relative path (an empty
-//   project_dir included) and says nothing of it, where the original's gits
-//   printed `fatal: Unable to read current working directory`.
-// - Bytes: argv arrives decoded (U+FFFD for a byte that is not UTF-8), and a
-//   meta value reaches a child's argv the same way.
-// - date(1)'s own stderr on the knowledge-loop record append passes, where
-//   the original dropped that append's stderr; only a date that fails says
-//   anything.
+// Also: incomplete-run.md.tmp.<pid> and port-slots.tsv.tmp.<pid> are created
+// exclusively (the next .<n> past a name taken) and keep the record's mode.
+// Past the qa bound the sweep's child and everything it started (the docker
+// client) are TERMed then KILLed, and the signal evidence names the id as
+// text, never evaluated. Every child reads the caller's stdin. An AC_HOME
+// that cannot be entered is `ERROR: AC_HOME is not a readable directory:
+// <h>`. A caller whose cwd has no name resolves no relative path (an empty
+// project_dir included) and says nothing of it. Argv arrives decoded (U+FFFD
+// for a byte that is not UTF-8), and a meta value reaches a child's argv the
+// same way. date(1)'s own stderr on the knowledge-loop record append passes.
+// A passed --ci-override is recorded on the status (`ci override
+// acknowledged: <words>`) ahead of the `done:` line. With no bun on PATH the
+// shim refuses `ERROR: required tool not found: bun`, exit 1, before anything
+// durable.
 //
 // CALLERS: none executes it from code - the crewchief at landing (the
 // task-lifecycle skill), roomchiefs and solo chiefs for their members and
@@ -450,22 +430,22 @@ import {
   nowRaw,
   orcaWorktreeRelease,
   physicalDir,
-  portSlotRelease,
+  projectConfigFile,
   require,
   runBounded,
   shellStatus,
   softSubdir,
-  soloLandingCheck,
   spawnShellSync,
   statusAppend,
   statusTimelineMirror,
   taskBackend,
   taskDir,
-  taskStamps,
   warn,
   worktreeStatus,
   writeAll,
+  yamlGet,
 } from "./lib.ts";
+import { portSlotRelease, soloLandingCheck, taskStamps } from "./lib-teardown.ts";
 
 // Byte strings (latin1) carry what the bash held as bytes; argv and the lib's
 // paths are UTF-8 strings and cross over here.
@@ -686,6 +666,26 @@ export function transcriptTokens(texts: string[]): Map<string, number[]> {
   return new Map([...out.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 }
 
+// --pr-ready's CI GATE.
+// ci= is src/pr-check.ts's classifyCi reading of the PR's statusCheckRollup;
+// only none (nothing has verified the PR) and failing (a real run failed)
+// refuse - pending and an older meta's absent key keep today's behavior
+// (never checked here). none alone passes once the repo's own
+// projects/<name>.yaml declares `ci: none` (the captain's trusted
+// declaration that this repo runs no CI, mirroring no-mistakes'
+// internal/pipeline/steps/ci.go no_ci); failing is never excused that way -
+// a config only says a repo has no checks, never that a real failure is
+// fine. Short of that, --ci-override '<words>' is the captain's own
+// explicit acknowledgement, the same shape as --pr-ready itself.
+export function ciGateRefusal(id: string, ci: string, override: string, projectDeclaresNoCi: boolean): string | null {
+  if (ci !== "none" && ci !== "failing") return null;
+  if (ci === "none" && projectDeclaresNoCi) return null;
+  if (override !== "") return null;
+  return ci === "none"
+    ? `--pr-ready refused: no CI check verified the PR - acknowledge it explicitly with --ci-override '<why>', or re-record once checks register (bin/ac-pr-check.sh ${id} <url>)`
+    : `--pr-ready refused: the recorded CI run failed - acknowledge it explicitly with --ci-override '<why>', or fix it and re-record (bin/ac-pr-check.sh ${id} <url>)`;
+}
+
 function recordTokens(sd: string, id: string, kind: string, harness: string, sid: string): void {
   const file = `${sd.slice(0, sd.lastIndexOf("/"))}/records/task-tokens.tsv`;
   const date = run(["date", "-u", "+%Y-%m-%dT%H:%M:%SZ"], { stdin: "ignore", out: "pipe" });
@@ -736,9 +736,10 @@ async function main(): Promise<void> {
 
   const argv = entered.args.map(b8);
   const id = argv[0] ?? "";
-  if (id === "") fail("usage: ac-teardown.sh <id> [--force] [--pr-ready '<the captain acceptance>'] [--no-lesson '<why>'] [--no-fact '<why>']");
+  if (id === "") fail("usage: ac-teardown.sh <id> [--force] [--pr-ready '<the captain acceptance>'] [--ci-override '<why CI need not be green>'] [--no-lesson '<why>'] [--no-fact '<why>']");
   let force = false;
   let prReady = "";
+  let ciOverride = "";
   let noLesson = "";
   let noFact = "";
   for (let i = 1; i < argv.length; ) {
@@ -749,6 +750,10 @@ async function main(): Promise<void> {
     } else if (a === "--pr-ready") {
       prReady = argv[i + 1] ?? "";
       if (prReady === "") fail("--pr-ready carries the captain's acceptance words - they are the proof, so an empty value is refused");
+      i += 2;
+    } else if (a === "--ci-override") {
+      ciOverride = argv[i + 1] ?? "";
+      if (ciOverride === "") fail("--ci-override carries the captain's acknowledgement that CI did not verify this PR - it is the record, so an empty value is refused");
       i += 2;
     } else if (a === "--no-lesson") {
       noLesson = argv[i + 1] ?? "";
@@ -791,6 +796,7 @@ async function main(): Promise<void> {
     }
   }
   const projectDir = pget("project_dir");
+  const leaseBase = pget("lease_base");
   const branch = b8(crewBranch(u8(id)));
   process.env.AC_BACKEND = u8(cutNul(taskBackend(u8(id)))) || "herdr";
 
@@ -910,8 +916,19 @@ async function main(): Promise<void> {
     return null;
   };
 
+  // The repo's own trusted declaration (never read from the repo itself -
+  // `ci: none` only counts from the captain-owned projects/<name>.yaml).
+  const ciNoneDeclared = (): boolean => {
+    const file = projectConfigFile(projectDir, true);
+    if (file === null) return false;
+    return yamlGet(file, "ci", true).out.replace(/\n+$/, "") === "none";
+  };
+
   const prReadyPreconditions = (): void => {
     if (mget(meta, "pr") === "") fail(`--pr-ready with no recorded PR for ${id} - record it first (bin/ac-pr-check.sh ${id} <url>)`);
+    const ci = mget(meta, "ci");
+    const ciRefusal = ciGateRefusal(id, ci, ciOverride, ci === "none" && ciNoneDeclared());
+    if (ciRefusal !== null) fail(ciRefusal);
     const status = dirtyOf(worktree);
     if (status === null) fail(`--pr-ready refused: ${unreadable(worktree)}`);
     const dirty = status.replace(/\n+$/, "");
@@ -1274,6 +1291,7 @@ async function main(): Promise<void> {
     must(["mv", `${archive}/meta`, `${prior}/meta`]);
     if (isFile(`${archive}/status`)) must(["mv", `${archive}/status`, `${prior}/status`]);
   }
+  if (prReady !== "" && ciOverride !== "") append(`ci override acknowledged: ${ciOverride}`);
   if (prReady !== "") append(`done: captain accepted the ready-to-merge PR - ${prReady}`);
   append(`resolved: teardown${force ? " (forced)" : ""}`);
   must(["mv", meta, `${archive}/meta`]);
@@ -1332,14 +1350,37 @@ async function main(): Promise<void> {
       } else if (run([`${bin}/ac-tree.sh`, "return", lease, "--force"].map(u8), quiet).status !== 0) say(`could not return worktree ${lease}; check the pool with ac-tree.sh list`);
     }
 
+    let orcaReleaseFailed = false;
     if (wtBackend === "orca" && worktree !== "" && isDir(worktree)) {
       sweepPaneAgents(worktree);
       portSlotRelease(u8(worktree));
-      if (!orcaWorktreeRelease(u8(worktree))) say(`could not remove orca worktree ${worktree} (remove by hand: orca worktree rm --worktree path:${worktree} --force)`);
+      orcaReleaseFailed = !orcaWorktreeRelease(u8(worktree));
+      if (orcaReleaseFailed) say(`could not remove orca worktree ${worktree} (remove by hand: orca worktree rm --worktree path:${worktree} --force)`);
     }
 
     if (projectDir === "") say(`no project_dir recorded for ${id} - ${branch} was not looked for; drop it by hand in the repository that holds it`);
     else if (git(projectDir, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], { out: "ignore" }).status === 0) {
+      // Whether `orca worktree rm` removes the directory before it returns is
+      // NOT established (its own --help: "Remove a worktree from Orca and
+      // git", nothing about ordering) - so this never keys on the directory.
+      // It keys on git's OWN worktree list instead: skipped release (the dir
+      // was already gone - the release block above never ran) or a release
+      // that reported success leaves nothing proven unsafe here (teardown's
+      // landed-work gate already ran for the whole task), so while git still
+      // lists the path - directory gone or not - `git worktree remove
+      // --force` clears it with no race to time. Only a release that
+      // ATTEMPTED and FAILED is left alone: that WARN already fired above,
+      // and nothing here second-guesses orca's own refusal.
+      if (
+        wtBackend === "orca" &&
+        worktree !== "" &&
+        !orcaReleaseFailed &&
+        git(projectDir, ["worktree", "list", "--porcelain"], { out: "pipe" })
+          .out.toString("latin1")
+          .split("\n")
+          .includes(`worktree ${worktree}`)
+      )
+        git(projectDir, ["worktree", "remove", "--force", worktree], quiet);
       let flag = "-d";
       const e = epicBaseFor(u8(id), u8(basename(projectDir)));
       if (e.rc === 2) say(`cannot read the ledger to resolve the epic-branch fence for ${id} - ${branch} is deleted only if -d proves it merged`);
@@ -1347,6 +1388,20 @@ async function main(): Promise<void> {
         const eb = e.entry.split(" ")[0]!;
         if (isAncestor(projectDir, `refs/heads/${branch}`, `refs/heads/${eb}`) || isAncestor(projectDir, `refs/heads/${branch}`, `refs/remotes/origin/${eb}`)) flag = "-D";
       }
+      // The recorded --base-branch lease base (spawn.ts: lease_base=): `-d`
+      // proves containment only in the PRIMARY's own HEAD/upstream, so a
+      // 0-commit branch cut from a base that is neither reads as "not fully
+      // merged" with no commit of its own to lose. isAncestor fails the
+      // moment the branch carries a commit the base does not, so a branch
+      // with its own unlanded work is never escalated by this leg. Gated on
+      // e.rc === 1 (no epic fence at all): an agreeing fence already proved
+      // it above, and an UNREADABLE ledger must keep today's fail-closed -d
+      // only, never a second path around it. leaseBase !== branch: a
+      // --base-branch naming the task's OWN family branch (continuing a live
+      // sibling, e.g. a revision) makes isAncestor(branch, branch) trivially
+      // true - without this guard that would -D the WHOLE family branch,
+      // including every commit a sibling has not landed yet.
+      if (flag === "-d" && e.rc === 1 && leaseBase !== "" && leaseBase !== branch && (isAncestor(projectDir, `refs/heads/${branch}`, `refs/heads/${leaseBase}`) || isAncestor(projectDir, `refs/heads/${branch}`, `refs/remotes/origin/${leaseBase}`))) flag = "-D";
       const del = run(["/bin/sh", "-c", 'exec "$0" "$@" 2>&1', "git", "-C", u8(projectDir), "branch", flag, u8(branch)], { out: "pipe" });
       if (del.status !== 0) {
         const held = git(projectDir, ["worktree", "list", "--porcelain"], { out: "pipe" }).out.toString("latin1").split("\n").includes(`branch refs/heads/${branch}`);

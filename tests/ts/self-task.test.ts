@@ -1,6 +1,6 @@
 // self-task.test.ts - the self-task twins of src/lib.ts held to the LIVE bash
-// helpers they twin, each run in the call context the frozen oracle
-// (tests/fixtures/ac-self-task.sh) gives it: familyOwned against
+// helpers they twin, each run in the call context the bash self-task entry
+// gave it: familyOwned against
 // ac_family_owned inside an `if`, and backendWindowNew with errexit false
 // against `( AC_WINDOW_FAMILY="" backend_window_new <id> <dir> ) || ...`, the
 // subshell whose errexit sleeps (bin/ac-backend.sh's herdr arm). Every row

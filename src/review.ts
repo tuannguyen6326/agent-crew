@@ -3,9 +3,8 @@
 // client of the dashboard review API - the DASHBOARD owns sessions, anchors
 // and the viewer (dashboard/app.ts's review block is that contract). The
 // entry is bin/ac-review.sh (a shim that starts this file through
-// bin/ac-bun.sh); THIS header is the authoritative spec, and the bash original
-// it replaced stays frozen at tests/fixtures/ac-review.sh as the oracle the
-// differential leg of tests/sh/ac-review.test.sh holds this module to.
+// bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-review.test.sh is its contract test.
 //
 // Usage (the artifact is an .html OR .md file under the home's artifact roots;
 // an md file reviews as-is - the dashboard renders it and pins carry the
@@ -137,34 +136,25 @@
 // EXIT: 0 per verb above; 1 on a refusal; a spawned tool's status where one
 // is named; 141, silently, when stdout's reader is gone.
 //
-// DIVERGENCES from the original, named in the differential leg:
-//   W1 an AC_HOME cd cannot enter: the entry's line alone, where the shell
-//      printed cd's own line first (the HOME RESOLUTION ruling).
-//   W10 an exported CDPATH: never consulted - the original's `cd` of a
-//      relative directory entered the CDPATH match and captured its echo into
-//      the path (of the artifact, or of a relative AC_HOME).
-//   A path component ending in LF is kept; the original's `$(...)` dropped it
-//      and named a sibling (the HOME RESOLUTION class).
-//   W5 bash's own `<script>: line <n>: 2: parameter null or not set` is now
-//      `<flag> needs a value`, exit 1 alike.
-//   Shell-own and tool-own stderr not reproduced: the test builtin's `[:
-//      <x>: integer expression expected` (W8), head's line for an unreadable
-//      config/dash-port, a failed redirection into the spool.
-//   A BROWSER naming a function of the original's (ac-lib.sh's helpers, req,
-//      post_reply, ac_try_open) RAN it there - ac_die ended the run 1,
-//      nothing launched; the port has no such functions and resolves the
-//      name like any other.
-//   A curl or jq on PATH that is not executable is `not found` here; the
-//      original's `command -v` took it and failed running it.
-//   An executable the kernel refuses (no shebang) runs under /bin/bash as
-//      the shell ran it with itself - the same file, $0 its resolved path;
-//      curl's capture shell is /bin/sh by its absolute path: PATH owes
-//      neither a bash nor an sh.
+// ALSO:
+//   An AC_HOME cd cannot enter is the entry's line alone (the HOME RESOLUTION
+//      ruling).
+//   An exported CDPATH is never consulted - for the artifact's directory or
+//      for a relative AC_HOME.
+//   A path component ending in LF is kept (the HOME RESOLUTION class).
+//   No line of a shell's or a tool's own is printed for the loop's integer
+//      test (W8), an unreadable config/dash-port or a failed write into the
+//      spool.
+//   A BROWSER spelled like a shell function name is a name like any other.
+//   A curl or jq on PATH that is not executable is `not found`.
+//   An executable the kernel refuses (no shebang) runs under /bin/bash - the
+//      same file, $0 its resolved path; curl's capture shell is /bin/sh by
+//      its absolute path: PATH owes neither a bash nor an sh.
 //   argv bytes: a byte that is not UTF-8 reaches Bun's argv as U+FFFD (a
 //      <file> or reply path holding one names nothing; a reply text sends
 //      U+FFFD), and config/dash-port is read as UTF-8 the same way.
 //   A caller cwd with no name: a relative <file>, reply path or AC_HOME names
-//      nothing, as the deleted directory the original looked in held nothing.
+//      nothing.
 //
 // CALLERS: no script runs this entry. Agents run it from crewmate and
 // roomchief panes on the rich-review skill's word (open, poll, reply, end)

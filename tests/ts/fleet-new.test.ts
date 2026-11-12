@@ -3,8 +3,7 @@
 // projectsDir against ac_config_dir and ac_projects_dir (the path printed, the
 // directory minted, the homeless refusal), and the module's untilde against
 // the bash case it replaces. The CLI contract itself - stdin line semantics,
-// prompts, refusals, the seeded tree - is tests/sh/ac-fleet-new.test.sh's,
-// whose differential leg runs the frozen bash original beside the shim.
+// prompts, refusals, the seeded tree - is tests/sh/ac-fleet-new.test.sh's.
 import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";

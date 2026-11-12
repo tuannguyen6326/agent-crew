@@ -2,8 +2,7 @@
 // its LIVE bash original: fleetName against ac_fleet_name, which the bash
 // backend, spawn and lib code still call (the physical home's basename, then
 // AC_FLEET_NAME, then the fixed `agent-crew`). The CLI contract itself is
-// tests/sh/ac-gate-watch.test.sh's, whose differential leg runs the frozen
-// original beside the shim.
+// tests/sh/ac-gate-watch.test.sh's.
 //
 // DISPUTED: the implementation of the fleet name (ac_fleet_name in bin/ac-lib.sh vs fleetName in src/lib.ts)
 // HELD-CONSTANT: one scratch root holding home/, a link to it and no nope/; argv (none); env (PATH the host's, AC_HOME and AC_FLEET_NAME only as a row sets them, HOME and TMPDIR the root); cwd (the distro root); stdin (/dev/null); stdout and the status compared whole, stderr too wherever the shell printed none of its own.

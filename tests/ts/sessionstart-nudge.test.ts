@@ -3,8 +3,7 @@
 // ac_self_tasks_in_flight that bin/ac-session-start.sh keeps calling, run as
 // the nudge ran it (`2>/dev/null || true`, set -u) over one home: the lines,
 // their order, the age spellings and the metas that never count. The hook's
-// own contract is tests/sh/ac-sessionstart-nudge.test.sh, whose leg runs the
-// frozen original.
+// own contract is tests/sh/ac-sessionstart-nudge.test.sh.
 //
 // DISPUTED: the implementation of the listing (ac_self_tasks_in_flight vs src/lib.ts's selfTasksInFlight)
 // HELD-CONSTANT: the home and its metas (bytes and mtimes), PATH (a date stub frozen at one instant ahead of the host's), LC_ALL=C, EPOCHSECONDS unset, the cwd

@@ -1,8 +1,7 @@
 // lock.ts - per-home chief session lock: one fleet-driving session at a time.
 // The entry is bin/ac-lock.sh (a shim that starts this file through
-// bin/ac-bun.sh); THIS header is the authoritative spec, and the bash original
-// it replaced stays frozen at tests/fixtures/ac-lock.sh as the oracle the
-// differential leg of tests/sh/ac-lock.test.sh holds this module to.
+// bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-lock.test.sh is its contract test.
 //
 // Usage: ac-lock.sh acquire | status | release
 //
@@ -59,7 +58,7 @@
 // other ERE-only syntax - is handed to a spawned `grep -qE` with the command
 // line on stdin, so the classification stays grep's (its stderr for an invalid
 // pattern passes through, as it did).
-// THE OWN-PID SKIP (a named divergence that preserves the bash RESULT): the
+// THE OWN-PID SKIP (it preserves the bash RESULT): the
 // walk starts at this process, whose own command line the bash classified too
 // - `bash <path>/ac-lock.sh <verb>`, a shell, never a match. The port's own
 // line is `bun --no-env-file <root>/src/lock.ts <caller cwd> <verb>`, which
@@ -94,9 +93,9 @@
 //     The temp `<lock>.tmp.<pid>` is written whole - `pid=<me>\nsince=<iso>\n`
 //     plus `cmd=<mycmd>\n` when non-empty, <iso> from date(1) through iso() -
 //     so the lock is never observed pid-less; it is removed on every return.
-//     EXCLUSIVE (a named divergence): the temp is created `wx`, the next name
-//     (`<lock>.tmp.<pid>.<n>`) on EEXIST - the bash wrote THROUGH a path
-//     already at that name, a planted symlink's target included.
+//     EXCLUSIVE: the temp is created `wx`, the next name
+//     (`<lock>.tmp.<pid>.<n>`) on EEXIST - a path already at that name, a
+//     planted symlink's target included, is never written through.
 //   - THE ATOMIC CLAIM: link(2) of the temp onto the lock path; it fails with
 //     EEXIST when the target exists, so exactly one racer wins and the winner
 //     is never overwritten. While it fails (ANY failure):
@@ -161,10 +160,8 @@
 //     answers nothing, so the nudge prints - fail-open, unchanged, but the
 //     hook is now transitively bun-dependent (the jev/compact-advise class).
 //
-// NAMED DIVERGENCES from the frozen original, pinned in the differential leg:
-// the own-pid skip and the exclusive temp (above); an AC_HOME that cannot be
-// entered is `ERROR: AC_HOME is not a readable directory: <h>` where the bash
-// printed its own `cd:` line (the HOME RESOLUTION ruling), same exit 1.
+// ALSO: an AC_HOME that cannot be entered is `ERROR: AC_HOME is not a readable
+// directory: <h>` (the HOME RESOLUTION ruling), exit 1.
 import { linkSync, mkdirSync, rmdirSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { die, enterCaller, HARNESS_RE, iso, metaGet, pidAlive, spawnShellSync, stateDir, warn } from "./lib.ts";
 

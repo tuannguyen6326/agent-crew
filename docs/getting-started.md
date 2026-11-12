@@ -29,7 +29,7 @@ It prints one line per tool:
 | `INERT:` | A newer copy sits later on `PATH` than the one that answers; diagnostic only. |
 | `CHECK-FAILED:` | The copy on `PATH` did not report a parseable version; diagnostic only. |
 
-Required: `git` (floor 2.15.0), `jq` (floor 1.6), `bun` (floor 1.3.5; the TypeScript under `src/` runs on it - the ported `bin/` entries and the helpers other `bin/` scripts start), `gh`, and the CLI of the fleet's configured session backend - `herdr` (floor 0.8.0, the default) or `orca`.
+Required: `git` (floor 2.15.0), `jq` (floor 1.6), `bun` (floor 1.4.4; the TypeScript under `src/` runs on it - the ported `bin/` entries and the helpers other `bin/` scripts start), `gh`, and the CLI of the fleet's configured session backend - `herdr` (floor 0.8.0, the default) or `orca`.
 Optional: `node`, `docker`, `shellcheck`.
 Pass `--quiet` to print problems only.
 
@@ -71,7 +71,7 @@ An empty answer writes no file, and the reader's default applies:
 | `gate-agent` | Design-gate judge engine: `codex`, `claude`, or `off`. | `codex` |
 | `gate-model`, `gate-effort` | The judge's model and effort. | The engine picks. |
 | `promote` | Roomchief promotion: `always`, `auto`, or `never`. | `always` |
-| `flow` | Task flow: `auto`, `direct`, or `staged`. | `auto` |
+| `flow` | Task flow: `auto`, `direct`, or `staged` (`sdlc` is written into `config/flow` by hand; see [configuration.md](configuration.md)). | `auto` |
 
 It also asks whether to seed a per-fleet `CREWMATE.md` from `docs/examples/CREWMATE.md`.
 It writes `config/backend` as `herdr`; set it to `orca` to run the fleet on Orca instead.
@@ -113,7 +113,7 @@ cd ~/Work/ac-homes/lab && AC_HOME="$PWD" claude
 The crewchief's first act every session is `bin/ac-session-start.sh`; on Claude Code a SessionStart hook reminds it.
 The digest acquires the home's session lock, re-runs the toolchain doctor, drains queued wakes, and prints the fleet view, the backlog head, the project registry, and the supervision block.
 When another live session already owns the home, the digest degrades to read-only and skips the drain.
-Any `MISSING:`, `BELOW-FLOOR:`, or `NO-CAPABILITY:` line means fix the toolchain before anything is spawned.
+Any `MISSING:`, `BELOW-FLOOR:`, or `NO-CAPABILITY:` line means fix the toolchain before anything is spawned, and so does a `HOOK-DEAD:` line, a ported harness hook whose module cannot load (or every one of them, without bun).
 
 ## 6. Add a project
 
@@ -152,8 +152,8 @@ What the crewchief does, in order:
 2. **Knowledge and overlap reads.**
    It recalls what the fleet already verified about the codebase (`bin/ac-know.sh recall`) and checks for in-flight work on the same files (`bin/ac-ready.sh overlap`).
 3. **Triage.**
-   It picks the flow (`direct` or `staged`), the delivery mode (`crew-ship`, `direct-pr`, `feature-pr`, or `local-only`), and whether review and QA are owed.
-   The heavy values - `flow:staged`, `mode:crew-ship`, `qa:yes`, and a discretionary review - need your confirmation first, asked once with the reason.
+   It picks the flow (`direct`, `staged` or `sdlc`), the delivery mode (`crew-ship`, `direct-pr`, `feature-pr`, or `local-only`), and whether review and QA are owed.
+   The heavy values - `flow:staged`, `flow:sdlc`, `mode:crew-ship`, `qa:yes`, and a discretionary review - need your confirmation first, asked once with the reason.
 4. **Receipt.**
    It records a backlog row in `records/backlog.md` and posts a `TRIAGE:` line with the why to the family room, `data/<family>/room.md`.
 5. **Promotion.**
@@ -203,6 +203,7 @@ Whether a verified local-only land waits for your approval per merge is a standi
 `bin/ac-teardown.sh <id>` then ends the task: it archives the task state, closes the pane, returns the worktree to the pool, and deletes a merged `crew/<id>` branch.
 It is fail-closed: it refuses while the work is unlanded or the worktree is dirty.
 A PR task does not have to wait for the merge: when the PR is ready, your acceptance lands it through `--pr-ready '<your words>'`.
+Zero CI checks reported is never green: `--pr-ready` refuses a none/failing `ci=` (`ac-pr-check.sh`'s own read of the PR's checks) unless `--ci-override '<why>'` says otherwise, or, for a repo that runs no CI at all, its `projects/<name>.yaml` declares `ci: none`.
 `--force` means you are explicitly discarding the work.
 
 At landing the chief also records the run's lessons (`bin/ac-learn.sh note`) and verified repo facts (`bin/ac-know.sh add`), moves the backlog row to `## Done`, and closes the room once its inbox is empty.
@@ -241,5 +242,6 @@ Waive the first two on the record with `--no-lesson '<why>'` or `--no-fact '<why
 - [validate-pipeline.md](validate-pipeline.md) - the `crew-ship` pipeline.
 - [qa-attestation.md](qa-attestation.md) - QA evidence and merge attestation.
 - [staged-design-flow-spec.md](staged-design-flow-spec.md) - the staged design reports and gates.
+- [sdlc-flow.md](sdlc-flow.md) - the sdlc flow: the staged flow plus the artifact chain committed in the main repository.
 - [backlog.md](backlog.md) - the backlog grammar.
 - [AGENTS.md](../AGENTS.md) - the law the crewchief follows.

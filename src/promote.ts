@@ -3,9 +3,7 @@
 // FULL ship protection applies (landed proof for crew/<id> plus a clean
 // worktree, not only a report.md). The entry is bin/ac-promote.sh (a shim that
 // starts this file through bin/ac-bun.sh); THIS header is the authoritative
-// spec, and the bash original it replaced stays frozen at
-// tests/fixtures/ac-promote.sh as the oracle the differential leg of
-// tests/sh/ac-promote.test.sh holds this module to.
+// spec, and tests/sh/ac-promote.test.sh is its contract test.
 //
 //   ac-promote.sh <id> --mode <crew-ship|direct-pr|local-only>
 //                      [--captain-requested '<ref>' --reason '<one line>']
@@ -59,8 +57,8 @@
 // printed and the meta look goes on at `/<id>.meta`, so stderr carries that
 // line AND `no crewmate meta for <id>`, exit 1 - the bash's wart, kept (its
 // `$(ac_state_dir)` lost the inner status). An AC_HOME cd cannot enter prints
-// `ERROR: AC_HOME is not a readable directory: <h>` in place of the shell's
-// own `cd:` line (named divergence), then the same `no crewmate meta`.
+// `ERROR: AC_HOME is not a readable directory: <h>`, then the same `no
+// crewmate meta`.
 //
 // Writes, in this order, through the twins of ac_meta_set, ac_status_append
 // and ac_delivery_mode_block (src/lib.ts, where each one's bytes and named
@@ -70,12 +68,9 @@
 //                     placeholder goes with the rest); every other line byte
 //                     for byte in order, an unterminated tail
 //                     newline-terminated. Two rewrites, each a sibling temp
-//                     renamed over the meta - created EXCLUSIVELY where the
-//                     bash wrote through a planted `<meta>.tmp.<pid>`; a meta
-//                     holding a NUL byte keeps its bytes here where the bash's
-//                     `grep -v` left `Binary file <path> matches` plus the new
-//                     lines (exit 0 both) - the named divergences, pinned in
-//                     the leg; the mode is kept where the bash left 0644.
+//                     renamed over the meta - created EXCLUSIVELY, never
+//                     through a planted `<meta>.tmp.<pid>`; a meta holding a
+//                     NUL byte keeps its bytes; the file's mode is kept.
 //   state/<id>.status `<iso> promoted: scout -> ship (mode=<mode>)[ captain-requested: <ref>][ reason: <reason>]\n`
 //                     appended, <iso> from the PATH's date(1) (a date that
 //                     fails ends the run with ITS status, the meta already
@@ -101,8 +96,7 @@
 //                       <blank>
 //                       Escalate ask-user findings and needs-decision questions through your status
 //                       line as before; the chief relays them to the captain.
-//                     A write that fails refuses `ERROR: cannot write <path>: <code>`, exit 1,
-//                     in place of the shell's own redirection line.
+//                     A write that fails refuses `ERROR: cannot write <path>: <code>`, exit 1.
 //   the pane notice   <distro root>/bin/ac-send.sh <id> '<notice>' is SPAWNED
 //                     (a shim of src/send.ts) with stdout and stderr discarded, where
 //                     the notice is
@@ -118,9 +112,8 @@
 //                     cmd; then` kept only the boolean, and so does this.
 // id, mode, ref and reason print and record as their bytes. An argv byte that
 // is not valid UTF-8 reaches this module as U+FFFD (bun's argv decoding), so
-// such a reason is recorded as EF BF BD where the bash carried the byte -
-// named divergence. An id carrying `$` or a back-tick is interpolated
-// literally on both sides (the bash quoted its heredoc's expansions).
+// such a reason is recorded as EF BF BD. An id carrying `$` or a back-tick is
+// interpolated literally.
 //
 // Callers: none in bin/, src/, dashboard/ or .agents/ run this entry -
 // chiefs run it by hand on bin/ac-teardown.sh's remedy text (`promote it
@@ -129,7 +122,7 @@
 // found: bun`, exit 1, from the shim.
 import { statSync, writeFileSync, writeSync } from "node:fs";
 import { resolve } from "node:path";
-import { dataDir, deliveryModeBlock, die, enterCaller, metaGet, metaSet, spawnShellSync, statusAppend, taskMeta, taskStatus } from "./lib.ts";
+import { deliveryModeBlock, die, enterCaller, famDir, famDirMint, metaGet, metaSet, spawnShellSync, statusAppend, taskMeta, taskStatus } from "./lib.ts";
 
 const bytes = (s: string): string => Buffer.from(s, "utf8").toString("latin1");
 const b = (s: string): Buffer => Buffer.from(s, "latin1");
@@ -199,9 +192,11 @@ try {
 if (!appended) die(b(`cannot append ${bytes(taskStatus(id))}`));
 writeSync(1, b(`promoted ${bytes(id)}: kind scout -> ship, mode=${mode} (ship teardown protection now applies)\n`));
 
-const instructions = `${dataDir()}/${id}/ship-instructions.md`;
-const made = spawnShellSync(["mkdir", "-p", `${dataDir()}/${id}`], { stdin: "ignore", stdout: "inherit", stderr: "inherit" });
+const famd = famDir(id);
+const instructions = `${famd}/ship-instructions.md`;
+const made = spawnShellSync(["mkdir", "-p", famd], { stdin: "ignore", stdout: "inherit", stderr: "inherit" });
 if (made.exitCode !== 0) process.exit(made.exitCode ?? 1);
+famDirMint(id);
 const contract = `# Ship contract: ${id} (promoted from scout)
 
 This task now delivers a PROJECT CHANGE on \`crew/${id}\`; a report alone no

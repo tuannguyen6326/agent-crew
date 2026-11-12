@@ -55,9 +55,11 @@ A fleet home holds the fleet's state, not code; `AGENTS.md` section 2 lists its 
 Scripts run from the distro checkout that owns `bin/` and read and write fleet state under `$AC_HOME`, which is required: `ac_home` refuses rather than fall back to the checkout.
 A caller that legitimately runs homeless, as every crewmate pane does, uses the rungs built for it instead (`bin/ac-lib.sh` header).
 
-`seedRuntimeLinks` (`src/lib.ts`) symlinks the executable core - `bin`, `CLAUDE.md`, `.claude`, `AGENTS.md` - into a home, so a chief session runs with cwd = home while the code stays in the checkout.
+`seedRuntimeLinks` (`src/lib.ts`) symlinks the executable core - `bin`, `CLAUDE.md`, `.claude`, `AGENTS.md`, `.agents` - into a home, so a chief session runs with cwd = home while the code stays in the checkout.
+At its first writing session start `bin/ac-home-carriers.sh` turns `.claude` (and `.codex`, `.cursor`, `.opencode`, `.pi`) into a real per-home directory with the distro content linked in and one home-owned carrier file naming the home (the "Hooks per harness" section).
+`.agents` is linked as well as `.claude` because codex scans `.agents/skills` only, never the skills `.claude` carries.
 A real (non-symlink) entry is a per-home override and is left alone, a stale symlink is repointed, and `docs/` and `tests/` are never linked.
-`src/fleet-new.ts` calls it for a new fleet home and `src/home-seed.ts` for a crewdeputy home; its bash original `ac_seed_runtime_links` is retired, frozen at `tests/fixtures/ac-seed-runtime-links.sh` for the oracles.
+`src/fleet-new.ts` calls it for a new fleet home and `src/home-seed.ts` for a crewdeputy home; its bash original `ac_seed_runtime_links` is retired.
 `state/.ac-root`, rewritten by every `bin/ac-remote.sh` run (the `src/remote.ts` preamble; its bash original `ac_seed_root_pointer` is retired), records the checkout, so a hook deployed under `config/` can find `bin/ac-lib.sh` from any cwd.
 
 `bin/ac-lib.sh` is the core library every script sources.
@@ -120,7 +122,7 @@ The available layers are concatenated in read order - container baseline (`<cont
 A repo-shipped file wins outright and the layer lands at a fallback path that the kickoff names; a file the seed wrote is refreshed when its sources move, and seeded paths go to the repo's `info/exclude`.
 
 `ac_seed_crew_settings` copies, never symlinks, `$AC_HOME/.claude/settings.json` and `$AC_HOME/.claude/settings.local.json` (else the container copy of each) to the same paths under `<worktree>/.claude/`, so a crewmate's permission grants stay local and its plugin set follows the fleet.
-A home `.claude` that is the runtime symlink into the distro is skipped, because it holds the chief's hook wiring.
+A home `.claude` that is the chief's runtime dir - the symlink into the distro, or the real dir `bin/ac-home-carriers.sh` makes of it (its `settings.json` the distro link) - is skipped, because it holds the chief's hook wiring and the home's `AC_HOME` carrier, which must never reach a crewmate; a `settings.local.json` naming `AC_HOME` is skipped on its own even beside a real per-fleet `settings.json` override.
 
 `ac_seed_crew_skills` symlinks skills into the directory the harness scans (`.agents/skills` for codex, `.claude/skills` otherwise): first the built-ins in `AC_CREW_SKILLS` (default `crew-ship crew-verify crew-qa domain-e2e document`) from the container store or this checkout, then every fleet-learned package except `skills-archive`.
 A repo-shipped skill of the same name wins, and dangling links from retired skills are removed first.
@@ -189,12 +191,19 @@ Other harnesses carry a subset:
 - opencode - `.opencode/plugins/ac-primary-guards.js`: watch policy, turn-end guard on `session.idle`, prompt recall.
 - pi - `.pi/extensions/ac-primary-turnend-guard.ts`: watch policy, turn-end guard on `agent_settled`, prompt recall.
 
-Every adapter fails open and the guards self-scope, so hooks copied into a crewmate worktree stay inert there.
+A hook runs with the harness process's environment, which carries `AC_HOME` only when the launch line put it there; a hand-typed `claude --resume` or a pane reopened by the backend carries none, and every ac- hook then exits 0 in silence.
+So the home names itself: `bin/ac-home-carriers.sh` (run by `bin/ac-session-start.sh` on every writing start) makes the five dot-dirs real per-home directories, links the distro content in, and writes one home-owned carrier per harness holding `AC_HOME=<home>` - claude's `settings.local.json` `env` block (seeded once from the distro's, then only the `AC_HOME` key is pinned), codex's and cursor's `hooks.json` with every command prefixed `AC_HOME="${AC_HOME:-<home>}"`, and a small real module under `.opencode/plugins/` and `.pi/extensions/` that fills `process.env.AC_HOME`.
+The carriers fill a missing `AC_HOME` and never replace a launch line's; per-session words (`AC_SCOPE`, `AC_SOLO`) stay on the launch line.
+The spec is the header of `src/home-carriers.ts`.
+
+Every adapter fails open on its own missing dependencies and the guards self-scope, so hooks copied into a crewmate worktree stay inert there.
+The four PreToolUse guards are the exception for bun: with bun or their module missing they deny, naming it, and `bin/ac-session-start.sh` reports a hook module that cannot load as `HOOK-DEAD:` (`bin/ac-bun.sh`).
 The non-claude wirings ship with live probes pending, and `tests/sh/ac-harness-hooks.test.sh` fences them.
 
 ## Rooms and the ledger machinery
 
 `records/backlog.md` is the fleet-wide task index and `data/<family>/room.md` is one family's narrative; they never merge.
+A story of an epic lives at `data/<epic>/<story>/` (marked `.family`), so `data/<family>/` throughout means the family's dir as `ac_fam_dir` / `famDir` resolve it; the header of `src/brief.ts` owns the layout.
 
 `bin/ac-room.sh` owns rooms: `post`, `show`, `list`, `close`, `open`, `pending`, `handback`, and the gate-receipt verbs `gate-route`, `gate-verify`, `disposition`.
 `post` refuses a malformed `GATE:`/`ASK:`/`DECIDED:` opening (the grammar of `ac_room_marker_malformed`).
@@ -271,7 +280,7 @@ Learning (`src/learn.ts`, started by `bin/ac-learn.sh`):
 
 Each complete Learning run ticks Curate, and at `config/curate-every` (default 5) Learning runs `bin/ac-curate.sh run`, which archives retired captain rules and old Done rows verbatim and gates anything non-deterministic.
 Neither has a cron or daemon.
-Both mutate knowledge only through the maintenance transaction (`maintenanceApply` in `src/lib.ts`) - a fleet lock, a pre-write backup, a closed schema, staged hashes, atomic replacement and a journal under `state/.maintenance-transactions/` - and the receipt boundary (`receiptValidate` in `src/maintenance-receipt.ts`) re-derives every hash rather than trust a writer.
+Both mutate knowledge only through the maintenance transaction (`maintenanceApply` in `src/lib-curate.ts`) - a fleet lock, a pre-write backup, a closed schema, staged hashes, atomic replacement and a journal under `state/.maintenance-transactions/` - and the receipt boundary (`receiptValidate` in `src/maintenance-receipt.ts`) re-derives every hash rather than trust a writer.
 `ac-learn.sh maintenance status|resume|abandon` settles a held transaction.
 
 The brain database is disposable: markdown stays the system of record (`src/brain.ts` header).
@@ -358,7 +367,7 @@ Every tracked package follows the Agent Skills spec, enforced by `tests/sh/ac-sk
 | crew-ship and QA pipelines | `src/ship.ts` (started by `bin/ac-ship.sh`), `src/qa.ts` (started by `bin/ac-qa.sh`), `src/lib.ts` |
 | Second chief and maintenance gate | `src/gate.ts` (started by `bin/ac-gate.sh`) |
 | Knowledge, scenes, brain | `src/know.ts` (started by `bin/ac-know.sh`), `bin/ac-scene.sh`, `src/brain.ts` |
-| Learning, Curate, maintenance transaction | `src/learn.ts` (started by `bin/ac-learn.sh`), `src/curate.ts` (started by `bin/ac-curate.sh`), `src/lib.ts` (`maintenanceApply`), `bin/ac-maintenance-lib.sh` (the readers) |
+| Learning, Curate, maintenance transaction | `src/learn.ts` (started by `bin/ac-learn.sh`), `src/curate.ts` (started by `bin/ac-curate.sh`), `src/lib-curate.ts` (`maintenanceApply`), `bin/ac-maintenance-lib.sh` (the readers) |
 | System One | `src/jev.ts` (started by `bin/ac-jev.sh`), `src/compact-advise.ts` (started by `bin/ac-compact-advise.sh`) |
 | Dashboard | `dashboard/app.ts` |
 | Remote orders, GitHub intake | `src/remote.ts`, `src/github.ts` |

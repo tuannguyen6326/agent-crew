@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ac-learn.test.sh - the learning-loop DISTILL trigger (Slice 2): the durable
-# per-debrief counter (learnTick, src/lib.ts), the pure digest reader (ac_learn_due), the
+# per-debrief counter (learnTick, src/lib-learn.ts), the pure digest reader (ac_learn_due), the
 # agent-callable `ac-learn.sh tick` CLI, and the `-- learning --` digest block.
 # The counter lives at state/.learn.meta - DOT-PREFIXED so it stays OUTSIDE the
 # state/*.meta task-meta namespace the fleet enumerates as crewmates (a bare
@@ -18,12 +18,11 @@
 # twin <expr> [<arg>...] - <expr> over src/lib.ts (L) and
 # src/maintenance-receipt.ts (M), its arguments A, in one bun process: the code
 # the fleet runs where a bash helper retired once src/learn.ts took its last
-# caller (the bash one is frozen at tests/fixtures/ac-maintenance-retired.sh,
-# and tests/ts holds each twin to it). A string answer is printed; the status
-# is a number answer, else 1 for false or null and 0 for anything else.
+# caller. A string answer is printed; the status is a number answer, else 1
+# for false or null and 0 for anything else.
 twin() {
   local expr="$1"; shift
-  (cd "$ROOT" && bun --no-env-file -e "const L = await import('./src/lib.ts'); const M = await import('./src/maintenance-receipt.ts'); const A = process.argv.slice(1); const v = await (async () => ($expr))(); if (typeof v === 'string') process.stdout.write(v); process.exit(typeof v === 'number' ? v : v === false || v === null ? 1 : 0);" "$@")
+  (cd "$ROOT" && bun --no-env-file -e "const L = { ...await import('./src/lib.ts'), ...await import('./src/lib-learn.ts') }; const M = await import('./src/maintenance-receipt.ts'); const A = process.argv.slice(1); const v = await (async () => ($expr))(); if (typeof v === 'string') process.stdout.write(v); process.exit(typeof v === 'number' ? v : v === false || v === null ? 1 : 0);" "$@")
 }
 
 make_home
@@ -205,27 +204,6 @@ assert_eq "$(grep -c 'race-fam' "$AC_HOME/state/.learn-ticks")" "1" \
   "and the landing is stamped exactly once - no stamp lost to last-mv-wins"
 rm -f "$AC_HOME/state/.learn.meta" "$AC_HOME/state/.learn-ticks"
 
-# A keyed tick claims AND counts under one hold of the cadence lock. Taken
-# twice, another holder could slip in between: the landing was stamped as
-# counted, the counter never moved, and every re-run skipped it as a
-# duplicate. Here any second acquire of it fails; ac_meta_set's own per-meta
-# locks are not counted. Only the bash function can be shadowed, so this pins
-# the frozen original, which tests/ts/learn.test.ts holds learnTickKeyed to.
-cat >"$TMP/one-hold.sh" <<EOF
-set -euo pipefail
-. '$ROOT/bin/ac-lib.sh'
-. '$ROOT/bin/ac-maintenance-lib.sh'
-. '$ROOT/bin/ac-bun.sh'
-. '$ROOT/tests/fixtures/ac-maintenance-retired.sh'
-eval "orig_\$(declare -f ac_lock_acquire)"
-calls=0
-ac_lock_acquire() { case "\$1" in */.learn-cadence.lock) calls=\$((calls + 1)); [ "\$calls" -le 1 ] || return 1 ;; esac; orig_ac_lock_acquire "\$@"; }
-ac_learn_tick_keyed once-fam
-ac_meta_get "\$(ac_learn_meta)" debriefs
-EOF
-assert_eq "$(bash "$TMP/one-hold.sh" 2>&1)" "1" "a keyed tick counts its landing with one lock hold"
-rm -f "$AC_HOME/state/.learn.meta" "$AC_HOME/state/.learn-ticks"
-
 # A claim that LOSES the cadence lock is not a duplicate: nothing was stamped
 # or counted. ac-teardown.sh records the tick's answer on the landing, so an
 # "already counted" there would be a false record of a landing the counter
@@ -274,6 +252,16 @@ rm -f "$AC_HOME/state/.learn.meta"
 # herdr keeps the backend probes hermetic. The learning block is the assertion.
 make_fake_herdr
 
+# ac-wake-drain.sh runs `ac-learn.sh autoroom` as an unconditional ride-along
+# on every real drain (src/wake-drain.ts), and this fresh fixture home holds
+# no live-session lock, so ac-session-start.sh never degrades to read-only
+# here. Pre-claiming the autoroom lock makes `cmdAutoroom`'s own `lock(lk, 0)`
+# fail instantly for every call below, before it ever reaches a real
+# `ac-spawn.sh --roomchief learning` - a pane spawn make_fake_herdr never
+# serves, so it would wait out the pane-readiness budget.
+autoroom_lock="$AC_HOME/state/.learn-autoroom.lock"
+mkdir -p "$autoroom_lock" && printf '%s\n' "$$" >"$autoroom_lock/pid"
+
 # Below threshold: debriefs=3 < learn-every=8 -> NOTHING for learning (no
 # header, matching the scheduler/clones silent-when-empty style).
 printf 'debriefs=3\n' >"$AC_HOME/state/.learn.meta"
@@ -309,6 +297,10 @@ assert_contains "$out" "INCOMPLETE TXN: learning-99-subject" "the digest NAMES t
 assert_contains "$out" "1 action(s) committed" "and how much of its plan already landed"
 assert_contains "$out" "ac-learn.sh maintenance status" "and where to settle it"
 rm -rf "$AC_HOME/state/.maintenance-transactions"
+
+assert_no_file "$AC_HOME/state/learning-chief.status" \
+  "the held autoroom lock must keep the digest calls off a real roomchief spawn the fake herdr cannot serve"
+ac_lock_release "$autoroom_lock"
 
 # --- cmd_run: the learning scout is a durable, supervised verify-learning agent
 # Option-A residue: task-flow-v2 routed codereview/qa through ac-verify (durable
@@ -953,6 +945,128 @@ alw_fill 4096
 "$BIN/ac-learn.sh" reinforce old-one --evidence x >/dev/null || fail "W4: a reinforce landing at exactly 4096 bytes fits"
 assert_eq "$(wc -c <"$ALW" | tr -d ' ')" "4096" "W4: ... at exactly the budget"
 
+# --- retire: the 4096-budget wall's named remedy is performable -------------
+# RT1 proves it from reinforce's own caller (--retire, including when the
+# reinforced slug's own clock is already today); RT2 proves it from a
+# crewmate land's (the candidate's own `retire:` header) - each cutting and
+# archiving the named stale entry in the same locked rewrite or transaction
+# the new entry lands through.
+
+# RT1: reinforce --retire validates its target, then cuts and archives the
+# WHOLE named entry (heading, body, date line) in the SAME locked rewrite -
+# never a silent drop.
+alw_reset
+printf '## drop-me\n\na superseded lesson.\n\n(learned 2025-01-01)\n' >>"$ALW"
+alw_before_rt="$(cat "$ALW")"
+refuses_learn "no entry '## ghost'" "$BIN/ac-learn.sh" reinforce stale-one --retire ghost --evidence x
+assert_eq "$(cat "$ALW")" "$alw_before_rt" "RT1: an unknown --retire target leaves the file untouched"
+refuses_learn "--retire cannot name the same slug being reinforced ('stale-one')" \
+  "$BIN/ac-learn.sh" reinforce stale-one --retire stale-one --evidence x
+out="$("$BIN/ac-learn.sh" reinforce stale-one --retire drop-me --evidence 'the window re-derived stale-one; drop-me is superseded')"
+assert_contains "$out" "reinforced stale-one" "RT1: the reinforce half still receipts"
+assert_contains "$out" "retired drop-me (archived to records/learnings-archive/drop-me.md)" \
+  "RT1: ... and the retire half receipts too"
+case "$(cat "$ALW")" in
+  *"## drop-me"*) fail "RT1: the retired entry must leave the always-loaded file: $(cat "$ALW")" ;;
+esac
+grep -qxF -- "## drop-me" "$ARCHDIR/drop-me.md" || fail "RT1: the retired body must survive in its own archive, never silently lost"
+assert_contains "$(cat "$ARCHDIR/drop-me.md")" "a superseded lesson." "RT1: ... with its own text intact"
+assert_contains "$(printf '%s\n' "$("$BIN/ac-learn.sh" stale)" | grep 'stale-one')" "FRESH" "RT1: the reinforce half still flips the grade"
+
+# RT1b: the wall itself - a reinforce that refuses ALONE past budget (W4
+# above) fits once paired with a retire that frees enough bytes in the SAME
+# call, and the no-loss destination is 'pad's own archive.
+alw_fill 4097
+"$BIN/ac-learn.sh" reinforce old-one --retire pad --evidence 'frees room for the refresh' >/dev/null \
+  || fail "RT1b: reinforce --retire must fit once retiring 'pad' frees enough bytes"
+case "$(cat "$ALW")" in
+  *"## pad"*) fail "RT1b: the retired 'pad' entry must be gone: $(cat "$ALW")" ;;
+esac
+grep -qxF -- "## pad" "$ARCHDIR/pad.md" || fail "RT1b: pad's filler body must survive in its own archive"
+grep -qxF "(learned 2026-01-01, reinforced $(date -u +%F))" "$ALW" || fail "RT1b: old-one is still reinforced"
+
+# RT1c: --retire must still act when the reinforce half is a same-day no-op -
+# the EARLY "already reinforced today" return is for a BARE reinforce only,
+# never a silent way to skip a requested retire.
+printf '# Fleet-learned crewmate lessons\n<!-- written only by ac-learn.sh transactions -->\n\n' >"$ALW"
+printf '## today-one\n\nb\n\n(learned 2026-01-01, reinforced %s)\n\n' "$(date -u +%F)" >>"$ALW"
+printf '## drop-me\n\na superseded lesson.\n\n(learned 2025-01-01)\n' >>"$ALW"
+out="$("$BIN/ac-learn.sh" reinforce today-one --retire drop-me --evidence 'drop-me is superseded')"
+assert_contains "$out" "already at $(date -u +%F) - unchanged" "RT1c: the reinforce half still reports its real (no) effect"
+assert_contains "$out" "retired drop-me (archived to records/learnings-archive/drop-me.md)" "RT1c: ... but the retire half still ran"
+case "$(cat "$ALW")" in
+  *"## drop-me"*) fail "RT1c: drop-me must be gone even though today-one's clock did not move: $(cat "$ALW")" ;;
+esac
+grep -qxF -- "## drop-me" "$ARCHDIR/drop-me.md" || fail "RT1c: drop-me's body must still be archived"
+
+# RT1d: --retire only ever names a real entry - never the skill-pointer
+# section (which holds spaces and is not an entry, learnedSlugs' own filter).
+alw_reset
+alw_before_rt1d="$(cat "$ALW")"
+refuses_learn "no entry '## when to reach for a learned skill'" \
+  "$BIN/ac-learn.sh" reinforce stale-one --retire 'when to reach for a learned skill' --evidence x
+assert_eq "$(cat "$ALW")" "$alw_before_rt1d" "RT1d: the pointer section survives an attempted retire, nothing written"
+
+# RT2: a crewmate land's own `retire:` header closes the SAME wall from the
+# OTHER caller - the candidate pairs its new entry with a named stale one,
+# and the land cuts, archives and lands both in one transaction.
+alw_reset
+printf '## old-method\n\na superseded method.\n\n(learned 2025-01-01)\n' >>"$ALW"
+mkdir -p "$AC_HOME/cand"
+printf 'kind: crewmate\nname: new-method\ndescription: A replacement method.\nretire: ghost\napproved: yes\n===crewmate===\nDo the new thing instead.\n' \
+  >"$AC_HOME/cand/rt2-badretire.md"
+refuses_learn "crewmate candidate 'retire: ghost' names no existing '## ghost' entry" \
+  "$BIN/ac-learn.sh" land "$AC_HOME/cand/rt2-badretire.md"
+printf 'kind: crewmate\nname: self-loop\ndescription: x\nretire: self-loop\napproved: yes\n===crewmate===\nx\n' \
+  >"$AC_HOME/cand/rt2-selfretire.md"
+refuses_learn "crewmate candidate 'retire:' cannot name its own 'self-loop'" \
+  "$BIN/ac-learn.sh" land "$AC_HOME/cand/rt2-selfretire.md"
+printf 'kind: crewmate\nname: new-method\ndescription: A replacement method.\nretire: old-method\napproved: yes\n===crewmate===\nDo the new thing instead.\n' \
+  >"$AC_HOME/cand/rt2-ok.md"
+out="$("$BIN/ac-learn.sh" land "$AC_HOME/cand/rt2-ok.md")" || fail "RT2: a crewmate land pairing a retire must land: $out"
+assert_contains "$out" "landed crewmate through maintenance transaction" "RT2: the land still receipts normally"
+grep -qxF -- "## new-method" "$ALW" || fail "RT2: the new entry must land"
+case "$(cat "$ALW")" in
+  *"## old-method"*) fail "RT2: the retired entry must leave the always-loaded file: $(cat "$ALW")" ;;
+esac
+grep -qxF -- "## old-method" "$ARCHDIR/old-method.md" || fail "RT2: the retired body must survive in its own archive"
+assert_contains "$(cat "$ARCHDIR/old-method.md")" "a superseded method." "RT2: ... with its own text intact"
+
+# RT2c: a candidate's `retire:` header is held to the same real-entry-only
+# rule as --retire - the skill-pointer section can never be named.
+printf 'kind: crewmate\nname: another-method\ndescription: y\nretire: when to reach for a learned skill\napproved: yes\n===crewmate===\ny\n' \
+  >"$AC_HOME/cand/rt2c-pointerretire.md"
+refuses_learn "crewmate candidate 'retire: when to reach for a learned skill' names no existing '## when to reach for a learned skill' entry" \
+  "$BIN/ac-learn.sh" land "$AC_HOME/cand/rt2c-pointerretire.md"
+grep -qxF -- "## when to reach for a learned skill" "$ALW" || fail "RT2c: the pointer section must survive the refused land"
+
+# RT2b: the wall itself, from the land side - a NEW entry that refuses over
+# budget alone fits once its candidate pairs a `retire:` big enough to free
+# the room, and the refusal it hit first names a path that now exists.
+rt2b_fill() {  # rt2b_fill <filler bytes> - one '## pad' entry of that size
+  printf '# Fleet-learned crewmate lessons\n<!-- written only by ac-learn.sh transactions -->\n\n## pad\n\n' >"$ALW"
+  head -c "$1" /dev/zero | tr '\0' 'x' >>"$ALW"
+  printf '\n\n(learned 2025-01-01)\n' >>"$ALW"
+}
+rt2b_fill 4000
+printf 'kind: crewmate\nname: new-method\ndescription: A replacement method.\napproved: yes\n===crewmate===\nShort lesson.\n' \
+  >"$AC_HOME/cand/rt2b-noretire.md"
+refuses_learn "pair the new entry with a retire of one of: pad (nothing written) - a crewmate candidate's own 'retire: <slug>' header" \
+  "$BIN/ac-learn.sh" land "$AC_HOME/cand/rt2b-noretire.md"
+case "$(cat "$ALW")" in
+  *"## new-method"*) fail "RT2b: an over-budget land must write nothing: $(cat "$ALW")" ;;
+esac
+rt2b_fill 4000
+printf 'kind: crewmate\nname: new-method\ndescription: A replacement method.\nretire: pad\napproved: yes\n===crewmate===\nShort lesson.\n' \
+  >"$AC_HOME/cand/rt2b-retire.md"
+"$BIN/ac-learn.sh" land "$AC_HOME/cand/rt2b-retire.md" >/dev/null \
+  || fail "RT2b: pairing the SAME land with 'retire: pad' must fit and land"
+grep -qxF -- "## new-method" "$ALW" || fail "RT2b: the new entry must land once pad is retired"
+case "$(cat "$ALW")" in
+  *"## pad"*) fail "RT2b: pad must be gone once retired: $(cat "$ALW")" ;;
+esac
+grep -qxF -- "## pad" "$ARCHDIR/pad.md" || fail "RT2b: pad's filler body must survive in its own archive"
+
 # S6: the DISTILL run stages the layer + its grading for the scout (wiring, the
 # R5 idiom - one awk process, no early-closing pipe).
 awk '/^async function cmdRun\(/{f=1} f&&/always-loaded-staleness/{found=1} f&&/^}/{exit} END{exit !found}' "$ROOT/src/learn.ts" \
@@ -1128,25 +1242,27 @@ assert_contains "$(jq -r '.state' "$FAKE_BODY")" "[2] - Always read the family r
 assert_eq "$(tail -n1 "$AC_HOME/state/jev-shadow.jsonl" | jq -r '.site')" "learn-route" "route-propose: shadow record site"
 
 printf 'on\n' >"$AC_HOME/config/jev"
+ledger_before="$(cksum <"$AC_HOME/records/learnings.md")"
 out="$(printf '%s\n' "$lines" | "$BIN/ac-learn.sh" route-propose 2>/dev/null)"
 assert_eq "$(printf '%s\n' "$out" | sed -n 1p)" "1	owner=repo_knowledge p=0.93	dup-of=none	worth=durable p=0.9" "route-propose: a repo fact routes to repo-knowledge, new, durable"
 assert_eq "$(printf '%s\n' "$out" | sed -n 2p)" "2	owner=learnings p=0.9	dup-of=read-the-room-first p=0.88	worth=routine p=0.75" "route-propose: a duplicate lesson names the entry it repeats and its worth"
 assert_eq "$(printf '%s\n' "$out" | sed -n 3p)" "3	owner=none p=1	dup-of=none	worth=unclear p=0.4" "route-propose: noise routes nowhere; unclear worth is printed, never hidden"
 assert_contains "$(printf '%s\n' "$out" | sed -n 4p)" "state_sha=" "route-propose: the label key closes the output"
-assert_eq "$(grep -c . "$AC_HOME/records/learnings.md" 2>/dev/null || printf 0)" "$(grep -c . "$AC_HOME/records/learnings.md" 2>/dev/null || printf 0)" "route-propose: never writes the ledger"
+assert_eq "$(cksum <"$AC_HOME/records/learnings.md")" "$ledger_before" "route-propose: never writes the ledger"
 rm -f "$AC_HOME/config/jev"
 
-# --- differential: src/learn.ts against the frozen bash original -------------
-# DISPUTED: the implementation (tests/fixtures/ac-learn.sh under bash vs src/learn.ts through bin/ac-learn.sh)
-# HELD-CONSTANT: two side roots seeded alike ($LOH for the oracle, $LNH for the shim) - a home at <side>/home rebuilt per row by the same commands; each side's bin holding the same ac-spawn.sh and ac-jev.sh stubs beside the live siblings (the oracle's from make_oracle_bin, the shim's built by hand under its own name); argv and env (the side root spelled @H, substituted in values only; AC_HOME=<side>/home, AC_PANE_AGENT, AC_GATE and AC_CURATE the leg's stubs unless a row names others; FAKE_HERDR and FAKE_ORCA under each side); cwd <side>/cwd; stdin /dev/null unless a row pipes lines; LC_ALL=C unless a row names en_US.UTF-8; TMPDIR <side>/tmp; PATH stubs - date answering one instant per format (BSD date itself for an age's -j -f and an epoch's -r), sleep logging each call but the early-pane poll's 0.05 and returning at once; exit status, stdout and stderr compared whole once normalised (the side root @H, either bin root ROOT, every 64-hex digest SHA, the entry's pid PID, mktemp suffixes, wake-spool names), then the world: every path under home/, tmp/ and stub/ with its mode and bytes, each backup as its sorted tar listing.
+# --- the entry end to end, one scenario per row ------------------------------
+# One side root ($H): a home at $H/home rebuilt per row; a bin holding an
+# ac-spawn.sh stub beside the live siblings; AC_HOME=$H/home,
+# AC_PANE_AGENT, AC_GATE and AC_CURATE the leg's stubs unless a row names
+# others; FAKE_HERDR and FAKE_ORCA under $H; cwd $H/cwd; stdin /dev/null;
+# LC_ALL=C unless a row names en_US.UTF-8; TMPDIR $H/tmp; PATH stubs - date
+# answering one instant per format (BSD date itself for an age's -j -f and an
+# epoch's -r), sleep logging each call but the early-pane poll's 0.05 and
+# returning at once. A row reads the run's exit status, stdout and stderr (the
+# side root spelled @H, the bin root ROOT, every 64-hex digest SHA) and what it
+# left under $H.
 unset AC_PANE_AGENT LEARN_PANE LEARN_CREW_STATE LEARN_CREW_STATE_CAPTURE
-lobin="$(make_oracle_bin ac-learn)"
-# The frozen entry calls the cadence and transaction helpers retired from
-# bin/ac-maintenance-lib.sh and bin/ac-lib.sh once src/learn.ts took their
-# last caller; the oracle's own lib copy gets them back, frozen at
-# tests/fixtures/ac-maintenance-retired.sh.
-cat "$ROOT/tests/fixtures/ac-maintenance-retired.sh" >>"$lobin/ac-maintenance-lib.sh"
-cmp -s "$lobin/ac-learn.sh" "$ROOT/tests/fixtures/ac-learn.sh" || fail "the oracle bin holds the frozen original"
 lnroot="$TMP/learn-shim"
 mkdir -p "$lnroot/bin"
 cp "$BIN"/*.sh "$lnroot/bin/"
@@ -1154,7 +1270,7 @@ ln -s "$ROOT/src" "$lnroot/src"
 ln -s "$ROOT/dashboard" "$lnroot/dashboard"
 lnbin="$lnroot/bin"
 cmp -s "$lnbin/ac-learn.sh" "$BIN/ac-learn.sh" || fail "the shim side runs the live shim"
-LOH="$TMP/lside-o"; LNH="$TMP/lside-n"
+H="$TMP/lside"
 LSTUBS="$TMP/lstubs"; LGITSTUBS="$TMP/lgitstubs"; mkdir -p "$LSTUBS" "$LGITSTUBS"
 cat >"$LSTUBS/date" <<'STUB'
 #!/bin/sh
@@ -1219,12 +1335,23 @@ STUB
 # The maintenance gate: a receipt deciding LGATE_DECISION (continue) with the
 # read-evidence a judge that opened the inputs would cite; LGATE_RC exits
 # with that status after LGATE_DIAG on stderr; LGATE_SAY prints a line;
-# LGATE_BAD binds the receipt to a hash no plan has; LGATE_HOLD sleeps first.
+# LGATE_BAD binds the receipt to a hash no plan has; LGATE_HOLD sleeps first;
+# LGATE_NOTE notes that line through $LGATE_NOTE_BIN while it judges, logging
+# whether the note lock was held to gate-lock.log; LGATE_EDIT deletes that
+# line from the ledger.
 cat >"$LSTUBS/gate" <<'GATE'
 #!/usr/bin/env bash
 mode=""; run=""; subject=""; manifest=""; plan=""
 printf '%s\n' "$*" >>"$STUB_DIR/gate.log"
 [ -z "${LGATE_HOLD:-}" ] || /bin/sleep "$LGATE_HOLD"
+if [ -n "${LGATE_NOTE:-}" ]; then
+  if [ -d "$AC_HOME/state/.learn-note.lock" ]; then echo held; else echo free; fi >>"$STUB_DIR/gate-lock.log"
+  "$LGATE_NOTE_BIN/ac-learn.sh" note "$LGATE_NOTE" >>"$STUB_DIR/gate-note.log" 2>&1
+fi
+if [ -n "${LGATE_EDIT:-}" ]; then
+  grep -vxF -- "$LGATE_EDIT" "$AC_HOME/records/learnings.md" >"$STUB_DIR/edit.tmp"
+  cat "$STUB_DIR/edit.tmp" >"$AC_HOME/records/learnings.md"
+fi
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --mode) mode="$2"; shift 2 ;;
@@ -1279,12 +1406,6 @@ echo "curate stub: $*"
 echo "curate stub stderr" >&2
 exit "${LCURATE_RC:-0}"
 STUB
-cat >"$LSTUBS/runner" <<'STUB'
-#!/bin/sh
-printf 'runner\n' >>"$STUB_DIR/runner.log"
-[ -z "${LRUNNER_HOLD:-}" ] || /bin/sleep "$LRUNNER_HOLD"
-exit "${LRUNNER_RC:-0}"
-STUB
 cat >"$LGITSTUBS/git" <<'STUB'
 #!/bin/sh
 printf '%s\n' "$*" >>"$STUB_DIR/git.log"
@@ -1296,10 +1417,8 @@ case "$1 ${2:-}" in
   *) : ;;
 esac
 STUB
-# Both bins carry the same spawn and jev stand-ins: the oracle reaches its
-# siblings through `$(dirname "$0")`, the shim through STARTED_BIN.
-for b in "$lobin" "$lnbin"; do
-  cat >"$b/ac-spawn.sh" <<'STUB'
+# The bin's spawn stand-in, reached through STARTED_BIN.
+cat >"$lnbin/ac-spawn.sh" <<'STUB'
 #!/bin/sh
 printf '%s\n' "$*" >>"$STUB_DIR/spawn.log"
 [ -z "${LSPAWN_META:-}" ] || printf 'kind=roomchief\n' >"$AC_HOME/state/learning-chief.meta"
@@ -1307,121 +1426,40 @@ echo "spawn stub: promoted"
 echo "spawn stub: stderr" >&2
 exit "${LSPAWN_RC:-0}"
 STUB
-  cat >"$b/ac-jev.sh" <<'STUB'
-#!/bin/sh
-printf '%s\n' "$*" >>"$STUB_DIR/jev.log"
-case "$1" in
-  ask) [ -z "${LJEV_ANSWER:-}" ] || cat "$LJEV_ANSWER" ;;
-  sha) echo statesha ;;
-esac
-STUB
-  chmod +x "$b/ac-spawn.sh" "$b/ac-jev.sh"
-done
+chmod +x "$lnbin/ac-spawn.sh"
 chmod +x "$LSTUBS"/* "$LGITSTUBS/git"
 
-lboth() {  # lboth <cmd> <args...> - a seeding step at each side root: H names it, and so does a literal @H in an argument
-  local h x a; for h in "$LOH" "$LNH"; do H="$h"; a=(); for x in "$@"; do a+=("${x//@H/$h}"); done; "${a[@]}"; done
-}
 lseed() { [ ! -e "$H" ] || chmod -R u+rwX "$H"; rm -rf "$H"; mkdir -p "$H/home" "$H/cwd" "$H/tmp" "$H/stub" "$H/herdr/panes" "$H/herdr/tabs" "$H/orca/terminals"; }
 lstd() { lseed; mkdir -p "$H/home/records" "$H/home/state" "$H/home/data" "$H/home/config" "$H/home/projects" "$H/home/skills"; }
 lput() { mkdir -p "$(dirname "$H/$1")"; printf '%s' "${2//@H/$H}" >"$H/$1"; }   # lput <path under the side> <bytes>
-LLC=C; LENV=(); LCWD=cwd; LHOME=@H/home; LPATH=""; LPLANT=""; LSTDIN=/dev/null; LOBIN="$lobin"; LNBIN="$lnbin"
-lrun_side() {  # lrun_side <bin> <side root> <prefix> <args...> - LPLANT=<path under the side> links <path>.<the entry's pid> to <side>/victim first
-  local bin="$1" h="$2" p="$3" x v path rc=0; shift 3
-  path="$LSTUBS:$PATH"; [ -z "$LPATH" ] || path="${LPATH//@H/$h}"
-  local a=() e=("LC_ALL=$LLC" "PATH=$path" "TMPDIR=$h/tmp" "STUB_DIR=$h/stub" "FAKE_HERDR=$h/herdr" "FAKE_ORCA=$h/orca"
+LLC=C; LENV=(); LHOME=@H/home; LPATH=""; LPLANT=""; LN_RC=0
+lrun() {  # lrun <args...> - one run of the entry; @H in an argument or an LENV value is the side root; LPLANT=<path under the side> links <path>.<the entry's pid> to <side>/victim first
+  local x v path a=() e
+  path="$LSTUBS:$PATH"; [ -z "$LPATH" ] || path="${LPATH//@H/$H}"
+  e=("LC_ALL=$LLC" "PATH=$path" "TMPDIR=$H/tmp" "STUB_DIR=$H/stub" "FAKE_HERDR=$H/herdr" "FAKE_ORCA=$H/orca"
     "AC_PANE_AGENT=$LSTUBS/pane" "AC_GATE=$LSTUBS/gate" "AC_CURATE=$LSTUBS/curate")
-  [ -z "$LHOME" ] || e+=("AC_HOME=${LHOME//@H/$h}")
-  for x in ${LENV[@]+"${LENV[@]}"}; do v="${x#*=}"; e+=("${x%%=*}=${v//@H/$h}"); done
-  for x in "$@"; do a+=("${x//@H/$h}"); done
-  { (cd "$h/$LCWD" && exec env -u AC_HOME -u AC_FLEET_STATE -u AC_SCOPE -u AC_SOLO -u CDPATH -u AC_LOCK_STALE_GRACE -u EPOCHSECONDS \
+  [ -z "$LHOME" ] || e+=("AC_HOME=${LHOME//@H/$H}")
+  for x in ${LENV[@]+"${LENV[@]}"}; do v="${x#*=}"; e+=("${x%%=*}=${v//@H/$H}"); done
+  for x in "$@"; do a+=("${x//@H/$H}"); done
+  LN_RC=0
+  { (cd "$H/cwd" && exec env -u AC_HOME -u AC_FLEET_STATE -u AC_SCOPE -u AC_SOLO -u CDPATH -u AC_LOCK_STALE_GRACE -u EPOCHSECONDS \
     -u AC_BACKEND -u AC_PANE_AGENT -u AC_GATE -u AC_CURATE -u AC_WINDOW_FAMILY -u AC_LEARN_TIMEOUT -u AC_LEARN_START_TIMEOUT \
     -u AC_LEARN_SUITE_BIN -u AC_LEARN_SUITE_TIMEOUT -u AC_SEND_UNPROVEN "${e[@]}" \
     /bin/sh -c 'printf %s "$$" >"$0"; [ -z "$1" ] || ln -s "$2" "$1.$$"; shift 2; exec "$@"' \
-    "$TMP/$p.pid" "${LPLANT:+$h/$LPLANT}" "$h/victim" "$bin/ac-learn.sh" ${a[@]+"${a[@]}"}) <"${LSTDIN//@H/$h}" >"$TMP/$p.raw" 2>"$TMP/$p.err"; } 2>/dev/null || rc=$?
-  { cat "$TMP/$p.pid"; printf '\n'; } >>"$h/.pids"
-  return "$rc"
+    "$TMP/l.pid" "${LPLANT:+$H/$LPLANT}" "$H/victim" "$lnbin/ac-learn.sh" ${a[@]+"${a[@]}"}) </dev/null >"$TMP/l.raw" 2>"$TMP/l.rawerr"; } 2>/dev/null || LN_RC=$?
+  lnorm "$TMP/l.raw" >"$TMP/l.out"; lnorm "$TMP/l.rawerr" >"$TMP/l.err"
 }
-lnorm() {  # lnorm <file> <side root> - the side root @H, bin roots (and a suite meta's project=, their basename) ROOT, digests SHA, the k-th run's pid PID<k> where it names a temp, a run or a snapshot, mktemp and spool names
-  local e=() k=0 p
-  while IFS= read -r p; do
-    [ -n "$p" ] || continue
-    k=$((k + 1))
-    e+=(-e "s/(maintenance-learning-manual-[0-9]+-)$p([^0-9]|\$)/\1PID$k\2/g" -e "s/adhoc-$p([^0-9]|\$)/adhoc-PID$k\1/g"
-      -e "s/\.tmp\.$p(\.[0-9]+)?([^0-9]|\$)/.tmp.PID$k\2/g" -e "s/\.actions\.$p([^0-9]|\$)/.actions.PID$k\1/g")
-  done 2>/dev/null <"$2/.pids" || true
-  LC_ALL=C sed -E -e "s#$2#@H#g" -e "s#$TMP/oracle-ac-learn#ROOT#g" -e "s#$TMP/learn-shim#ROOT#g" -e "s#$ROOT#ROOT#g" -e 's#^project=(oracle-ac-learn|learn-shim)$#project=ROOT#' \
-    -e 's/[0-9a-f]{64}/SHA/g' ${e[@]+"${e[@]}"} \
-    -e 's/(ac-learn-route|tmp)\.[A-Za-z0-9]{6,10}/\1.XXXXXX/g' -e 's#\.wake-spool/[0-9]+\.[0-9]+\.[0-9]+#.wake-spool/WAKE#g' "$1"
-}
-LO_RC=0; LN_RC=0
-lw13() {  # W13 ORDER (named): run's printed candidate list, `find` (directory) order on the oracle, put in the byte order the port prints
-  LC_ALL=C awk '{ if ($0 ~ /^    @H\/home\/data\/learning-[0-9]+\/candidate-/) { if (!b) k = NR; b = 1 } else { k = NR; b = 0 } printf "%d\t%s\n", k, $0 }' \
-    | LC_ALL=C sort -t "$(printf '\t')" -k1,1n -k2 | cut -f2-
-}
-lpair() {  # lpair <args...> - both sides run, outputs normalised, nothing compared yet
-  LO_RC=0; LN_RC=0
-  lrun_side "$LOBIN" "$LOH" lo "$@" || LO_RC=$?
-  lrun_side "$LNBIN" "$LNH" ln "$@" || LN_RC=$?
-  lnorm "$TMP/lo.raw" "$LOH" >"$TMP/lo.out"; lnorm "$TMP/lo.err" "$LOH" >"$TMP/lo.err2"
-  ! LC_ALL=C grep -qE '^    @H/home/data/learning-[0-9]+/candidate-' "$TMP/lo.out" \
-    || { lw13 <"$TMP/lo.out" >"$TMP/lo.w13"; mv "$TMP/lo.w13" "$TMP/lo.out"; }
-  lnorm "$TMP/ln.raw" "$LNH" >"$TMP/ln.out"; lnorm "$TMP/ln.err" "$LNH" >"$TMP/ln.err2"
-}
-lrow() { printf '%s' "${BASH_LINENO[${#BASH_LINENO[@]}-2]}"; }   # the leg's own line that started this comparison
-lsame_rc_out() {
-  assert_eq "$LN_RC" "$LO_RC" "learn differential exit for '$*' at line $(lrow)"
-  cmp -s "$TMP/lo.out" "$TMP/ln.out" || fail "learn differential stdout differs for '$*' at line $(lrow): $(diff -a "$TMP/lo.out" "$TMP/ln.out" | head -n 8)"
-}
-lsame_err() {
-  cmp -s "$TMP/lo.err2" "$TMP/ln.err2" || fail "learn differential stderr differs for '$*' at line $(lrow): $(diff -a "$TMP/lo.err2" "$TMP/ln.err2" | head -n 8)"
-}
-lworld() {  # lworld <side root> - every path under home/ tmp/ stub/ herdr/ orca/ in normalised byte order, with its mode and bytes (a backup: its tar listing)
-  local h="$1" f n i
-  local -a names=() modes=()
-  while IFS= read -r -d '' f; do names+=("$f"); done < <(cd "$h" && find home tmp stub herdr orca -print0 2>/dev/null)
-  [ "${#names[@]}" -eq 0 ] || while IFS= read -r f; do modes+=("$f"); done < <(cd "$h" && printf '%s\0' "${names[@]}" | xargs -0 stat -f '%Sp')
-  for i in "${!names[@]}"; do
-    printf '%s\t%s\n' "${names[i]//$'\n'/\\n}" "$i"
-  done >"$h/.names"
-  lnorm "$h/.names" "$h" | LC_ALL=C sort | while IFS=$'\t' read -r n i; do
-    f="${names[i]}"
-    if [ -L "$h/$f" ]; then printf '== %s -> %s\n' "$n" "$(readlink "$h/$f")"; continue; fi
-    printf '== %s %s\n' "$n" "${modes[i]}"
-    [ ! -d "$h/$f" ] || continue
-    case "$f" in
-      */state/backups/*.tar.gz) tar -tzf "$h/$f" 2>&1 | LC_ALL=C sort ;;
-      *) cat "$h/$f" 2>/dev/null || printf '<unreadable>'; printf '\n' ;;
-    esac
-  done
-}
-# THE POINTER TRIGGER (named): the port's scout brief asks for a `trigger:`
-# header the frozen brief never had - these whole lines, and nothing else, are
-# dropped from the port's world before the comparison.
-cat >"$TMP/l-trigger-brief" <<'EOF'
-    trigger: <a few words - the situation, read after "when">
-- `trigger:` becomes the always-loaded pointer line
-  `- when <trigger> -> use skill <name>` every crewmate reads, so it is at most
-  100 bytes and does not itself start with "when"; the land refuses one that is
-  missing or over. The full `description:` stays in the SKILL.md.
-EOF
-lsame_world() {
-  lworld "$LOH" >"$TMP/lo.world"; lworld "$LNH" >"$TMP/ln.world"
-  lnorm "$TMP/lo.world" "$LOH" >"$TMP/lo.world2"; lnorm "$TMP/ln.world" "$LNH" | grep -vxF -f "$TMP/l-trigger-brief" >"$TMP/ln.world2"
-  cmp -s "$TMP/lo.world2" "$TMP/ln.world2" || fail "learn differential world differs after '$*' at line $(lrow): $(diff -a "$TMP/lo.world2" "$TMP/ln.world2" | head -n 12)"
-}
-lsame() { lpair "$@"; lsame_rc_out "$@"; lsame_err "$@"; lsame_world "$@"; }
-lout() { cat "$TMP/ln.out"; }
-lerr() { cat "$TMP/ln.err2"; }
-loerr() { cat "$TMP/lo.err2"; }
-lrefuse() {  # lrefuse <stderr> <args...> - both sides refuse alike: exit 1, no stdout, exactly <stderr>
+lnorm() { LC_ALL=C sed -E -e "s#$H#@H#g" -e "s#$lnroot#ROOT#g" -e "s#$ROOT#ROOT#g" -e 's/[0-9a-f]{64}/SHA/g' "$1"; }
+lout() { cat "$TMP/l.out"; }
+lerr() { cat "$TMP/l.err"; }
+lrefuse() {  # lrefuse <stderr> <args...> - exit 1, no stdout, exactly <stderr>
   local want="$1"; shift
-  lsame "$@"
-  assert_eq "$LN_RC:$(lout):$(lerr)" "1::$want" "learn refusal for '$*' at line $(lrow)"
+  lrun "$@"
+  assert_eq "$LN_RC:$(lout):$(lerr)" "1::$want" "learn refusal for '$*'"
 }
-lok() {  # lok <args...> - both sides succeed alike, nothing on stderr
-  lsame "$@"
-  assert_eq "$LN_RC:$(lerr)" "0:" "learn success for '$*' at line $(lrow)"
+lok() {  # lok <args...> - exit 0, nothing on stderr
+  lrun "$@"
+  assert_eq "$LN_RC:$(lerr)" "0:" "learn success for '$*'"
 }
 LUSAGE="ERROR: usage: ac-learn.sh tick [<landing-id>]|autoroom|suite [<task-id>]|run|note <line>...|land <candidate>|promote <name>|rotate-pending|stale|reinforce <slug> --evidence <line>|maintenance status|resume <txid>|abandon <txid>"
 LNOHOME='ERROR: AC_HOME is not set - set AC_HOME=<fleet home> (the directory holding state/ data/ records/ config/ projects/); the distro checkout is not one'
@@ -1430,23 +1468,27 @@ LNOHOME='ERROR: AC_HOME is not set - set AC_HOME=<fleet home> (the directory hol
 #    unknown verb are the one usage line; an unsupported backend name refuses
 #    every verb, note and promote included (W16); extra words after the
 #    word-less verbs are ignored.
-lboth lstd
+lstd
 lrefuse "$LUSAGE"
 lrefuse "$LUSAGE" -h
 lrefuse "$LUSAGE" bogus
 LTMUX="ERROR: unsupported backend 'tmux' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)"
-lboth lput home/config/backend $'tmux\n'
+lput home/config/backend $'tmux\n'
 lrefuse "$LTMUX" note '- a lesson'
 lrefuse "$LTMUX" promote some-skill
-lboth lstd
+lstd
 LENV=(AC_BACKEND=tmux); lrefuse "$LTMUX" tick; LENV=()
 lok stale extra words
+assert_eq "$(lout)" "always-loaded (CREWMATE-learned.md), stale past 30 days:
+  (no file yet)" "stale ignores extra words"
 lok rotate-pending extra
+assert_eq "$(lout)" "" "rotate-pending ignores extra words"
+assert_no_file "$H/home/records/learnings.md" "... and an absent ledger is left absent"
+LNOTX="no incomplete maintenance transaction - the Learning/Curate loop is clear"
 lok maintenance
+assert_eq "$(lout)" "$LNOTX" "a bare maintenance is its status"
 
-# Homeless: the verbs whose bash refused at its first home read agree; tick
-# and autoroom are the named W10 divergence - one refusal where the bash
-# printed three (tick, exit 1) and two (autoroom, exit 0).
+# Homeless: one refusal at the first home read, exit 1 (autoroom: exit 0).
 LHOME=""
 lrefuse "$LNOHOME" note '- a lesson'
 lrefuse "$LNOHOME" stale
@@ -1454,186 +1496,139 @@ lrefuse "$LNOHOME" rotate-pending
 lrefuse "$LNOHOME" maintenance status
 lrefuse "$LNOHOME" reinforce s --evidence e
 lrefuse "$LUSAGE" bogus
-lpair tick
-assert_eq "$LO_RC:$(grep -c 'AC_HOME is not set' "$TMP/lo.err2")" "1:3" "W10: the oracle's homeless tick printed three refusals"
-assert_eq "$LN_RC:$(lerr)" "1:$LNOHOME" "W10 (named): the port's homeless tick is one refusal"
-lpair autoroom
-assert_eq "$LO_RC:$(grep -c 'AC_HOME is not set' "$TMP/lo.err2")" "0:2" "W10: the oracle's homeless autoroom printed two refusals, exit 0"
-assert_eq "$LN_RC:$(lerr)" "0:$LNOHOME" "W10 (named): the port's homeless autoroom is one refusal, exit 0"
+lrefuse "$LNOHOME" tick
+lrun autoroom
+assert_eq "$LN_RC:$(lout):$(lerr)" "0::$LNOHOME" "a homeless autoroom is one refusal, exit 0"
 LHOME=@H/home
 
 # 2. note: the frame minted on an absent ledger, insertion before the first
 #    `## Distilled` with the seam blank held, every refusal before any write,
-#    the lock, and W1 (a word holding LF passes the marker refusal).
-lboth lstd
+#    the lock, a link planted at the rewrite's temp.
+LLEDGER="$H/home/records/learnings.md"
+lstd
 lok note '### 2026-01-01 (solo s1)' '- a first lesson (by: s1, first-hand)'
+assert_eq "$(lout)" "appended 2 line(s) under ## Pending in @H/home/records/learnings.md" "note says what it appended"
+assert_eq "$(cat "$LLEDGER")" $'# Learning Ledger\n\n## Pending\n### 2026-01-01 (solo s1)\n- a first lesson (by: s1, first-hand)' "note mints the frame on an absent ledger"
 lok note '- a second lesson'
-lboth lstd
-lboth lput home/records/learnings.md $'# Learning Ledger\n\n## Pending\n\n- old\n\n\n## Distilled\n\n- [distilled -> x] sources=1 updated=2026-01-01 ([skill](../skills/x/SKILL.md))\n'
+assert_eq "$(cat "$LLEDGER")" $'# Learning Ledger\n\n## Pending\n### 2026-01-01 (solo s1)\n- a first lesson (by: s1, first-hand)\n- a second lesson' "note appends at the end of the Pending body"
+lstd
+lput home/records/learnings.md $'# Learning Ledger\n\n## Pending\n\n- old\n\n\n## Distilled\n\n- [distilled -> x] sources=1 updated=2026-01-01 ([skill](../skills/x/SKILL.md))\n'
 lok note '- placed above the index'
-lboth lput home/records/learnings.md $'# Learning Ledger\n\n## Pending\n- unterminated'
+assert_eq "$(cat "$LLEDGER")" $'# Learning Ledger\n\n## Pending\n\n- old\n- placed above the index\n\n\n## Distilled\n\n- [distilled -> x] sources=1 updated=2026-01-01 ([skill](../skills/x/SKILL.md))' "note inserts above the index, the seam blanks held"
+lput home/records/learnings.md $'# Learning Ledger\n\n## Pending\n- unterminated'
 lok note '- after an unterminated line'
+assert_eq "$(cat "$LLEDGER")" $'# Learning Ledger\n\n## Pending\n- unterminated\n- after an unterminated line' "note terminates an unterminated last line first"
 lrefuse "ERROR: usage: ac-learn.sh note <line>... (each argument is appended verbatim as one line under '## Pending')" note
 lrefuse "ERROR: refusing to append the section marker '## Distilled': a second marker makes learn_ledger_split read everything after it as the pointer index and drop it (nothing written)" note '- ok' '## Distilled'
-lrefuse "ERROR: note takes lesson lines only and defines no flags - refusing '--file' (nothing written). A ledger line is '- <lesson>' and a heading is '### <date> (solo|family <id>)', each passed as its own argument." note --file x
 lrefuse "ERROR: note takes lesson lines only and defines no flags - refusing '-x' (nothing written). A ledger line is '- <lesson>' and a heading is '### <date> (solo|family <id>)', each passed as its own argument." note -x
-lok note $'- one\n## Distilled\n- two (by: s2, first-hand)'
-lboth lstd
-lboth lput home/state/.learn-note.lock/pid "$$"$'\n'
-lsame note '- refused under a held lock'
-assert_contains "$(lerr)" "learnings ledger lock" "note: a held lock refuses with nothing written"
-lboth lstd
-lboth lput home/records/learnings.md $'# Learning Ledger\n\n## Pending\n\n'
-lboth chmod 600 @H/home/records/learnings.md
-lok note '- the mode the rewrite leaves (W12)'
-# EXCLUSIVE TEMPS (named): a link planted at the bash's `<ledger>.tmp.<pid>`
-# was written through and the victim took the new ledger; the port's temp is
-# made exclusively and the victim is untouched.
-lboth lstd
-lboth lput victim $'victim\n'
+assert_eq "$(cat "$LLEDGER")" $'# Learning Ledger\n\n## Pending\n- unterminated\n- after an unterminated line' "the refused notes wrote nothing"
+lstd
+lput home/state/.learn-note.lock/pid "$$"$'\n'
+lrun note '- refused under a held lock'
+assert_eq "$LN_RC:$(lout)" "1:" "note under a held lock refuses"
+assert_contains "$(lerr)" "ERROR: learnings ledger lock @H/home/state/.learn-note.lock could not be acquired within 30s - NOTHING was written" "note: a held lock refuses with nothing written"
+assert_no_file "$LLEDGER" "... and mints no ledger"
+# EXCLUSIVE TEMPS: a link planted at `<ledger>.tmp.<pid>` is never written
+# through.
+lstd
+lput victim $'victim\n'
 LPLANT=home/records/learnings.md.tmp
-lpair note '- through a planted link'
+lok note '- through a planted link'
 LPLANT=""
-assert_eq "$LO_RC:$LN_RC" "0:0" "note with a planted temp link: both land the lesson"
-assert_contains "$(cat "$LOH/victim")" "through a planted link" "the oracle wrote through the planted link (W12)"
-assert_eq "$(cat "$LNH/victim")" "victim" "the port never writes through a planted temp (W12, named)"
-assert_contains "$(cat "$LNH/home/records/learnings.md")" "- through a planted link" "the port's ledger still takes the lesson"
+assert_eq "$(cat "$H/victim")" "victim" "note never writes through a planted temp"
+assert_contains "$(cat "$LLEDGER")" "- through a planted link" "the ledger still takes the lesson"
 
-# 3. tick: unkeyed and keyed, a duplicate inside the window, the crossing
-#    wake, busy locks, the key grammar, the legacy counter, a keyed count of 08.
-lboth lstd
-lok tick
-lok tick fam-a
-lok tick fam-a
-lboth lput home/state/.learn.meta $'generation=2\ndebriefs=7\n'
-lok tick fam-b
-lok tick fam-c
-lboth lstd
-lboth lput home/state/.learn.meta $'stows=3\n'
-lok tick
-lboth lput home/state/.learn-cadence.lock/pid "$$"$'\n'
-lsame tick
-assert_eq "$LN_RC" "1" "an unkeyed tick whose lock is busy ends 1"
-lsame tick fam-z
-assert_contains "$(lout)" "tick NOT counted: landing fam-z could not be claimed" "a keyed tick whose lock is busy says so"
-lboth lstd
+# 3. tick: the key grammar under C and UTF-8, and an empty key is unkeyed.
+lstd
 lrefuse "ERROR: tick key must be a task/family id [a-z0-9-] (got: 'Bad')" tick Bad
-lrefuse "ERROR: tick takes at most one landing id (got: a b)" tick a b
-lok tick ''
-# W11 (named): under a UTF-8 locale bash's bracket collated `Bad` in.
 LLC=en_US.UTF-8
-lpair tick Bad
+lrefuse "ERROR: tick key must be a task/family id [a-z0-9-] (got: 'Bad')" tick Bad
 LLC=C
-assert_eq "$LO_RC:$LN_RC" "0:1" "W11: the oracle stamped 'Bad' under UTF-8, the port refuses it per the text"
-# A count or generation of 08 is an arithmetic error inside learn_cadence_call's
-# capture: only that subshell ended, its cadence lock still held by the entry,
-# and the caller took its failed-and-spoke branch. SHELL-OWN STDERR (named): the
-# oracle's own diagnostic is dropped before the comparison.
-l08() {  # l08 <args...> - lsame once the oracle's arithmetic line is dropped and each side's left-held cadence lock is checked and cleared
-  local p h
-  lpair "$@"
-  assert_contains "$(loerr)" "08: value too great for base" "the oracle's capture ended on the arithmetic error for '$*'"
-  LC_ALL=C sed -E '/^ROOT\/bin\/ac-maintenance-lib\.sh: line [0-9]+: 08: value too great for base /d' "$TMP/lo.err2" >"$TMP/lo.err3"
-  mv "$TMP/lo.err3" "$TMP/lo.err2"
-  lsame_rc_out "$@"; lsame_err "$@"
-  for p in "lo:$LOH" "ln:$LNH"; do
-    h="${p#*:}"
-    assert_eq "$(cat "$h/home/state/.learn-cadence.lock/pid")" "$(cat "$TMP/${p%%:*}.pid")" "the cadence lock is left held by the entry after '$*' ($h)"
-    rm -rf "$h/home/state/.learn-cadence.lock"
-  done
-  lsame_world "$@"
-}
-lboth lstd
-lboth lput home/state/.learn.meta $'generation=1\ndebriefs=08\n'
-l08 tick fam-x
-assert_eq "$LN_RC:$(lout)" "1:tick NOT counted: landing fam-x could not be claimed (see the warning above) - re-run this tick" "a keyed tick whose count the arithmetic refuses says NOT counted"
+lok tick ''
+assert_eq "$(lout)" "tick: debriefs=1/8" "an empty key ticks unkeyed"
+assert_no_file "$H/home/state/.learn-ticks" "... stamping no landing"
 
-# 4. rotate-pending: under budget a no-op, over budget the oldest prefix
-#    archived at a safe cut, held sources kept with their heading, a bad knob,
-#    nothing archivable.
-lrotledger() {
-  local i
-  { printf '# Learning Ledger\n\n## Pending\n\n[pending-overflow -> learnings-archive/pending-1.md]\n### 2025-12-01 (family f)\n'
-    for i in 1 2 3 4 5 6; do printf -- '- lesson %02d with padding to take some room in the body\n  continued %02d\n' "$i" "$i"; done
-    printf '### 2025-12-02 (solo s)\n- held source bullet\n  its continuation\n- lesson 07 newest\n\n## Distilled\n\n- [distilled -> x] sources=1 updated=2026-01-01 ([skill](../skills/x/SKILL.md))\n'
-  } >"$H/home/records/learnings.md"
-}
-lboth lstd
-lboth lrotledger
-lok rotate-pending
-lboth lput home/config/learn-pending-budget $'300\n'
-lboth lput home/data/learning-1700000000/report.md $'# report\n'
-lboth lput home/data/learning-1700000000/candidate-a.md $'kind: skill\nname: a\n===sources===\n2025-12-02\thook\t- held source bullet\n'
-lsame rotate-pending
-assert_contains "$(cat "$LNH/home/records/learnings.md")" "- held source bullet" "the last examined run's held source stays in Pending"
-lboth lrotledger
-lboth lput home/config/learn-pending-budget $'10\n'
-lsame rotate-pending
-lboth lput home/config/learn-pending-budget $'12k\n'
+# 4. rotate-pending: a bad knob.
+lput home/records/learnings.md $'# Learning Ledger\n\n## Pending\n\n- a lesson\n'
+lput home/config/learn-pending-budget $'12k\n'
 lrefuse "ERROR: config/learn-pending-budget must be a byte count (got: '12k')" rotate-pending
 
-# 5. stale and reinforce: graded, NO-CLOCK, the discovery section skipped,
-#    scenes, the knob; every reinforce refusal, the same-day receipt, the
-#    rewrite (W18: BSD date fills the time of day and normalizes Feb 30).
+# 5. stale and reinforce: the discovery section skipped, scenes, the knob;
+#    every reinforce refusal, a reinforced date replaced, the lock.
 lcml() {
-  lput home/CREWMATE-learned.md $'# Fleet-learned crewmate lessons\n\n## stale-one\n\nbody\n\n(learned 2025-10-01)\n\n## fresh-one\n\nbody\n\n(learned 2025-12-20, reinforced 2025-12-30)\n\n## no-clock\n\nbody\n\n## today-one\n\nbody\n\n(learned 2025-11-01, reinforced 2026-01-01)\n\n## feb-thirty\n\n(learned 2025-02-30)\n\n## when to reach for a learned skill\n- when x -> use skill x\n'
+  lput home/CREWMATE-learned.md $'# Fleet-learned crewmate lessons\n\n## stale-one\n\nbody\n\n(learned 2025-10-01)\n\n## fresh-one\n\nbody\n\n(learned 2025-12-20, reinforced 2025-12-30)\n\n## no-clock\n\nbody\n\n## today-one\n\nbody\n\n(learned 2025-11-01, reinforced 2026-01-01)\n\n## when to reach for a learned skill\n- when x -> use skill x\n'
   lput home/records/scenes/alpha.md $'# alpha\nscene=alpha updated=2025-11-01T00:00:00Z\n'
   lput home/records/scenes/beta.md $'# beta\nupdated=2025-12-31T00:00:00Z extra\n'
 }
-lboth lstd
+lstd
+lcml
 lok stale
-lboth lcml
-lok stale
-lboth lput home/config/learn-stale-days $'30d\n'
+assert_contains "$(lout)" "  -- 4 entries, 1 stale --" "stale grades every entry, the discovery section aside"
+case "$(lout)" in *"when to reach"*) fail "the discovery section is no entry" ;; esac
+assert_contains "$(lout | grep '^  alpha ')" "STALE (merge or update it - ac-scene.sh)" "a scene past the window is STALE"
+assert_contains "$(lout | grep '^  beta ')" "FRESH" "a scene inside the window is FRESH"
+lput home/config/learn-stale-days $'30d\n'
 lrefuse "ERROR: config/learn-stale-days must be a day count (got: '30d')" stale
-lboth lstd
-lboth lcml
+lstd
+lcml
 lrefuse "ERROR: --evidence needs a value" reinforce stale-one --evidence
 lrefuse "ERROR: unknown flag: --nope" reinforce stale-one --nope
 lrefuse "ERROR: reinforce takes ONE slug (got 'a' and 'b')" reinforce a b --evidence e
 lrefuse "ERROR: usage: ac-learn.sh reinforce <slug> --evidence '<what this window proved>'" reinforce --evidence e
-lrefuse "ERROR: --evidence must be a single line" reinforce stale-one --evidence $'two\nlines'
-lrefuse "ERROR: no entry '## ghost' in CREWMATE-learned.md (ac-learn.sh stale lists them)" reinforce ghost --evidence e
-lrefuse "ERROR: entry '## no-clock' carries no '(learned <date>)' line to refresh - nothing written" reinforce no-clock --evidence e
-lok reinforce today-one --evidence 'the window re-ran it'
-lok reinforce stale-one --evidence 'the window re-ran it'
 lok reinforce fresh-one --evidence 'replaces the reinforced date'
-# stale-one is reinforced today by now, and a same-day reinforce answers
-# before the lock: reseeded, it reaches the lock.
-lboth lcml
-lboth lput home/CREWMATE-learned.md.lock/pid "$$"$'\n'
-lsame reinforce stale-one --evidence e
-assert_contains "$(lerr)" "CREWMATE-learned lock" "reinforce under a held lock refuses with nothing written"
+assert_eq "$(lout)" "reinforced fresh-one (clock -> 2026-01-01) on evidence: replaces the reinforced date
+post the evidence to the owning room/report - the file deliberately does not store it" "reinforce says what it refreshed"
+assert_contains "$(cat "$H/home/CREWMATE-learned.md")" $'## fresh-one\n\nbody\n\n(learned 2025-12-20, reinforced 2026-01-01)\n' "a reinforced date is replaced, the learned date kept"
+lcml
+lput home/CREWMATE-learned.md.lock/pid "$$"$'\n'
+lrun reinforce stale-one --evidence e
+assert_eq "$LN_RC:$(lout):$(lerr)" "1::ERROR: CREWMATE-learned lock @H/home/CREWMATE-learned.md.lock could not be acquired within 30s - nothing written" "reinforce under a held lock refuses"
+assert_contains "$(cat "$H/home/CREWMATE-learned.md")" $'## stale-one\n\nbody\n\n(learned 2025-10-01)\n' "... with nothing written"
 
 # 6. maintenance: status clean and held (two journals, byte order), resume's
 #    and abandon's refusals and settles.
-lboth lstd
+lstd
 lok maintenance status
+assert_eq "$(lout)" "$LNOTX" "a clean status"
 lok maintenance ''
+assert_eq "$(lout)" "$LNOTX" "an empty subverb is status"
 lmj() { lput "home/state/.maintenance-transactions/$1/journal" "$2"; }
-lboth lmj learning-b-x $'status=applying\nplan=/nowhere/plan.json\nrun=/nowhere\naction_0=complete\nheld_committed=1\nbackup=/b.tar.gz\n'
-lboth lmj Learning-a-y $'status=applying\n'
-lboth lmj curate-1-z $'status=complete\n'
-lboth lmj curate-2-w $'status=abandoned\n'
+lmj learning-b-x $'status=applying\nplan=/nowhere/plan.json\nrun=/nowhere\naction_0=complete\nheld_committed=1\nbackup=/b.tar.gz\n'
+lmj Learning-a-y $'status=applying\n'
+lmj curate-1-z $'status=complete\n'
+lmj curate-2-w $'status=abandoned\n'
 lok maintenance status
+assert_eq "$(lout)" "INCOMPLETE maintenance transaction(s) - every other Learning/Curate transaction refuses until settled:
+  Learning-a-y status=applying committed=0 plan=-
+    resume: bin/ac-learn.sh maintenance resume Learning-a-y
+    drop:   bin/ac-learn.sh maintenance abandon Learning-a-y
+  learning-b-x status=applying committed=1 plan=/nowhere/plan.json
+    resume: bin/ac-learn.sh maintenance resume learning-b-x
+    drop:   bin/ac-learn.sh maintenance abandon learning-b-x" "status names each unsettled transaction, in byte order"
 lrefuse "ERROR: usage: ac-learn.sh maintenance resume <transaction-id> (list them: ac-learn.sh maintenance status)" maintenance resume
 lrefuse "ERROR: transaction id must be [A-Za-z0-9._-] (got: 'a/b')" maintenance abandon a/b
 lrefuse "ERROR: no maintenance transaction 'ghost' on record at @H/home/state/.maintenance-transactions" maintenance resume ghost
 lrefuse "ERROR: Learning-a-y records no plan/run to replay (it predates the resume record) - re-run the owning Learning/Curate run, or settle it: bin/ac-learn.sh maintenance abandon Learning-a-y" maintenance resume Learning-a-y
 lrefuse "ERROR: learning-b-x's plan or run directory is gone (plan=/nowhere/plan.json run=/nowhere) - it cannot be replayed; settle it: bin/ac-learn.sh maintenance abandon learning-b-x" maintenance resume learning-b-x
 lok maintenance resume curate-1-z
+assert_eq "$(lout)" "curate-1-z already reached complete - nothing to settle" "resume of a complete transaction settles nothing"
 lok maintenance abandon curate-2-w
+assert_eq "$(lout)" "curate-2-w was already abandoned - it blocks nothing" "abandon of an abandoned transaction"
 lok maintenance abandon learning-b-x
+assert_eq "$(lout)" "abandoned learning-b-x - it no longer blocks the loop.
+NOTHING was rolled back: 1 action(s) of this plan are still committed to disk.
+The pre-mutation backup of records/ + skills/ is at /b.tar.gz" "abandon says what is still committed and where the backup is"
+assert_contains "$(cat "$H/home/state/.maintenance-transactions/learning-b-x/journal")" $'status=abandoned\nabandoned_at=1767225600' "abandon settles the journal"
 lok maintenance abandon Learning-a-y
+assert_eq "$(lout)" "abandoned Learning-a-y - it no longer blocks the loop.
+NOTHING was rolled back: an unrecorded number of action(s) of this plan are still committed to disk." "abandon of a journal recording no actions"
+lok maintenance status
+assert_eq "$(lout)" "$LNOTX" "every transaction settled"
 lrefuse "ERROR: usage: ac-learn.sh maintenance status|resume <txid>|abandon <txid>" maintenance bogus
 
-# 7. land and promote: every refusal, then a skill, a crewmate lesson, a patch
-#    and a rule landed through the shared transaction (backup, journal, staged
-#    files, the ledger rewrite, the archive, the discovery pointer), and a
-#    landed skill whose cadence reset meets a generation of 08.
+# 7. land and promote: the refusals no other suite names.
 lrefuse "ERROR: usage: ac-learn.sh promote <skill-name>" promote
 lrefuse "ERROR: skill name must be a slug [a-z0-9-] (got: 'Bad')" promote Bad
-lrefuse "ERROR: learned skills are permanently fleet-local; promote is a fail-closed compatibility command (the legacy container store is retired and never read)." promote good-name
 lrefuse "ERROR: usage: ac-learn.sh land <candidate-file>" land
 lrefuse "ERROR: no candidate file at @H/nope.md" land @H/nope.md
 lland() {  # lland - a home whose Pending holds the sources every land row cites
@@ -1642,37 +1637,14 @@ lland() {  # lland - a home whose Pending holds the sources every land row cites
   lput home/data/s1/report.md $'# report\n## Lessons\n- this exact phrase has more than six words in it\n'
   lput home/skills/patchme/SKILL.md $'---\nname: patchme\ndescription: Patch me when x.\n---\n\n# body\n'
 }
-lcand() { lput "cand/$1.md" "$2"; }
-lboth lland
-lboth lcand unapproved $'kind: skill\nname: s\n'
-lrefuse "ERROR: refusing to land an UNAPPROVED candidate (@H/cand/unapproved.md): no 'approved:' header - the captain gate (Q6) must approve first" land @H/cand/unapproved.md
-lboth lcand badslug $'kind: skill\nname: Bad_Name\ndescription: x\napproved: yes\n'
+lland
+lput cand/badslug.md $'kind: skill\nname: Bad_Name\ndescription: x\napproved: yes\n'
 lrefuse "ERROR: skill candidate 'name:' must be an agentskills slug: lowercase [a-z0-9-], <=64 chars, no leading/trailing/consecutive hyphen (got: 'Bad_Name')" land @H/cand/badslug.md
-lboth lcand unverbatim $'kind: skill\nname: newskill\ndescription: Use when x.\ntrigger: Use when x\napproved: yes\n===sources===\n2025-12-01\thook\t- not in the ledger\n===skill===\n# body\n'
-lrefuse "ERROR: source bullet not found verbatim in learnings.md (compaction is coupled to landing; nothing written): - not in the ledger" land @H/cand/unverbatim.md
-lboth lcand skill $'kind: skill\nname: newskill\ndescription: Use when the thing happens.\ntrigger: Use when the thing happens\napproved: yes\n===sources===\n2025-12-01\thook\t- src one (by: s1, first-hand) "this exact phrase has more than six words in it"\n2025-12-02\thook\t- src two\n===skill===\n# newskill\nDo the thing.\n'
-lok land @H/cand/skill.md
-lboth lcand crewmate $'kind: crewmate\nname: a-method\ndescription: A method lesson.\napproved: yes\n===sources===\n2025-12-03\thook\t- src two\n===crewmate===\nDo the method, briefly.\n'
-lok land @H/cand/crewmate.md
-lboth lcand crewmate2 $'kind: crewmate\nname: a-method\ndescription: Again.\napproved: yes\n===crewmate===\nx\n'
-lrefuse "ERROR: CREWMATE-learned.md already carries '## a-method' - curate the existing entry instead of re-landing it (nothing written)" land @H/cand/crewmate2.md
-lboth lcand patch $'kind: patch\nname: patchme\napproved: yes\n===patch===\n## Gotcha\nWatch this.\n'
-lok land @H/cand/patch.md
-lboth lcand rule $'kind: rule\nname: r\napproved: yes\n===rule===\n- 2026-01-01: STANDING: a new rule.\n'
-lok land @H/cand/rule.md
-lboth lcand spoof $'kind: crewmate\nname: spoof\ndescription: x.\napproved: yes\n===crewmate===\nprose\n## injected\n'
-lrefuse "ERROR: crewmate '===crewmate===' body must be lesson prose only - the transaction composes the '## spoof' heading itself (nothing written)" land @H/cand/spoof.md
-lboth lland
-lboth lput home/state/.learn.meta $'generation=08\ndebriefs=3\n'
-lboth lcand skill $'kind: skill\nname: newskill\ndescription: Use when the thing happens.\ntrigger: Use when the thing happens\napproved: yes\n===sources===\n2025-12-01\thook\t- src one (by: s1, first-hand) "this exact phrase has more than six words in it"\n2025-12-02\thook\t- src two\n===skill===\n# newskill\nDo the thing.\n'
-l08 land @H/cand/skill.md
-assert_eq "$LN_RC:$(lerr)" "0:WARN: landed skill, but its cadence lock was busy; its cadence was preserved instead of reset" "a land whose reset the arithmetic refuses warns and still says it landed"
-assert_contains "$(lout)" "landed skill through maintenance transaction" "the landed line follows the reset's warning"
+assert_no_file "$H/home/skills/Bad_Name" "a refused slug writes no skill"
 
-# 8. run: a stub scout through every ending, then candidates through every
-#    gate answer, the rule escalation, a rejected preparer, Curate due, the
-#    orca home (W2 at parity - the meta records the fleet's backend), a
-#    generation of 08 at the reset, a link planted at the pointer rewrite's temp.
+# 8. run: the orca home (the meta records the fleet's backend), bytes under
+#    UTF-8, a link planted at the pointer rewrite's temp, two candidates on one
+#    name, a note or an edit while the gate judges.
 lrunhome() {
   lland
   lput home/records/backlog.md $'## In flight\n\n## Queued\n\n## Done\n- [x] s1 - receipt - local main (merged 2025-12-30)\n- [x] old - receipt (merged 2025-01-01)\n- [x] nodate - receipt\n- [x] [failed] f1 - receipt (merged 2025-12-31)\n- [x] arch1 - receipt (merged 2025-12-31)\n'
@@ -1681,216 +1653,176 @@ lrunhome() {
   lput home/data/archive/2025/arch1/room.md $'# archived room\n'
   lput home/data/archive/2025/arch1/tasks/t/report.md $'## Lessons\n```\n## Lessons\n```\n- a lesson inside\n## Next\n'
 }
-lboth lrunhome
-lok run
-lboth lrunhome
-LENV=(LPANE_STATUS=blocked); lsame run; LENV=()
-lboth lrunhome
-LENV=(LPANE_NOREPORT=1 LPANE_NORETRO=1); lsame run; LENV=()
-lboth lrunhome
-LENV=(LPANE_NODONE=1); lsame run; LENV=()
-assert_contains "$(lerr)" "learning scout emitted no done event" "a scout with no done event ends the run, its panes reaped"
-lboth lrunhome
-LENV=(LPANE_JUNK=1); lsame run; LENV=()
-lboth lrunhome
-LENV=(LPANE_OPEN=pL LPANE_TRANSCRIPT=/t.jsonl); lsame run; LENV=()
-lboth lrunhome
-LENV=(LPANE_NOPANE=1); lsame run; LENV=()
 lcands() {  # lcands <dir> - candidates of every kind a run's scout may write
   lput "$1/candidate-newskill.md" $'kind: skill\nname: newskill\ndescription: Use when the thing happens.\ntrigger: Use when the thing happens\n===sources===\n2025-12-01\thook\t- src one (by: s1, first-hand) "this exact phrase has more than six words in it"\n===skill===\n# newskill\nDo the thing.\n'
   lput "$1/candidate-rule-a.md" $'kind: rule\nname: whatever\n===rule===\n- a captain rule\n'
   lput "$1/candidate-bad.md" $'kind: skill\nname: has space\ndescription: x\n'
   lput "$1/candidate-patchme.md" $'kind: patch\nname: patchme\n===sources===\n2025-12-02\thook\t- src two\n===patch===\n## Gotcha\nWatch.\n'
 }
-lboth lrunhome
-lboth lcands cands
-LENV=("LPANE_CANDS=@H/cands"); lsame run; LENV=()
-for d in revise ask-captain; do
-  lboth lrunhome; lboth lcands cands
-  LENV=("LPANE_CANDS=@H/cands" "LGATE_DECISION=$d"); lsame run; LENV=()
+lrunhome
+lput home/config/backend $'orca\n'
+lok run
+assert_contains "$(cat "$H/stub/seen.verify-learning-1767225600.meta")" "backend=orca" "an orca home's scout meta records backend=orca"
+# W5 BYTES: under a UTF-8 locale a byte that is no UTF-8 in Pending is read as
+# a byte, and every Pending line is kept.
+lrunhome
+lput home/records/learnings.md $'# Learning Ledger\n\n## Pending\n\n### 2025-12-01 (solo s1)\n- src one (by: s1, first-hand) "this exact phrase has more than six words in it"\n- a later lesson with caf\351 byte\n- the last lesson\n\n## Distilled\n\n'
+lcands cands
+LLC=en_US.UTF-8; LENV=("LPANE_CANDS=@H/cands"); lok run; LENV=(); LLC=C
+assert_contains "$(lout)" "auto-applied: newskill" "W5: the skill applies"
+assert_contains "$(cat "$H/home/skills/newskill/SKILL.md")" "Do the thing." "W5: ... its body landed"
+grep -qF -- '- the last lesson' "$LLEDGER" || fail "W5: every Pending line is kept"
+LC_ALL=C grep -qF -- $'- a later lesson with caf\351 byte' "$LLEDGER" || fail "W5: ... the line holding the byte too"
+# EXCLUSIVE TEMPS: the staged rewrite of an existing pointer is made through a
+# temp in the run dir the scout writes, before any gate judges the plan; a link
+# planted at its name is never written through.
+lrunhome
+lput home/records/learnings.md $'# Learning Ledger\n\n## Pending\n\n### 2025-12-01 (solo s1)\n- src one (by: s1, first-hand) "this exact phrase has more than six words in it"\n- src two\n- src two\n\n## Distilled\n\n- [distilled -> old] sources=2 updated=2025-11-01 ([skill](../skills/old/SKILL.md))\n- [distilled -> patchme] sources=1 updated=2025-11-01 ([skill](../skills/patchme/SKILL.md))\n'
+lput pcands/candidate-patchme.md $'kind: patch\nname: patchme\n===sources===\n2025-12-02\thook\t- src two\n===patch===\n## Gotcha\nWatch.\n'
+lput victim $'victim\n'
+mkdir -p "$H/home/data/learning-1767225600/work"
+ln -s "$H/victim" "$H/home/data/learning-1767225600/work/pointers.next.tsv.tmp"
+LENV=("LPANE_CANDS=@H/pcands"); lok run; LENV=()
+assert_contains "$(lout)" "auto-applied: patchme" "the patch applies past a planted pointer temp"
+assert_eq "$(cat "$H/victim")" "victim" "the pointer rewrite never writes through a planted temp"
+assert_contains "$(cat "$LLEDGER")" "[distilled -> patchme] sources=2 updated=2025-12-02" "the existing pointer is rewritten past a planted temp"
+# TWO CANDIDATES ON ONE NAME: the later claimant is keyed patchme.2, with its
+# own gates/ dir, plan, staged copy and transaction.
+lpatch2() {
+  lrunhome
+  lput pcands/candidate-patchme-a.md $'kind: patch\nname: patchme\n===sources===\n2025-12-01\thook\t- src one (by: s1, first-hand) "this exact phrase has more than six words in it"\n===patch===\n## First\nOne.\n'
+  lput pcands/candidate-patchme-b.md $'kind: patch\nname: patchme\n===sources===\n2025-12-02\thook\t- src two\n===patch===\n## Second\nTwo.\n'
+}
+lpatch2
+LENV=("LPANE_CANDS=@H/pcands"); lok run; LENV=()
+assert_contains "$(lout)" $'auto-applied: patchme\n  auto-applied: patchme.2' "the second patch applies under its own subject"
+for s in patchme patchme.2; do
+  assert_file "$H/home/data/learning-1767225600/gates/$s/decision.md" "the run keeps the receipt of $s"
+  assert_file "$H/home/data/learning-1767225600/plans/$s.json" "the run keeps the plan of $s"
+  assert_contains "$(cat "$H/home/state/.maintenance-transactions/learning-1767225600-$s/journal")" "status=complete" "the transaction of $s completes"
 done
-lboth lrunhome; lboth lcands cands
-LENV=("LPANE_CANDS=@H/cands" LGATE_RC=3 "LGATE_DIAG=engine said no"); lsame run; LENV=()
-lboth lrunhome; lboth lcands cands
-LENV=("LPANE_CANDS=@H/cands" LGATE_BAD=1 LGATE_SAY=said); lsame run; LENV=()
-lboth lrunhome
-lboth lput home/state/.curate.meta $'generation=1\nruns_since=4\n'
-lsame run
-lboth lrunhome
-lboth lput home/state/.curate.meta $'generation=1\nruns_since=4\n'
-LENV=(LCURATE_RC=2); lsame run; LENV=()
-lboth lrunhome
-lboth lput home/state/.learn-cadence.lock/pid "$$"$'\n'
-lsame run
-lboth lrunhome
-lboth lput home/config/backend $'orca\n'
-lsame run
-assert_contains "$(cat "$LNH/stub/seen.verify-learning-1767225600.meta")" "backend=orca" "an orca home's scout meta records backend=orca on both sides (W2 at parity)"
-# W5 (named): under a UTF-8 locale one byte that is no UTF-8 in Pending
-# aborted the bash's split awk (towc) inside the errexit-asleep preparer, and
-# the continue applied a ledger cut at that byte; the port reads bytes and
-# keeps every Pending line.
-lboth lrunhome
-lboth lput home/records/learnings.md $'# Learning Ledger\n\n## Pending\n\n### 2025-12-01 (solo s1)\n- src one (by: s1, first-hand) "this exact phrase has more than six words in it"\n- a later lesson with caf\351 byte\n- the last lesson\n\n## Distilled\n\n'
-lboth lcands cands
-LLC=en_US.UTF-8; LENV=("LPANE_CANDS=@H/cands"); lpair run; LENV=(); LLC=C
-assert_eq "$LO_RC:$LN_RC" "0:0" "W5: both runs end 0"
-assert_contains "$(cat "$LOH/home/skills/newskill/SKILL.md")" "Do the thing." "W5: the oracle applied the skill"
-grep -qF -- '- the last lesson' "$LOH/home/records/learnings.md" && fail "W5: the oracle's cut ledger lost the lines past the byte"
-grep -qF -- '- the last lesson' "$LNH/home/records/learnings.md" || fail "W5 (named): the port keeps every Pending line"
-lboth lrunhome
-lboth lput home/state/.learn.meta $'generation=08\ndebriefs=9\nlast_run=1764547200\n'
-l08 run
-assert_eq "$LN_RC:$(lerr)" "0:WARN: Learning completed, but its cadence lock was busy - the DISTILL cycle is NOT consumed and the retro window is NOT advanced" "a run whose reset the arithmetic refuses warns and completes"
-# EXCLUSIVE TEMPS (named): the staged rewrite of an existing pointer went
-# through the fixed <run>/work/pointers.next.tsv.tmp, a name inside the run dir
-# the scout writes; the bash wrote through a link planted there before any
-# gate judged the plan, the port's temp is made exclusively.
-lboth lrunhome
-lboth lput home/records/learnings.md $'# Learning Ledger\n\n## Pending\n\n### 2025-12-01 (solo s1)\n- src one (by: s1, first-hand) "this exact phrase has more than six words in it"\n- src two\n- src two\n\n## Distilled\n\n- [distilled -> old] sources=2 updated=2025-11-01 ([skill](../skills/old/SKILL.md))\n- [distilled -> patchme] sources=1 updated=2025-11-01 ([skill](../skills/patchme/SKILL.md))\n'
-lboth lput pcands/candidate-patchme.md $'kind: patch\nname: patchme\n===sources===\n2025-12-02\thook\t- src two\n===patch===\n## Gotcha\nWatch.\n'
-lboth lput victim $'victim\n'
-lboth mkdir -p @H/home/data/learning-1767225600/work
-lboth ln -s @H/victim @H/home/data/learning-1767225600/work/pointers.next.tsv.tmp
-LENV=("LPANE_CANDS=@H/pcands"); lpair run; LENV=()
-lsame_rc_out run; lsame_err run
-assert_contains "$(cat "$LOH/victim")" "patchme" "the oracle wrote the pointer rewrite through the planted link (W12)"
-assert_eq "$(cat "$LNH/victim")" "victim" "the port never writes the pointer rewrite through a planted temp (W12, named)"
-cmp -s "$LOH/home/records/learnings.md" "$LNH/home/records/learnings.md" || fail "a planted pointer temp: both sides land the same ledger"
-assert_contains "$(cat "$LNH/home/records/learnings.md")" "[distilled -> patchme] sources=2 updated=2025-12-02" "the existing pointer is rewritten past a planted temp"
+assert_contains "$(cat "$H/home/skills/patchme/SKILL.md")" $'## First\nOne.\n\n## Second\nTwo.' "both patches land on the skill, in byte order"
+assert_contains "$(cat "$H/home/state/.learn.meta")" "last_run=1767225600" "the settled run advances the retro window"
+lpatch2
+LENV=("LPANE_CANDS=@H/pcands" LGATE_DECISION=revise); lok run; LENV=()
+assert_contains "$(lout)" "revise: patchme.2" "revise on both: the run judges the second candidate as its own subject"
+for s in patchme patchme.2; do
+  assert_contains "$(cat "$H/home/data/learning-1767225600/gates/$s/decision.md")" 'decision: "revise"' "revise on both: the run keeps the receipt of $s"
+done
+# W3 ONE LOCK ORDER: no lock is held across the gate; lines a note added while
+# the gate judged a ledger plan are lifted out for the hash-bound apply and put
+# back verbatim. Any other ledger change refuses the plan before its first
+# action.
+lnotehome() {
+  lrunhome
+  lput home/records/learnings.md $'# Learning Ledger\n\n## Pending\n\n### 2025-12-01 (solo s1)\n- src one (by: s1, first-hand) "this exact phrase has more than six words in it"\n- src two\n- an unrelated lesson\n\n## Distilled\n\n- [distilled -> old] sources=2 updated=2025-11-01 ([skill](../skills/old/SKILL.md))\n'
+  lput pcands/candidate-patchme.md $'kind: patch\nname: patchme\n===sources===\n2025-12-02\thook\t- src two\n===patch===\n## Gotcha\nWatch.\n'
+}
+lnoted='- a lesson noted while the gate judged'
+lrun3="data/learning-1767225600"
+ltxn3="state/.maintenance-transactions/learning-1767225600-patchme/journal"
+lnotehome
+LENV=("LPANE_CANDS=@H/pcands" "LGATE_NOTE=$lnoted" "LGATE_NOTE_BIN=$BIN"); lrun run; LENV=()
+assert_eq "$(cat "$H/stub/gate-lock.log")" "free" "W3: no note lock is held while the gate judges"
+assert_eq "$LN_RC:$(lerr)" "0:" "W3: the run applies with the note kept, nothing warned"
+assert_contains "$(lout)" "auto-applied: patchme" "W3: the patch applies past the note"
+assert_contains "$(cat "$H/home/$ltxn3")" "status=complete" "W3: the transaction completes"
+assert_contains "$(cat "$H/home/state/.learn.meta")" "last_run=1767225600" "W3: the settled run advances the retro window"
+assert_eq "$(cat "$H/home/$lrun3/work/patchme.notes-replayed")" "$lnoted" "W3: the lifted lines are kept beside the run"
+mkdir -p "$TMP/lw3/records" "$TMP/lw3/state"
+cp "$H/home/$lrun3/staged/patchme/records/learnings.md" "$TMP/lw3/records/learnings.md"
+env -u AC_SOLO AC_HOME="$TMP/lw3" "$BIN/ac-learn.sh" note "$lnoted" >/dev/null
+cmp -s "$TMP/lw3/records/learnings.md" "$LLEDGER" \
+  || fail "W3: the ledger is the staged rewrite with the note inserted: $(diff -a "$TMP/lw3/records/learnings.md" "$LLEDGER" | head -n 8)"
+lnotehome
+LENV=("LPANE_CANDS=@H/pcands" "LGATE_EDIT=- an unrelated lesson"); lrun run; LENV=()
+assert_eq "$LN_RC" "0" "W3: a refused plan still ends the run 0"
+assert_contains "$(lerr)" "not by a note alone - the plan was refused before its first action" "W3: a non-note ledger change refuses the plan"
+assert_eq "$(cat "$H/home/skills/patchme/SKILL.md")" $'---\nname: patchme\ndescription: Patch me when x.\n---\n\n# body' "W3: the refused plan committed nothing"
+assert_no_file "$H/home/state/.maintenance-transactions/learning-1767225600-patchme" "W3: the refused plan was never claimed"
+assert_contains "$(cat "$H/home/state/.learn.meta")" "last_run=1764547200" "W3: the refused plan withholds the cadence"
+# STAGING UNDER THE NOTE LOCK: a note landing between the preparer's read of
+# the ledger and its hash for the rewrite waits for the lock, so the apply
+# never deletes the noted line. The jq that writes the archive action - after
+# that read, before that hash - notes the line: in the foreground when the
+# note lock is free, else in the background, which waits.
+mkdir -p "$TMP/ljq"
+cat >"$TMP/ljq/jq" <<STUB
+#!/bin/sh
+case " \$* " in
+  *" append-archive "*)
+    if [ ! -e "\$STUB_DIR/jq-noted" ]; then
+      : >"\$STUB_DIR/jq-noted"
+      if [ -d "\$AC_HOME/state/.learn-note.lock" ]; then
+        echo held >"\$STUB_DIR/jq-lock.log"
+        ( PATH="$PATH" "$BIN/ac-learn.sh" note "\$LJQ_NOTE" >"\$STUB_DIR/jq-note.log" 2>&1; : >"\$STUB_DIR/jq-note.done" ) </dev/null >/dev/null 2>&1 &
+      else
+        echo free >"\$STUB_DIR/jq-lock.log"
+        PATH="$PATH" "$BIN/ac-learn.sh" note "\$LJQ_NOTE" </dev/null >"\$STUB_DIR/jq-note.log" 2>&1
+        : >"\$STUB_DIR/jq-note.done"
+      fi
+    fi ;;
+esac
+exec "$(command -v jq)" "\$@"
+STUB
+chmod +x "$TMP/ljq/jq"
+lnotehome
+LPATH="$TMP/ljq:$LSTUBS:$PATH"
+LENV=("LPANE_CANDS=@H/pcands" "LJQ_NOTE=$lnoted"); lrun run; LENV=()
+LPATH=""
+i=0; while [ ! -e "$H/stub/jq-note.done" ] && [ "$i" -lt 600 ]; do /bin/sleep 0.1; i=$((i + 1)); done
+assert_eq "$(cat "$H/stub/jq-lock.log")" "held" "staging: the ledger is staged under the note lock"
+assert_eq "$LN_RC:$(sed -n '/^## Distilled$/q;p' "$LLEDGER" | grep -cxF -- "$lnoted")" "0:1" "staging: the noted line lands once under Pending"
+assert_contains "$(cat "$H/home/$ltxn3")" "status=complete" "staging: the transaction completes"
 
-# 9. autoroom: scoped, not due, the lock, the shape gate's two holds, the
-#    charter and the promote, a failing promote with and without its meta,
-#    the suite gate's green, red-same-head and in-flight holds.
-lboth lstd
-LENV=(AC_SCOPE=fam); lok autoroom; LENV=()
-lok autoroom
-lboth lput home/state/.learn.meta $'generation=4\ndebriefs=8\n'
-lboth lput home/state/.learn-autoroom.lock/pid "$$"$'\n'
-lok autoroom
-lboth rm -rf @H/home/state/.learn-autoroom.lock
-lboth lput home/records/learnings.md $'# Learning Ledger\n\n## Pending\n\n## Distilled\n\n- 2026-01-01 [distilled -> x @fleet] sources=1\n'
-lok autoroom
-lboth lput home/records/learnings.md $'# Learning Ledger\n\n## Pending\n\n## Distilled\n\n- [distilled -> gone] sources=1 updated=2026-01-01 ([skill](../skills/gone/SKILL.md); [evidence](learnings-archive/gone.md))\n'
-lok autoroom
-lboth lput home/records/learnings.md $'# Learning Ledger\n\n## Pending\n\n## Distilled\n\n'
-lsame autoroom
-assert_contains "$(lout)" "auto-created room \`learning\` and promoted its roomchief" "a due drain promotes the learning room"
-lboth rm -rf @H/home/data/learning @H/stub/spawn.log
-LENV=(LSPAWN_RC=1); lsame autoroom; LENV=()
-assert_contains "$(lerr)" "the roomchief promote failed BEFORE its meta was written" "a failed promote with no meta warns"
-lboth rm -rf @H/home/data/learning
-LENV=(LSPAWN_RC=1 LSPAWN_META=1); lsame autoroom; LENV=()
-assert_eq "$(lerr)" "" "a failed promote whose meta exists is the idempotent loser, silent"
-lboth lstd
-lboth lput home/state/.learn.meta $'generation=4\ndebriefs=8\n'
-lboth lput home/config/learn-suite-gate $'on\n'
-lboth lput home/state/.learn-suite-pin.meta $'generation=4\nhead=1111111111111111111111111111111111111111\n'
-lboth lput home/state/.learn-suite.meta $'generation=4\nhead=1111111111111111111111111111111111111111\nstatus=green\nexit=0\nat=1\n'
-LPATH="$LGITSTUBS:$LSTUBS:$PATH"
-lok autoroom
-lboth lput home/state/.learn-suite.meta $'generation=4\nhead=1111111111111111111111111111111111111111\nstatus=red\nexit=1\nat=1\n'
-lboth rm -rf @H/home/state/learning-chief.meta @H/home/data/learning
-lok autoroom
-assert_contains "$(lout)" "the full suite is RED for this cycle" "a red verdict for the pinned tree holds"
-lboth lput home/state/verify-suite-1.meta $'kind=verify-suite\nbackend=herdr\nspawned_epoch=1767225000\n'
-lboth lput home/state/.pane-verify-suite-1 $'p9 t9\n'
-lboth lput herdr/panes/p9.buf ''
-lboth lput home/state/.learn-suite.meta $'generation=3\nhead=x\nstatus=green\nexit=0\nat=1\n'
-lsame autoroom
-# An in-flight epoch of 08 ends only the gate's capture: the autoroom lock is
-# released and the verb exits 0. SHELL-OWN STDERR (named): the oracle's own
-# diagnostic is dropped before the comparison.
-lboth lput home/state/verify-suite-1.meta $'kind=verify-suite\nbackend=herdr\nspawned_epoch=08\n'
-lpair autoroom
-assert_contains "$(loerr)" "08: value too great for base" "the oracle's gate capture ended on the arithmetic error"
-LC_ALL=C sed -E '/^ROOT\/bin\/ac-learn\.sh: line [0-9]+: 08: value too great for base /d' "$TMP/lo.err2" >"$TMP/lo.err3"
-mv "$TMP/lo.err3" "$TMP/lo.err2"
-lsame_rc_out autoroom; lsame_err autoroom; lsame_world autoroom
-assert_eq "$LN_RC" "0" "an arithmetic error in the suite gate still ends autoroom 0"
-# The launch's window opens inside the gate's capture, errexit asleep: a failing
-# `workspace list` is walked past and the run still starts.
-lboth rm -f @H/home/state/verify-suite-1.meta @H/home/state/.pane-verify-suite-1
+# 9. autoroom: a failing promote with and without its meta, and a failing
+#    `workspace list` walked past by the suite launch.
+lstd
+lput home/state/.learn.meta $'generation=4\ndebriefs=8\n'
+lput home/records/learnings.md $'# Learning Ledger\n\n## Pending\n\n## Distilled\n\n'
+LENV=(LSPAWN_RC=1); lrun autoroom; LENV=()
+assert_eq "$LN_RC" "0" "a failed promote never fails autoroom"
+assert_contains "$(lerr)" "WARN: learning DUE (8/8) but the roomchief promote failed BEFORE its meta was written, so the next checkpoint retries" "a failed promote with no meta warns"
+rm -rf "$H/home/data/learning"
+LENV=(LSPAWN_RC=1 LSPAWN_META=1); lrun autoroom; LENV=()
+assert_eq "$LN_RC:$(lerr)" "0:" "a failed promote whose meta exists is the idempotent loser, silent"
+lstd
+lput home/state/.learn.meta $'generation=4\ndebriefs=8\n'
+lput home/config/learn-suite-gate $'on\n'
 mkdir -p "$TMP/lwsfail"
 printf '#!/bin/sh\n[ "$1 $2" != "workspace list" ] || exit 1\nexec "%s/stubbin/herdr" "$@"\n' "$TMP" >"$TMP/lwsfail/herdr"
 chmod +x "$TMP/lwsfail/herdr"
 LPATH="$TMP/lwsfail:$LGITSTUBS:$LSTUBS:$PATH"
-lsame autoroom
+lok autoroom
 assert_contains "$(lout)" "HELD: started the full-suite run verify-suite-" "a failing workspace list still starts the suite run"
 LPATH=""
 
-# 10. suite: the id grammar, green and red verdicts recorded for the pinned
-#     tree, the identity retired, the ceiling (124) ending the runner's tree.
-lboth lstd
-lrefuse "ERROR: suite takes its own task id (verify-suite-*), never another task's (got: 'other')" suite other
-LPATH="$LGITSTUBS:$LSTUBS:$PATH"
-LENV=("AC_LEARN_SUITE_BIN=$LSTUBS/runner"); lok suite; LENV=()
-lboth lput home/state/verify-suite-7.meta $'kind=verify-suite\n'
-lboth lput home/state/verify-suite-7.status $'x started\n'
-LENV=("AC_LEARN_SUITE_BIN=$LSTUBS/runner" LRUNNER_RC=3); lsame suite verify-suite-7; LENV=()
-assert_eq "$LN_RC" "3" "suite exits with its runner's status"
-LENV=("AC_LEARN_SUITE_BIN=$LSTUBS/runner" LRUNNER_HOLD=6 AC_LEARN_SUITE_TIMEOUT=1); lpair suite; LENV=()
-lsame_rc_out suite
-# SHELL-OWN STDERR (named): bash's own job notice for the runner it ended.
-assert_contains "$(loerr)" "Terminated: 15" "the oracle's shell reports the ended runner"
-LC_ALL=C sed -E '/^ROOT\/bin\/ac-learn\.sh: line [0-9]+: +[0-9]+ Terminated: 15 /d' "$TMP/lo.err2" >"$TMP/lo.err3"
-mv "$TMP/lo.err3" "$TMP/lo.err2"
-lsame_err suite; lsame_world suite
-assert_eq "$LN_RC" "124" "a runner past the ceiling records red exit 124"
-LPATH=""
-
-# 11. route-propose: blank stdin silent, a silent provider, an answer with a
-#     learned-entry duplicate.
-lboth lstd
-lput_lines() { lput lines "$1"; }
-lboth lput_lines $'   \n\n'
-LSTDIN=@H/lines; lok route-propose
-lboth lput_lines $'- a repo fact about the build\n\n- read the room first\n'
-lok route-propose
-lboth lput home/CREWMATE-learned.md $'# Fleet-learned crewmate lessons\n\n## read-the-room-first\n\nRead the family room first.\n\n(learned 2026-01-01)\n\n## when to reach for a learned skill\n- when x -> use skill x\n'
-lboth lput answer.json '{"owner_1":{"choice":"repo_knowledge","p":{"repo_knowledge":0.9}},"dup_1":{"choice":"new","p":{"new":0.8}},"worth_1":{"choice":"durable","p":{"durable":0.7}},"owner_2":{"choice":"learnings","p":{"learnings":0.6}},"dup_2":{"choice":"read-the-room-first","p":{"read-the-room-first":0.5}},"worth_2":{"choice":"routine","p":{"routine":0.4}}}'
-LENV=("LJEV_ANSWER=@H/answer.json"); lok route-propose; LENV=()
-LSTDIN=/dev/null
-
-# 12. signals, as the bash's traps stood: TERM while the scout runs, before
-#     the pane ledger is armed, ends both at once with the identity left
-#     behind (W7); TERM inside a gate capture waits for the gate, then the
-#     ledger's reap runs.
-lsig() {  # lsig <bin> <side> <prefix> <signal> <wait-for-file> <args...> - the entry started, signalled once <wait-for-file> exists, its status in $LSIG_RC
-  local bin="$1" h="$2" p="$3" sig="$4" want="$5" pid i=0; shift 5
-  lrun_side "$bin" "$h" "$p" "$@" &
+# 10. signals: TERM while the scout runs, before the pane ledger is armed,
+#     ends the run at once; TERM inside a gate capture waits for the gate,
+#     then the ledger's reap runs.
+lsig() {  # lsig <signal> <wait-for-file> <args...> - the entry started, signalled once <wait-for-file> exists, its status in $LSIG_RC
+  local sig="$1" want="$2" pid i=0; shift 2
+  rm -f "$TMP/l.pid"
+  ( lrun "$@"; exit "$LN_RC" ) &
   pid=$!
-  while [ ! -e "${want//@H/$h}" ] && [ "$i" -lt 300 ]; do /bin/sleep 0.05; i=$((i + 1)); done
-  kill "-$sig" "$(cat "$TMP/$p.pid")" 2>/dev/null || true
+  while [ ! -e "${want//@H/$H}" ] && [ "$i" -lt 300 ]; do /bin/sleep 0.05; i=$((i + 1)); done
+  kill "-$sig" "$(cat "$TMP/l.pid")" 2>/dev/null || true
   LSIG_RC=0; wait "$pid" || LSIG_RC=$?
 }
-lboth lrunhome
+lrunhome
 LENV=(LPANE_HOLD=3)
-lsig "$LOBIN" "$LOH" lo TERM "@H/stub/seen.verify-learning-1767225600.meta" run; lo_sig="$LSIG_RC"
-lsig "$LNBIN" "$LNH" ln TERM "@H/stub/seen.verify-learning-1767225600.meta" run; ln_sig="$LSIG_RC"
+lsig TERM "@H/stub/seen.verify-learning-1767225600.meta" run
 LENV=()
-assert_eq "$ln_sig" "$lo_sig" "TERM during the scout wait: the same status on both sides"
-assert_eq "$ln_sig" "143" "TERM during the scout wait ends the run at once"
-for h in "$LOH" "$LNH"; do assert_file "$h/home/state/verify-learning-1767225600.meta" "W7: the scout identity is left behind ($h)"; done
-# The orphaned scouts finish their hold before the next world is seeded.
+assert_eq "$LSIG_RC" "143" "TERM during the scout wait ends the run at once"
+# The orphaned scout finishes its hold before the next world is seeded.
 /bin/sleep 4
-lboth lrunhome
-lboth lcands cands
+lrunhome
+lcands cands
 LENV=("LPANE_CANDS=@H/cands" LGATE_HOLD=2)
-lsig "$LOBIN" "$LOH" lo TERM "@H/stub/gate.log" run; lo_sig="$LSIG_RC"
-lsig "$LNBIN" "$LNH" ln TERM "@H/stub/gate.log" run; ln_sig="$LSIG_RC"
+lsig TERM "@H/stub/gate.log" run
 LENV=()
-assert_eq "$ln_sig:$lo_sig" "143:143" "TERM inside a gate capture: both end 143 once the gate returns"
-for h in "$LOH" "$LNH"; do
-  assert_contains "$(cat "$h/stub/pane.log")" "reap-pane --pane pL" "the armed ledger's reap ran on TERM ($h)"
-  assert_no_file "$h/home/skills/newskill" "nothing past the signalled gate applied ($h)"
-done
-
-# 13. continuation: a ledger the oracle's note wrote is what the port's land
-#     reads, and a land the oracle held is what the port's maintenance names.
-lboth lland
-for h in "$LOH" "$LNH"; do lrun_side "$LOBIN" "$h" lc note '- src three'; done
-lboth lcand three $'kind: crewmate\nname: three-method\ndescription: Three.\napproved: yes\n===sources===\n2025-12-04\thook\t- src three\n===crewmate===\nThree.\n'
-lok land @H/cand/three.md
+assert_eq "$LSIG_RC" "143" "TERM inside a gate capture ends 143 once the gate returns"
+assert_contains "$(cat "$H/stub/pane.log")" "reap-pane --pane pL" "the armed ledger's reap ran on TERM"
+assert_no_file "$H/home/skills/newskill" "nothing past the signalled gate applied"
 
 pass

@@ -30,8 +30,17 @@
 // - The mass-delete valve refuses a reconcile that would drop >50% of pages
 //   when the index holds >20 - a moved or half-mounted home must not empty
 //   the brain.
-// - The sync lease is broken only for a provably dead PID (ESRCH), never on
-//   staleness: a live holder mid-CHECKPOINT looks stale.
+// - The sync lease is broken only for a provably gone holder - its PID dead
+//   (ESRCH) or now a process that started after the lease was written -
+//   never on staleness: a live holder mid-CHECKPOINT looks stale. It is held
+//   through the embedding backfill too: a sync whose pages pass is done is
+//   still writing vectors, and a second sync admitted there interleaves with
+//   those transactions.
+// - One strange file never costs the sync: a non-regular `.md` (FIFO, device)
+//   or one the process cannot stat or read is HELD - counted as `unreadable`,
+//   its path named, never opened - while every other page imports and its
+//   own last-indexed page stays. A read would block or throw with the lease
+//   taken, and doctor never walks files, so the wedge would be silent.
 // - remember REQUIRES provenance; the write appends the ledger line and the
 //   DB row inside one IMMEDIATE transaction so cross-process writers
 //   serialize on SQLite's own lock. A fact's TTL binds at READ time: every
@@ -61,7 +70,8 @@
 //   zero-LLM forever. The embedding lane (voyage|openai|stub) is an optional
 //   vectorizer - absent config or key degrades to keyword-only with a stamp,
 //   never an error. Its call is BOUNDED (AC_BRAIN_EMBED_TIMEOUT seconds,
-//   default 60) and its `embed_degraded` stamp NAMES the cause - the HTTP
+//   default 60; recall's query embed at most 10, inside the prompt hook's
+//   15s window) and its `embed_degraded` stamp NAMES the cause - the HTTP
 //   status plus a slice of the body, a timeout, or an unreachable host -
 //   because one opaque token for every remote failure is a degradation
 //   nobody ever chases. A wedged sync never reaches a prompt: the catch-up
@@ -78,12 +88,16 @@
 //   fabricated answer.
 // - Deputy reads are explicit only: recall --deputy <id> resolves the
 //   absolute home: path from records/crewdeputies.md and opens that brain
-//   READ-ONLY; there is no cross-brain write path.
+//   READ-ONLY; there is no cross-brain write path. An arm it cannot read is
+//   stamped in search_degraded, never answered as empty: deputy_not_found
+//   (no such id), deputy_no_brain (its home holds no state/brain.sqlite).
 // - Usage log: every verb appends one line to state/brain-usage.jsonl
 //   (home-local, never uploaded) so later demand-signal work has evidence.
 //   Each line carries `by` (who asked): --by wins, else AC_SOLO=1 names a
 //   solo session "solo", else AC_SCOPE names a scoped chief as <fam>-chief,
-//   else the unscoped default "crewchief".
+//   else the unscoped default "crewchief". recall's line carries no raw
+//   query text - a prompt-recall caller may hand it a pasted secret, and
+//   nothing reads the query back off this log.
 // - Scale ceiling: vector retrieval is an in-process linear cosine scan,
 //   supported to 50k embedded chunks of live pages (doctor's vector_scan_scale
 //   check fails past it). An ANN index is deliberately out until measurements demand it.
@@ -98,9 +112,10 @@
 //   verb's words, is taken out of argv and the last one wins (a value that is
 //   itself `--home` is a value); an empty value, or none, falls back to
 //   AC_HOME. That home must be a directory (a link to one counts) where the
-//   caller stood - a cwd Bun cannot name is looked up under the path ac-bun.sh
-//   handed over - and it rides back appended as `--home <home>`, every other
-//   word handed on as given (`--home=<x>` is a word of the verb's). The
+//   caller stood - a cwd Bun cannot name (before 1.4.4, one ending in a
+//   backslash) is looked up under the path ac-bun.sh handed over - and it
+//   rides back appended as `--home <home>`, every other word handed on as
+//   given (`--home=<x>` is a word of the verb's). The
 //   entry's refusals carry no protocol_version (stdout, exit 1):
 //     {"error":"invalid_params","message":"--home needs a value","suggestion":"pass --home <abs path> or set AC_HOME"}
 //   for a `--home` with nothing after it, wherever it stands, before any home
@@ -118,7 +133,7 @@
 //   direct form reads it is `no fleet home`, both in the protocol_version
 //   shape below. Every command prints ONE JSON value.
 //   sync [--rebuild] [--dry-run] [--no-embed] [--force-reconcile] [--break-lease]
-//   recall [--query q] [--entity slug] [--agent a] [--since iso|7d] [--limit n]
+//   recall [<q> | --query q] [--entity slug] [--agent a] [--since iso|7d] [--limit n]
 //          [--budget-tokens n] [--no-boosts] [--deputy id]
 //          (no --query: facts plus a browse of the store - the newest 50
 //          pages as slug/title/type/family/path/mtime/size and page_count)
@@ -129,44 +144,26 @@
 //   synthesize <question>         doctor              stats
 //   serve                         (MCP stdio, the seven verbs)
 // Errors: {"protocol_version":1,"error":<code>,"message":...,"suggestion":...}
-//   on stdout, exit 1.
+//   on stdout, exit 1. recall, remember and forget refuse a flag they do not
+//   read (invalid_params, naming it), beside the global --home, --by, --compact;
+//   every verb refuses the `--flag=value` spelling (one word no reader
+//   matches - `sync --dry-run=true` would otherwise run a real sync).
 // PROTOCOL: protocol_version refers to THIS file's shapes - ac-brain's own
 //   dialect. The seven verb NAMES are shared memory-verbs vocabulary, but the
 //   response shapes are deliberately not wire-conformant to any external
 //   MEMORY_VERBS spec; do not point an external protocol client at serve.
 //
-// ORACLE. The bash entry the entry form replaced stays frozen at
-//   tests/fixtures/ac-brain.sh; the differential leg of
-//   tests/sh/ac-brain.test.sh holds the entry form to it.
-// ESCAPE HATCH. The frozen original starts this module in the direct form,
-//   which the port left as it was, so it runs from a bin/ copy beside the
-//   live module:
-//   o=$(cd "$(mktemp -d)" && pwd -P); mkdir "$o/bin"; cp bin/*.sh "$o/bin/"; ln -s "$PWD/src" "$o/src"
-//   cp tests/fixtures/ac-brain.sh "$o/bin/ac-brain.sh"
-//   then "$o/bin/ac-brain.sh" <verb> ... by hand. Every script caller below
-//   reads a failed call as no answer, so a broken entry costs the brain,
-//   never the caller's own run.
-// AT PARITY (each pinned in the leg):
+// Every script caller below reads a failed call as no answer, so a broken
+// entry costs the brain, never the caller's own run.
+// ALSO:
 // - The entry's two refusals carry no protocol_version, where every refusal
 //   of the module carries it (Errors above).
 // - An empty --home value is no refusal: it reads AC_HOME.
 // - The home is the spelling given, tested with [ -d ] and resolve()d, never
 //   cd'd into: an LF-ended name is that directory, so HOME RESOLUTION's
 //   physicalDir binding has no artifact to replace here.
-// DIVERGENCES from the frozen original (the leg names each one a row can show):
-// - HOME RESOLUTION: from a cwd that has no path at all (deleted) the
-//   original's [ -d ] still looked inside the deleted directory, which holds
-//   no name but `.` and `..`, so a relative home such as `rel` was `no fleet
-//   home`; started in the distro root, the port cannot look there, and the
-//   direct form refuses every relative home with its cannot-be-resolved line
-//   (exit 1 both).
-// - SHELL-OWN STDERR: bash's own getcwd lines from a deleted cwd
-//   (`shell-init:`, `chdir:`) are not reproduced - the shim prints one per
-//   shell and cd it runs, where a refusal the original made in bash came
-//   before its cd, one line fewer.
 // - BYTES: argv arrives decoded, so a home that is no UTF-8 is tested as its
-//   U+FFFD spelling where the original tested the bytes - the same answer
-//   on APFS, which refuses such a name.
+//   U+FFFD spelling - the same answer on APFS, which refuses such a name.
 // CALLERS: by path - src/prompt-recall.ts (recall; a failed call is no
 //   hits), src/wake-drain.ts (sync and delta with no --home, so AC_HOME's
 //   rung; only a 0 is read), src/lib.ts brainFreshen (src/watch.ts and the
@@ -203,10 +200,11 @@ function entryArgs(given: string[], caller: string, atCaller: boolean): string[]
     else refuse("--home needs a value");
   }
   home ||= process.env.AC_HOME ?? "";
-  // `[ -d ]` where the caller stood: a cwd Bun cannot name left this process
-  // in the distro root, but the kernel still reads the path ac-bun.sh handed
-  // over. A cwd with no path at all (deleted) leaves nowhere to look, and the
-  // direct form refuses a relative home there.
+  // `[ -d ]` where the caller stood: a cwd Bun cannot name (before 1.4.4, one
+  // ending in a backslash) left this process in the distro root, but the
+  // kernel still reads the path ac-bun.sh handed over. A cwd with no path at
+  // all (deleted) leaves nowhere to look, and the direct form refuses a
+  // relative home there.
   const at = isAbsolute(home) || atCaller ? home : caller && `${caller}/${home}`;
   const dir = (p: string) => { try { return statSync(p).isDirectory(); } catch { return false; } };
   if (!home || (at !== "" && !dir(at))) refuse("no fleet home");
@@ -520,13 +518,22 @@ function stubVec(text: string, dims: number): Float32Array {
 // with an established socket open - asleep on the remote read, with no ceiling
 // at any layer. Intermittent and tied to the remote call: the retry right
 // after reaping it returned in 304ms.
-const EMBED_TIMEOUT_MS = (Number(process.env.AC_BRAIN_EMBED_TIMEOUT) > 0
-  ? Number(process.env.AC_BRAIN_EMBED_TIMEOUT) : 60) * 1000;
+// A non-finite override passes `> 0`, and the runtime refuses it only once the
+// request is built - reported as the provider's fault.
+function secondsOr(env: string | undefined, dflt: number): number {
+  const n = Number(env);
+  return Number.isFinite(n) && n > 0 ? n : dflt;
+}
+const EMBED_TIMEOUT_MS = secondsOr(process.env.AC_BRAIN_EMBED_TIMEOUT, 60) * 1000;
+// recall's query embed runs inside the prompt hook's 15s window
+// (.claude/settings.json, .codex/hooks.json): at the sync lane's 60s a hung
+// provider outlives the hook, and the keyword fallback never lands either.
+const RECALL_EMBED_TIMEOUT_MS = Math.min(EMBED_TIMEOUT_MS, 10_000);
 // Why the last embedBatch gave up, for the caller's degraded token. A return
 // value would have to be threaded through the batch loop; the failure is
 // read exactly once, right where the loop stops.
 let embedError: string | undefined;
-async function embedBatch(texts: string[], cfg: EmbedCfg): Promise<Float32Array[] | null> {
+async function embedBatch(texts: string[], cfg: EmbedCfg, timeoutMs = EMBED_TIMEOUT_MS): Promise<Float32Array[] | null> {
   embedError = undefined;
   const key = embedKey(cfg);
   if (!key) return null;
@@ -537,7 +544,7 @@ async function embedBatch(texts: string[], cfg: EmbedCfg): Promise<Float32Array[
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}`, "User-Agent": "agent-crew-brain/1.0" },
       body: JSON.stringify({ model: cfg.model, input: texts }),
-      signal: AbortSignal.timeout(EMBED_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!r.ok) {
       // KEEP THE STATUS AND A SLICE OF THE BODY. Discarding both left every
@@ -558,7 +565,7 @@ async function embedBatch(texts: string[], cfg: EmbedCfg): Promise<Float32Array[
   } catch (e: any) {
     const n = e?.name;
     embedError = (n === "TimeoutError" || n === "AbortError")
-      ? `provider_timeout after ${EMBED_TIMEOUT_MS / 1000}s`
+      ? `provider_timeout after ${timeoutMs / 1000}s`
       : `provider_unreachable: ${String(e?.message ?? e).replace(/\s+/g, " ").slice(0, 200)}`;
     return null;
   }
@@ -626,13 +633,30 @@ function leaseGet(db: Database): any | null {
 function pidAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch (e: any) { return e.code === "EPERM"; }
 }
-function cmdSync() {
+// A sync killed before its finally (SIGKILL, a killed pane) leaves its lease,
+// and once the OS hands that pid to a later process kill(pid, 0) succeeds for
+// ever. The writer started before it wrote `at`, so a pid whose process
+// started later (ps -o lstart=, strftime %c under LC_ALL=C, local time; +2s
+// for its whole-second grain) is not the holder. An unreadable start keeps
+// the lease: a false break interleaves two syncs' FTS rewrites, a false hold
+// only delays one sync.
+const MONTHS = "JanFebMarAprMayJunJulAugSepOctNovDec";
+function leaseHolderAlive(l: any): boolean {
+  if (!pidAlive(l.pid)) return false;
+  const r = spawnShellSync(["/usr/bin/env", "LC_ALL=C", "ps", "-o", "lstart=", "-p", String(l.pid)], { stdout: "pipe", stderr: "ignore" });
+  const m = r.stdout.toString().trim().match(/^\w{3} (\w{3}) +(\d+) (\d+):(\d+):(\d+) (\d{4})$/);
+  const at = Date.parse(l.at || "");
+  if (!m || MONTHS.indexOf(m[1]) % 3 !== 0 || Number.isNaN(at)) return true;
+  const started = new Date(+m[6], MONTHS.indexOf(m[1]) / 3, +m[2], +m[3], +m[4], +m[5]).getTime();
+  return started <= at + 2000;
+}
+async function cmdSync() {
   const db = openDb();
   const t0 = performance.now();
   if (flag("break-lease")) {
     const l = leaseGet(db);
     if (!l) { out({ broke: false, reason: "no lease" }); return; }
-    if (l.host === hostname() && !pidAlive(l.pid)) {
+    if (l.host === hostname() && !leaseHolderAlive(l)) {
       db.run("DELETE FROM meta WHERE k='sync_lease'");
       out({ broke: true, dead_pid: l.pid });
     } else out({ broke: false, reason: "holder alive or foreign host", holder: l });
@@ -653,7 +677,7 @@ function cmdSync() {
     const l = leaseGet(db);
     const fresh = !!l && Date.now() - Date.parse(l.at || 0) < 60 * 60e3;
     const held = !!l && (l.host === hostname()
-      ? pidAlive(l.pid) && l.pid !== process.pid
+      ? leaseHolderAlive(l) && l.pid !== process.pid
       : fresh);
     if (held) {
       db.run("ROLLBACK");
@@ -664,9 +688,9 @@ function cmdSync() {
     db.run("COMMIT");
   } catch (e) { try { db.run("ROLLBACK"); } catch {} throw e; }
   CUR_LEASE = leaseVal;
-  try { syncInner(db, t0); } finally { db.run("DELETE FROM meta WHERE k='sync_lease' AND v=?", [leaseVal]); }
+  try { await syncInner(db, t0); } finally { db.run("DELETE FROM meta WHERE k='sync_lease' AND v=?", [leaseVal]); }
 }
-function syncInner(db: Database, t0: number) {
+async function syncInner(db: Database, t0: number) {
   const dry = flag("dry-run");
   const rebuild = flag("rebuild") && !dry;
   const ec = embedCfg();
@@ -707,16 +731,26 @@ function syncInner(db: Database, t0: number) {
   const patterns = loadPatterns();
   const seenPaths = new Set<string>();
   let changed = 0, skippedMtime = 0, skippedHash = 0, flagged = 0;
+  const unreadablePaths: string[] = [];
+  let unreadable = 0;
+  const hold = (rel: string) => { unreadable++; if (unreadablePaths.length < 5) unreadablePaths.push(rel); };
   type Item = { slug: string; path: string; title: string; type: string; family: string; mtime: number; hash: string;
     updated: string; chunks: string[]; aliases: string[]; links: Array<{ to: string; type: string }>; flags: string };
   const batch: Item[] = [];
   for (const f of files) {
     const rel = relative(HOME, f);
     seenPaths.add(rel);
-    const st = statSync(f);
+    // A file the sync cannot read is HELD, never read: a FIFO or device would
+    // block the open for ever with the lease taken, an EACCES file or one
+    // removed since the walk would throw out of every later sync while doctor
+    // stayed green. The page as last indexed stays (seen, so never swept) and
+    // the rest of the home imports.
+    let st: ReturnType<typeof statSync>;
+    try { st = statSync(f); if (!st.isFile()) throw 0; } catch { hold(rel); continue; }
     const prev = known.get(rel);
     if (prev && prev.mtime === st.mtimeMs) { skippedMtime++; continue; }
-    const raw = readFileSync(f, "utf8");
+    let raw: string;
+    try { raw = readFileSync(f, "utf8"); } catch { hold(rel); continue; }
     const hash = new Bun.CryptoHasher("sha256").update(raw).digest("hex");
     if (prev && prev.hash === hash) {
       skippedHash++;
@@ -738,7 +772,7 @@ function syncInner(db: Database, t0: number) {
       links: extractLinks(p.body, rel, p.family, p.fmEdges), flags });
     changed++;
   }
-  if (dry) { out({ dry_run: true, files: files.length, would_change: changed, skipped_mtime: skippedMtime, skipped_hash: skippedHash }); return; }
+  if (dry) { out({ dry_run: true, files: files.length, would_change: changed, skipped_mtime: skippedMtime, skipped_hash: skippedHash, unreadable, unreadable_paths: unreadablePaths }); return; }
   // A changed page reinserts all of its chunks; the vectors of the ones whose
   // text, model and width did not change ride the same temp table a rebuild
   // uses and are re-attached below, so an edit re-embeds only what it changed.
@@ -874,6 +908,7 @@ function syncInner(db: Database, t0: number) {
   const stats = {
     files: files.length, changed, deduped, deleted, revived, purged, refused_reconcile: refusedReconcile,
     skipped_mtime: skippedMtime, skipped_hash: skippedHash, flagged, ttl_swept: sweptTtl, reattached,
+    unreadable, unreadable_paths: unreadablePaths,
     pages: (db.query("SELECT COUNT(*) c FROM pages WHERE deleted_at IS NULL").get() as any).c,
     chunks: (db.query("SELECT COUNT(*) c FROM chunks").get() as any).c,
     ms: Math.round(performance.now() - t0),
@@ -889,30 +924,26 @@ function syncInner(db: Database, t0: number) {
       die("invalid_params", `index embedded at ${metaDims} dims but config says ${ec.dims}`, "run: ac-brain sync --rebuild (re-embeds only what the new width invalidates)");
     }
     const pending = db.query("SELECT id, slug, text FROM chunks WHERE embedding IS NULL LIMIT 4096").all() as any[];
-    (async () => {})();
     embedDegraded = embedKey(ec) ? undefined : "no_api_key";
     if (!embedDegraded && pending.length) {
       const upd = db.prepare("UPDATE chunks SET embedding=?, embedded_at=?, embed_model=?, embed_dims=? WHERE id=?");
-      // synchronous await via Bun top-level not available in function: do it with a promise loop
-      const run = async () => {
-        for (let i = 0; i < pending.length; i += 64) {
-          const slice = pending.slice(i, i + 64);
-          const vecs = await embedBatch(slice.map(r => r.text), ec);
-          if (!vecs) { embedDegraded = embedError ?? "provider_error"; return; }
-          const t2 = db.transaction(() => {
-            slice.forEach((r, j) => { upd.run(toBlob(vecs[j]), iso(), ec.model, ec.dims, r.id); embedded++; });
-          });
-          t2();
-        }
-        db.run("INSERT OR REPLACE INTO meta(k,v) VALUES('embed_dims', ?)", [String(ec.dims)]);
-      };
-      // @ts-ignore  top-level style await through then-chain before printing
-      globalThis.__embedPromise = run();
+      // Awaited in place: the caller holds the lease for exactly as long as
+      // this runs, and these UPDATE transactions are what it keeps a second
+      // sync's writes away from.
+      for (let i = 0; i < pending.length; i += 64) {
+        const slice = pending.slice(i, i + 64);
+        const vecs = await embedBatch(slice.map(r => r.text), ec);
+        if (!vecs) { embedDegraded = embedError ?? "provider_error"; break; }
+        const t2 = db.transaction(() => {
+          slice.forEach((r, j) => { upd.run(toBlob(vecs[j]), iso(), ec.model, ec.dims, r.id); embedded++; });
+        });
+        t2();
+      }
+      if (!embedDegraded) db.run("INSERT OR REPLACE INTO meta(k,v) VALUES('embed_dims', ?)", [String(ec.dims)]);
     }
   } else if (!ec) embedDegraded = "no_provider_configured";
-  const finish = () => { usageLog({ verb: "sync", changed, ms: stats.ms }); out({ ...stats, embedded, embed_degraded: embedDegraded }); };
-  const p = (globalThis as any).__embedPromise;
-  if (p) p.then(finish); else finish();
+  usageLog({ verb: "sync", changed, ms: stats.ms });
+  out({ ...stats, embedded, embed_degraded: embedDegraded });
 }
 
 // ---------- retrieval ----------
@@ -958,7 +989,7 @@ async function searchArm(db: Database, q: string, limit: number, boosts: boolean
   if (ec && useVector) {
     if (!embedKey(ec)) degraded = "keyword_only_no_api_key";
     else {
-      const qv = (await embedBatch([q], ec))?.[0];
+      const qv = (await embedBatch([q], ec, RECALL_EMBED_TIMEOUT_MS))?.[0];
       if (!qv) degraded = "keyword_only_provider_error";
       else {
         const rows = db.query("SELECT slug, embedding FROM chunks WHERE embedding IS NOT NULL AND slug IN (SELECT slug FROM pages WHERE deleted_at IS NULL)").all() as any[];
@@ -1059,8 +1090,7 @@ async function searchArm(db: Database, q: string, limit: number, boosts: boolean
 
 // Seconds, AC_BRAIN_RERANK_TIMEOUT to override; 10 rather than the embed
 // lane's 60 because a prompt is waiting on the other end.
-const RERANK_TIMEOUT_MS = (Number(process.env.AC_BRAIN_RERANK_TIMEOUT) > 0
-  ? Number(process.env.AC_BRAIN_RERANK_TIMEOUT) : 10) * 1000;
+const RERANK_TIMEOUT_MS = secondsOr(process.env.AC_BRAIN_RERANK_TIMEOUT, 10) * 1000;
 // Optional precision knob: cross-encoder rerank of the fused top-N, then
 // autocut at the largest normalized score cliff. Gated on config/brain.json
 // reranker{provider,model,pin} + its key; provider "stub" (term-overlap) exists
@@ -1131,7 +1161,7 @@ function packToBudget<T>(items: T[], cost: (x: T) => number, budget: number): { 
 async function cmdRecall() {
   const db = openDb();
   const t0 = performance.now();
-  const q = opt("query"), entity = opt("entity"), agent = opt("agent");
+  const q = opt("query") ?? positional(0), entity = opt("entity"), agent = opt("agent");
   const since = opt("since") ? parseSince(opt("since")!) : undefined;
   const limit = Math.min(count("limit", "8")!, 50);
   const budget = count("budget-tokens");
@@ -1178,7 +1208,7 @@ async function cmdRecall() {
           hits = hits.slice(0, limit);
           ddb.close();
           void saved;
-        }
+        } else degraded = (degraded ? degraded + ";" : "") + "deputy_no_brain";
       } else degraded = (degraded ? degraded + ";" : "") + "deputy_not_found";
     }
   }
@@ -1197,7 +1227,7 @@ async function cmdRecall() {
   const create_safety = top && (top.evidence === "slug_match" || top.evidence === "title_phrase") ? "exists"
     : top && top.evidence === "title_all_terms" ? "probable" : "unknown";
   const ms = Math.round((performance.now() - t0) * 10) / 10;
-  usageLog({ verb: "recall", q: q ?? null, entity: entity ?? null, hits: hits.length, ms });
+  usageLog({ verb: "recall", entity: entity ?? null, hits: hits.length, ms });
   out({ protocol_version: 1, facts, total: facts.length, results: hits, create_safety, ...(reranked ? { reranked: true, rerank_pinned: rerankPinned } : {}),
     ...(pages ? { pages, page_count } : {}),
     ...(degraded ? { search_degraded: degraded } : {}),
@@ -1495,7 +1525,7 @@ async function cmdDoctor() {
     const metaDims = (db.query("SELECT v FROM meta WHERE k='embed_dims'").get() as any)?.v;
     if (ec && metaDims) push("embed_dims", Number(metaDims) === ec.dims, `index ${metaDims} vs config ${ec.dims}`);
     const lease = leaseGet(db);
-    if (lease) push("sync_lease", true, pidAlive(lease.pid) ? `live holder pid ${lease.pid}` : `stale (dead pid ${lease.pid}; the next sync reclaims it)`);
+    if (lease) push("sync_lease", true, leaseHolderAlive(lease) ? `live holder pid ${lease.pid}` : `stale (pid ${lease.pid} is dead or started after the lease; the next sync reclaims it)`);
     const ledgerActive = readLedger().reduce((s, l) => s + (l.op === "f" ? 1 : 0), 0);
     const dbTotal = (db.query("SELECT COUNT(*) c FROM facts").get() as any).c;
     push("facts_ledger_indexed", ledgerActive === dbTotal, `ledger ${ledgerActive} vs db ${dbTotal} (fix: sync --rebuild)`);
@@ -1739,4 +1769,26 @@ const CMDS: Record<string, () => unknown> = {
   synthesize: cmdSynthesize, serve: cmdServe,
 };
 if (!cmd || !CMDS[cmd]) die("invalid_params", `unknown command '${cmd ?? ""}'`, "commands: " + Object.keys(CMDS).join(" "));
+// `--flag=value` is one word no reader matches: `sync --dry-run=true` would run
+// a real sync and `delta --since=7d` would read as no --since, each with a
+// normal-looking answer. Refused for every verb, before anything runs.
+for (const a of args.slice(1)) {
+  const m = /^(--[^=]+)=/.exec(a);
+  if (m) die("invalid_params", `${cmd} does not read ${a}`, `write a flag and its value as two words (${m[1]} <value>), a switch as ${m[1]} alone`);
+}
+// A flag a verb never reads would otherwise be dropped in silence, and the
+// verb would answer as if it had not been typed.
+const VERB_FLAGS: Record<string, string[]> = {
+  recall: ["query", "entity", "agent", "since", "limit", "budget-tokens", "no-boosts", "deputy"],
+  remember: ["provenance", "agent", "entity", "kind", "ttl", "family"],
+  forget: ["reason"],
+};
+const known = VERB_FLAGS[cmd];
+if (known)
+  for (let i = 1; i < args.length; i++) {
+    if (!args[i].startsWith("--")) continue;
+    if (![...known, "home", "by", "compact"].includes(args[i].slice(2)))
+      die("invalid_params", `${cmd} does not read ${args[i]}`, `${cmd} reads ${known.map(f => "--" + f).join(" ")}`);
+    if (!isBoolFlag(args[i])) i++;
+  }
 await CMDS[cmd]();

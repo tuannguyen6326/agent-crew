@@ -365,7 +365,7 @@ assert_contains "$out" "floor 1.6" "...naming the jq floor"
 mkdir -p "$TMP/bun-nocap"
 cat >"$TMP/bun-nocap/bun" <<'EOF'
 #!/usr/bin/env bash
-[ "${1:-}" = --version ] && { printf '1.3.13\n'; exit 0; }
+[ "${1:-}" = --version ] && { printf '1.4.4\n'; exit 0; }
 exit 0
 EOF
 chmod +x "$TMP/bun-nocap/bun"

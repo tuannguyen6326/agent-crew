@@ -1,10 +1,9 @@
 // pane-agent.ts - run ONE agent turn in a backend pane, for the mechanisms
 // that verify: the ship pipeline's reviewer, qa, the learning scout, the gate
 // judge. The entry is bin/ac-pane-agent.sh (a shim that starts this file
-// through bin/ac-bun.sh); THIS header is the authoritative spec, and the bash
-// original it replaced stays frozen at tests/fixtures/ac-pane-agent.sh as the
-// oracle the differential leg of tests/sh/ac-pane-agent.test.sh holds this
-// module to. THREE ARMS, chosen by the caller's mode and the resolved
+// through bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-pane-agent.test.sh is its contract test. THREE ARMS, chosen by
+// the caller's mode and the resolved
 // harness: the SESSION arm (default, claude) runs a claude session - visible,
 // steerable, real permission prompts answerable by a human; the CREWMATE arm
 // (default mode, codex/opencode/pi/cursor) runs the harness's own TUI under
@@ -638,26 +637,10 @@
 // the closes and steer's list (herdr_cli's bounded twin elsewhere), orca
 // through orcaJson, git, grep -qxF, mkdir -p, mv, od, tr, sed-free readings of
 // sed's own patterns, date(1) for every clock read and the PATH's sleep for
-// every wait, so a suite's stubs bind both sides.
+// every wait, so a suite's PATH stubs bind every one of them.
 //
-// ESCAPE HATCH. Every independent review (ac-verify codereview and qa, the
-// solo session's slice reviews included), every staged and maintenance gate and
-// the Learning scout is a turn of this module, so a broken land stops them all
-// at once - and the slice that fixes it cannot get its own review. The frozen
-// original starts src/pane-agent.ts's helpers and src/dispatch-select.ts, which
-// import the live src/lib.ts, so a bin copy over the live src dies with the
-// thing it escapes: run a FULL ARCHIVE of the pre-port tree instead -
-//   o=$(cd "$(mktemp -d)" && pwd -P); git -C <repo> archive <pre-port sha> | tar -x -C "$o"
-// then per call AC_VERIFY_PANE_BIN="$o/bin/ac-pane-agent.sh" for ac-verify and
-// AC_PANE_AGENT="$o/bin/ac-pane-agent.sh" for the gate, ac-learn and ship's
-// finish; when ac-verify itself cannot start, run "$o/bin/ac-verify.sh" (its
-// default pane agent is the archive's). src/teardown.ts names
-// <bin>/ac-pane-agent.sh with no override - its reap is a soft WARN; close the
-// pane by hand or run the archive's teardown. Nothing a pane keeps bakes "$o"
-// (the launch line names the cwd, the prompt and the marker dir; the Stop hook
-// names the marker). The captain's revert of the land is the last resort.
-//
-// AT PARITY (each pinned in the leg until its own fix lands):
+// AT PARITY with the bash original, and deliberately left unasserted by the
+// contract test (each until its own fix lands):
 // - W1: ONE failed liveness read is a dead pane - every fifth poll one raw
 //   `pane get` (orca `terminal show`'s connected) and ANY failure ends a live
 //   turn `pane_closed`, against ac-backend.sh's WINDOW LIVENESS three states.
@@ -689,54 +672,41 @@
 // - Two same-label agents in one family workspace both adopt one tab; two
 //   session agents sharing a cwd each adopt the NEWEST new transcript.
 //
-// DIVERGENCES from the original (the leg names each one a row can show):
+// ALSO:
 // - BUN (W11): every verb needs bun on the CALLER's PATH (the shim's `ERROR:
-//   required tool not found: bun`, exit 1, no NDJSON), where the original
-//   found it after its own PATH hardening - and close, reap-pane, reap and
-//   steer ran without it.
+//   required tool not found: bun`, exit 1, no NDJSON) - close, reap-pane, reap
+//   and steer included.
 // - --timeout (Q3): anything but a sign and decimal digits - a name, an
 //   expression, a radix prefix, a fraction, a unit - is refused before any
-//   pane or rung, where bash evaluated it after placing (a name naming no
-//   variable ended the run 0 with nothing printed, `1+1` was 2 s, `SECONDS`
-//   about 0).
-// - SHELL-OWN STDERR (W12) is not reproduced, the status kept: a value flag
-//   with no value or an empty one is `ERROR: <flag> needs a value` where the
-//   shell printed `line <n>: 2: parameter null or not set` (close and
+//   pane or rung.
+// - SHELL-OWN STDERR (W12) is not printed, the status kept: a value flag with
+//   no value or an empty one is `ERROR: <flag> needs a value` (close and
 //   reap-pane exit 1 there, against their always-0 contract, as before); HOME
-//   unset is `ERROR: HOME is not set` for the shell's unbound line; the test
-//   builtin's `integer expression expected`, the arithmetic and unbound lines
-//   of W4, a redirection's own line (an unwritable exclude, wrap or descriptor
-//   temp).
-// - SIGINT (W7): no handler is registered, as the original set no trap: TERM
-//   and HUP end the process at once (143, 129), the rung or pane left
-//   running, and so does INT to the pid alone (130), where bash waited its
-//   foreground sleep out and went on. An agent started as an async job of a
-//   non-interactive shell (ac-verify's round, the Learning scout) inherits
-//   SIGINT ignored, and the original then ignored INT outright - as this port
-//   does, since bun keeps the inherited SIG_IGN; the 130 needs a foreground
-//   start. The rung keeps the original's ignored SIGINT and SIGQUIT.
+//   unset is `ERROR: HOME is not set`; the test builtin's `integer expression
+//   expected`, the arithmetic and unbound lines of W4, a redirection's own
+//   line (an unwritable exclude, wrap or descriptor temp) are not printed.
+// - SIGINT (W7): no handler is registered: TERM and HUP end the process at
+//   once (143, 129), the rung or pane left running, and so does INT to the pid
+//   alone (130). An agent started as an async job of a non-interactive shell
+//   (ac-verify's round, the Learning scout) inherits SIGINT ignored and then
+//   ignores INT outright, since bun keeps the inherited SIG_IGN; the 130 needs
+//   a foreground start. The rung keeps an ignored SIGINT and SIGQUIT.
 // - HOME RESOLUTION: an AC_HOME cd cannot enter pins `AC_HOME='' ` without
 //   cd's own line, and a home whose name ends in LF is pinned whole.
 // - EXCLUSIVE TEMP (W13): --pane-file and --observe write through
-//   <path>.tmp.<pid> (then .<n>) created exclusively, where the original wrote
-//   through whatever sat at the predictable name.
+//   <path>.tmp.<pid> (then .<n>) created exclusively, never through whatever
+//   sits at the predictable name.
 // - BYTES: argv and the environment arrive decoded, so a byte that is no UTF-8
-//   in a flag or env value reaches the events, files and children as U+FFFD,
-//   where the original wrote the byte (fail()'s jq already wrote U+FFFD);
-//   BSD sed and tr no longer abort on such a byte (the empty slug, the cut
-//   branch - FAIL-PATH).
-// - The kind grammar is read per its text ([a-z0-9-]), where bash 3.2's range
-//   under a UTF-8 locale also admitted accented letters.
-// - The transcripts are ordered by mtime and, on a tie, by name's bytes, where
-//   `ls -t` collated the tie under the caller's locale (uuid names agree).
-// - LOCK GRACE: a pid-less Stop-hook lock's age is read from the clock, where
-//   the original spawned `date +%s`.
+//   in a flag or env value reaches the events, files and children as U+FFFD
+//   (fail()'s jq writes U+FFFD too); BSD sed and tr no longer abort on such a
+//   byte (the empty slug, the cut branch - FAIL-PATH).
+// - The kind grammar is read per its text ([a-z0-9-]) under any locale.
+// - The transcripts are ordered by mtime and, on a tie, by name's bytes.
+// - LOCK GRACE: a pid-less Stop-hook lock's age is read from the clock.
 // - The helper subcommands are verbs of this module and so reach through the
-//   shim, where `ac-pane-agent.sh wrap-transcript` was the usage error; they
-//   run in process, where the original started bun for each (whose own
-//   failure was the harvest's).
+//   shim; they run in process.
 // - A caller whose cwd has no name resolves no relative path the helpers read
-//   or write (the Stop hook, a transcript), as the started helpers did not.
+//   or write (the Stop hook, a transcript).
 //
 // CALLERS: bin/ac-verify.sh (`${AC_VERIFY_PANE_BIN:-<bin>/ac-pane-agent.sh}`:
 // the codereview and qa round in the background with stdout and stderr in one
@@ -757,16 +727,10 @@ import { dirname, isAbsolute } from "node:path";
 import {
   STARTED_BIN,
   arithValue,
-  backendAgentIdlePane,
-  backendAgentStatusPane,
-  backendCapturePane,
   backendDialogAnswerPane,
   backendHarnessUpPane,
   backendRoute,
-  backendSendLinePane,
   backendStartupDialogsPane,
-  buildLaunch,
-  claudeConfigEnv,
   claudeTranscriptRoot,
   commandV,
   configReadSoft,
@@ -774,14 +738,12 @@ import {
   enterCaller,
   exclusiveTemp,
   fileMtime,
-  harnessPaneArm,
   herdrResolveWorkspace,
   herdrTabOpen,
   lockAcquire,
   lockRelease,
   orcaJson,
   orcaPlacePane,
-  paneProfile,
   physicalDir,
   shellQuote,
   shellStatus,
@@ -789,10 +751,11 @@ import {
   spawnShellSync,
   tabFields,
   testInt,
-  transcriptFinalEpoch,
   writeAll,
   wsFamilyLabel,
 } from "./lib.ts";
+import { backendAgentIdlePane, buildLaunch, claudeConfigEnv, paneProfile } from "./lib-spawn.ts";
+import { backendAgentStatusPane, backendCapturePane, backendSendLinePane, harnessPaneArm, transcriptFinalEpoch } from "./lib-verify.ts";
 
 export type Py = null | boolean | bigint | number | string | Py[] | Map<string, Py>;
 

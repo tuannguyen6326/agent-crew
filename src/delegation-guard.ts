@@ -1,10 +1,9 @@
 // delegation-guard.ts - PreToolUse hook: refuse harness-native delegation
 // from a CHIEF's own checkout.
-// The entry is bin/ac-delegation-guard.sh, the fail-open hook shim that starts
-// this file through bin/ac-bun.sh's ac_bun_exec_hook; THIS header is the
-// authoritative spec, and the bash original it replaced stays frozen at
-// tests/fixtures/ac-delegation-guard.sh as the oracle the differential leg of
-// tests/sh/ac-delegation-guard.test.sh holds this module to.
+// The entry is bin/ac-delegation-guard.sh, the hook shim that starts this
+// file through bin/ac-bun.sh's ac_bun_exec_guard; THIS header is the
+// authoritative spec, and tests/sh/ac-delegation-guard.test.sh its contract
+// test.
 //
 // Wired in .claude/settings.json and .codex/hooks.json under PreToolUse; reads
 // the hook payload JSON on stdin and inspects .tool_name.
@@ -77,7 +76,7 @@
 // at launch - a chief cannot grant it to itself mid-turn.
 //
 // Fails open: non-matching payloads, an unparseable payload, a missing
-// DEPENDENCY (jq anywhere, git under arm 3; bun, through the shim), a linked
+// DEPENDENCY (jq anywhere, git under arm 3; bun's is the shim's deny), a linked
 // worktree, or a checkout git cannot read all exit 0 - a broken guard must
 // never wedge the harness. EXACTLY ONE of those is narrower under arm 3,
 // deliberately: a cwd git reads as no repo at all is indistinguishable from a
@@ -97,7 +96,7 @@
 // Exit codes: 0 allow, 2 deny; nothing on stdout, the refusal one line on
 // stderr. Files: none.
 //
-// THE READS, the original's: the payload is stdin to its end with NULs
+// THE READS: the payload is stdin to its end with NULs
 // dropped and trailing LFs stripped (empty allows), and the name is jq's
 // `-r '.tool_name // empty'` over it plus one LF, spawned, its stdout taken
 // whatever jq's status, NULs dropped and trailing LFs stripped. `git -C <cwd>
@@ -106,12 +105,7 @@
 // physical one bin/ac-bun.sh hands over; AC_HOME is entered as physicalDir
 // enters it, and one that cannot be entered reads as no home path.
 //
-// A BROKEN PORT. The frozen original needs only bash and jq: copying
-// tests/fixtures/ac-delegation-guard.sh over bin/ac-delegation-guard.sh in the
-// checkout the fleets run (the wiring names that path) restores it whole until
-// the fix lands; the captain's revert of the land is the last resort.
-//
-// AT PARITY (each pinned in the leg until its own fix lands):
+// AT PARITY with the bash original (each until its own fix lands):
 // - every value jq printed before its first parse error is the name, joined
 //   by LF: `{"tool_name":"Task"} x` refuses, and two values `Read` and `Agent`
 //   refuse naming `Read<LF>Agent`;
@@ -121,21 +115,17 @@
 //   stripped before the shape test: `Ta\u0000sk` refuses, `m\u0000cp__Agent`
 //   is an mcp__ name.
 //
-// DIVERGENCES from the original (the leg names each one a row can show):
-// - BUN: with no bun on PATH the shim allows at once, saying nothing, where
-//   the original judged; a module that cannot load or crashes allows too.
-// - HOME RESOLUTION: a home or cwd whose name ends in LF is the directory it
-//   names, where the original's `$(...)` dropped the LF and compared the
-//   sibling; a relative AC_HOME is entered without CDPATH, where an exported
-//   CDPATH made cd echo its destination into the original's captured path, so
-//   the fleet home read as no home.
+// ALSO:
+// - With no bun on PATH, or no module file, the shim denies at once with one
+//   stderr line naming it; a module that cannot load or crashes allows, with
+//   one stderr line.
+// - A home or cwd whose name ends in LF is the directory it names, and a
+//   relative AC_HOME is entered without CDPATH.
 // - A caller whose cwd Bun cannot enter (a name ending in a backslash)
 //   resolves no relative AC_HOME: arm 2 decides.
-// - TEMP: the original fed jq a here-string, a temp file under $TMPDIR, else
-//   /tmp; with neither writable it allowed with bash's own line, where the
-//   port pipes jq's stdin and judges.
-// - BYTES: an environment value arrives decoded, so a non-UTF-8 byte in
-//   AC_HOME reaches the filesystem as U+FFFD and the home reads as unresolved.
+// - jq's stdin is a pipe, so the verdict needs no writable temp directory.
+// - An environment value arrives decoded, so a non-UTF-8 byte in AC_HOME
+//   reaches the filesystem as U+FFFD and the home reads as unresolved.
 //
 // CALLERS: the PreToolUse wiring of .claude/settings.json and
 // .codex/hooks.json, each behind its own [ -x ] gate; no script runs it.

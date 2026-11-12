@@ -1,12 +1,11 @@
-// qa-lib.ts - the TypeScript twins of the closed QA validators in
-// tests/fixtures/ac-qa-lib.sh that src/verify.ts's qa verb calls, of the QA store
+// qa-lib.ts - the TypeScript twins of the closed QA validators of the
+// retired bash ac-qa-lib.sh that src/verify.ts's qa verb calls, of the QA store
 // learning loop src/qa.ts's store-curate and store-calibration call, and of
 // the helpers those call in turn. THIS header is the twins' spec; src/qa.ts
-// and src/verify.ts call the twins, and the frozen bash originals
-// (tests/fixtures/ac-qa.sh, tests/fixtures/ac-verify.sh) still source every
-// one, so each twin is pinned to its LIVE original by tests/ts/qa-lib.test.ts
-// - two implementations until the last bash caller goes. The bash's comments
-// own WHY each check exists; this file owns how the twin reads it.
+// and src/verify.ts call the twins, and tests/ts/qa-lib.test.ts holds each
+// twin to the answers stated here. The WHY of each check was the bash's
+// comments, kept in git history at tests/fixtures/ac-qa-lib.sh; this file
+// owns how the twin reads it.
 //
 //   qaBundleValidate(profile, sha)            ac_qa_bundle_validate
 //   qaTestplanManifestRender(repo, sha, plan) ac_qa_testplan_manifest_render
@@ -58,6 +57,38 @@
 // the body hash or `-`, the calibration's JSON line with awk's status. Its
 // `date -u +%Y-%m-%d` and ac_iso's date are spawned, so a PATH stub binds both
 // sides; the run's ledger is read as `IFS=$'\t' read` reads it (tabFields).
+//
+// QA STORE LEARNING LOOP (store-curate / store-label / store-calibration):
+// Three pure functions over explicit paths, so the loop is testable without a
+// live run; ac-qa.sh's verbs resolve the run and call them.
+//
+// HISTORY (store/history.tsv, travels with the store through the curation
+// candidate and store-install): one line per case row per run -
+//   sha  date  case  tier  status  classification  body_sha  qa_model  task
+// body_sha hashes the case's testplan row (tier, precondition, steps,
+// expected) so a case whose body changed is a new streak, never a continued
+// one; "-" when the run's testplan has no row for that id (a store case that
+// was adopted has one; an ad-hoc probe may not).
+//
+// PROMOTION (the rule, machine-made where curation used to be judgment): a
+// run-local case becomes a store case when it PASSED in N consecutive runs
+// (distinct shas, newest first) with the SAME body - default 3 - and no
+// store case of that id exists yet. A store case that passed again gets its
+// `verified:` line moved to this sha/date. A pass that is really a re-run of
+// a fail (classification flaky) does not count and resets nothing: it is
+// neither evidence for nor against. Nothing is ever demoted or retired here -
+// retirement stays the curating pane's judgment, recorded with a reason.
+//
+// CALIBRATION (the judge against the human): the pane's `fail` rows classed
+// `defect` are the JUDGE's positive labels, its `pass` rows the negatives; the
+// chief's labels (store-label: confirmed | not-a-defect, recorded when the
+// defect is fixed or dismissed) are the HUMAN's. Paired on (sha, case), the
+// agreement is Cohen's kappa: (po - pe) / (1 - pe), 1.0 when pe == 1 and
+// every pair agrees, 0.0 when pe == 1 and any disagrees. Labels and the
+// calibration file sit BESIDE the store (<store>.labels.tsv,
+// <store>.calibration.json), never inside it: they are the chief's word and
+// a computed summary, and store-install replaces the store wholesale from a
+// pane's candidate - inside it they would be lost at the next install.
 //
 // Named divergences: the shell's own error lines (a failed `<"$f"`, `>"$f"`
 // or `>>"$f"` redirection, `cd`'s, `[`'s "integer expression expected") are

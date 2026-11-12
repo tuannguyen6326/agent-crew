@@ -3,10 +3,8 @@
 // the qa.require_for_ship gate, with the landing interlock, and with the
 // OUTCOME proven by the forge before the landed proof bin/ac-teardown.sh
 // trusts is written. The entry is bin/ac-pr-merge.sh (a shim that starts this
-// file through bin/ac-bun.sh); THIS header is the authoritative spec, and the
-// bash original it replaced stays frozen at tests/fixtures/ac-pr-merge.sh as
-// the oracle the differential leg of tests/sh/ac-pr-merge.test.sh holds this
-// module to.
+// file through bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-pr-merge.test.sh is its contract test.
 //
 //   ac-pr-merge.sh <id> <github-pr-url> [-- <gh merge flags>]
 //
@@ -34,8 +32,8 @@
 //    `WARN: cannot read meta file <meta>` alone, exit 1 (W8 - the bash's bare
 //    assignment). When project_dir is non-empty and a directory,
 //    qaRequired <project_dir> reads the policy in process - src/lib.ts's
-//    twins of ac_qa_required and ac_qa_gate_ok, held to the bash functions by
-//    tests/ts/qa-gate.test.ts, their named divergences at that block; the
+//    twins of ac_qa_required and ac_qa_gate_ok, held to their stated answers
+//    by tests/ts/qa-gate.test.ts, their named divergences at that block; the
 //    ERROR they throw for a policy they cannot read (a legacy config's
 //    RETIRED copy, a yaml they cannot read, a git that cannot run, a .git in
 //    project_dir that git refuses) is the run's exit 1, before any gh call.
@@ -120,18 +118,15 @@
 // for an unreadable ledger; mv's status for a meta write mv refused; a sleep's
 // or date's own status where one failed.
 //
-// DIVERGENCES from the original:
-// - SHELL-OWN STDERR is not reproduced: bash's job notice for a signalled gh
-//   (`line 124: <pid> Terminated: 15 gh "${merge_args[@]}"`, W9), the
-//   redirection lines of a status log that cannot be written (a meta whose
-//   directory takes no temp is the meta lock's WARN on both sides now),
-//   the arithmetic line of an empty-family ledger record, awk's `can't open
-//   file` for an unreadable ledger (the differential leg's rows 6, 7, 10).
+// ALSO:
+// - No line of a shell's or a tool's own is printed: for a signalled gh (W9),
+//   for a status log that cannot be written (a meta whose directory takes no
+//   temp is the meta lock's WARN), for an empty-family ledger record or for an
+//   unreadable ledger.
 // - The meta and ledger temps are created EXCLUSIVELY (metaSet,
-//   landingRecord - the bash wrote through a planted `.tmp.<pid>` sibling;
-//   tests/ts/pr-check.test.ts and tests/ts/merge-local.test.ts).
+//   landingRecord; tests/ts/pr-check.test.ts and tests/ts/merge-local.test.ts).
 // - require reads PATH through Bun.which, which refuses a non-executable PATH
-//   file `command -v` accepted (every port shares it).
+//   file (every port shares it).
 // - argv and the meta's bytes: an argument arrives decoded, and a project_dir,
 //   head or landed path that is not UTF-8 is spawned decoded (as U+FFFD).
 //
@@ -148,13 +143,8 @@ import {
   die,
   enterCaller,
   familyOfId,
-  knowledgeWarn,
-  landingRecord,
-  landingWarn,
   metaGet,
   metaSet,
-  qaGateOk,
-  qaRequired,
   require,
   shellPrefix,
   shellStatus,
@@ -162,6 +152,8 @@ import {
   statusAppend,
   taskMeta,
 } from "./lib.ts";
+import { knowledgeWarn, landingRecord, landingWarn } from "./lib-merge-local.ts";
+import { qaGateOk, qaRequired } from "./lib-qa-gate.ts";
 
 const b = (s: string): Buffer => Buffer.from(s, "latin1");
 const bytes = (s: string): string => Buffer.from(s, "utf8").toString("latin1");

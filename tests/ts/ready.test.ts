@@ -5,9 +5,8 @@
 // over one ledger: awk's reading of each epoch, a header line, a numeric
 // family, a future record, a third field with a CR or a field after it, and
 // path lists of one, several, repeated and spaced paths. The CLI contract is
-// tests/sh/ac-ready.test.sh's, whose differential leg runs the frozen original
-// beside the shim.
-// DISPUTED: the implementation of the landing lookup (ac_landing_overlaps in bin/ac-lib.sh vs landingOverlaps in src/lib.ts)
+// tests/sh/ac-ready.test.sh's.
+// DISPUTED: the implementation of the landing lookup (ac_landing_overlaps in bin/ac-lib.sh vs landingOverlaps in src/lib-merge-local.ts)
 // HELD-CONSTANT: one scratch home per test holding state/.landings; argv (the window, '' and the paths); env (PATH the host's, LC_ALL=C, AC_HOME the home, EPOCHSECONDS fixed); cwd (the distro root); stdin (/dev/null); stdout, stderr and the status compared whole.
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -15,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const ROOT = realpathSync(join(import.meta.dir, "..", ".."));
-const LIB = join(ROOT, "src", "lib.ts");
+const LIB = join(ROOT, "src", "lib-merge-local.ts");
 const NOW = 1767225600;
 const made: string[] = [];
 afterAll(() => made.forEach((d) => rmSync(d, { recursive: true, force: true })));

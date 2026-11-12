@@ -15,7 +15,7 @@ A read never creates the file or the directory, so a homeless reader (a crewmate
 | File | Controls |
 | --- | --- |
 | `config/captain` | How the fleet addresses the human, e.g. `echo Alex > config/captain`; absent = `captain`. Shown in the session-start digest and stamped into briefs (`ac_captain`, `bin/ac-lib.sh`). |
-| `config/flow` | Default task flow: `auto` (default: the chief triages each order), `direct` or `staged`. Printed in the session-start digest; the chief applies it at intake. |
+| `config/flow` | Default task flow: `auto` (default: the chief triages each order), `direct`, `staged` or `sdlc` (the `ac-fleet-new.sh` wizard offers `direct`/`staged`; write `sdlc` by hand). Printed in the session-start digest; the chief applies it at intake. |
 | `config/promote` | Room promotion policy: `always` (default: every family gets a roomchief at intake, up to `config/room-parallel`), `auto` (the chief triages promotion per family) or `never` (rooms stay records). Printed in the session-start digest; the chief applies it at intake. |
 | `config/epic-parallel` | Max stories of one epic in flight at once; default 2. Read by `bin/ac-ready.sh`. |
 | `config/room-parallel` | Max roomchiefs in flight at once; default 5. `ac-spawn.sh --roomchief` refuses past it; the exemptions (`--captain-initiated`, `--system-initiated`, `--over-cap`) are in the `src/spawn.ts` header. |
@@ -57,7 +57,7 @@ A dispatched `panes.gate` profile outranks `gate-agent`/`gate-model`/`gate-effor
 | `config/backend` | Session backend for new tasks: `herdr` (default) or `orca`. Recorded per task at spawn, so changing it never re-routes an in-flight task. Resolution ladder: `AC_BACKEND` row below. |
 | `config/herdr-session` | herdr only: the named herdr session to talk to; absent = no `--session` flag (the ship/qa/gate watch openers pass `default`). |
 | `config/herdr-rpc-timeout` | herdr only: seconds one herdr RPC may run before it is killed with its process group; default 2, and anything that is not a positive integer falls back to 2. A killed RPC reads as unobservable, never as a dead pane. Owner: HUNG RPC in the `bin/ac-backend.sh` header. |
-| `config/orca-node` | Orca only: the full Orca worktree selector (`id:<repo-id>::<path>[::workspace:<id>]` or `path:<path>`) that chief-kind home panes attach to; absent = the nearest registered ancestor of the home path. Read only when a family tab is created. Owner: `bin/ac-backend-orca.sh`. |
+| `config/orca-node` | Orca only: the full Orca worktree selector (`id:<repo-id>::<path>[::workspace:<id>]` or `path:<path>`) that chief-kind home panes attach to; absent = auto-pinned when a family tab is created, from the Orca entry at the home's nearest registered ancestor whose display name ends with the fleet name as its own token (`ac lab` for the fleet lab, `ac lab/ops` for its deputy ops), else that ancestor's `path:` selector with a WARN naming the candidates when several entries share the path. Owner: `bin/ac-backend-orca.sh`. |
 
 The former `config/herdr-workspace`, `herdr-workspace-agents` and `herdr-workspace-chiefs` pins are retired and read by nothing; herdr tabs now group by family (FAMILY WORKSPACE GROUPING in the `bin/ac-backend.sh` header).
 
@@ -78,7 +78,7 @@ The former `config/herdr-workspace`, `herdr-workspace-agents` and `herdr-workspa
 | File | Controls |
 | --- | --- |
 | `config/brain-auto-sync` | Valve for the shared brain-freshen slot (fleet watcher cycle and prompt-time recall): `on` (default) or `off`. The slot fires only when `state/brain.sqlite` exists, at most once per `AC_BRAIN_SYNC_IV`. |
-| `config/brain-prompt-recall` | Valve for prompt-time recall (`bin/ac-prompt-recall.sh`): `on` (default) or `off`. It fires only for a solo session or a chief whose cwd is the fleet home, and prints at most `AC_PROMPT_RECALL_LIMIT` hits. |
+| `config/brain-prompt-recall` | Valve for prompt-time recall (`bin/ac-prompt-recall.sh`): `on` (default) or `off`. It fires only for a solo session or a chief whose cwd is the fleet home, gates a credential-shaped prompt (a key-like token) and a harness-injected one (a task notification, an agent message, a system reminder) to silence instead of recalling it, and prints at most `AC_PROMPT_RECALL_LIMIT` hits. |
 | `config/brain.json` | Brain engine settings: `embedding` (`provider`, `model`, `dims`, `base_url`), `reranker`, `synthesize.api`, and the `excludes` list for sync (directory names skipped at any depth; it REPLACES the default list, which skips `state`, `logs`, `whiteboards`, `skills-archive`, `scenes-archive`, `node_modules`, `.git`, `.crew` and `verify`). Edited from the dashboard's brain config panel. Owner: the `src/brain.ts` header. |
 | `config/brain-agent`, `config/brain-model`, `config/brain-effort` | Harness, model and effort for `ac-brain synthesize` when `crew-dispatch.json` has no `panes.brain` entry; absent = `config/crew-harness` + `config/model`. A harness with no one-shot form there (`agy`, a `launch-<h>` template) or an effort outside the one-shot arm's tiers is refused: `synthesis_status` carries `harness_refused` and stderr names why. `AC_BRAIN_SYNTH_CMD` overrides all of it. |
 | `config/providers.json` | Per-home secret store for LLM provider keys, one entry per provider name holding `api_key`. The brain engine reads an env var first, then this file - never a `.env`, which no bun entry loads (`bin/ac-bun.sh`); `bin/ac-jev.sh` reads its bearer key only from here. Edited from the dashboard's Providers panel. Keep it operator-only. |
@@ -91,8 +91,8 @@ The former `config/herdr-workspace`, `herdr-workspace-agents` and `herdr-workspa
 | `config/jev-provider` | Provider `ac-jev.sh` talks to: `openrouter` (default), `typesafe`, `opencode` or `laya` (the loopback sandbox, no key). Each maps to an endpoint, a `providers.json` entry and a model id listed in the `src/jev.ts` header. |
 | `config/jev-laya-port` | Loopback port of the `laya` sandbox (`http://127.0.0.1:<port>/v1/systemone`); default 8765. |
 | `config/compact-window` | Context-window size in tokens that `bin/ac-compact-advise.sh` divides a session's context by; default 200000. `AC_COMPACT_WINDOW` wins. |
-| `config/compact-auto` | `on` makes the compact advice act for a roomchief (a session with a task meta): the Stop hook sends `/compact` into its own pane once the turn ends and the pane is idle. `off` (default) keeps the hint only; the crewchief, solo sessions and crewmates always keep the hint. Needs `config/jev=on`. Outcomes: `state/.compact-advise/send.log`; contract: the `src/compact-advise.ts` header (AUTO). |
-| `config/compact-auto-min` | Percent of `config/compact-window` a roomchief's context must reach before `config/compact-auto` acts; below it the advice stays a hint. Default 50. |
+| `config/compact-auto` | `on` makes the compact advice act for a roomchief (a session with a task meta): the Stop hook sends `/compact` into its own pane once the turn ends and the pane is idle. It also acts for a claude crewmate: on a quiet wake whose note the adviser judges ready, the watcher's adviser call sends `/compact` into the crewmate's pane and the wake's note reads `compact=auto` instead of `compact=advise`. `off` (default) keeps the hint only; the crewchief, solo sessions and crewdeputies always keep the hint. Needs `config/jev=on`. Outcomes: `state/.compact-advise/send.log`; contract: the `src/compact-advise.ts` header (AUTO, AUTO FOR A CREWMATE). |
+| `config/compact-auto-min` | Percent of `config/compact-window` a roomchief's or crewmate's context must reach before `config/compact-auto` acts; below it the advice stays a hint. Default 50. |
 | `config/compact-pct` | 1-100: claude's own auto-compact fires at this percent of the context window for chief sessions (crewchief via the `ac` launcher, roomchief spawn and recover), as `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` on the launch line. Unset (default) leaves claude's threshold alone; takes effect at the next launch. |
 
 ### Remote orders and notifications
@@ -158,7 +158,7 @@ These files live under `$AC_HOME/records/` (resolved by `ac_records_dir`) and ar
 | `$AC_HOME/CREWMATE-learned.md` | Machine-owned learned layer, written only by `bin/ac-learn.sh`; never edit it by hand. |
 | `<container>/.claude/CLAUDE.md` | Baseline shared by every fleet under the homes container (e.g. `~/Work/ac-homes/.claude/CLAUDE.md`). |
 | `<container>/.claude/settings.json`, `$AC_HOME/.claude/settings.json` | Harness settings copied into each worktree's `.claude/settings.json`: repo-shipped > per-fleet > container. A copy, never a symlink. |
-| `<container>/.claude/settings.local.json`, `$AC_HOME/.claude/settings.local.json` | The enabled plugins, copied into each worktree's `.claude/settings.local.json` on the same ladder, resolved independently of `settings.json`. |
+| `<container>/.claude/settings.local.json`, `$AC_HOME/.claude/settings.local.json` | The enabled plugins, copied into each worktree's `.claude/settings.local.json` on the same ladder, resolved independently of `settings.json`. A home `.claude` that is the chief's runtime dir (the distro link, or the real dir `bin/ac-home-carriers.sh` makes of it, whose `settings.local.json` carries the home's `AC_HOME`) is no fleet layer: both files fall through to the container, and a `settings.local.json` naming `AC_HOME` never seeds even beside a real per-fleet `settings.json` override. |
 | `<container>/.claude/skills/<name>` | Overrides the distro's built-in crewmate skill of the same name when seeding (`ac_seed_crew_skills`). |
 
 Seeding merges the available layers in the order container, learned, fleet, then the crewdomain's `CREWMATE.md` when the session is domain-bound; a single available layer is copied as is.
@@ -171,9 +171,11 @@ The file lives at `$AC_HOME/projects/<name>.yaml`, where `<name>` is the project
 It is home-only, captain-owned and branch-immune: the project repo is never a config source, so the branch under test cannot change its own commands or merge gate.
 Resolver: `ac_project_config_file` (`bin/ac-lib.sh`); the legacy `config/projects/<name>.yaml` location is no longer read.
 Example: `docs/examples/project-config.yaml`.
-Authoritative key contracts: the header of `src/ship.ts`, which `bin/ac-ship.sh` starts (ship keys), and the header of `src/qa.ts`, which `bin/ac-qa.sh` starts (`qa.*` keys).
+Authoritative key contracts: the header of `src/ship.ts`, which `bin/ac-ship.sh` starts (ship keys), the header of `src/qa.ts`, which `bin/ac-qa.sh` starts (`qa.*` keys), THE LEASE INSTALL in the header of `src/spawn.ts` (`commands.install`), and THE CI GATE in the header of `src/teardown.ts` (`ci`).
 
 ```yaml
+ci: none
+
 commands:
   test: "npm test"
   lint: "npm run lint"
@@ -220,6 +222,18 @@ qa:
 | `test.evidence.store_in_repo`, `test.evidence.dir` | Where test evidence is written (`ac-ship.sh evidence-dir`). |
 | `review.max_rounds` | Verifier invocations before the review loop holds for the owning chief's decision; default 3. |
 
+### CI keys
+
+| Key | Controls |
+| --- | --- |
+| `ci` | `none` declares the repo runs no CI at all, trusted the way no-mistakes' `no_ci` is: a zero-check `ci=none` `bin/ac-pr-check.sh` recorded then lands through `bin/ac-teardown.sh --pr-ready` without the captain's `--ci-override`. Never excuses `ci=failing` - a real CI failure always needs `--ci-override '<why>'`. Any other value, or no key, changes nothing. Owner: ciGateRefusal in the `src/teardown.ts` header. |
+
+### Lease keys
+
+| Key | Controls |
+| --- | --- |
+| `commands.install` | Optional dependency install run as `sh -c` in every fresh crew and self-task lease (not a scout's or a verifier's), before the agent starts, with `AC_LEASE_PRIMARY` naming the primary checkout so it can reuse the primary's caches. A non-zero exit, a timeout (`AC_LEASE_INSTALL_TIMEOUT`) or a dirty `git status` after it never refuses the lease: it is WARNed, recorded as `deps=failed` in the task meta and named in the crewmate's kickoff; success records `deps=ok`. A command that touches tracked files (e.g. `.yarn/install-state.gz`) must restore them itself. |
+
 ### QA keys
 
 The `qa:` block configures stable, approved execution mechanics; it is frozen from the fleet home at run start.
@@ -227,7 +241,7 @@ QA pane routing belongs to `config/crew-dispatch.json`, not to this yaml.
 
 | Key | Controls |
 | --- | --- |
-| `qa.require_for_ship` | Any value but an explicit false spelling (`false`, `no` or `off` in lower, Title or UPPER case; quotes, a `# comment` and surrounding space ignored) makes both merge helpers require a parser-valid atomic v2 attestation for the exact head; file existence or a legacy marker is not enough. Every `require_for_ship` key in the `qa:` block counts - at any depth, quoted or bare, with or without space before its colon, and inside a flow mapping such as `qa: {require_for_ship: true}`, where a value ends at its `,` or `}` - and ANY of them that is not false enforces, so a false key never switches another off. An empty or unrecognised value enforces, no such key does not, and a yaml the helpers cannot read, a host where git cannot run, or a project directory holding a `.git` that git refuses to read (a corrupt repo, a `safe.directory` refusal) refuses the merge. Owner: `qaRequired` in `src/lib.ts`, held to `ac_qa_required` in the frozen `tests/fixtures/ac-qa-lib.sh`. |
+| `qa.require_for_ship` | Any value but an explicit false spelling (`false`, `no` or `off` in lower, Title or UPPER case; quotes, a `# comment` and surrounding space ignored) makes both merge helpers require a parser-valid atomic v2 attestation for the exact head; file existence or a legacy marker is not enough. Every `require_for_ship` key in the `qa:` block counts - at any depth, quoted or bare, with or without space before its colon, and inside a flow mapping such as `qa: {require_for_ship: true}`, where a value ends at its `,` or `}` - and ANY of them that is not false enforces, so a false key never switches another off. An empty or unrecognised value enforces, no such key does not, and a yaml the helpers cannot read, a host where git cannot run, or a project directory holding a `.git` that git refuses to read (a corrupt repo, a `safe.directory` refusal) refuses the merge. Owner: `qaRequired` in `src/lib-qa-gate.ts`, held to its stated answers by `tests/ts/qa-gate.test.ts`. |
 | `qa.serve` | Command that boots the service; it must honor `$QA_PORT`. App-level in a scoped project. |
 | `qa.health` | Readiness probe; app-level in a scoped project. |
 | `qa.health_timeout` | Seconds the bounded health poll waits; default 60. |
@@ -253,7 +267,7 @@ Owner: the `src/qa.ts` header; completion-gate and attestation details are in `d
 
 REQUIRED-PROFILE MATRIX: `ac-brief.sh --qa-required-profile <project>/<scope>/<app>` (repeatable) records a required set in `data/<family>/qa/manifest.json`.
 With that manifest present and `qa.require_for_ship` enforced, every required profile needs a profiled passing attestation at the merge-head SHA.
-Owner: `qaGateOk` and its matrix arm in `src/lib.ts` (the qa-gate twins), held to `ac_qa_gate_ok` and `ac_qa_gate_matrix` in the frozen `tests/fixtures/ac-qa-lib.sh`.
+Owner: `qaGateOk` and its matrix arm in `src/lib-qa-gate.ts` (the qa-gate twins of `ac_qa_gate_ok` and `ac_qa_gate_matrix`), held to their stated answers by `tests/ts/qa-gate.test.ts`.
 
 DOMAIN E2E REPOSITORY: a crewdomain may name the project holding its maintained end-to-end suite with `bin/ac-domain.sh qa-repo <domain> --set <project>` (the crewchief's, by project name), stored as `$AC_HOME/crewdomains/<domain>/qa-repo`.
 It configures no execution mechanics and mints no attestation, so `qa.require_for_ship` still needs the profile-driven route above.
@@ -290,6 +304,9 @@ Variables marked "launch line" are set by `ac-spawn.sh` on a crewmate's launch l
 | `AC_HEARTBEAT` | 600 | Seconds with nothing actionable before the watcher exits `heartbeat`. |
 | `AC_STALE` | 240 | Quiet-pane seconds before a wake: `ended:` when the pane ended its turn (`limited:` when the provider usage limit stopped it, `needs-login:` when an expired login did), else `stale:`. |
 | `AC_BUSY_MAX` | 2700 | Seconds a pane may read busy with no turn end before one `stale:` wake per busy run; `0` disables. |
+| `AC_STALE_MAX_WAKES` | 0 (off) | Soft `stale:` wakes a redrawing idle pane may receive before it is capped - the last carries a PERMANENTLY-STALE clause and the pane stays silent until `AC_STALE_CAP_HORIZON` or a hand-removed marker. A busy poll resets the count. Owner: the `src/watch.ts` header (STALE WAKE CAP). |
+| `AC_STALE_CAP_HORIZON` | 86400 | Seconds a capped pane (`AC_STALE_MAX_WAKES`) stays silent before the cap marker self-clears. |
+| `AC_PAUSE_RESURFACE` | 14400 | Seconds between re-surfacing the SAME declared wait, backlog hold, or gate-parked finding to `stale:` - it otherwise keeps deferring forever. Owner: the `src/watch.ts` header (STALE DEFERRAL). |
 | `AC_BUSY_RE` | built-in spinner patterns | Pane content that means "still working". |
 | `AC_DECISION_RE` | built-in | Captain-wait marker regex (the BLOCKED-stamp class, `bin/ac-lib.sh`). |
 | `AC_WATCH_ONLY` | unset, defaulted to `AC_SCOPE` | Families a scoped watcher watches (`fam1,fam2`), normally from `ac-ready.sh watch-set <fam>`. With `AC_SCOPE` set it must contain it. Disables the remote poll slot. |
@@ -337,11 +354,13 @@ Variables marked "launch line" are set by `ac-spawn.sh` on a crewmate's launch l
 | `AC_CURATE_STALE_DAYS` | 90 | Age in days past which Curate reads a signal as stale. |
 | `AC_SESSION_QA_TIMEOUT` | 10 | Per-project watchdog for the session-start qa-infra reap sweep. |
 | `AC_ORPHAN_CPU` | 50 | Min %cpu for the session-start sweep to flag an orphaned shell-snapshot process (read-only, never kills). |
+| `AC_LEASE_INSTALL_TIMEOUT` | 300 | Seconds a lease's `commands.install` may run before its process group is ended and the install recorded `deps=failed`. |
+| `AC_LEASE_PRIMARY` | unset (install command) | The primary checkout's path, set only in the environment of a lease's `commands.install`. |
 | `AC_SYNC_TIMEOUT` | `config/sync-timeout`, else 60 | Fetch watchdog for `ac-sync.sh` and the `ac-tree.sh` pool's fetch and ls-remote. |
 | `AC_INHERITABLE_CONFIG` | `model effort backend crew-harness codereview-agent codereview-model codereview-effort qa-agent qa-model qa-effort gate-agent gate-model gate-effort epic-parallel room-parallel promote flow learn-every curate-every crew-dispatch.json` | Knobs a crewdeputy converges from its parent at session start. |
 | `AC_BRAIN_SYNC_IV` | 1800 | Seconds between brain-freshen syncs, and the age past which prompt-time recall calls the brain stale. |
-| `AC_BRAIN_EMBED_TIMEOUT` | 60 | Seconds one embedding call inside `ac-brain.sh sync` may take; past it the sync completes keyword-only. |
-| `AC_BRAIN_RERANK_TIMEOUT` | 10 | Seconds the rerank call inside `ac-brain.sh recall` may take; past it the fused order is returned unreranked. |
+| `AC_BRAIN_EMBED_TIMEOUT` | 60 | Seconds one embedding call inside `ac-brain.sh sync` may take; past it the sync completes keyword-only. A value that is not a finite positive number falls back to the default. |
+| `AC_BRAIN_RERANK_TIMEOUT` | 10 | Seconds the rerank call inside `ac-brain.sh recall` may take; past it the fused order is returned unreranked. Same fallback. |
 | `AC_BRAIN_SYNTH_CMD` | unset | Overrides the one-shot command `ac-brain synthesize` runs, ahead of `panes.brain` and `config/brain-*`. |
 | `AC_BRAIN_OLLAMA_URL` | `http://127.0.0.1:11434/v1` | The local ollama `ac-brain synthesize` asks before the harness one-shot when no synthesize api answered (the test suite points it at a closed port). |
 | `AC_BRAIN_PATTERN_FILE` | `~/.config/agent-crew/push-gate.patterns` | Pattern file the brain's pattern floor reads (`src/brain.ts`): sync flags a matching page, synthesize redacts every match from what it sends a model, matched with `grep -iE` as the push gate matches. |
@@ -384,4 +403,4 @@ Version floors, each tied to a call the fleet makes (FLOOR TABLE in the `bin/ac-
 | `herdr` | 0.8.0 | `status server --json` reporting `.running`, which `bin/ac-backend.sh` reads. |
 | `git` | 2.15.0 | `git interpret-trailers --parse`, used by the commit-msg guard `bin/ac-tree.sh` installs. |
 | `jq` | 1.6 | `--args` / `$ARGS`, used by `bin/ac-brief.sh`. |
-| `bun` | 1.3.5 | `Bun.Terminal`, the dashboard's native terminal; `bun:sqlite`, the brain engine. |
+| `bun` | 1.4.4 | The fixed brotli decoder (CVE-2026-111497); `Bun.Terminal`, the dashboard's native terminal; `bun:sqlite`, the brain engine. |

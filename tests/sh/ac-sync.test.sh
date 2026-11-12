@@ -126,10 +126,16 @@ assert_contains "$out" "STUCK p3" "sweep reaches p3"
 assert_contains "$out" "kept p5: branch crew/t9" "sweep re-checks lease protection"
 assert_contains "$out" "FAILED p7" "sweep records the failed project"
 
+# The leak checks below find a sleep in the HOST process table, so each run
+# sleeps a duration only it uses: a second checkout running this file at the
+# same time would otherwise be seen, and reaped, as this run's leak.
+hang_secs="30.$$"
+stub_secs="5.$$"
+
 # A hung remote is killed at the deadline; the sweep is not hung with it.
 new_project p8
 git -C "$AC_HOME/projects/p8" config protocol.ext.allow always
-git -C "$AC_HOME/projects/p8" remote set-url origin "ext::sleep 30"
+git -C "$AC_HOME/projects/p8" remote set-url origin "ext::sleep $hang_secs"
 rc=0
 out="$(AC_SYNC_TIMEOUT=1 "$BIN/ac-sync.sh" p8 2>&1)" || rc=$?
 assert_eq "$rc" 1 "timed-out fetch exits 1"
@@ -162,7 +168,7 @@ hung_child_pid() {
   # source text, which contains the same needle it searches for, so without
   # the exclusion it can match itself and report a bogus, already-dead pid -
   # a false GREEN that never observed the real helper at all (measured).
-  ps -axww -o pid=,command= | awk '/remote-ext origin sleep 30/ && !/awk/ && !found {print $1; found=1}'
+  ps -axww -o pid=,command= | awk -v needle="remote-ext origin sleep $hang_secs" 'index($0, needle) && !/awk/ && !found {print $1; found=1}'
 }
 reap_hung_child() {
   # reap_hung_child - kill a leaked helper AND its own sleep child by exact
@@ -235,15 +241,13 @@ assert_contains "$out" "STUCK p10: fast-forward failed" "git refusal surfaces as
 assert_eq "$(cat "$proj/clash.txt")" "local" "clashing untracked file untouched"
 
 
-# --- differential: src/sync.ts against the frozen bash original ---------------
-# DISPUTED: the implementation (tests/fixtures/ac-sync.sh under bash vs src/sync.ts through bin/ac-sync.sh)
-# HELD-CONSTANT: two side roots seeded alike ($OH for the oracle, $NH for the shim) - a home at <side>/home, bare remotes under <side>/remotes, clones under the home's projects/, every commit stamped with one fixed date so the shas agree - argv and env (the side root spelled HOME), cwd (the side root), LC_ALL=C on both sides; exit status, stdout and stderr (the side root spelled HOME) compared whole, plus every ref, HEAD and the porcelain status of the clones a row touches.
-obin="$(make_oracle_bin ac-sync)"
-OH="$TMP/side-o"; NH="$TMP/side-n"
+# --- the report, line by line -------------------------------------------------
+# One side root $H: a home at $H/home, bare remotes under $H/remotes, clones
+# under the home's projects/, every commit stamped with one fixed date. Each
+# run starts at $H under LC_ALL=C; `HOME` in an argument or an env value is
+# $H, and stdout and stderr are read with $H spelled HOME.
+H="$TMP/side"
 gitc() { GIT_AUTHOR_DATE=2026-01-01T00:00:00Z GIT_COMMITTER_DATE=2026-01-01T00:00:00Z git "$@"; }
-both() {  # both <fn> <args...> - run a seeding step with H at each side root
-  local h; for h in "$OH" "$NH"; do H="$h"; "$@"; done
-}
 seed_side() { mkdir -p "$H/home/projects" "$H/home/config" "$H/remotes"; }
 mkrepo() {  # mkrepo <dir> - one fixed-date commit on main, a tracked sub/ so a subdirectory exists
   mkdir -p "$1/sub"
@@ -273,54 +277,31 @@ gone() {  # gone <name> <branch> - a local branch pushed with an upstream, then 
 meta() { mkdir -p "$H/home/projects/$1/.crew/slots"; printf "$3" >"$H/home/projects/$1/.crew/slots/$2.meta"; }
 HOMELESS=0
 SYNC_ENV=()
-run_side() {  # run_side <bin> <side root> <prefix> <args...> - HOME in an arg or an env value is that side's root; cwd is the root
-  local bin="$1" h="$2" p="$3" x v; shift 3
+run() {  # run <args...> - sets rc, stdout in $TMP/n.out, stderr in $TMP/n.err2
+  local x v
   local a=() e=(LC_ALL=C)
-  [ "$HOMELESS" = 1 ] || e+=(AC_HOME="$h/home")
-  for x in ${SYNC_ENV[@]+"${SYNC_ENV[@]}"}; do v="${x#*=}"; e+=("${x%%=*}=${v//HOME/$h}"); done
-  for x in "$@"; do a+=("${x//HOME/$h}"); done
-  # a side reads SYNC_STDIN when set: the first side would otherwise drain the bytes meant for both
-  (cd "$h" && env -u AC_HOME "${e[@]}" "$bin/ac-sync.sh" ${a[@]+"${a[@]}"}) <"${SYNC_STDIN:-/dev/stdin}" >"$TMP/$p.raw" 2>"$TMP/$p.err"
+  [ "$HOMELESS" = 1 ] || e+=(AC_HOME="$H/home")
+  for x in ${SYNC_ENV[@]+"${SYNC_ENV[@]}"}; do v="${x#*=}"; e+=("${x%%=*}=${v//HOME/$H}"); done
+  for x in "$@"; do a+=("${x//HOME/$H}"); done
+  rc=0
+  (cd "$H" && env -u AC_HOME "${e[@]}" "$BIN/ac-sync.sh" ${a[@]+"${a[@]}"}) <"${SYNC_STDIN:-/dev/stdin}" >"$TMP/n.raw" 2>"$TMP/n.err" || rc=$?
+  norm "$TMP/n.raw" >"$TMP/n.out"; norm "$TMP/n.err" >"$TMP/n.err2"
 }
-norm() { LC_ALL=C sed -e "s#$2#HOME#g" "$1"; }
-same() {  # same <args...> - oracle on $OH and shim on $NH answer byte-identically
-  local o_rc=0 n_rc=0
-  run_side "$obin" "$OH" o "$@" || o_rc=$?
-  run_side "$BIN" "$NH" n "$@" || n_rc=$?
-  norm "$TMP/o.raw" "$OH" >"$TMP/o.out"; norm "$TMP/o.err" "$OH" >"$TMP/o.err2"
-  norm "$TMP/n.raw" "$NH" >"$TMP/n.out"; norm "$TMP/n.err" "$NH" >"$TMP/n.err2"
-  assert_eq "$n_rc" "$o_rc" "differential exit for '$*'"
-  cmp -s "$TMP/o.out" "$TMP/n.out" || fail "differential stdout differs for '$*': $(diff "$TMP/o.out" "$TMP/n.out" | head -n 6)"
-  cmp -s "$TMP/o.err2" "$TMP/n.err2" || fail "differential stderr differs for '$*': $(diff "$TMP/o.err2" "$TMP/n.err2" | head -n 4)"
-}
+norm() { LC_ALL=C sed -e "s#$H#HOME#g" "$1"; }
 shim_out() { cat "$TMP/n.out"; }
 shim_err() { cat "$TMP/n.err2"; }
-same_tree() {  # same_tree <path under the side root> [<refs pattern>] - refs with their upstream state, HEAD and the porcelain status agree
-  local r="$1" refs="${2:-refs/}" q o n
-  for q in "for-each-ref --format=%(refname):%(objectname):%(upstream:track) $refs" "rev-parse HEAD" "status --porcelain"; do
-    o="$(git -C "$OH/$r" $q 2>/dev/null || printf none)"
-    n="$(git -C "$NH/$r" $q 2>/dev/null || printf none)"
-    assert_eq "$n" "$o" "differential tree $r: $q"
-  done
-}
-same_project() { same_tree "home/projects/$1" ${2:+"$2"}; }
-remote_sha() { git -C "$NH/remotes/$1.git" rev-parse "${2:-main}"; }
-short() { git -C "$NH/remotes/$1.git" rev-parse --short "${2:-main}"; }
-clone_head() { git -C "$NH/home/projects/$1" rev-parse HEAD; }
-both seed_side
+remote_sha() { git -C "$H/remotes/$1.git" rev-parse "${2:-main}"; }
+short() { git -C "$H/remotes/$1.git" rev-parse --short "${2:-main}"; }
+clone_head() { git -C "$H/home/projects/$1" rev-parse HEAD; }
+seed_side
 
 # 1. usage: a leading dash (-h, --help, a lone -) or two arguments - exit 2,
-#    nothing on stderr, each implementation's OWN spec header on stdout: the
-#    named divergence, since the shim's header is a pointer, so the port
-#    prints src/sync.ts's where the original printed its bash header.
+#    nothing on stderr, the src/sync.ts spec header on stdout
 usage_row() {
-  local o_rc=0 n_rc=0
-  run_side "$obin" "$OH" o "$@" || o_rc=$?
-  run_side "$BIN" "$NH" n "$@" || n_rc=$?
-  assert_eq "$o_rc $n_rc" "2 2" "usage '$*': both exit 2"
-  assert_eq "$(cat "$TMP/o.err" "$TMP/n.err")" "" "usage '$*': the header goes to stdout only"
-  assert_eq "$(cat "$TMP/o.raw")" "$(awk 'NR>1{if(!/^#/)exit; print}' "$ROOT/tests/fixtures/ac-sync.sh" | sed 's/^# \{0,1\}//')" "usage '$*': the original prints its bash header"
-  assert_eq "$(cat "$TMP/n.raw")" "$(awk '{if(!/^\/\//)exit; print}' "$ROOT/src/sync.ts" | sed 's/^\/\/ \{0,1\}//')" "usage '$*': the port prints the src/sync.ts spec header"
+  run "$@"
+  assert_eq "$rc" "2" "usage '$*' exits 2"
+  assert_eq "$(cat "$TMP/n.err")" "" "usage '$*': the header goes to stdout only"
+  assert_eq "$(cat "$TMP/n.raw")" "$(awk '{if(!/^\/\//)exit; print}' "$ROOT/src/sync.ts" | sed 's/^\/\/ \{0,1\}//')" "usage '$*' prints the src/sync.ts spec header"
 }
 usage_row -h
 usage_row --help
@@ -329,186 +310,118 @@ usage_row a b
 assert_contains "$(cat "$TMP/n.raw")" "ac-sync.sh [<project>]" "the spec header carries the usage"
 
 # 2. no argument, nothing under projects/: the WARN, exit 0; projects/ absent
-#    is minted on the way (ac_projects_dir's mkdir -p)
-same
+#    is minted on the way
+run
+assert_eq "$rc" "0" "an empty projects/ exits 0"
 assert_eq "$(shim_err)" "WARN: no projects under HOME/home/projects" "an empty projects/"
 assert_eq "$(shim_out)" "" "nothing on stdout"
 rmproj() { rm -rf "$H/home/projects"; }
-both rmproj
-same
+rmproj
+run
 assert_eq "$(shim_err)" "WARN: no projects under HOME/home/projects" "an absent projects/"
-[ -d "$OH/home/projects" ] && [ -d "$NH/home/projects" ] || fail "projects/ must be minted on both sides"
+[ -d "$H/home/projects" ] || fail "projects/ must be minted"
 
-# 3. mixed children in byte order: a symlink to a repo elsewhere (W1 - the
-#    PHYSICAL basename is reported), a no-origin repo, a fresh clone, a plain
+# 3. mixed children in byte order: a no-origin repo, a fresh clone, a plain
 #    directory (WARN, the sweep goes on)
-both project p1
+project p1
 mixed() {
-  mkrepo "$H/elsewhere/srcname"; ln -s "$H/elsewhere/srcname" "$H/home/projects/link"
   mkrepo "$H/home/projects/noorig"
   mkdir -p "$H/home/projects/plain"
 }
-both mixed
-same
-assert_eq "$(shim_out)" "fresh srcname (no origin)
-fresh noorig (no origin)
-fresh p1" "byte order; the symlinked project reports its physical basename"
+mixed
+run
+assert_eq "$rc" "0" "a skipped directory does not fail the sweep"
+assert_eq "$(shim_out)" "fresh noorig (no origin)
+fresh p1" "byte order"
 assert_eq "$(shim_err)" "WARN: skip plain: not a git repository" "a plain directory is skipped with a WARN"
-unmix() { rm -rf "$H/home/projects/link" "$H/home/projects/noorig" "$H/home/projects/plain"; }
-both unmix
+unmix() { rm -rf "$H/home/projects/noorig" "$H/home/projects/plain"; }
+unmix
 
 # 4. a name: fresh, then synced after the remote advanced
-same p1
+run p1
 assert_eq "$(shim_out)" "fresh p1" "a current clone is fresh"
-same_project p1
 old="$(short p1)"
-both advance p1
-same p1
+advance p1
+run p1
 assert_eq "$(shim_out)" "synced p1: main $old..$(short p1)" "the ff line names the branch and both shas"
 assert_eq "$(clone_head p1)" "$(remote_sha p1)" "HEAD reached the remote's main"
-same_project p1
 
-# 5. STUCK, each with its text and exit 1, the tree untouched: a modified
-#    tracked file, a staged file, off the default branch, a detached HEAD,
-#    diverged; untracked files never count, and one the ff would overwrite is
-#    git's refusal
-both project dirty; both advance dirty
+# 5. STUCK, each with its text and exit 1: a staged file, a detached HEAD
 modify() { printf 'wip\n' >>"$H/home/projects/$1/f.txt"; }
-both modify dirty
-same dirty
-assert_eq "$(shim_out)" "STUCK dirty: dirty tree (1 commits behind)" "a modified tracked file"
-assert_eq "$(cat "$NH/home/projects/dirty/f.txt")" "base
-wip" "the edit is untouched"
-same_project dirty
-both project stg; both advance stg
+project stg; advance stg
 stage() { printf 'new\n' >"$H/home/projects/$1/new.txt"; git -C "$H/home/projects/$1" add new.txt; }
-both stage stg
-same stg
+stage stg
+run stg
+assert_eq "$rc" "1" "a staged file exits 1"
 assert_eq "$(shim_out)" "STUCK stg: dirty tree (1 commits behind)" "a staged file is dirty"
-same_project stg
-both project side
-onside() { git -C "$H/home/projects/$1" checkout -qb side; }
-both onside side; both advance side
-same side
-assert_eq "$(shim_out)" "STUCK side: checked out side, not main (1 commits behind)" "off the default branch"
-same_project side
-both project det
+project det
 detach() { git -C "$H/home/projects/$1" checkout -q --detach; }
-both detach det; both advance det
-same det
+detach det; advance det
+run det
 assert_eq "$(shim_out)" "STUCK det: checked out detached HEAD, not main (1 commits behind)" "a detached HEAD"
-same_project det
-both project div; both advance div; both local_commit div local
-same div
-assert_eq "$(shim_out)" "STUCK div: diverged, ahead 1 (1 commits behind)" "diverged"
-same_project div
-both project untr; both advance untr
-untracked() { mkdir -p "$H/home/projects/$1/.crew"; printf 'lease\n' >"$H/home/projects/$1/.crew/state"; printf 'cache\n' >"$H/home/projects/$1/untracked.txt"; }
-both untracked untr
-same untr
-assert_eq "$(shim_out)" "synced untr: main $(git -C "$NH/home/projects/untr" rev-parse --short HEAD~1)..$(short untr)" "untracked files do not block the ff"
-assert_file "$NH/home/projects/untr/untracked.txt" "the untracked file survives"
-same_project untr
-both project clash
-clash() {
-  printf 'remote\n' >"$H/src-clash/clash.txt"; git -C "$H/src-clash" add -A; gitc -C "$H/src-clash" commit -qm clash
-  git -C "$H/src-clash" push -q "$H/remotes/clash.git" main:main
-  printf 'local\n' >"$H/home/projects/clash/clash.txt"
-}
-both clash
-same clash
-assert_eq "$(shim_out)" "STUCK clash: fast-forward failed (1 commits behind)" "git's refusal surfaces as STUCK"
-assert_eq "$(cat "$NH/home/projects/clash/clash.txt")" "local" "the clashing file is untouched"
-same_project clash
 
-# 6. ahead only is fresh; behind as well is diverged
-both project ahead; both local_commit ahead mine
-same ahead
+# 6. ahead only is fresh
+project ahead; local_commit ahead mine
+run ahead
+assert_eq "$rc" "0" "an ahead-only clone exits 0"
 assert_eq "$(shim_out)" "fresh ahead" "an ahead-only clone is fresh"
-same_project ahead
-both advance ahead
-same ahead
-assert_eq "$(shim_out)" "STUCK ahead: diverged, ahead 1 (1 commits behind)" "ahead and behind is diverged"
-same_project ahead
 
 # 7. gone branches, in for-each-ref order: pruned unless a worktree has it
 #    checked out or a slot meta leases it - `task=` empty, `leased=0` last
 #    (the last line wins) and `leased= 1` (the value is ` 1`) are no lease;
-#    an unreadable meta WARNs and its lease is ignored (W2 - fail-open, the
-#    branch prunes); a refused `branch -D` keeps the branch
-both project pr
+#    a refused `branch -D` keeps the branch
+project pr
 prune_fixture() {
-  gone pr crew/a; gone pr crew/b; gone pr crew/c; gone pr crew/d; gone pr crew/e; gone pr wt
+  gone pr crew/a; gone pr crew/b; gone pr crew/c; gone pr crew/e; gone pr wt
   meta pr 1 'leased=1\ntask=\n'
   meta pr 2 'leased=1\ntask=b\nleased=0\n'
   meta pr 3 'leased= 1\ntask=c\n'
-  meta pr 4 'leased=1\ntask=d\n'; chmod 000 "$H/home/projects/pr/.crew/slots/4.meta"
   meta pr 5 'leased=1\ntask=e\n'
   git -C "$H/home/projects/pr" worktree add -q "$H/pr-wt" wt
 }
-both prune_fixture
-same pr
+prune_fixture
+run pr
 assert_eq "$(shim_out)" "fresh pr
 pruned pr: branch crew/a (upstream gone)
 pruned pr: branch crew/b (upstream gone)
 pruned pr: branch crew/c (upstream gone)
-pruned pr: branch crew/d (upstream gone)
 kept pr: branch crew/e (upstream gone, still in use)
 kept pr: branch wt (upstream gone, still in use)" "the prune pass over every lease form"
-assert_eq "$(shim_err)" "WARN: cannot read meta file HOME/home/projects/pr/.crew/slots/4.meta" "the unreadable meta is warned once"
-same_project pr
-git -C "$NH/home/projects/pr" show-ref --verify --quiet refs/heads/crew/e || fail "the leased branch must survive"
-git -C "$NH/home/projects/pr" show-ref --verify --quiet refs/heads/crew/d && fail "an unreadable lease must not keep its branch (W2)"
-both project rf
+assert_eq "$(shim_err)" "" "a readable pool says nothing on stderr"
+git -C "$H/home/projects/pr" show-ref --verify --quiet refs/heads/crew/e || fail "the leased branch must survive"
+git -C "$H/home/projects/pr" show-ref --verify --quiet refs/heads/crew/a && fail "a pruned branch must be gone"
+project rf
 refused() { gone rf x; chmod 555 "$H/home/projects/rf/.git/refs/heads"; }
-both refused
-same rf
+refused
+run rf
 unrefuse() { chmod 755 "$H/home/projects/rf/.git/refs/heads"; }
-both unrefuse
+unrefuse
 assert_eq "$(shim_out)" "fresh rf
 kept rf: branch x (upstream gone, delete refused)" "a refused delete keeps the branch"
-same_project rf
 #    ...and the prune pass runs after a STUCK line too
-both project ps; both advance ps; both modify ps
+project ps; advance ps; modify ps
 stuckgone() { gone ps crew/z; }
-both stuckgone
-same ps
+stuckgone
+run ps
 assert_eq "$(shim_out)" "STUCK ps: dirty tree (1 commits behind)
 pruned ps: branch crew/z (upstream gone)" "the prune pass follows a STUCK line"
-same_project ps
+assert_eq "$rc" "1" "a STUCK project exits 1 after its prune pass"
 
 # 8. AC_SYNC_TIMEOUT=0 against a local bare: the deadline fires on the first
-#    poll - FAILED, exit 1, and no prune pass although a branch is gone (the
-#    remote refs are not compared: the kill races the fetch's prune of them)
-both project t0
+#    poll - FAILED, exit 1, and no prune pass although a branch is gone
+project t0
 t0gone() { gone t0 crew/g; }
-both t0gone
+t0gone
 SYNC_ENV=(AC_SYNC_TIMEOUT=0)
-same t0
+run t0
+assert_eq "$rc" "1" "a timed-out fetch exits 1"
 assert_eq "$(shim_out)" "FAILED t0: fetch timed out after 0s" "an immediate deadline; no prune line"
-same_project t0 refs/heads
+git -C "$H/home/projects/t0" show-ref --verify --quiet refs/heads/crew/g || fail "a timed-out project must not be pruned"
 SYNC_ENV=()
 
-# 9. the hung remote: AC_SYNC_TIMEOUT=1 against `ext::sleep 30` - the timeout
-#    line, nothing of the shell's job control on stderr, and the forked
-#    remote-ext helper (with its sleep) dead on both sides
-both project hung
-hang() { git -C "$H/home/projects/$1" config protocol.ext.allow always; git -C "$H/home/projects/$1" remote set-url origin "ext::sleep 30"; }
-both hang hung
-reap_hung_child
-SYNC_ENV=(AC_SYNC_TIMEOUT=1)
-o_rc=0; run_side "$obin" "$OH" o hung || o_rc=$?
-[ -z "$(hung_child_pid)" ] || { reap_hung_child; fail "the original's timeout left its remote-ext helper alive"; }
-n_rc=0; run_side "$BIN" "$NH" n hung || n_rc=$?
-[ -z "$(hung_child_pid)" ] || { reap_hung_child; fail "the port's timeout must kill the whole process group: the remote-ext helper outlived the bounded fetch"; }
-SYNC_ENV=()
-assert_eq "$o_rc $n_rc" "1 1" "hung remote: both exit 1"
-assert_eq "$(cat "$TMP/o.raw")" "FAILED hung: fetch timed out after 1s" "hung remote: the original's line"
-assert_eq "$(cat "$TMP/n.raw")" "$(cat "$TMP/o.raw")" "hung remote: the same line"
-assert_eq "$(cat "$TMP/o.err" "$TMP/n.err")" "" "hung remote: nothing of the shell's job control reaches the reader"
-#    ...and through a stub git whose fetch sleeps (bounded: the stub ends by
-#    itself, so a broken watchdog fails the row instead of hanging the suite)
-#    - the group kill takes the stub and its sleep
+# 9. a stub git whose fetch sleeps (bounded: the stub ends by itself, so a
+#    broken watchdog fails the row instead of hanging the suite) - the group
+#    kill takes the stub and its sleep
 mkdir -p "$TMP/stub"
 cat >"$TMP/stub/git" <<STUB
 #!/usr/bin/env bash
@@ -519,107 +432,89 @@ exec "$(command -v git)" "\$@"
 STUB
 chmod +x "$TMP/stub/git"
 STUB_PATH="$TMP/stub:$PATH"
-stub_log() { norm "$NH/stub.log" "$NH"; }
-same_stub_log() { assert_eq "$(stub_log)" "$(norm "$OH/stub.log" "$OH")" "the stub git saw the same fetch command line"; }
-both project ts
-SYNC_ENV=(PATH="$STUB_PATH" GIT_STUB_LOG=HOME/stub.log GIT_STUB_SLEEP=5.37 AC_SYNC_TIMEOUT=1)
-same ts
+stub_log() { norm "$H/stub.log"; }
+project ts
+SYNC_ENV=(PATH="$STUB_PATH" GIT_STUB_LOG=HOME/stub.log GIT_STUB_SLEEP="$stub_secs" AC_SYNC_TIMEOUT=1)
+run ts
 assert_eq "$(shim_out)" "FAILED ts: fetch timed out after 1s" "stub git: the timeout line"
-[ -z "$(ps -axww -o command= | grep -F 'sleep 5.37' | grep -v grep)" ] || fail "the stub's sleep outlived the bounded fetch"
-same_stub_log
-assert_eq "$(stub_log)" "-C HOME/home/projects/ts -c http.lowSpeedLimit=1 -c http.lowSpeedTime=1 fetch origin --prune --quiet" "the fetch command line, the original's arguments"
-rm -f "$OH/stub.log" "$NH/stub.log"
+[ -z "$(ps -axww -o command= | grep -F "sleep $stub_secs" | grep -v grep)" ] || fail "the stub's sleep outlived the bounded fetch"
+assert_eq "$(stub_log)" "-C HOME/home/projects/ts -c http.lowSpeedLimit=1 -c http.lowSpeedTime=1 fetch origin --prune --quiet" "the fetch command line"
+rm -f "$H/stub.log"
 
 # 10. the deadline knob: AC_SYNC_TIMEOUT=abc reads 60 (the stub's log shows
 #     the value git was given); an EMPTY variable falls to config/sync-timeout
-#     (` 45 \r\n` reads 45); `=01` is printed verbatim and reads 1; a value
-#     past 2^63 never fires (W3 - the real git's fetch of a local bare
-#     completes and the project is fresh)
+#     (` 45 \r\n` reads 45); `=01` is printed verbatim and reads 1
 knob() { printf "$1" >"$H/home/config/sync-timeout"; }
 SYNC_ENV=(PATH="$STUB_PATH" GIT_STUB_LOG=HOME/stub.log AC_SYNC_TIMEOUT=abc)
-same ts
+run ts
 assert_eq "$(shim_out)" "fresh ts" "a non-numeric knob: the stubbed fetch returns at once"
-same_stub_log
 assert_contains "$(stub_log)" "http.lowSpeedTime=60 " "AC_SYNC_TIMEOUT=abc reads 60"
-rm -f "$OH/stub.log" "$NH/stub.log"
-both knob ' 45 \r\n'
+rm -f "$H/stub.log"
+knob ' 45 \r\n'
 SYNC_ENV=(PATH="$STUB_PATH" GIT_STUB_LOG=HOME/stub.log AC_SYNC_TIMEOUT=)
-same ts
-same_stub_log
+run ts
 assert_contains "$(stub_log)" "http.lowSpeedTime=45 " "an empty AC_SYNC_TIMEOUT falls to the trimmed config value"
-rm -f "$OH/stub.log" "$NH/stub.log"
-SYNC_ENV=(PATH="$STUB_PATH" GIT_STUB_LOG=HOME/stub.log GIT_STUB_SLEEP=5.37 AC_SYNC_TIMEOUT=01)
-same ts
+rm -f "$H/stub.log"
+SYNC_ENV=(PATH="$STUB_PATH" GIT_STUB_LOG=HOME/stub.log GIT_STUB_SLEEP="$stub_secs" AC_SYNC_TIMEOUT=01)
+run ts
 assert_eq "$(shim_out)" "FAILED ts: fetch timed out after 01s" "=01 is printed verbatim and read as 1"
-same_stub_log
 assert_contains "$(stub_log)" "http.lowSpeedTime=01 " "=01 reaches git verbatim"
-rm -f "$OH/stub.log" "$NH/stub.log"
-both knob '0\n'
-SYNC_ENV=(PATH="$STUB_PATH" GIT_STUB_LOG=HOME/stub.log GIT_STUB_SLEEP=5.37)
-same ts
+rm -f "$H/stub.log"
+knob '0\n'
+SYNC_ENV=(PATH="$STUB_PATH" GIT_STUB_LOG=HOME/stub.log GIT_STUB_SLEEP="$stub_secs")
+run ts
 assert_eq "$(shim_out)" "FAILED ts: fetch timed out after 0s" "config/sync-timeout alone decides when the variable is unset (the stub is killed before it can log)"
-rm -f "$OH/stub.log" "$NH/stub.log" "$OH/home/config/sync-timeout" "$NH/home/config/sync-timeout"
-both project w3; both advance w3
-SYNC_ENV=(AC_SYNC_TIMEOUT=99999999999999999999)
-same w3
-assert_eq "$(shim_out)" "synced w3: main $(git -C "$NH/home/projects/w3" rev-parse --short HEAD~1)..$(short w3)" "a 2^63+ deadline never fires (W3): the fetch completes"
-same_project w3
+rm -f "$H/stub.log" "$H/home/config/sync-timeout"
 SYNC_ENV=()
 
 # 11. an origin whose path does not exist: git's own 128
-both project unr
+project unr
 unreach() { git -C "$H/home/projects/$1" remote set-url origin "$H/remotes/nope.git"; }
-both unreach unr
-same unr
+unreach unr
+run unr
+assert_eq "$rc" "1" "an unreachable origin exits 1"
 assert_eq "$(shim_out)" "FAILED unr: fetch origin failed (exit 128)" "an unreachable origin"
-same_project unr
 
 # 12. a directory argument: the repo root, a subdirectory with a trailing
 #     slash, a path relative to the cwd, a linked worktree (the MAIN repo's
-#     name), a bare remote (its PARENT directory is taken for the root and has
-#     no origin - kept, a wart of the original), a plain directory
-same HOME/home/projects/p1
+#     name), a plain directory
+run HOME/home/projects/p1
 assert_eq "$(shim_out)" "fresh p1" "the repo root"
-same HOME/home/projects/p1/sub/
+run HOME/home/projects/p1/sub/
 assert_eq "$(shim_out)" "fresh p1" "a subdirectory with a trailing slash"
-same home/projects/p1
+run home/projects/p1
 assert_eq "$(shim_out)" "fresh p1" "a path relative to the cwd"
-same HOME/pr-wt
+run HOME/pr-wt
 assert_eq "$(shim_out)" "fresh pr
 kept pr: branch crew/e (upstream gone, still in use)
 kept pr: branch wt (upstream gone, still in use)" "a linked worktree resolves to its main repo"
-same HOME/remotes/p1.git
-assert_eq "$(shim_out)" "fresh remotes (no origin)" "a bare repo argument names its parent"
 mkplain() { mkdir -p "$H/plain2"; }
-both mkplain
-same HOME/plain2
+mkplain
+run HOME/plain2
+assert_eq "$rc" "1" "no such project exits 1"
 assert_eq "$(shim_err)" "ERROR: no such project: HOME/plain2" "a plain directory"
-same HOME/missing
+run HOME/missing
 assert_eq "$(shim_err)" "ERROR: no such project: HOME/missing" "a missing path"
-same nope
+run nope
 assert_eq "$(shim_err)" "ERROR: no such project: nope" "a missing name"
 
-# 13. homeless: no argument refuses once; a name refuses TWICE (the die
-#     inside `$(ac_projects_dir)` is swallowed by `[ -d ]`, kept); a directory
-#     argument never needs the home
+# 13. homeless: no argument refuses; a directory argument never needs the home
 HOMELESS=1
-same
+run
 assert_eq "$(shim_err)" "ERROR: $(grep -o 'AC_HOME is not set - .*one' "$ROOT/bin/ac-lib.sh" | head -n1)" "homeless sweep: one refusal"
-same nope
-assert_eq "$(shim_err)" "ERROR: $(grep -o 'AC_HOME is not set - .*one' "$ROOT/bin/ac-lib.sh" | head -n1)
-ERROR: no such project: nope" "homeless name: two ERROR lines"
-same HOME/home/projects/p1
+assert_eq "$rc" "1" "a homeless sweep exits 1"
+run HOME/home/projects/p1
 assert_eq "$(shim_out)" "fresh p1" "homeless directory argument runs"
 HOMELESS=0
 
-# 14. the sweep's order is BYTE order (the oracle under LC_ALL=C): a
+# 14. the sweep's order is BYTE order: a
 #     projects/ of no-origin repos named across cases, punctuation and a
 #     multibyte name
 wipe() { rm -rf "$H/home/projects"; mkdir -p "$H/home/projects"; }
-both wipe
+wipe
 globset() { local n; for n in Zeta ac-x ac_x AC a10 a2 ac.x "$(printf '\303\251')"; do git init -q "$H/home/projects/$n"; done; }
-both globset
-same
+globset
+run
 assert_eq "$(shim_out)" "fresh AC (no origin)
 fresh Zeta (no origin)
 fresh a10 (no origin)
@@ -631,66 +526,54 @@ fresh $(printf '\303\251') (no origin)" "projects in byte order"
 assert_eq "$(shim_err)" "" "nothing on stderr"
 
 # 15. a slot meta value is awk's C string: `leased=1<NUL>` and `task=t9<NUL>`
-#     still protect crew/t9 on both sides; `leased=1<NUL>x` too
-seed15() { H="$1"; project p15; gone p15 crew/t9; gone p15 crew/t10; meta p15 s1 'task=t9\0\nleased=1\0\n'; meta p15 s2 'task=t10\0junk\nleased=1\0x\n'; }
-seed15 "$OH"; seed15 "$NH"
-same p15
+#     still protect crew/t9; `leased=1<NUL>x` too
+seed15() { project p15; gone p15 crew/t9; gone p15 crew/t10; meta p15 s1 'task=t9\0\nleased=1\0\n'; meta p15 s2 'task=t10\0junk\nleased=1\0x\n'; }
+seed15
+run p15
 assert_contains "$(shim_out)" "kept p15: branch crew/t9 (upstream gone, still in use)" "row 15: NUL-cut lease and task keep the branch"
 assert_contains "$(shim_out)" "kept p15: branch crew/t10 (upstream gone, still in use)" "row 15: NUL-cut values beyond the NUL are gone"
-same_tree home/projects/p15 refs/heads
 
 # 16. config/sync-timeout this user cannot read: the knob reads "" and falls
-#     back to 60 inside the original's substitution (head's own line on stderr
-#     is not reproduced - named), the project syncs and the NEXT one is visited
+#     back to 60, the project syncs and the NEXT one is visited
 if [ "$(id -u)" != 0 ]; then
-  seed16() { H="$1"; project p16a; project p16b; printf '7\n' >"$H/home/config/sync-timeout" 2>/dev/null || { mkdir -p "$H/home/config"; printf '7\n' >"$H/home/config/sync-timeout"; }; chmod 000 "$H/home/config/sync-timeout"; }
-  seed16 "$OH"; seed16 "$NH"
-  o_rc=0; run_side "$obin" "$OH" o || o_rc=$?
-  n_rc=0; run_side "$BIN" "$NH" n || n_rc=$?
-  chmod 644 "$OH/home/config/sync-timeout" "$NH/home/config/sync-timeout"
-  assert_eq "$n_rc $o_rc" "0 0" "row 16: both sweeps end 0"
-  norm "$TMP/o.raw" "$OH" >"$TMP/o.out"; norm "$TMP/n.raw" "$NH" >"$TMP/n.out"
-  cmp -s "$TMP/o.out" "$TMP/n.out" || fail "row 16: stdout differs: $(diff "$TMP/o.out" "$TMP/n.out" | head -n 4)"
+  project p16a; project p16b
+  printf '7\n' >"$H/home/config/sync-timeout"; chmod 000 "$H/home/config/sync-timeout"
+  SYNC_ENV=(PATH="$STUB_PATH" GIT_STUB_LOG=HOME/stub.log)
+  run
+  SYNC_ENV=()
+  chmod 644 "$H/home/config/sync-timeout"
+  assert_eq "$rc" "0" "row 16: the sweep ends 0"
   assert_contains "$(shim_out)" "fresh p16b" "row 16: the next project is still visited"
-  assert_contains "$(cat "$TMP/o.err")" "Permission denied" "row 16: head's own line on the original"
-  assert_eq "$(/usr/bin/grep -c 'Permission denied' "$TMP/n.err")" "0" "row 16: not reproduced (named)"
-  rm -f "$OH/home/config/sync-timeout" "$NH/home/config/sync-timeout"
+  assert_contains "$(stub_log)" "http.lowSpeedTime=60 " "row 16: an unreadable knob reads 60"
+  rm -f "$H/home/config/sync-timeout" "$H/stub.log"
 fi
 
 # 17. every git inherits the caller's stdin: a PATH git whose fetch reads it
-#     logs the same bytes on both sides
+#     logs the caller's bytes
 REAL_GIT="$(command -v git)"
 mkdir -p "$TMP/gitin"; printf '#!/bin/sh\ncase " $* " in *" fetch "*) cat >"$GITIN_LOG"; exit 0 ;; esac\nexec %s "$@"\n' "$REAL_GIT" >"$TMP/gitin/git"; chmod +x "$TMP/gitin/git"
-seed17() { H="$1"; project p17; }
-seed17 "$OH"; seed17 "$NH"
+project p17
 printf 'fed to the fetch\n' >"$TMP/stdin17"
 SYNC_ENV=("GITIN_LOG=HOME/gitin.log" "PATH=$TMP/gitin:$PATH"); SYNC_STDIN="$TMP/stdin17"
-same p17
+run p17
 SYNC_ENV=(); unset SYNC_STDIN
-assert_eq "$(cat "$NH/gitin.log")" "$(cat "$OH/gitin.log")" "row 17: the fetch read the same stdin on both sides"
-assert_eq "$(cat "$NH/gitin.log")" "fed to the fetch" "row 17: the caller's bytes reached the fetch"
+assert_eq "$(cat "$H/gitin.log")" "fed to the fetch" "row 17: the caller's bytes reached the fetch"
 
 # 18. the knob is not read under a non-empty AC_SYNC_TIMEOUT: an AC_HOME that
 #     does not exist never matters to a directory argument
-seed18() { H="$1"; project p18; }
-seed18 "$OH"; seed18 "$NH"
+project p18
 HOMELESS=1; SYNC_ENV=("AC_HOME=HOME/missing" "AC_SYNC_TIMEOUT=1")
-same HOME/home/projects/p18
+run HOME/home/projects/p18
 HOMELESS=0; SYNC_ENV=()
 assert_eq "$(shim_out)" "fresh p18" "row 18: the override spares the knob read"
 
 # 19. without the override the knob of an AC_HOME that cannot be entered reads
-#     "" - 60 - and the sweep goes on; cd's own line on the original's stderr
-#     is not reproduced (named)
+#     "" - 60 - and the sweep goes on
 HOMELESS=1; SYNC_ENV=("AC_HOME=HOME/missing")
-o_rc=0; run_side "$obin" "$OH" o HOME/home/projects/p18 || o_rc=$?
-n_rc=0; run_side "$BIN" "$NH" n HOME/home/projects/p18 || n_rc=$?
+run HOME/home/projects/p18
 HOMELESS=0; SYNC_ENV=()
-assert_eq "$n_rc $o_rc" "0 0" "row 19: both sweeps end 0"
-norm "$TMP/o.raw" "$OH" >"$TMP/o.out"; norm "$TMP/n.raw" "$NH" >"$TMP/n.out"
-cmp -s "$TMP/o.out" "$TMP/n.out" || fail "row 19: stdout differs: $(diff "$TMP/o.out" "$TMP/n.out" | head -n 4)"
+assert_eq "$rc" "0" "row 19: the sweep ends 0"
 assert_eq "$(shim_out)" "fresh p18" "row 19: the default answered"
-assert_contains "$(cat "$TMP/o.err")" "No such file or directory" "row 19: cd's own line on the original"
-assert_eq "$(cat "$TMP/n.err")" "" "row 19: not reproduced (named)"
+assert_eq "$(shim_err)" "" "row 19: nothing on stderr"
 
 pass

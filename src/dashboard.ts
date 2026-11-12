@@ -1,11 +1,10 @@
 // dashboard.ts - launch the agent-crew local web dashboard.
 //
 // The entry is bin/ac-dashboard.sh (a shim that starts this file through
-// bin/ac-bun.sh); THIS header is the authoritative spec of the entry, and the
-// bash original it replaced stays frozen at tests/fixtures/ac-dashboard.sh as
-// the oracle the differential leg of tests/sh/ac-dashboard-daemon.test.sh holds
-// this module to. The server itself is dashboard/app.ts, whose header owns the
-// routes, the API and the write surfaces.
+// bin/ac-bun.sh); THIS header is the authoritative spec of the entry, and
+// tests/sh/ac-dashboard-daemon.test.sh its contract test. The server itself is
+// dashboard/app.ts, whose header owns the routes, the API and the write
+// surfaces.
 //
 // Usage: ac-dashboard.sh [--port <N>]     (default port 8787; FOREGROUND)
 //        ac-dashboard.sh start|stop|restart|status [--port <N>]
@@ -109,52 +108,31 @@
 // port busy. bun missing is the shim's own `ERROR: required tool not found:
 // bun`, exit 1.
 //
-// ESCAPE HATCH. No script starts this entry. If a landed change breaks it, run
-// the frozen original from a scratch bin/ at a physical path:
-//   o=$(cd "$(mktemp -d)" && pwd -P); mkdir "$o/bin"; cp bin/*.sh "$o/bin/"
-//   ln -s "$PWD/src" "$o/src"; ln -s "$PWD/dashboard" "$o/dashboard"
-//   cp tests/fixtures/ac-dashboard.sh "$o/bin/ac-dashboard.sh"
-// then AC_HOME=<home> "$o/bin/ac-dashboard.sh" <verb> by hand. Each side
-// recognises only a daemon whose cmdline names its OWN root, so a daemon one
-// started is `not running` to the other: stop it with the one that started it,
-// or kill the pid in <home>/state/dashboard.pid.
-//
-// AT PARITY (each pinned in the leg where a row can reach it):
+// AT PARITY (each stands until its own fix lands):
 // - A verb with no --port takes dashboard.port's text as the port unchecked.
 // - start against a FOREIGN port removes the pidfile but leaves dashboard.port.
 // - status never repairs a stale pidfile; stop does.
 // - A port that is digits but no TCP port (`0`, `99999`) passes the check: the
-//   probe never answers, and app.ts serves its default 8787 (no row: it would
-//   bind 8787).
+//   probe never answers, and app.ts serves its default 8787.
 // - A pidfile whose pid this user may not signal reads not running, and stop
 //   removes its files without a kill.
 // - A `kill -9` that fails after a live `kill -0` ends stop or restart 1, both
-//   files kept (no row: the window is a race).
+//   files kept.
 //
-// DIVERGENCES from the frozen original (the leg names each one a row can show):
-// - USAGE HEADER: -h/--help prints this header, where the original printed
-//   its own.
-// - BUN: the shim's refusal comes before any argument is read, where the
-//   original refused bad arguments first (exit 2) and then printed
-//   `ac-dashboard.sh: bun not found (needed to run dashboard/app.ts)`, exit 4.
+// ALSO:
+// - USAGE HEADER: -h/--help prints this header.
+// - BUN: the shim's refusal comes before any argument is read.
 // - ONE PROCESS: the foreground serves inside this process, so its cmdline
-//   names src/dashboard.ts where the original exec'd bun on dashboard/app.ts;
-//   the DAEMON's cmdline is the original's, which RUNNING matches.
+//   names src/dashboard.ts; the DAEMON's cmdline is bun on dashboard/app.ts,
+//   which RUNNING matches.
 // - The port probe and the daemon's signal wrapper are spawned shells
-//   (`/bin/bash -p`, and `/bin/sh -c 'trap "" INT QUIT; exec "$0" "$@"'`),
-//   where the original probed in a subshell and set the ignore in its fork:
-//   a /bin/bash that cannot start reads as no answer, and the daemon's SHLVL
-//   reads one higher.
-// - SHELL-OWN STDERR is not reproduced, the status kept: a log the daemon
-//   cannot open starts nothing (the original's fork printed the shell's
-//   redirection line and died), so the never-answered path follows with no pid
-//   recorded; a pidfile or port file that cannot be written ends the run 1
-//   silently; from a cwd that has no name the shell's own getcwd lines
-//   (`shell-init:`, `chdir:`) are the shim's, fewer than the original's cds
-//   printed.
+//   (`/bin/bash -p`, and `/bin/sh -c 'trap "" INT QUIT; exec "$0" "$@"'`): a
+//   /bin/bash that cannot start reads as no answer.
+// - A log the daemon cannot open starts nothing, so the never-answered path
+//   follows with no pid recorded; a pidfile or port file that cannot be
+//   written ends the run 1 silently.
 // - HOME RESOLUTION: a relative AC_HOME from a caller cwd that has no name is
-//   refused with the line above, where the verbs' `mkdir -p` failed in the
-//   deleted directory (exit 1 both).
+//   refused with the line above, exit 1.
 // - BYTES: argv and the environment arrive decoded, so a port, an argument or
 //   an AC_HOME that is no UTF-8 is U+FFFD.
 //

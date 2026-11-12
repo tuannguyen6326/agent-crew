@@ -2,13 +2,11 @@
 // bash originals differentially: metaIsVerify against ac_meta_is_verify,
 // watcherBeatRead against ac_watcher_beat_read, wakeScopeOk and
 // wakeFamilySpools against ac_wake_scope_ok / ac_wake_family_spools
-// (ac-wake-lib.sh), and configReadDir against the original's own cfg_read,
-// lifted from the frozen oracle. The bash side runs under LC_ALL=C where a
-// glob's ORDER is compared (the port lists in byte order; under a UTF-8 locale
-// bash's glob follows libc collation) and under the operators' UTF-8 locale
-// where the [:space:] CLASS is compared. The CLI contract itself is
-// tests/sh/ac-fleets.test.sh's, whose differential leg runs the frozen
-// original beside the shim.
+// (ac-wake-lib.sh), and configReadDir against an explicit table per locale.
+// The bash side runs under LC_ALL=C where a glob's ORDER is compared (the port
+// lists in byte order; under a UTF-8 locale bash's glob follows libc
+// collation) and under the operators' UTF-8 locale where the [:space:] CLASS
+// is compared. The CLI contract itself is tests/sh/ac-fleets.test.sh's.
 import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,7 +15,6 @@ import { configReadDir, metaIsVerify, wakeFamilySpools, wakeScopeOk, watcherBeat
 
 const root = join(import.meta.dir, "..", "..");
 const binDir = join(root, "bin");
-const oracle = join(root, "tests", "fixtures", "ac-fleets.sh");
 
 function bash(body: string, locale: string, ...args: string[]) {
   const r = Bun.spawnSync(["bash", "-c", `. "$0/ac-lib.sh"; . "$0/ac-wake-lib.sh"; ${body}`, binDir, ...args], {
@@ -130,7 +127,7 @@ test("wakeFamilySpools lists the dirs ac_wake_family_spools lists, in byte order
   }
 });
 
-test("configReadDir reads what the original's cfg_read reads: first line, [:space:]-trimmed, default when absent", () => {
+test("configReadDir reads the first line, [:space:]-trimmed under the locale's class, the default when absent", () => {
   const dir = mkdtempSync(join(tmpdir(), "ac-fleets-cfg-"));
   try {
     const cases: Record<string, string> = {
@@ -148,17 +145,23 @@ test("configReadDir reads what the original's cfg_read reads: first line, [:spac
       utf8: "đường\n",
       digits: " 8 \n",
     };
-    // The helper reads the process locale as bash reads its own: both sides
-    // held to one locale per pass, UTF-8 then C.
+    const b = (v: string): string => Buffer.from(v, "utf8").toString("latin1");
+    const line = (name: string): string => b(cases[name]!.slice(0, -1));
+    const want: Record<string, string> = {
+      plain: "codex", padded: "codex", tabs: "x\ty", bom: line("bom"), twoLines: "a", noNewline: "tail", empty: "",
+      blankLine: "", nbsp: "x", lineSep: "x", nel: line("nel"), utf8: b("đường"), digits: "8",
+    };
+    // Under C [:space:] is ASCII alone, so a non-ASCII space is kept.
+    const wantC: Record<string, string> = { ...want, nbsp: line("nbsp"), lineSep: line("lineSep") };
+    // The helper reads the process locale as bash reads its own: one locale
+    // per pass, UTF-8 then C.
     const wasLocale = process.env.LC_ALL;
     try {
       for (const locale of ["en_US.UTF-8", "C"]) {
         process.env.LC_ALL = locale;
         for (const [name, body] of Object.entries(cases)) {
           writeFileSync(join(dir, name), body, "utf8");
-          const want = bash('eval "$(sed -n "/^cfg_read()/,/^}/p" "$1")"; cfg_read "$2" "$3" "$4"', locale, oracle, dir, name, "dflt");
-          expect(want.rc).toBe(0);
-          expect([locale, name, configReadDir(dir, name, "dflt")]).toEqual([locale, name, want.out]);
+          expect([locale, name, configReadDir(dir, name, "dflt")]).toEqual([locale, name, (locale === "C" ? wantC : want)[name]]);
         }
       }
     } finally {
@@ -167,9 +170,7 @@ test("configReadDir reads what the original's cfg_read reads: first line, [:spac
     }
     mkdirSync(join(dir, "adir"));
     for (const name of ["absent", "adir"]) {
-      const want = bash('eval "$(sed -n "/^cfg_read()/,/^}/p" "$1")"; cfg_read "$2" "$3" "$4"', "en_US.UTF-8", oracle, dir, name, "dflt");
       expect([name, configReadDir(dir, name, "dflt")]).toEqual([name, "dflt"]);
-      expect(want.out).toBe("dflt");
     }
     expect(configReadDir(dir, "absent")).toBe("");
     // Bytes in, bytes out: the UTF-8 value is answered as its latin1 bytes.

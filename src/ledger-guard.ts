@@ -1,11 +1,9 @@
 // ledger-guard.ts - PreToolUse hook: refuse a SCOPED session (a roomchief,
 // AC_SCOPE set) writing records/backlog.md, records/projects.md or
 // records/captain.md.
-// The entry is bin/ac-ledger-guard.sh, the fail-open hook shim that starts
-// this file through bin/ac-bun.sh's ac_bun_exec_hook; THIS header is the
-// authoritative spec, and the bash original it replaced stays frozen at
-// tests/fixtures/ac-ledger-guard.sh as the oracle the differential leg of
-// tests/sh/ac-ledger-guard.test.sh holds this module to.
+// The entry is bin/ac-ledger-guard.sh, the hook shim that starts this file
+// through bin/ac-bun.sh's ac_bun_exec_guard; THIS header is the
+// authoritative spec, and tests/sh/ac-ledger-guard.test.sh its contract test.
 //
 // Wired in .claude/settings.json and .codex/hooks.json under PreToolUse;
 // reads the hook payload JSON on stdin and inspects .tool_name / .tool_input
@@ -64,29 +62,24 @@
 // arriving at a file that became load-bearing for scoped sessions.
 //
 // Fails open: no AC_SCOPE, a non-matching tool, missing jq, an unparseable
-// payload, or a path that resolves empty all exit 0 (no bun, and a module
-// that cannot load, are the shim's) - a broken guard must never wedge the
-// harness. Exit codes: 0 allow, 2 deny; nothing on stdout, the refusal one
-// line on stderr. Files: none.
+// payload, or a path that resolves empty all exit 0 (a module that cannot
+// load is the shim's, and no bun the shim's refusal) - a broken guard must
+// never wedge the harness. Exit codes: 0 allow, 2 deny; nothing on stdout, the
+// refusal one line on stderr. Files: none.
 //
 // RESIDUAL: this hook covers the `claude` harness's Edit/Write/NotebookEdit
 // tools only. A write performed through the Bash tool (sed, echo >, a
 // heredoc) still gets through - the same fail-open shape
 // src/delegation-guard.ts already accepts, not extended here to close it.
 //
-// THE READS, the original's: the payload is stdin to its end with NULs
+// THE READS: the payload is stdin to its end with NULs
 // dropped and trailing LFs stripped (empty allows); the name is jq's
 // `-r '.tool_name // empty'` and the path jq's `-r '.tool_input.file_path //
 // empty'` (Edit, Write) or `-r '.tool_input.notebook_path // empty'`
 // (NotebookEdit), each over the payload plus one LF, spawned, its stdout
 // taken whatever jq's status, NULs dropped and trailing LFs stripped.
 //
-// A BROKEN PORT. The frozen original needs only bash, jq, tr and sed: copying
-// tests/fixtures/ac-ledger-guard.sh over bin/ac-ledger-guard.sh in the
-// checkout the fleets run (the wiring names that path) restores it whole until
-// the fix lands; the captain's revert of the land is the last resort.
-//
-// AT PARITY (each pinned in the leg until its own fix lands):
+// AT PARITY with the bash original (each until its own fix lands):
 // - THE CASE-FOLD GAP: the canonical shape LOWERCASES while APFS FOLDS case,
 //   so a code point whose fold is an ASCII letter opens a fenced ledger
 //   unjudged: `record<U+017F>/backlog.md` (LATIN SMALL LETTER LONG S folds to
@@ -98,17 +91,15 @@
 //   jq printed for both, joined by LF (an `Edit<LF>Edit` name is no tool);
 // - sed reads lines: a path holding an LF has each line canonicalized alone.
 //
-// DIVERGENCES from the original (the leg names each one a row can show):
-// - BUN: with no bun on PATH the shim allows at once, saying nothing, where
-//   the original judged; a module that cannot load or crashes allows too.
-// - SHELL-OWN STDERR: a filter that cannot start reads as empty on both sides
-//   (the path then judges unfenced), and the original's `<name>: command not
-//   found` line is not reproduced.
-// - TEMP: the original fed jq a here-string, a temp file under $TMPDIR, else
-//   /tmp; with neither writable it allowed with bash's own line, where the
-//   port pipes jq's stdin and judges.
-// - BYTES: AC_SCOPE arrives decoded, so a byte of it that is not UTF-8 prints
-//   in the refusal as U+FFFD.
+// ALSO:
+// - With no bun on PATH, or no module file, the shim denies at once with one
+//   stderr line naming it; a module that cannot load or crashes allows, with
+//   one stderr line.
+// - A filter that cannot start reads as empty (the path then judges
+//   unfenced), and nothing is printed for it.
+// - jq's stdin is a pipe, so the verdict needs no writable temp directory.
+// - AC_SCOPE arrives decoded, so a byte of it that is not UTF-8 prints in the
+//   refusal as U+FFFD.
 //
 // CALLERS: the PreToolUse wiring of .claude/settings.json and
 // .codex/hooks.json, each behind its own [ -x ] gate; no script runs it.

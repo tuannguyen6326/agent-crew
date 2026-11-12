@@ -1,8 +1,7 @@
 // ship.ts - the crew-ship pipeline's state machine and deterministic runner.
 // The entry is bin/ac-ship.sh (a shim that starts this file through
-// bin/ac-bun.sh); THIS header is the authoritative spec, and the bash original
-// it replaced stays frozen at tests/fixtures/ac-ship.sh as the oracle the
-// differential leg of tests/sh/ac-ship.test.sh holds this module to.
+// bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-ship.test.sh is its contract test.
 //
 // Run from inside the target repo/worktree being validated. State lives at
 // <repo>/.crew/ship/<run-id>/ with a `current` symlink.
@@ -171,9 +170,8 @@
 //   ac_findings_normalize. Only NEW out-of-delta findings floor; an unresolved
 //   previous finding never becomes advisory merely because its file was not in
 //   the latest fix delta. The normalizer owns the floor directions
-//   (src/lib.ts findingsNormalize, held to its frozen bash original
-//   ac_findings_normalize in tests/fixtures/ac-pipeline-lib.sh; src/qa.ts
-//   calls it too).
+//   (src/lib.ts findingsNormalize, ac_findings_normalize's twin, held to its
+//   stated answers by tests/ts/ship.test.ts; src/qa.ts calls it too).
 //   A delta name holding a newline cannot ride that newline list, so such a
 //   round passes no delta and floors nothing.
 //
@@ -277,8 +275,7 @@
 // symlink. Declaration-only `--tdd`, a plain `step test completed`, and legacy
 // run metadata create NO receipt - they are claims, and the whole point of the
 // receipt is that it is an execution record. qaShipReceiptStatus
-// (src/qa-lib.ts, held to ac_qa_ship_receipt_status in
-// tests/fixtures/ac-qa-lib.sh) is
+// (src/qa-lib.ts, ac_qa_ship_receipt_status's twin) is
 // the ONE reader that decides whether a receipt qualifies; this
 // module only writes what actually happened.
 //
@@ -393,6 +390,8 @@
 // ignore_patterns, document.instructions, test.evidence.{store_in_repo,dir},
 // test.attestation (accept|ignore, default accept - see TDD ATTESTATION),
 // test.base_attribution (on|off, default off - see BASE ATTRIBUTION).
+// commands.install is no ship key: the lease runs it (src/spawn.ts, THE LEASE
+// INSTALL).
 // `cmd` exit codes: the command's own code; 4 = no command configured.
 // `start` FREEZE: trusts AC_FLEET_HOME_CHECKED/AC_FLEET_PROJECT_CONFIG (threaded
 // by ac-spawn.sh, which resolved the file with a real AC_HOME) over its own
@@ -464,22 +463,8 @@
 // at once while the suite, the verifier or git runs, the child orphaned and
 // finishing on its own (W2).
 //
-// ESCAPE HATCH. A broken port stops every lab money-path delivery at its first
-// `start` (and the step, push and finish of runs in flight) and chiefs'
-// attest-check. If a landed change breaks this module, run the frozen original
-// from a scratch bin/ at a physical path:
-//   o=$(cd "$(mktemp -d)" && pwd -P); mkdir "$o/bin"; cp bin/*.sh "$o/bin/"
-//   ln -s "$PWD/src" "$o/src"; ln -s "$PWD/dashboard" "$o/dashboard"
-//   cp tests/fixtures/ac-ship.sh "$o/bin/ac-ship.sh"
-//   cp tests/fixtures/ac-qa-lib.sh tests/fixtures/ac-pipeline-lib.sh "$o/bin/"
-// then the crewmate (through its chief) runs "$o/bin/ac-ship.sh" <verb> from its
-// worktree. The copy reaches its own ac-verify.sh, ac-pane-agent.sh and
-// ac-ship-watch.sh siblings and writes the same run-dir formats, so a run can
-// switch implementations mid-pipeline (the leg's continuation rows pin it); it
-// bakes only the board's launch path ("$o/bin/ac-ship-watch.sh", typed into a
-// pane). The captain's revert of the land is the last resort.
-//
-// AT PARITY (each pinned in the leg until its own fix lands):
+// AT PARITY with the bash original, and deliberately left unasserted by the
+// contract test (each until its own fix lands):
 // - W2: a TERM to the pid alone while the verifier runs leaves the verifier's
 //   RAW result as a durable round with nothing else written - the next round on
 //   that HEAD refuses `already reviewed`, review completed has no evidence and
@@ -511,50 +496,48 @@
 // - W18: a homeless query prints ac_home's ERROR beside its answer (attest-check,
 //   attest-test, config, and start's two lines).
 //
-// DIVERGENCES from the original (the leg names each one a row can show):
-// - BUN: every verb needs bun now (the shim's `ERROR: required tool not
-//   found: bun`, exit 1, before anything), where the original ran without it.
-// - USAGE HEADER: the usage is this header; the original printed its own.
-// - W9: the review-agent caller grammar is read per its text (a-z, 0-9, -),
-//   where bash 3.2's bracket ranges under a UTF-8 locale admitted an uppercase
-//   or accented letter.
+// ALSO:
+// - BUN: every verb needs bun (the shim's `ERROR: required tool not found:
+//   bun`, exit 1, before anything).
+// - USAGE HEADER: the usage is this header.
+// - W9: the review-agent caller grammar is read per its text (a-z, 0-9, -), so
+//   an uppercase or accented letter is refused under a UTF-8 locale too.
 // - W11 and BYTES: the override reason's tabs and newlines become spaces and
-//   every other byte is kept, where the original's `tr` under a UTF-8 locale cut
-//   the reason at an invalid byte (`tr: Illegal byte sequence`); argv and the
-//   environment arrive decoded, so a byte that is no UTF-8 in a flag, the intent
-//   or an env value reaches the run's files and children as U+FFFD, and a config
-//   value's reaches the suite's `sh -c` so (its `$ <cmd>` line and digest keep the
-//   bytes).
+//   every other byte is kept; argv and the environment arrive decoded, so a
+//   byte that is no UTF-8 in a flag, the intent or an env value reaches the
+//   run's files and children as U+FFFD, and a config value's reaches the
+//   suite's `sh -c` so (its `$ <cmd>` line and digest keep the bytes).
 // - W12 EXCLUSIVE TEMPS: the invocation ledger's outcome rewrite goes through
-//   logs/review-invocations.tsv.tmp.<pid> (then .<n>) created exclusively, where
-//   the original wrote through whatever sat at the predictable `.tmp` - a link
-//   planted there had its target overwritten and the ledger became the link.
-// - TRUSTED RE-POST: only review-agent's own call skips the F9 drop guard, where
-//   the original's guard also read `_ac_findings_trusted=1` from the caller's
-//   environment - so an exported one let a plain re-post drop a fix finding.
+//   logs/review-invocations.tsv.tmp.<pid> (then .<n>) created exclusively,
+//   never through whatever sits at the predictable `.tmp`.
+// - META ARGV: `meta <step>` with any further word is `usage: ac-ship.sh meta
+//   <step> (JSON object on stdin)`, exit 1, before stdin is read - as findings
+//   refuses its stray word - since a harness holding stdin open never sends
+//   EOF.
+// - TRUSTED RE-POST: only review-agent's own call skips the F9 drop guard; an
+//   exported `_ac_findings_trusted=1` does not let a plain re-post drop a fix
+//   finding.
 // - W14: a push refused over unincorporated commits prints the header, the
-//   first ten shas and the refusal, exit 1, where the original's
-//   `printf | head -10` died of SIGPIPE past the pipe buffer (141, no refusal).
+//   first ten shas and the refusal, exit 1, however many there are.
+// - RUNNING RESTART: `start` refuses while `current` is this branch's own run,
+//   still `outcome=running`, with a review invocation recorded, and names
+//   `finish cancelled`, so a new run's empty ledger cannot reset the review
+//   cap.
 // - W19: SIGINT to the pid alone ends the process at once (130), the suite
-//   finishing on its own, where the original waited its foreground child out
-//   and completed.
-// - W20 and SHELL-OWN STDERR are not reproduced, the status kept: a value flag
-//   as start's last word (`$2: unbound variable`), config with no key and a
-//   config present (`1: dotted key required`), a step listed twice in fix-report
-//   (`$((rounds + 1))`'s arithmetic error), a dangling finish's redirection line,
-//   `[: <n>: integer expression expected`, and the `Terminated` notice a
-//   signalled suite leaves in its log and on stdout names the port's helper
-//   shell (`ac-ship.sh: line 1:`), so that log's digest differs.
+//   finishing on its own.
+// - W20 and SHELL-OWN STDERR: no shell's own line is printed, the status kept -
+//   a value flag as start's last word, config with no key and a config
+//   present, a step listed twice in fix-report and a dangling finish each exit
+//   1 with no line; the `Terminated` notice a signalled suite leaves in its log
+//   and on stdout names the port's helper shell (`ac-ship.sh: line 1:`).
 // - HOME RESOLUTION: an AC_HOME cd cannot enter is
-//   `ERROR: AC_HOME is not a readable directory: <h>` where the original printed
-//   cd's own line; both go on with no config.
+//   `ERROR: AC_HOME is not a readable directory: <h>`, and the verb goes on
+//   with no config.
 // - git or jq on PATH as a file that is not executable is `required tool not
-//   found` (Bun.which), where the original's `command -v` accepted it.
+//   found` (Bun.which).
 // - The default verifier and pane agent are <this distro's bin>/ac-verify.sh
-//   and ac-pane-agent.sh by absolute path, where the original joined a relative
-//   `$0`'s dirname.
-// - The board sweep's `tab close` calls read /dev/null, where the original's
-//   read the rest of its loop's jq pipe.
+//   and ac-pane-agent.sh by absolute path.
+// - The board sweep's `tab close` calls read /dev/null.
 //
 // CALLERS: the execution crewmate through the crew-ship skill (start, step,
 // findings, meta, cmd, base, skip-remaining, review-agent, push, evidence-dir,
@@ -915,6 +898,25 @@ function resolveTarget(t: string): string {
   return fail(`start: --target branch not found (neither origin/${t} nor ${t}): ${t}`);
 }
 
+// The cap counts review invocations per RUN, so a fresh run over this branch's
+// own unfinished one would hand back the rounds the cap withheld. Another
+// branch's run is a former tenant of a reused pool slot, never this task's.
+function spentRunOn(branch: string): { id: string; n: string } | null {
+  const id = readLink(current);
+  if (id === null) return null;
+  const meta = readText(`${vdir}/${id}/run.meta`);
+  if (meta === null) return null;
+  let outcome = "";
+  let on = "";
+  for (const l of meta.split("\n")) {
+    if (l.startsWith("outcome=")) outcome = l.slice(8);
+    else if (l.startsWith("branch=") && on === "") on = l.slice(7);
+  }
+  if (outcome !== "running" || on !== branch) return null;
+  const n = reviewInvocationsRecorded(`${vdir}/${id}`);
+  return n === "0" ? null : { id, n };
+}
+
 function cmdStart(a: string[]): void {
   let intent = "";
   let skip = "";
@@ -961,6 +963,11 @@ function cmdStart(a: string[]): void {
   const sr = git(["symbolic-ref", "--short", "HEAD"], { stderr: "ignore" });
   const branch = cap(sr.status === 0 ? sr.out : `${sr.out}DETACHED`);
   const base = freshBase(tref || b8(defaultRef(u8(repo), true))) ?? fatal(1);
+  const spent = spentRunOn(branch);
+  if (spent !== null)
+    fail(
+      `start refused: run ${spent.id} on ${branch} is still running and has spent ${spent.n} review invocation(s) - a fresh run would reset its review cap. Keep working it, or end it with ac-ship.sh finish cancelled (or failed) first.`,
+    );
 
   // Every refusal sits above this line, so a refused start creates nothing.
   const d = run(["date", "+%Y%m%d-%H%M%S"]);
@@ -1153,6 +1160,7 @@ function cmdMeta(a: string[], hereJson: string | null = null): void {
   requireRun();
   const step = a[0] ?? "";
   if (!listed(STEPS, step)) fail(`unknown step: ${step}`);
+  if (a.length > 1) fail("usage: ac-ship.sh meta <step> (JSON object on stdin)");
   const rd = runDir();
   const f = `${rd}/findings/${step}.meta.json`;
   if (hereJson === null && isatty(0)) fail(`meta ${step} reads a JSON object on stdin - refusing a tty`);

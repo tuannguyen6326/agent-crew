@@ -67,7 +67,7 @@ A spawn that resumes an earlier session passes `--prefer` with the old slot, bec
 - **Process hygiene.** `return` and `remove` kill processes still running in the tree; `prune` skips a slot with live processes, or when `lsof` is unavailable to check.
 - **Verified prune.** `prune` removes only unleased, clean, process-free slots whose HEAD is merged into the default branch as verified against the live remote; a failed fetch or stale tracking ref skips the slot.
 - **Deliberate remove.** `remove` refuses a leased slot without `--include-leased`, and without `--force` refuses a dirty slot, a clean slot with unmerged commits, and a broken slot git cannot read.
-- **Self-healing, never over possible work.** Vanished slot directories and orphans from partial creates are healed by `get`, `list` and `prune`; a directory with an unreadable gitdir is only named, with the `remove` command that reclaims it.
+- **Self-healing, never over possible work.** Vanished slot directories and empty orphans from partial creates are healed by `get`, `list` and `prune`; a meta-less directory holding files is only named by `get` for the operator to inspect, and a directory with an unreadable gitdir is only named, with the `remove` command that reclaims it.
 
 ### `lease`: keeping a tree alive across tasks
 
@@ -98,11 +98,18 @@ It is regenerated after every slot mutation; never hand-edit it.
 
 `orca_worktree_release <path>` removes the worktree through the Orca CLI at teardown; unlike a pool slot, nothing is kept.
 
+## The lease install
+
+When the project's `$AC_HOME/projects/<name>.yaml` declares `commands.install`, `ac-spawn.sh` (crew spawns, not scouts) and `ac-self-task.sh start` run it in the fresh lease on either backend, before the agent starts, so a task does not begin on missing or stale dependencies.
+The task meta records `deps=ok` or `deps=failed`; a failure never refuses the lease, and the distro restores nothing the command dirtied.
+The contract is THE LEASE INSTALL in the header of `src/spawn.ts`; the key is documented in [configuration.md](configuration.md).
+
 ## Verifier rounds
 
 `ac-verify.sh` codereview and qa rounds lease their isolated checkout the same way the fleet's crew does: from the pool with holder `verify` on herdr, or an Orca-managed worktree on orca.
 The round then detaches to its exact ref, and on orca drops the `crew/<id>` branch at once, because a verifier branch is never a deliverable.
 The lease is returned (herdr, `return --force`) or released (orca) when the round is harvested.
+A verifier lease runs no `commands.install`.
 
 ## For contributors
 

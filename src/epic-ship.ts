@@ -2,9 +2,8 @@
 // (epic-branch-mech proposal v2 sections 3.5/3.6):
 // review/QA run per EPIC, and the ask-captain rules are unchanged inside one.
 // The entry is bin/ac-epic-ship.sh (a shim that starts this file through
-// bin/ac-bun.sh); THIS header is the authoritative spec, and the bash original
-// it replaced stays frozen at tests/fixtures/ac-epic-ship.sh as the oracle the
-// differential leg of tests/sh/ac-epic-ship.test.sh holds this module to.
+// bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-epic-ship.test.sh is its contract test.
 //
 // Usage: ac-epic-ship.sh <epic> <repo> [--dry-run]
 //
@@ -151,35 +150,28 @@
 // record, the ledger, the room, git's, jq's and gh's output and ships.env
 // are bytes, and every line built from them is written as those bytes.
 //
-// DIVERGENCES from the original, named in the differential leg:
-// - W4: homeless, the run refuses ONCE with the AC_HOME refusal, where the
-//   original printed it twice (a swallowed `$(ac_data_dir)` per record rung;
-//   once for an epic outside [a-zA-Z0-9_-], which skips the archive rung) and
-//   then the no-entry remedy; an AC_HOME cd cannot enter is `AC_HOME is not a
-//   readable directory: <h>` once, where the shell printed cd's own lines and
-//   the remedy (exit 1 everywhere).
-// - The ledger awk's own `can't open file` lines are not reproduced, its exit
-//   2 is; the parser runs in this process, so the binding's `backlog parser
-//   failed` refusal has no counterpart.
-// - W16 (the HOME RESOLUTION ruling): the clone is joined onto the PHYSICAL
-//   home, so under a symlinked AC_HOME the DRY-RUN lines and <cmd>'s --repo
-//   name the physical clone where the original named AC_HOME as spelled.
-// - bash's own stderr is not reproduced: the job line of a child a signal
-//   ended (`Terminated: 15`), `gh: command not found`, a failed append's
-//   redirection line, the `shell-init:`/`chdir:` lines a caller cwd with no
-//   name drew from every bash the original started.
-// - A git or jq on PATH that is not executable is `required tool not found`
-//   here; the original's `command -v` took it and failed running it.
+// ALSO:
+// - Homeless, the run refuses ONCE with the AC_HOME refusal; an AC_HOME cd
+//   cannot enter is `AC_HOME is not a readable directory: <h>` once (exit 1
+//   everywhere).
+// - The ledger parser runs in this process: a ledger that cannot be read
+//   prints nothing of a tool's own.
+// - The HOME RESOLUTION ruling: the clone is joined onto the PHYSICAL home,
+//   so under a symlinked AC_HOME the DRY-RUN lines and <cmd>'s --repo name
+//   the physical clone.
+// - No shell stands between this module and its children, so a child a
+//   signal ended, a gh missing from PATH and a failed append add no line of
+//   a shell's own to stderr.
+// - A git or jq on PATH that is not executable is `required tool not found`.
 // - argv and env arrive decoded: a byte that is not UTF-8 in an argument or
 //   in AC_SCOPE reaches this module as U+FFFD, and a branch, staging branch,
 //   story id or url that is not UTF-8 is spawned decoded (a story id that also
 //   holds a pattern character comes back from bash so); a url gh printed
 //   that is not UTF-8 is recorded and printed as its bytes and reaches the
-//   room as its U+FFFD spelling - the room entry decodes its argv the same
-//   way from either side.
-// W2 is no divergence: the glob is reproduced (the WIRE QUIRKS rule), where
-// src/feature.ts's W16 names the same glob in its member gate a divergence -
-// the sibling, not this module, is out of step.
+//   room as its U+FFFD spelling - the room entry decodes its argv too.
+// W2's glob is reproduced (the WIRE QUIRKS rule), where src/feature.ts's W16
+// names the same glob in its member gate a divergence - the sibling, not this
+// module, is out of step.
 //
 // CALLERS: no bin/, src/, dashboard/ or hook runs this entry - the
 // intake-triage skill, docs/scripts.md and docs/architecture.md name it in

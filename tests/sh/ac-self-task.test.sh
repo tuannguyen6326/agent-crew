@@ -203,6 +203,24 @@ assert_contains "$err" "requires an orca-backend fleet" \
   "--base-branch on a herdr-backend fleet must die, not silently no-op"
 assert_no_file "$state/s7.meta" "the refused start writes no meta"
 
+# --- the lease install: commands.install runs before the slice's first edit ---
+# (contract: src/self-task.ts step 2). No key records no deps= (s1 above).
+assert_eq "$(awk -F= '$1=="deps"{print $2}' "$state/s1.meta")" "" "no commands.install records no deps="
+printf '%s\n' 'commands:' "  install: 'printf %s \"\$AC_LEASE_PRIMARY\" >.git-ignored-marker'" >"$AC_HOME/projects/proj.yaml"
+printf '.git-ignored-marker\n' >>"$repo/.git/info/exclude"
+"$BIN/ac-self-task.sh" start si1 "$repo" >/dev/null 2>"$TMP/si1.err" || fail "a start with an install must succeed"
+si1wt="$(awk -F= '$1=="worktree"{print $2}' "$state/si1.meta")"
+assert_eq "$(cat "$si1wt/.git-ignored-marker" 2>/dev/null)" "$repo" "the install runs in the leased worktree, the primary named"
+assert_eq "$(awk -F= '$1=="deps"{print $2}' "$state/si1.meta")" "ok" "a clean successful install records deps=ok"
+"$BIN/ac-teardown.sh" si1 --force >/dev/null 2>&1
+# A failed install never refuses the start: one WARN, deps=failed.
+printf 'commands:\n  install: "exit 3"\n' >"$AC_HOME/projects/proj.yaml"
+"$BIN/ac-self-task.sh" start si2 "$repo" >/dev/null 2>"$TMP/si2.err" || fail "a failed install must not refuse the start"
+assert_contains "$(cat "$TMP/si2.err")" "WARN: commands.install failed for si2 (exit 3)" "a failed install is WARNed"
+assert_eq "$(awk -F= '$1=="deps"{print $2}' "$state/si2.meta")" "failed" "a failed install records deps=failed"
+"$BIN/ac-teardown.sh" si2 --force >/dev/null 2>&1
+rm -f "$AC_HOME/projects/proj.yaml"
+
 # --- orca fleet: the self-task worktree is ORCA-MANAGED ----------------------
 # The lease follows the fleet backend like every other isolated checkout
 # (crew, verifier): an orca fleet leases through the Orca CLI, records
@@ -566,19 +584,24 @@ case "$(cat "$state/s-peek.status" 2>/dev/null)" in
 esac
 rm -rf "$state/.wake-spool"
 
-# --- differential: src/self-task.ts against the frozen bash original ----------
-# Every row rebuilds one world at one path for each side and compares the calls
-# (exit, stdout, stderr) and the world they leave; a named divergence (the
-# DIVERGENCES block of the src/self-task.ts header) is pinned per side instead.
-# DISPUTED: the implementation (tests/fixtures/ac-self-task.sh under bash vs src/self-task.ts through bin/ac-self-task.sh)
-# HELD-CONSTANT: ONE world path ($XW) rebuilt by the row's own setup before each pass - a home ($XW/home, or the row's own name beside it) with config/ records/ data/ state/ and projects/proj linking the repo, the repo $XW/proj made under one git identity and one commit date, the container's .claude/CLAUDE.md, the fake herdr's and fake orca's dirs ($XW/herdr, $XW/orca), HOME=$XW/hh (bun's cache, never compared), TMPDIR=$XW/tmp; argv, env (AC_SEND_SETTLE=0, AC_HERDR_RPC_TIMEOUT=10, brain-auto-sync off, unless a row names others), cwd $XW/cwd unless a row names the home, stdin /dev/null, LC_ALL=C unless a row names en_US.UTF-8; PATH stubs on both sides - date answering one instant for every format (holding at a meta's spawned_at stamp where a row says), sleep logging each call and returning at once (holding where a row says), od answering /dev/urandom from a per-world counter (holding where a row says) - ahead of the fake herdr and orca; the live bin/ siblings beside each entry, the oracle's root also linking .agents. Every call's exit, stdout and stderr compared whole once normalised (either root ROOT, a temp pid PID, bash's `child setpgid` noise dropped), then the world: every path under $XW but hh/, the brain's own files and every repo's .git dir with mode and bytes (a link: its target), and the repo's refs, worktrees and info/exclude.
+# --- the CLI contract, row by row -----------------------------------------------
+# Every row rebuilds one world ($XW) by its own setup and reads the calls' exit,
+# stdout and stderr (one transcript) and the world they leave: a home ($XW/home,
+# or the row's own name beside it) with config/ records/ data/ state/ and
+# projects/proj linking the repo, the repo $XW/proj made under one git identity
+# and one commit date, the container's .claude/CLAUDE.md, the fake herdr's and
+# fake orca's dirs ($XW/herdr, $XW/orca), HOME=$XW/hh, TMPDIR=$XW/tmp;
+# AC_SEND_SETTLE=0, AC_HERDR_RPC_TIMEOUT=10, brain-auto-sync off, unless a row
+# names others; cwd $XW/cwd unless a row names the home; stdin /dev/null;
+# LC_ALL=C unless a row names en_US.UTF-8; PATH stubs - date answering one
+# instant for every format (holding at a meta's spawned_at stamp where a row
+# says), sleep logging each call and returning at once (holding where a row
+# says), od answering /dev/urandom from a per-world counter (holding where a
+# row says) - ahead of the fake herdr and orca. The transcript and the world
+# read the bin root ROOT and a temp pid PID; the world is every path under $XW
+# but hh/, the brain's own files and every repo's .git dir with mode and bytes
+# (a link: its target), and the repo's refs, worktrees and info/exclude.
 cd "$TMP" || fail "cd TMP"
-xobin="$(make_oracle_bin ac-self-task)"
-cmp -s "$xobin/ac-self-task.sh" "$ROOT/tests/fixtures/ac-self-task.sh" || fail "the oracle bin holds the frozen original"
-cmp -s "$BIN/ac-self-task.sh" "$ROOT/tests/fixtures/ac-self-task.sh" && fail "the live entry is the shim, not the original"
-# The seed links skills from <root>/.agents/skills: the oracle's root must
-# offer the same tree the port's does.
-ln -s "$ROOT/.agents" "$TMP/oracle-ac-self-task/.agents"
 XW="$TMP/xw"; XSTUBS="$TMP/xstubs"; mkdir -p "$XSTUBS"
 printf '[user]\n\tname = t\n\temail = t@t\n[init]\n\tdefaultBranch = main\n' >"$TMP/xgitconfig"
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$TMP/xgitconfig" \
@@ -607,8 +630,8 @@ fi
 case "$*" in *[0-9]*) case "$*" in *[!0-9.]*) ;; *) exit 0 ;; esac ;; esac
 exec /bin/sleep "$@"
 STUB
-# od: /dev/urandom is the n-th read's own bytes (lease ids differ per lease,
-# match per pass); with stub/hold-od it holds like sleep does.
+# od: /dev/urandom is the n-th read's own bytes (lease ids differ per lease);
+# with stub/hold-od it holds like sleep does.
 cat >"$XSTUBS/od" <<'STUB'
 #!/bin/bash
 args=()
@@ -641,8 +664,8 @@ xworld() {  # xworld - a fresh world: the home $XW/$XHN, the repo $XW/proj (one 
   ln -s "$XW/proj" "$XW/$XHN/projects/proj"
 }
 xorca() { xworld; printf 'orca\n' >"$XW/$XHN/config/backend"; }   # an orca fleet's world
-XLC=C; XENV=(); XPATH=""; XHOME=1; XCWD=cwd; XCLOSE=""; XPASS=o; XALT=(o); XCALL=0; XOBIN="$xobin"; XNBIN="$BIN"
-xe() {  # xe - the call environment into XE: the leg's stubs ahead of the fakes and the host, the world's home, tmp, HOME and backends, then the row's XENV
+XLC=C; XENV=(); XPATH=""; XHOME=1; XCWD=cwd; XCLOSE=""; XBIN="$BIN"
+xe() {  # xe - the call environment into XE: the stubs ahead of the fakes and the host, the world's home, tmp, HOME and backends, then the row's XENV
   local path="$XSTUBS:$PATH" x
   [ -z "$XPATH" ] || path="$XPATH"
   XE=(env -u AC_HOME -u AC_FLEET_STATE -u AC_SCOPE -u AC_SOLO -u AC_CHIEF_SOLO -u AC_FLEET_SCOPE -u AC_CREW_ID -u AC_DOMAIN
@@ -653,30 +676,29 @@ xe() {  # xe - the call environment into XE: the leg's stubs ahead of the fakes 
   [ -z "$XHOME" ] || XE+=("AC_HOME=$XW/$XHN")
   for x in ${XENV[@]+"${XENV[@]}"}; do XE+=("$x"); done
 }
-xrun() {  # xrun <cmd> <args...> - a setup step in the world's environment, quiet; a failure ends the leg
-  xe; (cd "$XW/cwd" && exec "${XE[@]}" "$@") </dev/null >/dev/null 2>&1 || fail "self-task differential setup failed at line $(xrow): $*"
+xrun() {  # xrun <cmd> <args...> - a setup step in the world's environment, quiet; a failure ends the row
+  xe; (cd "$XW/cwd" && exec "${XE[@]}" "$@") </dev/null >/dev/null 2>&1 || fail "self-task setup failed at line $(xrow): $*"
 }
 xput() { mkdir -p "$(dirname "$XW/$1")"; printf '%b' "$2" >"$XW/$1"; }   # xput <path under the world> <printf %b bytes>
-xside() { local side="${XALT[$((XCALL % ${#XALT[@]}))]}"; XCALL=$((XCALL + 1)); XBIN="$XOBIN"; [ "$side" != n ] || XBIN="$XNBIN"; }   # xside - this call's entry dir into XBIN, the sides taken in turn
-xc() {  # xc <args...> - one call by this pass's side for the call, its transcript appended
-  local bin rc=0
-  xside; bin="$XBIN"; xe
-  if [ -n "$XCLOSE" ]; then (cd "$XW/$XCWD" && exec "${XE[@]}" "$bin/ac-self-task.sh" "$@" >&-) </dev/null 2>"$TMP/x.err" || rc=$?; : >"$TMP/x.out"
-  else (cd "$XW/$XCWD" && exec "${XE[@]}" "$bin/ac-self-task.sh" "$@") </dev/null >"$TMP/x.out" 2>"$TMP/x.err" || rc=$?; fi
-  { printf '== %s\nrc=%s\n-- out\n' "$*" "$rc"; cat "$TMP/x.out"; printf '%s\n' '-- err'; cat "$TMP/x.err"; } >>"$TMP/xt.$XPASS"
+xc() {  # xc <args...> - one call, its transcript appended
+  local rc=0
+  xe
+  if [ -n "$XCLOSE" ]; then (cd "$XW/$XCWD" && exec "${XE[@]}" "$XBIN/ac-self-task.sh" "$@" >&-) </dev/null 2>"$TMP/x.err" || rc=$?; : >"$TMP/x.out"
+  else (cd "$XW/$XCWD" && exec "${XE[@]}" "$XBIN/ac-self-task.sh" "$@") </dev/null >"$TMP/x.out" 2>"$TMP/x.err" || rc=$?; fi
+  { printf '== %s\nrc=%s\n-- out\n' "$*" "$rc"; cat "$TMP/x.out"; printf '%s\n' '-- err'; cat "$TMP/x.err"; } >>"$TMP/xt"
 }
 xsig() {  # xsig <signal> <args...> - one call in the background; once the world holds stub/held, <signal> to its pid alone, then the hold released
-  local sig="$1" bin pid rc=0 i=0; shift
-  xside; bin="$XBIN"; xe
+  local sig="$1" pid rc=0 i=0; shift
+  xe
   # Job control gives the job its own group with SIGINT at its default - a
   # plain `&` job of a non-interactive shell starts with SIGINT ignored.
   {
     set -m
-    (cd "$XW/$XCWD" && exec "${XE[@]}" "$bin/ac-self-task.sh" "$@") </dev/null >"$TMP/x.out" 2>"$TMP/x.err" &
+    (cd "$XW/$XCWD" && exec "${XE[@]}" "$XBIN/ac-self-task.sh" "$@") </dev/null >"$TMP/x.out" 2>"$TMP/x.err" &
     pid=$!
     set +m
     while [ ! -e "$XW/stub/held" ] && [ "$i" -lt 600 ]; do /bin/sleep 0.05; i=$((i + 1)); done
-    [ -e "$XW/stub/held" ] || fail "self-task differential at line $(xrow): the run never reached its hold"
+    [ -e "$XW/stub/held" ] || fail "self-task at line $(xrow): the run never reached its hold"
     kill -"$sig" "$pid"
     /bin/sleep 0.5
     : >"$XW/stub/release"
@@ -684,13 +706,13 @@ xsig() {  # xsig <signal> <args...> - one call in the background; once the world
   } 2>/dev/null
   /bin/sleep 0.3
   rm -f "$XW/stub/held" "$XW/stub/release" "$XW/stub/hold-sleep" "$XW/stub/hold-od" "$XW/stub/hold-date"
-  { printf '== %s %s\nrc=%s\n-- out\n' "$sig" "$*" "$rc"; cat "$TMP/x.out"; printf '%s\n' '-- err'; cat "$TMP/x.err"; } >>"$TMP/xt.$XPASS"
+  { printf '== %s %s\nrc=%s\n-- out\n' "$sig" "$*" "$rc"; cat "$TMP/x.out"; printf '%s\n' '-- err'; cat "$TMP/x.err"; } >>"$TMP/xt"
 }
-xnorm() {  # xnorm <file> - either root ROOT, a temp pid PID, bash's `child setpgid` noise dropped
-  LC_ALL=C sed -E -e "s#$TMP/oracle-ac-self-task#ROOT#g" -e "s#$TMP/xlab-[on]#ROOT#g" -e "s#$ROOT#ROOT#g" \
+xnorm() {  # xnorm <file> - the bin root ROOT, a temp pid PID, bash's `child setpgid` noise dropped
+  LC_ALL=C sed -E -e "s#$TMP/xlab#ROOT#g" -e "s#$ROOT#ROOT#g" \
     -e 's#\.tmp\.[0-9]+#.tmp.PID#g' -e '/child setpgid \([0-9]+ to [0-9]+\): Operation not permitted/d' "$1"
 }
-xsnap() {  # xsnap <pass> - the world as one listing
+xsnap() {  # xsnap - the world as one listing
   local n f
   (cd "$XW" && find . \( -path ./hh -o -name .git -type d -o -path './*/state/brain*' -o -path './*/state/.brain*' \) -prune -o -print) \
     | sed 's#^\./##' >"$TMP/xnames"
@@ -698,37 +720,25 @@ xsnap() {  # xsnap <pass> - the world as one listing
     if [ -L "$XW/$f" ]; then printf '== %s -> %s\n' "$n" "$(readlink "$XW/$f")"; continue; fi
     printf '== %s %s\n' "$n" "$(stat -f %Sp "$XW/$f")"
     [ -d "$XW/$f" ] || { cat "$XW/$f" 2>/dev/null || printf '<unreadable>'; printf '\n'; }
-  done >"$TMP/xw.$1"
+  done >"$TMP/xw.snap"
   { printf -- '-- refs\n'; git -C "$XW/proj" for-each-ref --format='%(refname) %(objectname)'
     printf -- '-- worktrees\n'; git -C "$XW/proj" worktree list --porcelain
     printf -- '-- exclude\n'; cat "$XW/proj/.git/info/exclude" 2>/dev/null || true
-  } >>"$TMP/xw.$1"
+  } >>"$TMP/xw.snap"
 }
-xpass() {  # xpass <pass> <setup> <body> <side>... - rebuild the world, then the body's calls by the sides in turn
-  XPASS="$1"; : >"$TMP/xt.$1"; XCALL=0; XALT=("${@:4}")
-  XLC=C; XENV=(); XPATH=""; XHOME=1; XCWD=cwd; XCLOSE=""; XHN=home; XOBIN="$xobin"; XNBIN="$BIN"
-  $2; $3; xsnap "$1"
-  xnorm "$TMP/xt.$1" >"$TMP/xt2.$1"; xnorm "$TMP/xw.$1" >"$TMP/xw2.$1"
+xgo() {  # xgo <setup> <body> - rebuild the world, run the body's calls, read the transcript and the world
+  : >"$TMP/xt"
+  XLC=C; XENV=(); XPATH=""; XHOME=1; XCWD=cwd; XCLOSE=""; XHN=home; XBIN="$BIN"
+  $1; $2; xsnap
+  xnorm "$TMP/xt" >"$TMP/xt2"; xnorm "$TMP/xw.snap" >"$TMP/xw2"
 }
-xrow() { printf '%s' "${BASH_LINENO[${#BASH_LINENO[@]}-2]}"; }   # the leg's own line that started this comparison
-xcmpt() { cmp -s "$TMP/xt2.$1" "$TMP/xt2.$2" || fail "self-task differential calls differ ($1 vs $2) at line $(xrow): $(diff -a "$TMP/xt2.$1" "$TMP/xt2.$2" | head -n 14)"; }
-xcmpw() { cmp -s "$TMP/xw2.$1" "$TMP/xw2.$2" || fail "self-task differential world differs ($1 vs $2) at line $(xrow): $(diff -a "$TMP/xw2.$1" "$TMP/xw2.$2" | head -n 14)"; }
-xcmp() { xcmpt "$1" "$2"; xcmpw "$1" "$2"; }   # xcmp <pass> <pass> - transcripts and worlds identical
-xsame() { xpass o "$1" "$2" o; xpass n "$1" "$2" n; xcmp o n; }   # xsame <setup> <body> - the oracle alone, then the port alone
-xboth() { xpass o "$1" "$2" o; xpass n "$1" "$2" n; }   # xboth <setup> <body> - both passes, compared by the row (a named divergence)
-xcont() {  # xcont <setup> <body> - the oracle alone, then the two sides alternating call by call, either side first
-  xpass o "$1" "$2" o; xpass a "$1" "$2" o n; xpass b "$1" "$2" n o; xcmp o a; xcmp o b
-}
-xt() { cat "$TMP/xt2.${1:-n}"; }
-xhas() { assert_contains "$(xt "${2:-n}")" "$1" "self-task differential at line $(xrow)"; }   # xhas <text> [<pass>] - the normalised transcript holds <text>
-xlacks() { case "$(xt "${2:-n}")" in *"$1"*) fail "self-task differential at line $(xrow): '$1' found" ;; esac; }
-xwhas() { assert_contains "$(cat "$TMP/xw2.${2:-n}")" "$1" "self-task differential world at line $(xrow)"; }
-xwlacks() { case "$(cat "$TMP/xw2.${2:-n}")" in *"$1"*) fail "self-task differential world at line $(xrow): '$1' found" ;; esac; }
-# SHELL-OWN STDERR (named): bash's own error lines - a redirection or a printf
-# write error - are not reproduced; xownless sets them aside in the oracle's
-# transcript.
-xownless() { LC_ALL=C sed -E -i.bak '/^ROOT\/bin\/[a-z-]+\.sh: line [0-9]+: /d' "$TMP/xt2.o"; }
-xwithout() {  # xwithout <tool> - the leg's stubs and PATH with every dir holding <tool> mirrored without it
+xrow() { printf '%s' "${BASH_LINENO[${#BASH_LINENO[@]}-2]}"; }   # the line that started this row
+xt() { cat "$TMP/xt2"; }
+xhas() { assert_contains "$(xt)" "$1" "self-task at line $(xrow)"; }   # xhas <text> - the normalised transcript holds <text>
+xlacks() { case "$(xt)" in *"$1"*) fail "self-task at line $(xrow): '$1' found" ;; esac; }
+xwhas() { assert_contains "$(cat "$TMP/xw2")" "$1" "self-task world at line $(xrow)"; }
+xwlacks() { case "$(cat "$TMP/xw2")" in *"$1"*) fail "self-task world at line $(xrow): '$1' found" ;; esac; }
+xwithout() {  # xwithout <tool> - the stubs and PATH with every dir holding <tool> mirrored without it
   local dirs d f key mirror out=""
   IFS=: read -r -a dirs <<<"$XSTUBS:$PATH"
   for d in "${dirs[@]}"; do
@@ -747,220 +757,168 @@ xwithout() {  # xwithout <tool> - the leg's stubs and PATH with every dir holdin
 }
 xself() { xworld; xput home/state/s1.meta 'kind=self\nbackend=herdr\nproject=proj\n'; }   # a world holding a self task's meta
 
-# -- leg 1: before the verb -------------------------------------------------------
+# -- 1: before the verb ------------------------------------------------------------
 x1a() {
   xc; xc -h; xc bogus; xc start; xc log; xc start Ab proj; xc log Ab x
   xc start s1; xc log s1; xc log s1 ''
 }
-xsame xworld x1a
-xhas "usage: ac-self-task.sh start <id> <project> | ac-self-task.sh log <id> '<line>'"
+xgo xworld x1a
+xhas $'== \nrc=1\n-- out\n-- err\nERROR: usage: ac-self-task.sh start <id> <project> | ac-self-task.sh log <id> \'<line>\''
 xhas 'usage: ac-self-task.sh start <id> ...'
-xhas 'id must be [a-z0-9-]: Ab'
+xhas $'== start Ab proj\nrc=1\n-- out\n-- err\nERROR: id must be [a-z0-9-]: Ab'
 xhas 'usage: ac-self-task.sh start <id> <project-name-or-dir>'
-xhas "usage: ac-self-task.sh log <id> '<line>'"
-# W14 (at parity): an unsupported backend refuses every argv, usage included -
-# and a config/backend that only the start reads, past an env pin.
-x1b() {
-  XENV=(AC_BACKEND=tmux); xc; xc log s1 x
-  XENV=(); printf 'tmux\n' >"$XW/home/config/backend"; xc -h
-  XENV=(AC_BACKEND=herdr); xc start s2 proj
-}
-xsame xself x1b
-xhas "unsupported backend 'tmux'"
+xhas $'== log s1 \nrc=1\n-- out\n-- err\nERROR: usage: ac-self-task.sh log <id> \'<line>\''
 x1c() { XHOME=""; xc start s1 proj; xc log s1 x; }
-xsame xworld x1c
-xhas 'AC_HOME is not set'
-# W3 (at parity): `log` needs git too.
-x1d() { XPATH="$(xwithout git)"; xc log s1 x; xc start s2 proj; }
-xsame xself x1d
-xhas 'required tool not found: git'
-# BUN (named): with no bun the original's `log` runs and its herdr start ends
-# at the lease's shim; the port's shim refuses both before anything.
+xgo xworld x1c
+xhas $'== start s1 proj\nrc=1\n-- out\n-- err\nERROR: AC_HOME is not set'
+xhas $'== log s1 x\nrc=1\n-- out\n-- err\nERROR: AC_HOME is not set'
+# No bun: the shim refuses both verbs before anything.
 x1e() { XPATH="$(xwithout bun)"; xc log s1 'working: no bun'; xc start s2 proj; }
-xboth xself x1e
-xhas $'== log s1 working: no bun\nrc=0' o
-xhas $'== start s2 proj\nrc=1\n-- out\n-- err\nERROR: required tool not found: bun' o
-xwhas 'working: no bun' o
-xwlacks '== home/state/s2.status ' o
-assert_eq "$(grep -c '^ERROR: required tool not found: bun$' "$TMP/xt2.n")" "2" "the port's shim refuses both calls on bun alone"
-xwlacks 'working: no bun' n
-# W4 (at parity): the charset by its text under a UTF-8 locale, and a
-# dash-only id that passes it.
-x1f() {
-  XLC=en_US.UTF-8; xc start aB proj; xc start é proj; xc log é x
-  XLC=C; xc start -- proj --mode bogus; xc start -- proj
-}
-xsame xworld x1f
+xgo xself x1e
+xhas $'== log s1 working: no bun\nrc=1\n-- out\n-- err\nERROR: required tool not found: bun'
+xhas $'== start s2 proj\nrc=1\n-- out\n-- err\nERROR: required tool not found: bun'
+xwlacks 'working: no bun'
+# The charset by its text under a UTF-8 locale.
+x1f() { XLC=en_US.UTF-8; xc start aB proj; xc start é proj; xc log é x; XLC=C; xc start s1 proj --mode bogus; }
+xgo xworld x1f
 xhas 'id must be [a-z0-9-]: aB'
-xhas 'id must be [a-z0-9-]: é'
-xhas 'invalid --mode: bogus'
-xwhas '== home/state/--.meta '
+xhas $'== start é proj\nrc=1\n-- out\n-- err\nERROR: id must be [a-z0-9-]: é'
+xhas $'== log é x\nrc=1\n-- out\n-- err\nERROR: id must be [a-z0-9-]: é'
+xhas $'== start s1 proj --mode bogus\nrc=1\n-- out\n-- err\nERROR: invalid --mode: bogus'
 
-# -- leg 2: log -------------------------------------------------------------------
-# W5 (at parity): the refusal's second, unsilenced read of kind=; W10 (at
-# parity): a line holding LF.
-xlogs() {
-  xself
-  xput home/state/sk.meta 'kind=ship\nbackend=herdr\n'; xput home/state/sn.meta 'backend=herdr\n'
-  xput home/state/su.meta 'kind=self\n'; xput home/state/scr.meta 'kind=self\r\n'
-}
-x2a() {
-  xc log nometa x; xc log sk 'working: x'; xc log sn 'working: x'; xc log scr 'working: x'
-  chmod 000 "$XW/home/state/su.meta"; xc log su 'working: x'; chmod 644 "$XW/home/state/su.meta"
-  xc log s1 'working: edited a file' extra args; xc log s1 $'two\nlines'
-}
-xsame xlogs x2a
-xhas 'no self task for nometa (start it first)'
-xhas 'sk is kind=ship, not self'
-xhas 'sn is kind=, not self'
-xhas 'WARN: cannot read meta file'
-xwhas 'working: edited a file'
-xwhas '== home/data/s1/timeline.log '
-# W11 (named, SHELL-OWN): a status that is a directory ends the append 1, the
-# original's own `Is a directory` line set aside.
+# -- 2: log ---------------------------------------------------------------------------
+xlogs() { xself; xput home/state/sk.meta 'kind=ship\nbackend=herdr\n'; xput home/state/sn.meta 'backend=herdr\n'; }
+x2a() { xc log nometa x; xc log sk 'working: x'; xc log sn 'working: x'; xc log s1 'working: edited a file' extra args; }
+xgo xlogs x2a
+xhas $'== log nometa x\nrc=1\n-- out\n-- err\nERROR: no self task for nometa (start it first)'
+xhas $'== log sk working: x\nrc=1\n-- out\n-- err\nERROR: sk is kind=ship, not self'
+xhas $'== log sn working: x\nrc=1\n-- out\n-- err\nERROR: sn is kind=, not self'
+xhas $'== log s1 working: edited a file extra args\nrc=0\n-- out\n-- err'
+xwhas $'== home/state/s1.status -rw-r--r--\n2026-01-01T00:00:00Z working: edited a file\n'
+xwhas $'== home/data/s1/timeline.log -rw-r--r--\n2026-01-01T00:00:00Z working: edited a file\n'
+# A status that is a directory ends the append 1.
 x2b() { mkdir -p "$XW/home/state/s1.status"; xc log s1 x; }
-xboth xself x2b
-xhas 'Is a directory' o
-xownless; xcmp o n
+xgo xself x2b
 xhas $'== log s1 x\nrc=1'
 
-# -- leg 3: start's flags, the duplicate, the project -------------------------------
+# -- 3: start's flags, the duplicate, the project ---------------------------------------
 x3a() {
   xc start s1 proj --bogus; xc start s1 proj --mode; xc start s1 proj --harness; xc start s1 proj --base-branch
   xc start s1 proj --mode ''; xc start s1 proj --base-branch main; xc start s1 proj --mode crew-ship --mode direct-pr
 }
-xsame xworld x3a
-xhas 'unknown argument: --bogus'
-xhas 'invalid --mode: empty'
+xgo xworld x3a
+xhas $'== start s1 proj --bogus\nrc=1\n-- out\n-- err\nERROR: unknown argument: --bogus'
+xhas $'== start s1 proj --mode \nrc=1\n-- out\n-- err\nERROR: invalid --mode: empty'
 xhas '--harness names the harness working this slice'
 xhas '--base-branch names the branch the orca lease is cut from'
 xhas 'requires an orca-backend fleet (config/backend=herdr here)'
+xhas $'== start s1 proj --mode crew-ship --mode direct-pr\nrc=0'
 xwhas 'mode=direct-pr'
-# W9 (at parity): a dangling link at the meta path passes the duplicate check.
-x3b() { xc start s1 proj; xc start s1 proj; ln -s "$XW/nowhere" "$XW/home/state/s2.meta"; xc start s2 proj; }
-xsame xworld x3b
-xhas 'task s1 already exists (see '
-xhas 'self-task s2 kind=self project=proj'
+x3b() { xc start s1 proj; xc start s1 proj; }
+xgo xworld x3b
+xhas $'== start s1 proj\nrc=1\n-- out\n-- err\nERROR: task s1 already exists (see '
 # The project: a name, a linked name, a path inside the repo, a non-repo, a
-# missing one, and W7 (at parity) - a non-repo dir in the cwd shadowing
-# projects/<name>.
+# missing one.
 xprojects() { xworld; mkdir -p "$XW/proj/sub" "$XW/plain"; ln -s "$XW/proj" "$XW/home/projects/alias"; }
-x3c() {
-  xc start s1 proj; xc start s2 alias; xc start s3 "$XW/proj/sub"; xc start s4 "$XW/proj"
-  xc start s5 "$XW/plain"; xc start s6 nope; mkdir "$XW/cwd/proj"; xc start s7 proj
-}
-xsame xprojects x3c
+x3c() { xc start s1 proj; xc start s2 alias; xc start s3 "$XW/proj/sub"; xc start s4 "$XW/proj"; xc start s5 "$XW/plain"; xc start s6 nope; }
+xgo xprojects x3c
+for s in s1 s2 s3 s4; do xwhas "== home/state/$s.meta "; done
 xhas 'self-task s2 kind=self project=proj'
-xhas 'project not found: nope'
-xhas 'project not found: proj'
+xhas 'self-task s3 kind=self project=proj'
+xhas $'rc=1\n-- out\n-- err\nERROR: project not found: '
+xhas $'== start s6 nope\nrc=1\n-- out\n-- err\nERROR: project not found: nope'
+xwlacks '== home/state/s5.meta '
 
-# -- leg 4: the branch collision -----------------------------------------------------
+# -- 4: the branch collision --------------------------------------------------------------
 xcollide() {
   xworld; git -C "$XW/proj" branch crew/s3; git -C "$XW/proj" branch crew/fam; git -C "$XW/proj" branch crew/s4
   mkdir -p "$XW/home/data/fam/ship"; xput home/state/s4.meta 'kind=self\nbackend=herdr\n'
 }
 x4a() { xc start s3 proj; xc start fam-ship proj; xc start s4-r2 proj; }
-xsame xcollide x4a
-xhas 'crew/s3 already exists in '
+xgo xcollide x4a
+xhas $'== start s3 proj\nrc=1\n-- out\n-- err\nERROR: crew/s3 already exists in '
 xhas 'then start again'
 xhas 'crew/fam already exists in '
 xhas 'self-task s4-r2 kind=self'
 xwhas 'refs/heads/crew/s3'
+xwlacks '== home/state/s3.status '
 
-# -- leg 5: the herdr start ------------------------------------------------------------
+# -- 5: the herdr start -----------------------------------------------------------------------
 x5a() { xc start s1 proj; xc start s2 proj --mode direct-pr; }
-xsame xworld x5a
-xhas 'self-task s1 kind=self project=proj backend=herdr window=herdr:pane-p1 worktree='
+xgo xworld x5a
+xhas $'== start s1 proj\nrc=0\n-- out\nself-task s1 kind=self project=proj backend=herdr window=herdr:pane-p1 worktree='
 xwhas 'tail -f'
 xwhas 'working: self task started by the chief'
 xwhas '== home/state/port-slots.tsv '
-# The scope rides the meta; W2 (at parity): an env orca pin with no config
-# leases from the herdr pool.
-x5b() { XENV=(AC_SCOPE=fam); xc start fam-one proj --mode direct-pr; XENV=(AC_BACKEND=orca); xc start s2 proj; }
-xsame xworld x5b
+# The scope rides the meta.
+x5b() { XENV=(AC_SCOPE=fam); xc start fam-one proj --mode direct-pr; }
+xgo xworld x5b
 xwhas 'fleet_scope=fam'
-xhas 'self-task s2 kind=self project=proj backend=herdr'
 
-# -- leg 6: the crewmate layer -----------------------------------------------------------
+# -- 6: the crewmate layer ------------------------------------------------------------------
 xlayers() { xworld; rm -f "$XW/.claude/CLAUDE.md"; printf 'the fleet crewmate layer\n' >"$XW/home/CREWMATE.md"; }
 x6a() { xc start s1 proj; xc start s2 proj --harness codex; }
-xsame xlayers x6a
+xgo xlayers x6a
 xwhas 'AGENTS.md'
 xwhas '.agents/skills'
+xwhas 'the fleet crewmate layer'
 xshipped() { xworld; mkdir -p "$XW/proj/.claude"; printf 'the shipped law\n' >"$XW/proj/.claude/CLAUDE.md"; git -C "$XW/proj" add -f .claude/CLAUDE.md; git -C "$XW/proj" commit -qm shipped; }
 x6b() { xc start s1 proj; }
-xsame xshipped x6b
+xgo xshipped x6b
 xhas 'crewmate layer at FALLBACK path: .claude/CREWMATE.md'
 xwhas 'layer: crewmate layer at FALLBACK path .claude/CREWMATE.md'
-# W1 (at parity): an unknown --harness starts, its ERROR printed - with no
-# layer source, and with one landing at the FALLBACK path though the repo
-# ships nothing.
-xbare() { xworld; rm -f "$XW/.claude/CLAUDE.md"; }
-x6c() { xc start s1 proj --harness bogus; }
-xsame xbare x6c
-xhas "unknown harness 'bogus'"
-xhas 'self-task s1 kind=self'
-xsame xworld x6c
-xhas 'crewmate layer at FALLBACK path: .claude/CREWMATE.md'
 # A skills seed that fails ends the start after the lease: the rollback
 # returns the slot and removes the status.
 xskillsfile() { xworld; mkdir -p "$XW/proj/.claude"; printf 'x\n' >"$XW/proj/.claude/skills"; git -C "$XW/proj" add -f .claude/skills; git -C "$XW/proj" commit -qm skills-file; }
 x6d() { xc start s1 proj; }
-xsame xskillsfile x6d
+xgo xskillsfile x6d
 xhas $'== start s1 proj\nrc=1'
 xwlacks '== home/state/s1.status '
 xwlacks '== home/state/s1.meta '
 xwhas 'leased=0'
 
-# -- leg 7: the fleet-memory read ---------------------------------------------------------
+# -- 7: the fleet-memory read ---------------------------------------------------------------
 xbrain() {
   xworld; mkdir -p "$XW/home/data/fam-one"
   printf '# Room: fam-one\nA distinctive sentence about zanzibar quorum reconciliation lives here.\n' >"$XW/home/data/fam-one/room.md"
   xrun "$BIN/ac-brain.sh" sync --home "$XW/home" --compact
 }
 x7a() { XENV=(AC_SOLO=1); xc start zanzibar-quorum-reconciliation proj; xc start qqqxzv-wwwqzx proj; }
-xsame xbrain x7a
+xgo xbrain x7a
 xhas 'data/fam-one/room.md'
 xwhas 'working: fleet memory read, opening the pane'
 # A chief at the home with a queued wake: the hook's `agent-crew:` line is
 # dropped, the hits kept.
 x7b() { mkdir -p "$XW/home/state/.wake-spool"; printf 'x\n' >"$XW/home/state/.wake-spool/1.1.000001"; XCWD=home; xc start zanzibar-quorum-reconciliation proj; }
-xsame xbrain x7b
+xgo xbrain x7b
 xhas 'data/fam-one/room.md'
 xlacks 'agent-crew: '
-# W8 (at parity): a `"` in the project name breaks the hook's JSON and the
-# read vanishes.
-xquote() { xbrain; git init -q "$XW/q\"x"; printf 'b\n' >"$XW/q\"x/f"; git -C "$XW/q\"x" add f; git -C "$XW/q\"x" commit -qm b; }
-x7c() { XENV=(AC_SOLO=1); xc start zanzibar-quorum-reconciliation "$XW/q\"x"; }
-xsame xquote x7c
-xhas 'project=q"x'
-xlacks 'ac-brain recall'
 
-# -- leg 8: the pane's refusals, each after the lease ----------------------------------------
+# -- 8: the pane's refusals, each after the lease ----------------------------------------------
 # A live orphan window, an unreadable backend, herdr absent from PATH, a
-# stopped server: each rolls the lease and the status back, and W6 (at parity)
-# leaves the port slot's registry row.
+# stopped server: each rolls the lease and the status back.
 x8a() {
   xput home/state/.pane-or1 'pOR1 tOR1\n'; xput herdr/tabs/tOR1 'pOR1 crew:or1\n'; : >"$XW/herdr/panes/pOR1.buf"
   xc start or1 proj
   xput home/state/.pane-or2 'pOR2 tOR2\n'; : >"$XW/herdr/.unreachable"; xc start or2 proj; rm -f "$XW/herdr/.unreachable"
   : >"$XW/herdr/.server-stopped"; xc start sdown proj; rm -f "$XW/herdr/.server-stopped"
 }
-xsame xworld x8a
+xgo xworld x8a
 xhas 'window herdr:pane-pOR1 already exists'
 xhas 'the BACKEND could not be READ for or2'
 xhas 'herdr workspace create failed (is the herdr server running?)'
 xhas 'could not open the pane for sdown on the herdr backend: the herdr server is not running - attach the session'
 xwhas '== home/state/.pane-or1 '
-xwhas '== home/state/port-slots.tsv '
-xwlacks '== home/state/sdown.status '
+for s in or1 or2 sdown; do xwlacks "== home/state/$s.status "; xwlacks "== home/state/$s.meta "; done
+xwlacks 'leased=1'
 x8b() { xput home/state/.pane-lf1 'pLF1 tLF1\n'; XPATH="$(xwithout herdr)"; xc start lf1 proj; }
-xsame xworld x8b
+xgo xworld x8b
 xhas 'the BACKEND could not be READ for lf1'
+xhas $'== start lf1 proj\nrc=1'
 # A meta write refused after the pane (its lock held by a live pid): the
 # rollback reaps the tab too.
 x8c() { mkdir -p "$XW/home/state/.s1.meta.lock"; printf '%s\n' "$$" >"$XW/home/state/.s1.meta.lock/pid"; xc start s1 proj; }
-xsame xworld x8c
+xgo xworld x8c
 xhas 'cannot lock meta file'
 xwlacks '== home/state/s1.meta '
 xwlacks '== home/state/.pane-s1 '
@@ -968,51 +926,44 @@ xwlacks '== home/state/s1.status '
 xwhas 'leased=0'
 # A tail whose Enter is never acknowledged warns, and the start goes on.
 x8d() { printf '9\n' >"$XW/herdr/panes/p1.drop-enters"; xc start s1 proj; }
-xsame xworld x8d
+xgo xworld x8d
 xhas 'the pane may not have started tailing'
-xhas 'self-task s1 kind=self'
-# A meta rewrite whose mv dies by TERM: mv's status is the start's, the
-# rollback whole but for the temp (bash's own `Terminated` report set aside -
-# SHELL-OWN).
+xhas $'== start s1 proj\nrc=0\n-- out\nself-task s1 kind=self'
+# A meta rewrite whose mv dies by TERM: mv's status is the start's, and the
+# rollback runs.
 xmvterm() {
   xworld; mkdir -p "$XW/stub/mt"
   printf '#!/bin/sh\ncase "$1" in */state/s1.meta.tmp.*) kill -TERM $$ ;; esac\nexec /bin/mv "$@"\n' >"$XW/stub/mt/mv"
   chmod +x "$XW/stub/mt/mv"
 }
 x8e() { XPATH="$XSTUBS:$XW/stub/mt:$PATH"; xc start s1 proj; }
-xboth xmvterm x8e
-xhas 'Terminated' o
-xownless; xcmp o n
+xgo xmvterm x8e
 xhas $'== start s1 proj\nrc=143'
-xwhas '== home/state/s1.meta.tmp.PID '
 xwlacks '== home/state/s1.meta '
 xwlacks '== home/state/.pane-s1 '
 xwlacks '== home/state/s1.status '
 xwhas 'leased=0'
 
-# -- leg 9: the lease's refusals -------------------------------------------------------------
+# -- 9: the lease's refusals -------------------------------------------------------------------
 x9a() { XENV=(AC_MAX_TREES=0); xc start sfull proj; }
-xsame xworld x9a
+xgo xworld x9a
 xhas 'pool is full'
 xwlacks '== home/state/sfull.status '
 # A lease whose child dies by TERM: its status is the start's, the status
-# removed.
-xlab() {  # xlab <name> <bin> - a scratch root running <bin>'s scripts with an ac-tree.sh that kills itself with TERM
-  local d="$TMP/xlab-$1"
-  rm -rf "$d"; mkdir -p "$d/bin"; cp "$2"/*.sh "$d/bin/"
-  ln -s "$ROOT/src" "$d/src"; ln -s "$ROOT/dashboard" "$d/dashboard"; ln -s "$ROOT/.agents" "$d/.agents"
-  printf '#!/bin/sh\nkill -TERM $$\n' >"$d/bin/ac-tree.sh"; chmod +x "$d/bin/ac-tree.sh"
-  printf '%s\n' "$d/bin"
-}
-xlabo="$(xlab o "$xobin")"; xlabn="$(xlab n "$BIN")"
-x9b() { XOBIN="$xlabo"; XNBIN="$xlabn"; xc start s1 proj; }
-xsame xworld x9b
+# removed. The lab runs the live scripts with an ac-tree.sh that kills itself
+# with TERM.
+xlab="$TMP/xlab"
+mkdir -p "$xlab/bin"; cp "$BIN"/*.sh "$xlab/bin/"
+ln -s "$ROOT/src" "$xlab/src"; ln -s "$ROOT/dashboard" "$xlab/dashboard"; ln -s "$ROOT/.agents" "$xlab/.agents"
+printf '#!/bin/sh\nkill -TERM $$\n' >"$xlab/bin/ac-tree.sh"; chmod +x "$xlab/bin/ac-tree.sh"
+x9b() { XBIN="$xlab/bin"; xc start s1 proj; }
+xgo xworld x9b
 xhas $'== start s1 proj\nrc=143'
 xwlacks '== home/state/s1.status '
 # The orca lease: an unreachable runtime, and the epic-branch fence refusing
 # a missing integration branch - nothing leased, nothing released.
 x9c() { : >"$XW/orca/.unreachable"; xc start sofail proj; }
-xsame xorca x9c
+xgo xorca x9c
 xhas 'could not lease an Orca worktree for sofail'
 xwlacks 'worktree rm'
 xfence() {
@@ -1020,14 +971,15 @@ xfence() {
   printf '# Backlog\n## Queued\n- [ ] ofs5 - story; epic:ofe (repo: proj)\n## Done\n' >"$XW/home/records/backlog.md"
 }
 x9d() { xc start ofs5 proj; }
-xsame xfence x9d
+xgo xfence x9d
 xhas 'epic/ofe'
+xhas $'== start ofs5 proj\nrc=1'
 xwlacks '== home/state/ofs5.status '
 
-# -- leg 10: the orca start ------------------------------------------------------------------
+# -- 10: the orca start ----------------------------------------------------------------------
 x10a() { XENV=(AC_SCOPE=fam); xc start fam-o1 proj --base-branch main; }
-xsame xorca x10a
-xhas 'self-task fam-o1 kind=self project=proj backend=orca window=orca:'
+xgo xorca x10a
+xhas $'== start fam-o1 proj --base-branch main\nrc=0\n-- out\nself-task fam-o1 kind=self project=proj backend=orca window=orca:'
 xwhas 'worktree_backend=orca'
 xwhas 'exec tail -f'
 xwlacks 'lease_ids='
@@ -1039,88 +991,44 @@ xorcadown() {
   chmod +x "$XW/stub/oc/orca"
 }
 x10b() { XPATH="$XSTUBS:$XW/stub/oc:$PATH"; xc start s1 proj; }
-xsame xorcadown x10b
+xgo xorcadown x10b
 xhas 'orca terminal create failed for '
 xhas 'orca pane placement failed for s1 at '
+xhas $'== start s1 proj\nrc=1'
 xwhas 'worktree rm'
 
-# -- leg 11: %q (the status path's spelling in the tail) ------------------------------------
-# A home path holding a space and é, spelled by bash 3.2's %q under C and under
-# UTF-8 - the herdr send-text argument and the orca terminal command.
-xqworld() { XHN='hé x'; xworld; }
-xqorca() { XHN='hé x'; xorca; }
-x11a() { xc start s1 proj; XLC=en_US.UTF-8; xc start s2 proj; }
-xsame xqworld x11a
-xwhas 'tail -f'
-xsame xqorca x11a
-xwhas 'exec tail -f'
-
-# -- leg 12: signals -------------------------------------------------------------------------
-# W15 (at parity): TERM held through the lease acts as it returns - the slot
-# stays leased, the status goes.
-x12a() { : >"$XW/stub/hold-od"; xsig TERM start s1 proj; }
-xsame xworld x12a
-xhas $'== TERM start s1 proj\nrc=143'
-xwlacks '== home/state/s1.status '
-xwhas 'leased=1'
-xwlacks 'leased=0'
+# -- 11: signals -----------------------------------------------------------------------------
 # TERM, HUP and INT held through the meta's spawned_at stamp: the whole
 # rollback - lease returned, tab reaped, handle, meta and status gone.
 xstamp() { xworld; printf '%s\n' "$XW/home/state/s1.meta" >"$XW/stub/hold-date"; }
-x12b() { xsig TERM start s1 proj; }
-xsame xstamp x12b
+x11b() { xsig TERM start s1 proj; }
+xgo xstamp x11b
 xhas $'== TERM start s1 proj\nrc=143'
 xwlacks '== home/state/s1.meta '
 xwlacks '== home/state/.pane-s1 '
 xwlacks '== home/state/s1.status '
 xwhas 'leased=0'
-x12c() { xsig HUP start s1 proj; }
-xsame xstamp x12c
+x11c() { xsig HUP start s1 proj; }
+xgo xstamp x11c
 xhas $'== HUP start s1 proj\nrc=129'
-x12d() { xsig INT start s1 proj; }
-xsame xstamp x12d
+xwlacks '== home/state/s1.meta '
+x11d() { xsig INT start s1 proj; }
+xgo xstamp x11d
 xhas $'== INT start s1 proj\nrc=130'
+xwlacks '== home/state/s1.meta '
 xstamporca() { xorca; printf '%s\n' "$XW/home/state/s1.meta" >"$XW/stub/hold-date"; }
-xsame xstamporca x12b
+xgo xstamporca x11b
 xhas $'== TERM start s1 proj\nrc=143'
 xwhas 'worktree rm'
-# W16 (at parity): TERM held through the orca placement acts as it returns -
-# the terminal stays, no handle is written, the worktree is released.
-xorcahold() {
-  xorca; mkdir -p "$XW/stub/oh"
-  printf '#!/bin/sh\ncase "$*" in "terminal create"*) : >"$XSTUB/held"; i=0; while [ ! -e "$XSTUB/release" ] && [ "$i" -lt 300 ]; do /bin/sleep 0.1; i=$((i + 1)); done ;; esac\nexec "%s" "$@"\n' "$TMP/stubbin/orca" >"$XW/stub/oh/orca"
-  chmod +x "$XW/stub/oh/orca"
-}
-x12e() { XPATH="$XSTUBS:$XW/stub/oh:$PATH"; xsig TERM start s1 proj; }
-xsame xorcahold x12e
-xhas $'== TERM start s1 proj\nrc=143'
-xwlacks '== home/state/.pane-s1 '
-xwhas 'terminal create'
-# SIGNALS (named): during the tail's send, a plain child of the original, TERM
-# acted at once - the send cut short, the tab left (W16) - where the port
-# finishes the send first; INT the original swallowed there and completed,
-# where the port ends 130 with the rollback.
+# INT during the tail's send: the send finishes, then the run ends 130 with
+# the rollback.
 xsettle() { xworld; printf '7\n' >"$XW/stub/hold-sleep"; }
-x12f() { XENV=(AC_SEND_SETTLE=7); xsig TERM start s1 proj; }
-xboth xsettle x12f
-xhas $'== TERM start s1 proj\nrc=143' o
-xhas $'== TERM start s1 proj\nrc=143' n
-xwlacks '== home/state/s1.status ' o
-xwlacks '== home/state/s1.status ' n
-xwhas '== home/state/.pane-s1 ' o
-xwhas '== home/state/.pane-s1 ' n
-x12g() { XENV=(AC_SEND_SETTLE=7); xsig INT start s1 proj; }
-xboth xsettle x12g
-xhas $'== INT start s1 proj\nrc=0' o
-xwhas '== home/state/s1.meta ' o
-xhas $'== INT start s1 proj\nrc=130' n
-xwlacks '== home/state/s1.meta ' n
-# SIGNALS (named): held through the final meta rewrite's mv, a plain child of
-# the original, TERM and HUP acted at once - the rollback ran while the mv
-# went on, so whether it landed the meta before or after the rollback's rm is
-# the original's race, unpinned - and INT was swallowed, the start reported;
-# the port lands the rewrite, then rolls the whole start back. xmvdone waits
-# that mv out, the original's orphan included, before the world is read.
+x11g() { XENV=(AC_SEND_SETTLE=7); xsig INT start s1 proj; }
+xgo xsettle x11g
+xhas $'== INT start s1 proj\nrc=130'
+xwlacks '== home/state/s1.meta '
+# Held through the final meta rewrite's mv: the rewrite lands, then the whole
+# start is rolled back. xmvdone waits that mv out before the world is read.
 xmvhold() {
   xworld; mkdir -p "$XW/stub/mh"
   printf '#!/bin/sh\ncase "$1" in */state/s1.meta.tmp.*) if /usr/bin/grep -q "^spawned_at=" "$1"; then : >"$XSTUB/held"; i=0; while [ ! -e "$XSTUB/release" ] && [ "$i" -lt 300 ]; do /bin/sleep 0.1; i=$((i + 1)); done; /bin/mv "$@"; s=$?; : >"$XSTUB/mv-done"; exit $s; fi ;; esac\nexec /bin/mv "$@"\n' >"$XW/stub/mh/mv"
@@ -1129,79 +1037,62 @@ xmvhold() {
 xmvdone() {  # xmvdone - the held mv released again and waited for
   local i=0; : >"$XW/stub/release"
   while [ ! -e "$XW/stub/mv-done" ] && [ "$i" -lt 600 ]; do /bin/sleep 0.05; i=$((i + 1)); done
-  [ -e "$XW/stub/mv-done" ] || fail "self-task differential at line $(xrow): the held mv never finished"
+  [ -e "$XW/stub/mv-done" ] || fail "self-task at line $(xrow): the held mv never finished"
   rm -f "$XW/stub/release"
 }
-x12h() { XPATH="$XSTUBS:$XW/stub/mh:$PATH"; xsig TERM start s1 proj; xmvdone; }
-xboth xmvhold x12h
-xhas $'== TERM start s1 proj\nrc=143' o
-xwlacks '== home/state/s1.status ' o
-xwlacks '== home/state/.pane-s1 ' o
-xwhas 'leased=0' o
-xhas $'== TERM start s1 proj\nrc=143' n
-xwlacks '== home/state/s1.meta ' n
-xwlacks '== home/state/.s1.meta.lock ' n
-xwlacks '== home/state/s1.status ' n
-xwlacks '== home/state/.pane-s1 ' n
-xwhas 'leased=0' n
-x12i() { XPATH="$XSTUBS:$XW/stub/mh:$PATH"; xsig HUP start s1 proj; xmvdone; }
-xboth xmvhold x12i
-xhas $'== HUP start s1 proj\nrc=129' o
-xhas $'== HUP start s1 proj\nrc=129' n
-xwlacks '== home/state/s1.meta ' n
-x12j() { XPATH="$XSTUBS:$XW/stub/mh:$PATH"; xsig INT start s1 proj; xmvdone; }
-xboth xmvhold x12j
-xhas $'== INT start s1 proj\nrc=0' o
-xhas 'self-task s1 kind=self' o
-xhas $'== INT start s1 proj\nrc=130' n
-xlacks 'self-task s1 kind=self' n
-xwlacks '== home/state/s1.meta ' n
-# SIGNALS (named): held through log's date, TERM, HUP and INT ended the
-# original with nothing appended; the port appends the line, then ends 128+n.
+x11h() { XPATH="$XSTUBS:$XW/stub/mh:$PATH"; xsig TERM start s1 proj; xmvdone; }
+xgo xmvhold x11h
+xhas $'== TERM start s1 proj\nrc=143'
+xwlacks '== home/state/s1.meta '
+xwlacks '== home/state/.s1.meta.lock '
+xwlacks '== home/state/s1.status '
+xwlacks '== home/state/.pane-s1 '
+xwhas 'leased=0'
+x11i() { XPATH="$XSTUBS:$XW/stub/mh:$PATH"; xsig HUP start s1 proj; xmvdone; }
+xgo xmvhold x11i
+xhas $'== HUP start s1 proj\nrc=129'
+xwlacks '== home/state/s1.meta '
+x11j() { XPATH="$XSTUBS:$XW/stub/mh:$PATH"; xsig INT start s1 proj; xmvdone; }
+xgo xmvhold x11j
+xhas $'== INT start s1 proj\nrc=130'
+xlacks 'self-task s1 kind=self'
+xwlacks '== home/state/s1.meta '
+# Held through log's date: the line lands, then the run ends 128+n.
 xlogdate() { xself; printf '%s\n' "$XW/home/state/s1.meta" >"$XW/stub/hold-date"; }
-x12k() { xsig TERM log s1 'working: logged under TERM'; }
-xboth xlogdate x12k
-xhas $'== TERM log s1 working: logged under TERM\nrc=143' o
-xhas $'== TERM log s1 working: logged under TERM\nrc=143' n
-xwlacks 'working: logged under TERM' o
-xwhas 'working: logged under TERM' n
-x12l() { xsig HUP log s1 'working: logged under HUP'; }
-xboth xlogdate x12l
-xhas $'== HUP log s1 working: logged under HUP\nrc=129' o
-xhas $'== HUP log s1 working: logged under HUP\nrc=129' n
-x12m() { xsig INT log s1 'working: logged under INT'; }
-xboth xlogdate x12m
-xhas $'== INT log s1 working: logged under INT\nrc=130' o
-xhas $'== INT log s1 working: logged under INT\nrc=130' n
+for sig in TERM:143 HUP:129 INT:130; do
+  xsiglog() { xsig "${sig%%:*}" log s1 "working: logged under ${sig%%:*}"; }
+  xgo xlogdate xsiglog
+  xhas "== ${sig%%:*} log s1 working: logged under ${sig%%:*}"$'\n'"rc=${sig#*:}"
+  xwhas "working: logged under ${sig%%:*}"
+done
 
-# -- leg 13: continuation -----------------------------------------------------------------------
-# A slice started by one side is logged by the other and torn down after,
-# either side first.
-x13a() { xc start s1 proj; xc log s1 'working: the other side logs it'; xrun "$BIN/ac-teardown.sh" s1 --force; }
-xcont xworld x13a
-xhas 'self-task s1 kind=self' a
-xwhas 'the other side logs it' b
-
-# -- leg 14: a closed stdout --------------------------------------------------------------------
+# -- 12: a closed stdout ---------------------------------------------------------------------
 # The start's first write to stdout fails and ends it 1 where it stands - the
-# start line, the FALLBACK notice, the recall block; a log writes none (bash's
-# own `printf: write error` set aside - SHELL-OWN).
-x14a() { XCLOSE=1; xc start s1 proj; xc log s1 'working: logged with stdout closed'; }
-xboth xworld x14a
-xhas 'printf: write error' o
-xownless; xcmp o n
+# start line, the FALLBACK notice, the recall block; a log writes none.
+x12a() { XCLOSE=1; xc start s1 proj; xc log s1 'working: logged with stdout closed'; }
+xgo xworld x12a
 xhas $'== start s1 proj\nrc=1'
 xhas $'== log s1 working: logged with stdout closed\nrc=0'
 xwhas '== home/state/s1.meta '
-x14b() { XCLOSE=1; xc start s1 proj; }
-xboth xshipped x14b
-xhas 'printf: write error' o
-xownless; xcmp o n
+x12b() { XCLOSE=1; xc start s1 proj; }
+xgo xshipped x12b
 xhas $'== start s1 proj\nrc=1'
-x14c() { XCLOSE=1; XENV=(AC_SOLO=1); xc start zanzibar-quorum-reconciliation proj; }
-xboth xbrain x14c
-xhas 'write error' o
-xownless; xcmp o n
+x12c() { XCLOSE=1; XENV=(AC_SOLO=1); xc start zanzibar-quorum-reconciliation proj; }
+xgo xbrain x12c
 xhas $'== start zanzibar-quorum-reconciliation proj\nrc=1'
+
+# -- 13: %q (the status path's spelling in the tail) ------------------------------------
+# A home path holding a space and é, spelled as bash 3.2's printf %q spells it
+# under C and under UTF-8 - the herdr send-text argument and the orca terminal
+# command.
+xqworld() { XHN='hé x'; xworld; }
+xqorca() { XHN='hé x'; xorca; }
+x13a() { xc start s1 proj; XLC=en_US.UTF-8; xc start s2 proj; }
+xgo xqworld x13a
+xwhas "herdr pane send-text p1 tail -f \$'$XW/h"'\303\251'" x/state/s1.status'"
+xwhas "herdr pane send-text p2 tail -f $XW/hé"'\'" x/state/s2.status"
+xgo xqorca x13a
+xwhas "&& exec tail -f \$'$XW/h"'\303\251'" x/state/s1.status' --json"
+xwhas "&& exec tail -f $XW/hé"'\'" x/state/s2.status --json"
 
 pass

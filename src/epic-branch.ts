@@ -1,8 +1,7 @@
 // epic-branch.ts - the per-epic INTEGRATION-BRANCH verbs (epic-branch-mech).
 // The entry is bin/ac-epic-branch.sh (a shim that starts this file through
-// bin/ac-bun.sh); THIS header is the authoritative spec, and the bash original
-// it replaced stays frozen at tests/fixtures/ac-epic-branch.sh as the oracle
-// the differential leg of tests/sh/ac-epic-branch.test.sh holds this module to.
+// bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-epic-branch.test.sh is its contract test.
 //
 // A branch-recorded epic integrates its stories on one branch per repo before
 // the whole ships. The RECORD is data/<epic>/branches (`<repo> <branch>
@@ -82,14 +81,10 @@
 // rev-parse` ends the run with git's own status and message, as errexit did.
 // Record bytes are echoed as bytes (the branch in every line, show's cat).
 //
-// DIVERGENCES from the original, named in the differential leg: a missing
-// AC_HOME is refused once and nothing more is said (the original printed the
-// refusal twice and ran on to the verb's no-record line); an unreadable
-// AC_HOME names the variable (the shell's own `cd:` line is not reproduced);
-// retire keeps the record's mode (the original's mktemp+mv left it 0600 - the
-// temp file's mode, not the record's); the tool-own lines of an unreadable
-// record (head/awk/cat) are not reproduced, its exit status is; the archive
-// years are read in byte order under any locale.
+// A missing AC_HOME is refused once and nothing more is said; an unreadable
+// AC_HOME names the variable; retire keeps the record's mode; a record this
+// process cannot read ends the run with exit 1; the archive years are read in
+// byte order under any locale.
 import { chmodSync, readFileSync, renameSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { dataDir, die, enterCaller, epicBranchEntry, epicBranchesFile, freshestRef, pushControlPlane, spawnShellSync } from "./lib.ts";
 

@@ -1,9 +1,7 @@
 // ready.ts - the queued-work scheduler primitive and DAG validator.
 // The entry is bin/ac-ready.sh (a shim that starts this file through
 // bin/ac-bun.sh); THIS header is the authoritative spec and the entry's usage
-// text, and the bash original it replaced stays frozen at
-// tests/fixtures/ac-ready.sh as the oracle the differential leg of
-// tests/sh/ac-ready.test.sh holds this module to.
+// text, and tests/sh/ac-ready.test.sh is its contract test.
 // Idempotent and read-only over records/backlog.md: run it at every landing
 // checkpoint, wake drain, session start, and /debrief - an interrupted
 // checkpoint heals at the next run.
@@ -196,7 +194,7 @@
 // ac-ready.sh overlap --semantic '<order text>'`, exit 1; words after it are
 // ignored). A records/backlog.md (records/ minted) that is no regular file
 // prints nothing; one that cannot be read ends the run 2. Its open rows are
-// read as the original's awk read them: `## In flight` and `## Queued` open a
+// read so: `## In flight` and `## Queued` open a
 // section (`in flight`, `queued`), any other `## ` heading closes it; inside
 // one, a `- [` line is a row (acDoneline's id; none skips it), and an indented
 // non-blank line is a body line of the LAST row read, whatever section that
@@ -217,21 +215,9 @@
 // <bin>/ac-jev.sh sha --state-file <state>>`. A spawned `rm -f` removes the
 // state (its failure ends the run). <bin> is the distro's own bin/
 // (STARTED_BIN). Every child runs with the caller's stdin, and with its
-// stderr wherever the original did not drop it (rev-parse's, diff's).
+// stderr, rev-parse's and diff's aside (dropped).
 //
-// ESCAPE HATCH. ac-ready rides session start, the wake drain, the turn-end
-// guard and teardown (each fail-soft) and every intake's overlap check. If a
-// landed change breaks this module, run the frozen original from a scratch
-// bin/ at a physical path:
-//   o=$(cd "$(mktemp -d)" && pwd -P); mkdir "$o/bin"; cp bin/*.sh "$o/bin/"
-//   ln -s "$PWD/src" "$o/src"; ln -s "$PWD/dashboard" "$o/dashboard"
-//   cp tests/fixtures/ac-ready.sh "$o/bin/ac-ready.sh"
-// then "$o/bin/ac-ready.sh" overlap ... by hand. Its report, queued,
-// watch-set and validate start this module through "$o/src" all the same, so
-// the hatch covers overlap and the usage only; the captain's revert of the
-// land is the last resort.
-//
-// AT PARITY (each pinned in the leg):
+// AT PARITY with the bash this module replaced:
 // - A landing record with an EMPTY family never reports: the family '' that
 //   excludes nothing excludes it.
 // - grep's reading above: a path holding a LF is reported when any one of its
@@ -241,35 +227,22 @@
 // - A body line after a section change belongs to the last row read.
 // - A repeated id is asked twice and printed twice.
 //
-// DIVERGENCES from the frozen original (the leg names each one a row can show):
-// - USAGE HEADER: the usage is this header, where the original printed its
-//   own.
-// - ORDER: projects/ entries and briefs in byte order under every locale,
-//   where bash 3.2's glob followed the locale's collation under UTF-8 (the leg
-//   runs the oracle under C).
-// - SHELL-OWN STDERR is not reproduced, the status kept: an unreadable
-//   state/.landings or records/backlog.md ends the run 2 without awk's `can't
-//   open file` lines; a state/, data/, projects/ or records/ that mkdir cannot
-//   make is silent; a jq that cannot start ends the run 127 and a state file
-//   that cannot be written 1, without the shell's line; from a cwd that has
-//   no name the shell's own getcwd lines (`shell-init:`, `chdir:`) are the
-//   shim's, fewer than the original's cds printed.
-// - NO PARSER CHILD: --semantic parses its rows in this process, where the
-//   original's awk started `ac-backlog.sh fields` and ended 2 (`ERROR: the
-//   backlog parser failed on <file>`) when that failed - bun missing, or the
-//   ledger rewritten mid-read.
-// - HOME RESOLUTION: an AC_HOME cd cannot enter is the ERROR line above, where
-//   the shell printed its own `cd:` line (exit 1 both); a relative AC_HOME from
-//   a caller cwd that has no name is `ERROR: the current directory cannot be
-//   resolved, so a relative AC_HOME cannot be either`, exit 1, where cd failed
-//   in the deleted directory. From such a cwd every child runs in the distro
-//   root, so a relative TMPDIR names a directory there.
-// - BUN: overlap needs bun now (the shim's `ERROR: required tool not found:
-//   bun`, exit 1, before any argument is read), where the original's path
-//   overlap needed none.
-// - <bin>: ac-jev.sh is the distro's own bin/, where the original ran the one
-//   beside the path it was started by - the same file unless that path was a
-//   copy of bin/.
+// ALSO:
+// - The usage is this header.
+// - ORDER: projects/ entries and briefs in byte order under every locale.
+// - No line of a tool's own is printed: an unreadable state/.landings or
+//   records/backlog.md ends the run 2 silently; a state/, data/, projects/ or
+//   records/ that cannot be made is silent; a jq that cannot start ends the
+//   run 127 and a state file that cannot be written 1.
+// - --semantic parses its rows in this process.
+// - HOME RESOLUTION: an AC_HOME cd cannot enter is the ERROR line above; a
+//   relative AC_HOME from a caller cwd that has no name is `ERROR: the current
+//   directory cannot be resolved, so a relative AC_HOME cannot be either`,
+//   exit 1. From such a cwd every child runs in the distro root, so a relative
+//   TMPDIR names a directory there.
+// - BUN: every verb needs bun (the shim's `ERROR: required tool not found:
+//   bun`, exit 1, before any argument is read).
+// - <bin>: ac-jev.sh is the distro's own bin/.
 // - BYTES: argv and the environment arrive decoded, so a path, an order text
 //   or a TMPDIR that is no UTF-8 is U+FFFD, and a branch name that is no UTF-8
 //   reaches `git diff` decoded.
@@ -294,7 +267,6 @@ import {
   defaultBranch,
   die,
   enterCaller,
-  landingOverlaps,
   physicalDir,
   recordsDir,
   roomFile,
@@ -303,6 +275,7 @@ import {
   tabFields,
   taskMeta,
 } from "./lib.ts";
+import { landingOverlaps } from "./lib-merge-local.ts";
 
 type Row = {
   sec: string;

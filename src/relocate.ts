@@ -4,9 +4,7 @@
 // up where it left off (a roomchief is also told to re-arm its family
 // watcher, which died with the old tab). The entry is bin/ac-relocate.sh (a
 // shim that starts this file through bin/ac-bun.sh); THIS header is the
-// authoritative spec, and the bash original it replaced stays frozen at
-// tests/fixtures/ac-relocate.sh as the oracle the differential leg of
-// tests/sh/ac-relocate.test.sh holds this module to.
+// authoritative spec, and tests/sh/ac-relocate.test.sh is its contract test.
 //
 // Usage: ac-relocate.sh <id> [--family <fam> | --root]
 // Target (FAMILY WORKSPACE GROUPING, bin/ac-backend.sh header): by default the
@@ -139,33 +137,27 @@
 // STDIN BY POSITION: the old tab's close and send_line's typing and keys read
 // the caller's stdin, every other herdr call /dev/null.
 //
-// NAMED DIVERGENCES from the frozen original, each in the leg:
-// - stdin by history (V1, the D-E ruling): the original's twin-sweep calls
-//   read its loop's here-string, and its workspace create the caller's stdin
-//   (a compound command with a stdin redirect had run in that `$( )`); here
-//   both read /dev/null.
-// - The scope grammar per the text: bash 3.2's [!A-Za-z0-9_-] under a UTF-8
-//   locale admitted é by collation, so AC_SCOPE=é grouped there; here it is
+// ALSO:
+// - The twin sweep's calls and the workspace create are among the calls that
+//   read /dev/null.
+// - The scope grammar is read per its text under any locale: AC_SCOPE=é is
 //   skipped for the id's family.
 // - Bytes: argv and the environment arrive decoded, so an id byte that is not
 //   UTF-8 is U+FFFD in a path, a child's argv and a refusal; and a resume line
 //   or label holding such a byte - under a UTF-8 locale printf %q leaves a
 //   UTF-8 lead byte raw beside its escaped continuation - reaches herdr's argv
-//   with U+FFFD where the original typed the byte (W17).
-// - A meta holding a NUL keeps its bytes (metaSet), where the original's grep
-//   rewrote it as `Binary file <meta> matches` plus the new line.
+//   with U+FFFD (W17).
+// - A meta holding a NUL keeps its bytes (metaSet).
 // - The workspace close's `2>&1` capture is read as stdout, then stderr, not
 //   interleaved; only its workspace_group_close_required test reads it.
 // - The HOME RESOLUTION ruling: an AC_HOME that cannot be entered names the
-//   variable (`ERROR: AC_HOME is not a readable directory: <h>`) where the
-//   shell printed cd's own line.
-// - Shell-own stderr is not reproduced: a redirection refused (a status log
-//   that is a directory, a read-only handle - exit 1 alike) and bash 3.2's
-//   job-control race line `child setpgid (...): Operation not permitted`.
+//   variable (`ERROR: AC_HOME is not a readable directory: <h>`).
+// - A write the filesystem refuses (a status log that is a directory, a
+//   read-only handle) ends the run 1 with no line of a shell's own.
 // - require (src/lib.ts) uses Bun.which, which refuses a non-executable PATH
-//   file `command -v` accepted.
-// - BUN ABSENT from PATH: the original never needed it; the shim refuses with
-//   `ERROR: required tool not found: bun`.
+//   file.
+// - BUN ABSENT from PATH: the shim refuses with `ERROR: required tool not
+//   found: bun`.
 //
 // CALLERS: no script runs this entry; chiefs run it by hand (docs/scripts.md).
 // bin/ac-sessionstart-nudge.sh and two hook tests reason about the roomchief

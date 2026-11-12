@@ -1,8 +1,7 @@
 // home-seed.ts - provision a persistent crewdeputy home. The entry is
 // bin/ac-home-seed.sh (a shim that starts this file through bin/ac-bun.sh);
-// THIS header is the authoritative spec, and the bash original it replaced
-// stays frozen at tests/fixtures/ac-home-seed.sh as the oracle the differential
-// leg of tests/sh/ac-home-seed.test.sh holds this module to.
+// THIS header is the authoritative spec, and tests/sh/ac-home-seed.test.sh its
+// contract test.
 //
 //   ac-home-seed.sh <name> (--projects <p1,p2,...> | --no-projects)
 //
@@ -41,8 +40,10 @@
 // ends the run with ITS status and stderr, as `set -e` did:
 //   a. state/ data/ records/ config/ projects/ under the home, and the empty
 //      .ac-crewdeputy-home marker (ac_is_crewdeputy_home reads it)
-//   b. seedRuntimeLinks: bin CLAUDE.md .claude AGENTS.md linked to the distro
-//      root so the chief runs with cwd = home (workspace = home, repo = code)
+//   b. seedRuntimeLinks: bin CLAUDE.md .claude AGENTS.md .agents linked to the distro
+//      root so the chief runs with cwd = home (workspace = home, repo = code);
+//      the per-harness AC_HOME carriers are the first session start's
+//      (src/home-carriers.ts), never this seed's
 //   c. the parent's config knobs copied by basename with plain `cp` (content
 //      and mode through umask; macOS cp carries xattrs/ACLs): backend
 //      crew-harness crew-dispatch.json herdr-session wedge-alarm captain flow

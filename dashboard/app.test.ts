@@ -9,9 +9,9 @@
 // re-count pending/handback (the no-second-bookkeeping rule).
 
 import { test, expect } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync, statSync, chmodSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync, statSync, chmodSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { reviewWakeParts, reviewWakeText, reviewWakeFamily, reviewWakeTask, chiefPaneOf, orcaWindowOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, reviewBound, reviewLoad, reviewSave, REVIEW_SESSION_MAX_BYTES, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, attachArgv, paneViewportRows, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, warmMemo, homePathsIn, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, domainTallies, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted, pastedPngFile, composerEscapeCloses, unreachableNotice, noteReceipt, annotatePassThrough, reviewPage, reviewFrameHeaders, roomList } from "./app.ts";
+import { reviewWakeParts, reviewWakeText, reviewWakeFamily, reviewWakeTask, chiefPaneOf, orcaWindowOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, reviewBound, reviewLoad, reviewSave, REVIEW_SESSION_MAX_BYTES, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, attachArgv, paneViewportRows, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, warmMemo, homePathsIn, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, domainTallies, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted, pastedPngFile, composerEscapeCloses, imeOwnsKey, unreachableNotice, noteReceipt, annotatePassThrough, reviewPage, reviewFrameHeaders, roomList } from "./app.ts";
 
 test("review chrome is framable only by its own origin", () => {
   // The SPA embeds /review in its own #toolview iframe (same origin), so the
@@ -214,6 +214,69 @@ test("collectLearning stays fleet-local, excludes skills-archive, and refuses es
     expect(learning.pending.waiting.map((d) => d.subject)).toEqual(["needs-captain"]);
     expect(learning.pending.waiting_gate).toEqual([]);
     expect(learning.skills.some((s) => s.name === "foreign-skill" || s.name === "escape-skill")).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("collectLearning keys a later candidate on an already-claimed name as <name>.<k>, as src/learn.ts run does", () => {
+  const root = mkdtempSync(`${tmpdir()}/ac-dash-learning-k-`);
+  const home = `${root}/fleet`;
+  const run = `${home}/data/learning-run`;
+  const receipt = (subject: string, decision: string) =>
+    [
+      "---",
+      'schema: "agentcrew.maintenance-gate/v1"',
+      'mode: "learning"',
+      `subject: "${subject}"`,
+      `decision: "${decision}"`,
+      'authority: "second-chief"',
+      "---",
+      "",
+      "## Grounds",
+      "",
+      `${decision} for ${subject}.`,
+    ].join("\n");
+  try {
+    for (const s of ["x", "x.2"]) {
+      mkdirSync(`${run}/gates/${s}`, { recursive: true });
+      mkdirSync(`${home}/state/.maintenance-transactions/learning-run-${s}`, { recursive: true });
+    }
+    writeFileSync(`${run}/report.md`, "# Report\n\nstatus: ok\n");
+    writeFileSync(`${run}/retro.md`, "# Retro\n");
+    writeFileSync(`${run}/candidate-x-a.md`, "kind: patch\nname: x\n");
+    writeFileSync(`${run}/candidate-x-b.md`, "kind: patch\nname: x\n");
+    writeFileSync(`${run}/gates/x/decision.md`, receipt("x", "continue"));
+    writeFileSync(`${run}/gates/x.2/decision.md`, receipt("x.2", "ask-captain"));
+    writeFileSync(`${home}/state/.maintenance-transactions/learning-run-x/journal`, "status=complete\n");
+    writeFileSync(`${home}/state/.maintenance-transactions/learning-run-x.2/journal`, "status=claimed\n");
+
+    const learning = collectLearning(home);
+    expect(learning.pending.active_run).toBe("learning-run");
+    expect(learning.pending.waiting.map((d) => d.subject)).toEqual(["x.2"]);
+    expect(learning.pending.waiting_gate).toEqual([]);
+    const applied = Object.fromEntries(learning.decisions.map((d) => [d.subject, d.apply_state]));
+    expect(applied).toEqual({ x: "complete", "x.2": "claimed" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("collectLearning: a skill card's latest_decision is its newest receipt, a <name>.<k> one included", () => {
+  const root = mkdtempSync(`${tmpdir()}/ac-dash-learning-latest-`);
+  const home = `${root}/fleet`;
+  const run = `${home}/data/learning-run`;
+  try {
+    mkdirSync(`${home}/skills/x`, { recursive: true });
+    writeFileSync(`${home}/skills/x/SKILL.md`, "---\nname: x\ndescription: X.\n---\n");
+    for (const [s, decision, at] of [["x", "continue", 1000], ["x.2", "revise", 2000]] as const) {
+      mkdirSync(`${run}/gates/${s}`, { recursive: true });
+      writeFileSync(`${run}/gates/${s}/decision.md`, `---\nschema: "agentcrew.maintenance-gate/v1"\nmode: "learning"\nsubject: "${s}"\ndecision: "${decision}"\n---\n`);
+      utimesSync(`${run}/gates/${s}/decision.md`, at, at);
+    }
+    const card = collectLearning(home).skills.find((s) => s.name === "x");
+    expect(card?.latest_decision?.subject).toBe("x.2");
+    expect(card?.latest_decision?.decision).toBe("revise");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -936,6 +999,35 @@ test("domainProjectLinks: no projects/ dir -> []", () => {
 // ac-room.sh list exits non-zero when a room cannot be read: that is no
 // answer, so it must reach the page as UNKNOWN - an empty list reads as an
 // inbox with nothing waiting on the captain.
+test("readRoomEntries, collectArtifacts and reviewWakeFamily resolve a STORY nested in its epic's dir (data/<epic>/<story>/.family) as a family of its own", async () => {
+  const root = mkdtempSync(`${tmpdir()}/ac-dash-nested-`);
+  const home = `${root}/fleet`;
+  try {
+    mkdirSync(`${home}/data/ep/story/spec`, { recursive: true });
+    writeFileSync(`${home}/data/ep/story/.family`, "");
+    writeFileSync(`${home}/data/ep/story/room.md`, "# Room: story\n\n- [2026-08-03T00:00:00Z] chief> ORDER: do the story.\n");
+    writeFileSync(`${home}/data/ep/story/spec/report.md`, "# Spec\n");
+    mkdirSync(`${home}/data/ep/work`, { recursive: true });
+    writeFileSync(`${home}/data/ep/work/report.md`, "# Work\n");
+
+    const entries = await readRoomEntries(home, "story");
+    expect(entries.some((l) => l.includes("do the story"))).toBe(true);
+
+    const artifacts = collectArtifacts(home);
+    const story = artifacts.find((a) => a.path.endsWith("data/ep/story/spec/report.md"));
+    expect(story?.family).toBe("story");
+    expect(story?.stage).toBe("spec/report.md");
+    // A bare subdir with no marker is the epic's own, as it always was.
+    const work = artifacts.find((a) => a.path.endsWith("data/ep/work/report.md"));
+    expect(work?.family).toBe("ep");
+
+    expect(reviewWakeFamily(home, `${home}/data/ep/story/spec/report.md`)).toBe("story");
+    expect(reviewWakeFamily(home, `${home}/data/ep/work/report.md`)).toBe("ep");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("roomList: an unreadable room set is null (unknown), never an empty inbox", async () => {
   if (process.getuid?.() === 0) return;
   const home = mkdtempSync(`${tmpdir()}/ac-dash-rooms-`);
@@ -3588,8 +3680,35 @@ test("review chrome routes the composer's Escape through composerEscapeCloses wi
   const line = handler.slice(0, handler.indexOf("\n});"));
   expect(line).toContain("composerEscapeCloses(");
   expect(line).toContain("pendingCImage");
-  expect(line).toContain("e.isComposing");
+  expect(line).toContain("imeOwnsKey(e)");
   expect(line).not.toMatch(/Escape"\) composer\.style\.display = "none"/);
+});
+
+// The Enter that confirms an IME candidate (Vietnamese Telex, Japanese) used
+// to send the half-composed message: the review chat and the Board's chief
+// composer sent on any plain Enter. WebKit fires compositionend BEFORE that
+// keydown, so isComposing alone reads false there; keyCode 229 still marks it
+// (MDN "Element: keydown event", keydown events with IME).
+test("imeOwnsKey: a composing keydown or the keyCode-229 confirm keydown belongs to the IME", () => {
+  expect(imeOwnsKey({ isComposing: true, keyCode: 13 })).toBe(true);
+  expect(imeOwnsKey({ isComposing: false, keyCode: 229 })).toBe(true);
+  expect(imeOwnsKey({ isComposing: false, keyCode: 13 })).toBe(false);
+  expect(imeOwnsKey({})).toBe(false);
+});
+
+test("every send-on-Enter composer leaves an IME-owned keydown alone", () => {
+  const app = readFileSync(new URL("./app.ts", import.meta.url), "utf8");
+  const handler = (src: string, at: string) => { const h = src.slice(src.indexOf(at)); return h.slice(0, h.indexOf("\n});")); };
+  for (const id of ["cmsg", "ctext"]) {
+    const h = handler(app, `getElementById("${id}").addEventListener("keydown"`);
+    expect(h).toContain("Enter");
+    expect(h).toContain("imeOwnsKey(e)");
+  }
+  expect(app).toContain("${imeOwnsKey.toString()}");
+  const page = readFileSync(new URL("./page.ts", import.meta.url), "utf8");
+  const chief = page.slice(page.indexOf("if(t && t.id==='chief-msg')"));
+  expect(chief.slice(0, chief.indexOf("\n"))).toMatch(/e\.key==='Enter' && !e\.shiftKey && !imeOwnsKey\(e\)/);
+  expect(page).toContain("${imeOwnsKey.toString()}");
 });
 
 // A dead daemon left the review page looking healthy: the session poll just

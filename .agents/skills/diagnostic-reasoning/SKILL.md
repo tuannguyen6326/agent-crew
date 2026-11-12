@@ -1,6 +1,6 @@
 ---
 name: diagnostic-reasoning
-description: Crewchief judgment for scoping a reported bug, regression, intermittent failure, or unexplained behavior into an implementation-ready root-cause diagnosis. Load before writing a diagnostic investigation brief, and again before accepting a diagnostic report as ready. A diagnosis is evidence only and never authorizes a code change. Not for ordinary feature work, code review, or post-change QA - crew-qa owns behavioral verification after a change.
+description: Chief judgment for scoping a bug, regression or flake into a root-cause diagnosis (evidence only, never a code change). Load before writing a diagnostic brief or accepting its report.
 ---
 
 # diagnostic-reasoning

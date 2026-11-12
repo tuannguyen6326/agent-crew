@@ -1,9 +1,7 @@
 // domain.ts - the CREWDOMAIN verb layer: create a domain package and route
 // work to it by TOKEN. The entry is bin/ac-domain.sh (a shim that starts this
-// file through bin/ac-bun.sh); THIS header is the authoritative spec, and the
-// bash original it replaced stays frozen at tests/fixtures/ac-domain.sh as the
-// oracle the differential leg of tests/sh/ac-domain.test.sh holds this module
-// to.
+// file through bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-domain.test.sh is its contract test.
 //
 // Usage: ac-domain.sh new <name> --scope '<text>' --charter '<text>'
 //                         (--projects <p1,p2,...> | --no-projects)
@@ -437,53 +435,36 @@
 // --clear; tr and git through domainQaRepo; date through iso(), statusAppend
 // and wakePublish; mkdir -p, tar and rm through recordsBackup.
 //
-// DIVERGENCES from the original, named in the differential leg:
-// - THE LEDGER LOCK (W8, fixed): assign and unassign
-//   hold records/.backlog.md.lock from the first ledger read to the exit;
-//   the original took none, wrote past a live holder and could erase a
-//   commit made between its read and its mv. A backup taken inside the lock
-//   carries the lock dir.
-// - QA-REPO IS THE CHIEF'S, BY NAME (W17, fixed):
-//   --set and --clear refuse a scoped session and --set refuses a value
-//   holding `/`; the original let any session set or clear the declaration
-//   and took a path through the view as the project.
-// - DONE HISTORY AND KEPT PACKAGES (W15, fixed): the
-//   orphan scans of list and validate skip Done rows, and new re-adopts a
-//   kept package; the original read a retired domain's Done rows as
-//   orphans (validate red for good) and refused the package it had kept.
+// ALSO:
+// - THE LEDGER LOCK (W8, fixed): assign and unassign hold
+//   records/.backlog.md.lock from the first ledger read to the exit, so a
+//   live holder is never written past and a commit it makes before releasing
+//   survives. A backup taken inside the lock carries the lock dir.
+// - QA-REPO IS THE CHIEF'S, BY NAME (W17, fixed): --set and --clear refuse a
+//   scoped session and --set refuses a value holding `/`.
+// - DONE HISTORY AND KEPT PACKAGES (W15, fixed): the orphan scans of list and
+//   validate skip Done rows, and new re-adopts a kept package.
 // - EXCLUSIVE TEMPS (W9): the ledger's, the registry's and qa-repo's
 //   <file>.tmp.<pid> are created exclusively (the next .<n> past a name
 //   already taken), and the ledger and registry temps take their file's
-//   mode; the original wrote through whatever sat at the predictable name
-//   and left a 0600 ledger 0644.
-// - The ledger is read in-process wherever the original ran the doneline awk
-//   (queue, retire, list's tally and scan, validate's tokens), so its
-//   parser-failure arm (a bun that cannot start: `ERROR: the backlog parser
-//   failed on <f>`) and an assign whose token read could not run (W26) are
-//   unreachable - without bun the shim never starts - and a ledger that
-//   cannot be read is the parser's own `ERROR: cannot read <f>` where the
-//   original printed awk's `can't open file` pair; stdout and exit alike.
+//   mode.
+// - The ledger is read in-process (queue, retire, list's tally and scan,
+//   validate's tokens): without bun the shim never starts, and a ledger that
+//   cannot be read is the parser's own `ERROR: cannot read <f>`.
 // - The registry lookups read the parse's whole output, so a reader exiting
-//   early never ends the parse with SIGPIPE (W23: a registry past the pipe's
-//   capacity with the domain early made the original's assign refuse).
-// - The detail file and the fleet descriptions are read as bytes (LC_ALL=C):
-//   under a UTF-8 locale the original's ${#desc} counted characters (W20)
-//   and its grep/awk/sed there ran under that locale; an unreadable detail
-//   file reads as empty without their own lines.
-// - No pathname expansion: the original split new's project list and
-//   validate's names and headings unquoted with globbing on, so a `*` or `?`
-//   in one became the caller's cwd entries (W19); here it stays a word - the
-//   leg runs from an empty cwd, where the two agree.
+//   early never ends the parse with SIGPIPE (W23).
+// - The detail file and the fleet descriptions are read as bytes (LC_ALL=C)
+//   under any locale (W20); an unreadable detail file reads as empty.
+// - No pathname expansion: a `*` or `?` in new's project list or validate's
+//   names and headings stays a word (W19).
 // - Bytes: argv arrives decoded, so a byte that is not UTF-8 in a charter,
 //   scope, captain's words or project is U+FFFD; a path that is not UTF-8
 //   reaches a spawned child's argv as U+FFFD.
-// - The HOME RESOLUTION ruling: an AC_HOME that cannot be entered names the
-//   variable (`ERROR: AC_HOME is not a readable directory: <h>`) wherever the
-//   shell printed cd's own line; exits and stdout alike.
-// - Shell-own stderr is not reproduced: a failed redirection's
-//   `Permission denied` line (an unwritable registry, package member,
-//   ledger temp or qa-repo temp), `command not found` - the exit statuses
-//   are.
+// - An AC_HOME that cannot be entered names the variable (`ERROR: AC_HOME is
+//   not a readable directory: <h>`).
+// - Shell-own stderr is not printed: a failed redirection's `Permission
+//   denied` line (an unwritable registry, package member, ledger temp or
+//   qa-repo temp), `command not found` - the exit statuses are kept.
 //
 // CALLERS: bin/ac-session-start.sh prints `list` under `-- crewdomains
 // (routing table) --` and, since list needs bun, degrades to a WARN naming
@@ -498,14 +479,7 @@ import { appendFileSync, chmodSync, closeSync, existsSync, lstatSync, openSync, 
 import { acDoneline, records } from "./backlog.ts";
 import {
   awkAssign,
-  backlogIdOk,
   die,
-  domainNameOk,
-  domainParse,
-  domainQaRepo,
-  domainRegistry,
-  domainTally,
-  domainViewEntry,
   enterCaller,
   envHome,
   iso,
@@ -522,12 +496,12 @@ import {
   wakePublish,
   warn,
 } from "./lib.ts";
+import { backlogIdOk, domainNameOk, domainParse, domainQaRepo, domainRegistry, domainTally, domainViewEntry } from "./lib-domain.ts";
 
 const REGISTRY_LABEL = "records/crewdomains.md";
 const US = "\x1f";
 
-// The spawned programs, byte for byte as tests/fixtures/ac-domain.sh holds
-// them (tests/ts/domain.test.ts lifts each one out of it).
+// The spawned programs, byte for byte as the bash original spawned them.
 const HOLDS_AWK = String.raw`
       substr($0, 1, 2) != "- " { next }
       { line = substr($0, 3); sub(/ +- .*$/, "", line); gsub(/^[ \t]+|[ \t]+$/, "", line)

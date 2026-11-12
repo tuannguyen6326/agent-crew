@@ -1,9 +1,7 @@
 // lint.ts - the single lint definition: `bash -n` then shellcheck over the
 // scripts a checkout owns. The entry is bin/ac-lint.sh (a shim that starts
 // this file through bin/ac-bun.sh); THIS header is the authoritative spec, and
-// the bash original it replaced stays frozen at tests/fixtures/ac-lint.sh as
-// the oracle the differential leg of tests/sh/ac-lint.test.sh holds this
-// module to.
+// tests/sh/ac-lint.test.sh is its contract test.
 //
 // Usage: ac-lint.sh [--all]
 //   By DEFAULT only the CHANGED files of the set are linted - staged, unstaged
@@ -68,18 +66,12 @@
 //
 // EXIT: 0 clean; 1 any failure above; 2 usage.
 //
-// DIVERGENCES from the original, named in the differential leg: -h prints
-// THIS header where the original printed its bash header; the checkout is
-// the PHYSICAL one where the original cd'd to
-// `$(dirname "$0")/..` LOGICALLY - run through a fleet home's symlinked bin/
-// it linted the HOME (no repo, so the whole set through the link), the port
-// lints the checkout behind the link; BYTE order replaces the original's
-// `sort -u` and glob order under the operator's locale (the same under
-// LC_ALL=C); when a found shellcheck cannot run, the shell's own `Permission
-// denied` line is not reproduced, the failure is; without bun the shim
-// refuses with `ERROR: required tool not found: bun`, exit 1, where the
-// original needed none. An argument that is not UTF-8 reaches this module as
-// U+FFFD, and the unknown-arg line prints that character.
+// Run through a fleet home's symlinked bin/, the lint works on the checkout
+// behind the link; the order is BYTE order under any locale; a found
+// shellcheck that cannot run is a failure with no line of this module's own;
+// without bun the shim refuses with `ERROR: required tool not found: bun`,
+// exit 1. An argument that is not UTF-8 reaches this module as U+FFFD, and the
+// unknown-arg line prints that character.
 //
 // CALLERS: humans, opt-in by captain ruling (AGENTS.md section 13); the
 // bootstrap doctor only names it; no `set -e` caller runs it, so nothing

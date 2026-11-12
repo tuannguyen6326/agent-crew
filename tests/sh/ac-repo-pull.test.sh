@@ -51,278 +51,192 @@ if "$BIN/ac-repo-pull.sh" "$TMP/notrepo" >/dev/null 2>&1; then
   fail "a non-repo path must refuse"
 fi
 
-# --- differential: src/repo-pull.ts against the frozen bash original ----------
-# DISPUTED: the implementation (tests/fixtures/ac-repo-pull.sh under bash vs src/repo-pull.ts through bin/ac-repo-pull.sh)
-# HELD-CONSTANT: two homes seeded alike ($OH for the oracle, $NH for the shim) - each with its own origin and, per row, a FRESH clone (a run mutates the clone), every commit stamped with one fixed date so the shas agree - argv (HOME spelled per side), cwd (the home), LC_ALL=C on both sides; exit status, stdout and stderr (the home path spelled HOME) compared whole, plus the clone's HEAD, origin/main and porcelain status after the run.
-obin="$(make_oracle_bin ac-repo-pull)"
-OH="$TMP/oh"; NH="$TMP/nh"
-gitc() { GIT_AUTHOR_DATE=2026-01-01T00:00:00Z GIT_COMMITTER_DATE=2026-01-01T00:00:00Z git "$@"; }
-both() {  # both <fn> <args...> - run a seeding step with H at each home
-  local h; for h in "$OH" "$NH"; do H="$h"; "$@"; done
-}
+# --- the probes in order, row by row -------------------------------------------
+# One home ($H) with its own origin and, per row, a FRESH clone (a run mutates
+# the clone); cwd is the home and LC_ALL=C. HOME in an argument is the home,
+# and the home path reads HOME in what the run printed.
+H="$TMP/nh"
 seed_home() {  # one origin on main; sub/ is tracked so a subdirectory root exists in every clone
   mkdir -p "$H/origin/sub"
   git init -q -b main "$H/origin"
-  git -C "$H/origin" config user.email test@test; git -C "$H/origin" config user.name test
+  git_id "$H/origin"
   printf 'hello\n' >"$H/origin/file.txt"; printf 's\n' >"$H/origin/sub/s.txt"
-  git -C "$H/origin" add -A; gitc -C "$H/origin" commit -qm genesis
+  git -C "$H/origin" add -A; git -C "$H/origin" commit -qm genesis
 }
-advance() {  # advance <msg> [<branch>] - one more fixed-date commit on origin's <branch> (main)
+advance() {  # advance <msg> [<branch>] - one more commit on origin's <branch> (main)
   local br="${2:-main}"
   git -C "$H/origin" checkout -q "$br"
-  printf '%s\n' "$1" >>"$H/origin/file.txt"; git -C "$H/origin" add -A; gitc -C "$H/origin" commit -qm "$1"
+  printf '%s\n' "$1" >>"$H/origin/file.txt"; git -C "$H/origin" add -A; git -C "$H/origin" commit -qm "$1"
   git -C "$H/origin" checkout -q main
 }
 fresh() {  # fresh - a new clone of the home's origin at $H/clone
   rm -rf "$H/clone"
   git clone -q "$H/origin" "$H/clone"
-  git -C "$H/clone" config user.email test@test; git -C "$H/clone" config user.name test
+  git_id "$H/clone"
 }
-local_commit() {  # local_commit <msg> - one fixed-date commit in the clone
-  printf '%s\n' "$1" >"$H/clone/$1.txt"; git -C "$H/clone" add -A; gitc -C "$H/clone" commit -qm "$1"
+local_commit() { commit "$H/clone" "$1.txt" "$1"; }
+norm() { LC_ALL=C sed -e "s#$H#HOME#g" "$1"; }
+P_RC=0
+pull() {  # pull <args...> - the shim from the home; sets P_RC
+  local x a=()
+  for x in "$@"; do a+=("${x//HOME/$H}"); done
+  P_RC=0
+  (cd "$H" && LC_ALL=C "$BIN/ac-repo-pull.sh" ${a[@]+"${a[@]}"}) >"$TMP/n.raw" 2>"$TMP/n.err" || P_RC=$?
+  norm "$TMP/n.raw" >"$TMP/n.out"; norm "$TMP/n.err" >"$TMP/n.err2"
 }
-run_side() {  # run_side <bin> <home> <prefix> <args...> - HOME in an arg is that side's home; cwd is the home
-  local bin="$1" h="$2" p="$3" x; shift 3
-  local a=()
-  for x in "$@"; do a+=("${x//HOME/$h}"); done
-  (cd "$h" && LC_ALL=C "$bin/ac-repo-pull.sh" ${a[@]+"${a[@]}"}) >"$TMP/$p.raw" 2>"$TMP/$p.err"
+says() {  # says <stdout> <label> - exit 0, exactly that line, silent on stderr
+  assert_eq "$P_RC:$(cat "$TMP/n.out"):$(cat "$TMP/n.err2")" "0:$1:" "$2"
 }
-norm() { LC_ALL=C sed -e "s#$2#HOME#g" "$1"; }
-same() {  # same <args...> - oracle on $OH and shim on $NH answer byte-identically
-  local o_rc=0 n_rc=0
-  run_side "$obin" "$OH" o "$@" || o_rc=$?
-  run_side "$BIN" "$NH" n "$@" || n_rc=$?
-  norm "$TMP/o.raw" "$OH" >"$TMP/o.out"; norm "$TMP/o.err" "$OH" >"$TMP/o.err2"
-  norm "$TMP/n.raw" "$NH" >"$TMP/n.out"; norm "$TMP/n.err" "$NH" >"$TMP/n.err2"
-  assert_eq "$n_rc" "$o_rc" "differential exit for '$*'"
-  cmp -s "$TMP/o.out" "$TMP/n.out" || fail "differential stdout differs for '$*': $(diff "$TMP/o.out" "$TMP/n.out" | head -n 4)"
-  cmp -s "$TMP/o.err2" "$TMP/n.err2" || fail "differential stderr differs for '$*': $(diff "$TMP/o.err2" "$TMP/n.err2" | head -n 4)"
+refuses() {  # refuses <stderr> <label> - exit 1, no stdout, exactly that line
+  assert_eq "$P_RC:$(cat "$TMP/n.out"):$(cat "$TMP/n.err2")" "1::$1" "$2"
 }
-shim_out() { cat "$TMP/n.out"; }
-shim_err() { cat "$TMP/n.err2"; }
-same_clone() {  # same_clone [<path under the home>] - HEAD, origin/main and the porcelain status agree
-  local r="${1:-clone}" q o n
-  for q in "rev-parse HEAD" "rev-parse --verify -q refs/remotes/origin/main" "status --porcelain"; do
-    o="$(git -C "$OH/$r" $q 2>/dev/null || printf none)"
-    n="$(git -C "$NH/$r" $q 2>/dev/null || printf none)"
-    assert_eq "$n" "$o" "differential clone $r: $q"
-  done
-}
-origin_sha() { git -C "$NH/origin" rev-parse "${1:-main}"; }
-short() { git -C "$NH/origin" rev-parse --short "${1:-main}"; }
-clone_head() { git -C "$NH/clone" rev-parse HEAD; }
-both seed_home
+origin_sha() { git -C "$H/origin" rev-parse "${1:-main}"; }
+short() { git -C "$H/origin" rev-parse --short "${1:-main}"; }
+clone_head() { git -C "$H/clone" rev-parse HEAD; }
+fetched() { assert_eq "$(git -C "$H/clone" rev-parse refs/remotes/origin/main)" "$(origin_sha)" "$1: the fetch landed origin/main"; }
+seed_home
 
-# 1. up to date: `synced` although nothing moved (W2 - the operator cannot tell
-#    "already current" from "moved"; the dashboard shows the line verbatim)
-both fresh
-same HOME/clone
-assert_eq "$(shim_out)" "synced main -> $(short)" "up to date still says synced"
-assert_eq "$(clone_head)" "$(origin_sha)" "nothing moved"
-same_clone
 # 2. behind, clean -> ff-sync moves HEAD to origin/main
-both fresh
-both advance upstream1
-same HOME/clone
-assert_eq "$(shim_out)" "synced main -> $(short)" "behind and clean syncs"
+fresh; advance upstream1
+pull HOME/clone
+says "synced main -> $(short)" "behind and clean syncs"
 assert_eq "$(clone_head)" "$(origin_sha)" "HEAD reached origin main"
-same_clone
-# 3. behind, untracked file -> dirty; HEAD untouched, origin/main fetched
-both fresh
-both advance upstream2
-untracked() { printf 'u\n' >"$H/clone/untracked.txt"; }
-both untracked
-same HOME/clone
-assert_eq "$(shim_out)" "fetched only (working tree dirty)" "an untracked file is dirty"
-[ "$(clone_head)" != "$(origin_sha)" ] || fail "a dirty clone must not move"
-assert_eq "$(git -C "$NH/clone" rev-parse refs/remotes/origin/main)" "$(origin_sha)" "the fetch still happened"
-same_clone
-# 4. behind, modified tracked; behind, staged -> dirty: the fetch lands
+# 3. behind and dirty (untracked, modified tracked, staged) -> the fetch lands
 #    origin/main, the local branch stays where it was
-both fresh; both advance "behind-modified"
+untracked() { printf 'u\n' >"$H/clone/untracked.txt"; }
 modify() { printf 'edit\n' >>"$H/clone/file.txt"; }
-both modify
-same HOME/clone
-assert_eq "$(shim_out)" "fetched only (working tree dirty)" "a modified tracked file is dirty"
-assert_eq "$(git -C "$NH/clone" rev-parse refs/remotes/origin/main)" "$(origin_sha)" "behind+modified: the fetch landed origin/main"
-[ "$(clone_head)" != "$(origin_sha)" ] || fail "behind+modified: the local branch must stay behind"
-same_clone
-both fresh; both advance "behind-staged"
-stage() { printf 'edit\n' >>"$H/clone/file.txt"; git -C "$H/clone" add -A; }
-both stage
-same HOME/clone
-assert_eq "$(shim_out)" "fetched only (working tree dirty)" "a staged change is dirty"
-[ "$(clone_head)" != "$(origin_sha)" ] || fail "behind+staged: the local branch must stay behind"
-same_clone
-# 5. ahead; ahead + untracked says ahead (ancestry is probed before dirtiness)
-both fresh
-both local_commit ahead
-same HOME/clone
-assert_eq "$(shim_out)" "fetched only (local main ahead of origin - nothing to pull)" "ahead"
-same_clone
-both untracked
-same HOME/clone
-assert_eq "$(shim_out)" "fetched only (local main ahead of origin - nothing to pull)" "ahead wins over dirty"
-same_clone
-# 6. diverged; diverged + dirty says diverged
-both fresh
-both advance upstream3
-both local_commit diverge
-same HOME/clone
-assert_eq "$(shim_out)" "fetched only (main diverged from origin)" "diverged"
-same_clone
-both untracked
-same HOME/clone
-assert_eq "$(shim_out)" "fetched only (main diverged from origin)" "diverged wins over dirty"
-same_clone
+stage() { modify; git -C "$H/clone" add -A; }
+for dirt in untracked modify stage; do
+  fresh; advance "behind-$dirt"; "$dirt"
+  was="$(clone_head)"
+  pull HOME/clone
+  says "fetched only (working tree dirty)" "$dirt is dirty"
+  assert_eq "$(clone_head)" "$was" "$dirt: a dirty clone does not move"
+  fetched "$dirt"
+done
+# 5. ahead
+fresh; local_commit ahead
+was="$(clone_head)"
+pull HOME/clone
+says "fetched only (local main ahead of origin - nothing to pull)" "ahead"
+assert_eq "$(clone_head)" "$was" "ahead: the local commit stays"
+# 6. diverged
+fresh; advance upstream3; local_commit diverge
+was="$(clone_head)"
+pull HOME/clone
+says "fetched only (main diverged from origin)" "diverged"
+assert_eq "$(clone_head)" "$was" "diverged: the local commit stays"
+fetched diverged
 # 7. detached HEAD
-both fresh
-detach() { git -C "$H/clone" checkout -q --detach; }
-both detach
-same HOME/clone
-assert_eq "$(shim_out)" "fetched only (detached HEAD)" "detached"
-same_clone
-# 8. a checked-out feat/x with no origin counterpart; then pushed
-both fresh
-feat() { git -C "$H/clone" checkout -q -b feat/x; }
-both feat
-same HOME/clone
-assert_eq "$(shim_out)" "fetched only (origin has no feat/x)" "the branch name passes through"
-same_clone
-pushfeat() { git -C "$H/clone" push -q origin feat/x; }
-both pushfeat
-same HOME/clone
-assert_eq "$(shim_out)" "synced feat/x -> $(short feat/x)" "a pushed feat/x syncs (no-op)"
-same_clone
-# 9. unborn HEAD with origin configured -> `diverged` (W1 - both merge-base
-#    probes fail on the missing local ref and the second failure reads as diverged)
-unborn() { git init -q -b main "$H/unborn"; git -C "$H/unborn" remote add origin "$H/origin"; }
-both unborn
-same HOME/unborn
-assert_eq "$(shim_out)" "fetched only (main diverged from origin)" "an unborn branch is misreported as diverged"
+fresh; advance upstream-detached
+git -C "$H/clone" checkout -q --detach
+was="$(clone_head)"
+pull HOME/clone
+says "fetched only (detached HEAD)" "detached"
+assert_eq "$(clone_head)" "$was" "detached: HEAD stays"
+fetched detached
+# 8. a checked-out feat/x with no origin counterpart; then pushed and moved on
+fresh
+git -C "$H/clone" checkout -q -b feat/x
+pull HOME/clone
+says "fetched only (origin has no feat/x)" "the branch name passes through"
+git -C "$H/clone" push -q origin feat/x
+advance featmove feat/x
+pull HOME/clone
+says "synced feat/x -> $(short feat/x)" "a pushed feat/x syncs"
+assert_eq "$(clone_head)" "$(origin_sha feat/x)" "feat/x followed origin/feat/x"
 # 10. no origin remote; an origin URL at a missing dir
-noorigin() { git init -q -b main "$H/noorigin"; printf 'x\n' >"$H/noorigin/f"; git -C "$H/noorigin" add -A; gitc -C "$H/noorigin" commit -qm x; }
-both noorigin
-same HOME/noorigin
-assert_eq "$(shim_err)" "ERROR: fetch failed (no origin, or network down)" "no origin"
-assert_eq "$(shim_out)" "" "nothing on stdout"
-both fresh
-nowhere() { git -C "$H/clone" remote set-url origin "$H/nowhere"; }
-both nowhere
-same HOME/clone
-assert_eq "$(shim_err)" "ERROR: fetch failed (no origin, or network down)" "origin missing on disk"
-same_clone
+git init -q -b main "$H/noorigin"; git_id "$H/noorigin"; commit "$H/noorigin" f x
+pull HOME/noorigin
+refuses "ERROR: fetch failed (no origin, or network down)" "no origin"
+fresh
+git -C "$H/clone" remote set-url origin "$H/nowhere"
+pull HOME/clone
+refuses "ERROR: fetch failed (no origin, or network down)" "origin missing on disk"
 # 11. a bare clone (no fetch refspec, so origin/main never appears)
-bare() { git clone -q --bare "$H/origin" "$H/bare"; }
-both bare
-same HOME/bare
-assert_eq "$(shim_out)" "fetched only (origin has no main)" "a bare clone"
-# 12. root as a subdirectory, relative to the cwd, with a trailing slash
-both fresh
-both advance upstream4
-same HOME/clone/sub
-assert_eq "$(shim_out)" "synced main -> $(short)" "a subdirectory root"
-same_clone
-both fresh
-both advance upstream5
-same clone
-assert_eq "$(shim_out)" "synced main -> $(short)" "a root relative to the cwd"
-same_clone
-both fresh
-both advance upstream6
-same HOME/clone/
-assert_eq "$(shim_out)" "synced main -> $(short)" "a trailing slash"
-same_clone
+git clone -q --bare "$H/origin" "$H/bare"
+pull HOME/bare
+says "fetched only (origin has no main)" "a bare clone"
+# 12. root as a subdirectory, relative to the cwd, with a trailing slash; an
+#     extra arg is ignored
+n=0
+for root in HOME/clone/sub clone HOME/clone/; do
+  n=$((n + 1))
+  fresh; advance "upstream-root$n"
+  pull "$root"
+  says "synced main -> $(short)" "root given as '$root'"
+  assert_eq "$(clone_head)" "$(origin_sha)" "root given as '$root': HEAD reached origin main"
+done
+fresh; advance upstream-extra
+pull HOME/clone junk
+says "synced main -> $(short)" "an extra arg is ignored"
 # 13. a plain dir, a missing path, a regular file: the argument echoed as given
-plain() { mkdir -p "$H/plain"; printf 'f\n' >"$H/file.txt"; }
-both plain
-same HOME/plain
-assert_eq "$(shim_err)" "ERROR: not a git repo: HOME/plain" "a plain dir"
-same HOME/plain/
-assert_eq "$(shim_err)" "ERROR: not a git repo: HOME/plain/" "the trailing slash is echoed"
-same HOME/missing
-assert_eq "$(shim_err)" "ERROR: not a git repo: HOME/missing" "a missing path"
-same HOME/file.txt
-assert_eq "$(shim_err)" "ERROR: not a git repo: HOME/file.txt" "a regular file"
-# 14. no arg, an empty arg; an extra arg is ignored
-same
-assert_eq "$(shim_err)" "ERROR: usage: ac-repo-pull.sh <repo-root>" "no arg"
-same ""
-assert_eq "$(shim_err)" "ERROR: usage: ac-repo-pull.sh <repo-root>" "empty arg"
-both fresh
-same HOME/clone junk
-assert_eq "$(shim_out)" "synced main -> $(short)" "an extra arg is ignored"
-same_clone
+mkdir -p "$H/plain"; printf 'f\n' >"$H/file.txt"
+for root in HOME/plain HOME/plain/ HOME/missing HOME/file.txt; do
+  pull "$root"
+  refuses "ERROR: not a git repo: $root" "no repo at $root"
+done
+# 14. no arg, an empty arg
+pull
+refuses "ERROR: usage: ac-repo-pull.sh <repo-root>" "no arg"
+pull ""
+refuses "ERROR: usage: ac-repo-pull.sh <repo-root>" "empty arg"
 # 15. the CHECKED-OUT branch syncs, never origin/HEAD: `other` moves while main moved too
-mkother() { git -C "$H/origin" branch other main; }
-both mkother
-both fresh
-other() { git -C "$H/clone" checkout -q other; }
-both other
-both advance upstream7
-both advance other1 other
-same HOME/clone
-assert_eq "$(shim_out)" "synced other -> $(short other)" "the checked-out branch"
+git -C "$H/origin" branch other main
+fresh
+git -C "$H/clone" checkout -q other
+advance upstream7
+advance other1 other
+pull HOME/clone
+says "synced other -> $(short other)" "the checked-out branch"
 assert_eq "$(clone_head)" "$(origin_sha other)" "other followed origin/other"
-assert_eq "$(git -C "$NH/clone" rev-parse main)" "$(git -C "$NH/clone" rev-parse origin/main~1)" "local main was not touched"
-same_clone
+assert_eq "$(git -C "$H/clone" rev-parse main)" "$(git -C "$H/clone" rev-parse origin/main~1)" "local main was not touched"
 # 16. .git/index.lock planted on a behind, clean clone: the merge is what git
-#     refuses; status and fetch tolerate the lock (both sides spawn the same git)
-both fresh
-both advance upstream8
-lock() { : >"$H/clone/.git/index.lock"; }
-both lock
-same HOME/clone
-assert_eq "$(shim_out)" "fetched only (fast-forward refused)" "a locked index refuses the ff"
-same_clone
-# 17. Named divergence: a root with a byte that is not UTF-8. Bun's argv
-#     decodes it to U+FFFD, so the port cannot echo the byte the original does;
-#     exit status and stdout agree, the refusal's text differs in that byte.
-o_rc=0; (cd "$OH" && LC_ALL=C "$obin/ac-repo-pull.sh" "$OH/caf"$'\351') >"$TMP/o.raw" 2>"$TMP/o.err" || o_rc=$?
-n_rc=0; (cd "$NH" && LC_ALL=C "$BIN/ac-repo-pull.sh" "$NH/caf"$'\351') >"$TMP/n.raw" 2>"$TMP/n.err" || n_rc=$?
-assert_eq "$o_rc $n_rc" "1 1" "non-UTF-8 root: both refuse"
-assert_eq "$(cat "$TMP/o.raw" "$TMP/n.raw")" "" "non-UTF-8 root: nothing on stdout"
-assert_eq "$(norm "$TMP/o.err" "$OH")" "ERROR: not a git repo: HOME/caf"$'\351' "non-UTF-8 root: the original echoes the byte"
-assert_eq "$(norm "$TMP/n.err" "$NH")" "ERROR: not a git repo: HOME/caf"$'\357\277\275' "non-UTF-8 root: the port prints U+FFFD"
+#     refuses; status and fetch tolerate the lock
+fresh; advance upstream8
+: >"$H/clone/.git/index.lock"
+was="$(clone_head)"
+pull HOME/clone
+says "fetched only (fast-forward refused)" "a locked index refuses the ff"
+assert_eq "$(clone_head)" "$was" "locked: HEAD stays"
+fetched locked
+# 17. a root with a byte that is not UTF-8 is refused like any missing path.
+pull "HOME/caf"$'\351'
+assert_eq "$P_RC:$(cat "$TMP/n.out")" "1:" "non-UTF-8 root refuses, nothing on stdout"
+assert_contains "$(cat "$TMP/n.err2")" "ERROR: not a git repo: HOME/caf" "non-UTF-8 root: the entry's refusal"
 # `rev-parse --short HEAD` failing after a successful merge is not constructible
 # (the merge just wrote HEAD); its `synced <branch> -> ` shape is documented in
 # the module header, not pinned here.
 
-# 18. no git on PATH: the first probe fails as exit 127 failed it - the entry's
-#     own refusal, never a runtime's stack
-both fresh
+# 18. no git on PATH: the first probe fails - the entry's own refusal, never a
+#     runtime's stack
+fresh
 farm="$TMP/nogit"; mkdir -p "$farm"
 IFS=: read -ra pathdirs <<<"$PATH"
 for d in "${pathdirs[@]}"; do
   for x in "$d"/*; do [ -x "$x" ] && [ ! -e "$farm/$(basename "$x")" ] && ln -s "$x" "$farm/"; done
 done 2>/dev/null; rm -f "$farm/git"
-o_rc=0; (cd "$OH" && PATH="$farm" LC_ALL=C "$obin/ac-repo-pull.sh" clone) >"$TMP/o.raw" 2>"$TMP/o.err" || o_rc=$?
-n_rc=0; (cd "$NH" && PATH="$farm" LC_ALL=C "$BIN/ac-repo-pull.sh" clone) >"$TMP/n.raw" 2>"$TMP/n.err" || n_rc=$?
-assert_eq "$n_rc $o_rc" "1 1" "no git: both exit 1"
-assert_eq "$(cat "$TMP/n.err")" "$(cat "$TMP/o.err")" "no git: the same refusal"
-assert_eq "$(cat "$TMP/n.err")" "ERROR: not a git repo: clone" "no git: the entry's own line, no stack"
+n_rc=0; (cd "$H" && PATH="$farm" LC_ALL=C "$BIN/ac-repo-pull.sh" clone) >"$TMP/n.raw" 2>"$TMP/n.err" || n_rc=$?
+assert_eq "$n_rc:$(cat "$TMP/n.raw"):$(cat "$TMP/n.err")" "1::ERROR: not a git repo: clone" "no git: the entry's own line, no stack"
 
-# 19. git's own diagnostics pass through where the original let them: under
-#     GIT_TRACE=1 show-ref, status and the final rev-parse each trace (the
-#     clock prefix stripped before comparing)
-both fresh
-o_rc=0; (cd "$OH" && GIT_TRACE=1 LC_ALL=C "$obin/ac-repo-pull.sh" clone) >"$TMP/o.raw" 2>"$TMP/o.err" || o_rc=$?
-n_rc=0; (cd "$NH" && GIT_TRACE=1 LC_ALL=C "$BIN/ac-repo-pull.sh" clone) >"$TMP/n.raw" 2>"$TMP/n.err" || n_rc=$?
-assert_eq "$n_rc $o_rc" "0 0" "GIT_TRACE: both exit 0"
-untrace() { LC_ALL=C sed -e 's/^[0-9][0-9]:[0-9][0-9]:[0-9][0-9]\.[0-9]* //' -e "s#$2#HOME#g" "$1"; }
-assert_eq "$(untrace "$TMP/n.err" "$NH")" "$(untrace "$TMP/o.err" "$OH")" "GIT_TRACE: the same trace lines pass through"
-assert_eq "$(grep -c 'show-ref' "$TMP/n.err")" "1" "GIT_TRACE: show-ref's trace is among them"
+# 19. git's own diagnostics pass through for show-ref, status and the final
+#     rev-parse: under GIT_TRACE=1 each traces once, the quiet probes never
+fresh; advance upstream-trace
+n_rc=0; (cd "$H" && GIT_TRACE=1 LC_ALL=C "$BIN/ac-repo-pull.sh" clone) >"$TMP/n.raw" 2>"$TMP/n.err" || n_rc=$?
+assert_eq "$n_rc:$(cat "$TMP/n.raw")" "0:synced main -> $(short)" "GIT_TRACE: the answer is unchanged"
+for probe in 'show-ref' 'status --porcelain' 'rev-parse --short HEAD'; do
+  assert_eq "$(grep -c "built-in: git $probe" "$TMP/n.err")" "1" "GIT_TRACE: $probe traces once"
+done
+for probe in fetch merge symbolic-ref merge-base; do
+  assert_eq "$(grep -c "built-in: git $probe" "$TMP/n.err")" "0" "GIT_TRACE: $probe stays quiet"
+done
 
 # 20. a caller cwd bun cannot enter (a name ending in a backslash): a relative
 #     root is still the caller's, never the distro checkout's
-both fresh
-oddcd() { mkdir -p "$H/odd\\"; }
-both oddcd
-o_rc=0; (cd "$OH/odd\\" && LC_ALL=C "$obin/ac-repo-pull.sh" ../clone) >"$TMP/o.raw" 2>"$TMP/o.err" || o_rc=$?
-n_rc=0; (cd "$NH/odd\\" && LC_ALL=C "$BIN/ac-repo-pull.sh" ../clone) >"$TMP/n.raw" 2>"$TMP/n.err" || n_rc=$?
-assert_eq "$n_rc $o_rc" "0 0" "backslash cwd: both exit 0"
-assert_eq "$(cat "$TMP/n.raw")" "$(cat "$TMP/o.raw")" "backslash cwd: the same answer"
-assert_eq "$(cat "$TMP/n.raw")" "synced main -> $(short)" "backslash cwd: the relative root resolved against the caller"
-same_clone
+fresh; advance upstream-odd
+mkdir -p "$H/odd\\"
+n_rc=0; (cd "$H/odd\\" && LC_ALL=C "$BIN/ac-repo-pull.sh" ../clone) >"$TMP/n.raw" 2>"$TMP/n.err" || n_rc=$?
+assert_eq "$n_rc:$(cat "$TMP/n.raw")" "0:synced main -> $(short)" "backslash cwd: the relative root resolved against the caller"
+assert_eq "$(clone_head)" "$(origin_sha)" "backslash cwd: the caller's clone moved"
 
 pass

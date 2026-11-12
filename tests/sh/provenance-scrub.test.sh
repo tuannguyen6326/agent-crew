@@ -15,10 +15,8 @@
 # date through. The scan is line-based, so no newline ever reaches it.
 RULING_RE='captain[^.]{0,40}20[0-9]{2}-[0-9]{2}-[0-9]{2}|ruling[s]? 20[0-9]{2}-[0-9]{2}-[0-9]{2}|captain-ordered 20[0-9]{2}'
 
-# The one exempt string: src/brief.ts prints it into a brief byte for byte
-# with the frozen tests/fixtures/ac-brief.sh, and the differential leg of
-# tests/sh/ac-brief.test.sh compares the two, so it goes when that oracle
-# retires. Only the string is exempt, never the rest of its line.
+# The one exempt string: src/brief.ts prints it into a brief byte for byte.
+# Only the string is exempt, never the rest of its line.
 PARITY_HELD='epic gate owns the review round - captain ruling 2026-08-19'
 
 # shell_prose <file>... - FILE:LINE:TEXT for each comment line outside a

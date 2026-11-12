@@ -4,9 +4,7 @@
 // The entry is bin/ac-ship-watch.sh (a shim that starts this file through
 // bin/ac-bun.sh); THIS header is the authoritative spec of the crew-ship role,
 // src/watch-dash.ts's header that of the body it shares with src/qa-watch.ts.
-// The bash original stays frozen at tests/fixtures/ac-ship-watch.sh (sourcing
-// the frozen tests/fixtures/ac-watch-dash.sh) as the oracle the differential
-// leg of tests/sh/ac-ship-watch.test.sh holds this module to.
+// tests/sh/ac-ship-watch.test.sh is the role's contract test.
 //
 //   ac-ship-watch.sh [--repo DIR] [--self-pane ID] [--interval SECS] [--once]
 //
@@ -44,28 +42,13 @@
 // spawned `rm -f` of the file - with or without --self-pane (SW3), raw herdr
 // whatever the backend: a reviewer pane a reopened run's last round left.
 //
-// ESCAPE HATCH. A broken board costs a ship run only its observer: the opener
-// fails soft and nothing parses what it prints. If a landed change breaks this
-// module, run the frozen originals from a scratch bin/ at a physical path:
-//   o=$(cd "$(mktemp -d)" && pwd -P); mkdir "$o/bin"; cp bin/*.sh "$o/bin/"
-//   ln -s "$PWD/src" "$o/src"; ln -s "$PWD/dashboard" "$o/dashboard"
-//   cp tests/fixtures/ac-watch-dash.sh tests/fixtures/ac-ship-watch.sh "$o/bin/"
-// then "$o/bin/ac-ship-watch.sh" --repo <repo> by hand; a run started as
-// "$o/bin/ac-ship.sh" start opens its board from "$o/bin" too, because the
-// launch line names the bin root the pipeline started from. The captain's
-// revert of the land is the last resort.
+// AT PARITY with the bash original (each until its own fix lands): the body's
+// (see src/watch-dash.ts) and SW2 (the override list's shapes), SW3 (a
+// foreground board closes the reviewer pane, raw herdr), SW6 (the intent cut in
+// BYTES may split a character).
 //
-// AT PARITY (each pinned in the leg until its own fix lands): the body's (see
-// src/watch-dash.ts) and SW2 (the override list's shapes), SW3 (a foreground
-// board closes the reviewer pane, raw herdr), SW6 (the intent cut in BYTES may
-// split a character).
-//
-// DIVERGENCES from the frozen original: the body's (src/watch-dash.ts), and
-// FAIL-PATH - under a UTF-8 locale the original's `cut -f1` stopped at an
-// override line holding a byte that is no UTF-8 (`cut: <file>: Illegal byte
-// sequence`, the list emptied from there); the port lists every line. TOOL-OWN
-// STDERR: for an override that cannot be read cut printed its own line; the
-// port prints none (both list nothing).
+// An override line holding a byte that is no UTF-8 is listed as bytes whatever
+// the locale, and an override that cannot be read prints nothing on stderr.
 //
 // CALLERS: src/ship.ts's watchOpen runs `'<its bin>/ac-ship-watch.sh' --repo
 // '<repo>' --self-pane <pane>` in a herdr pane (fail-soft; a pane is reused by

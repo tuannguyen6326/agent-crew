@@ -2,10 +2,8 @@
 // nm-claude-watch (dashboard + --tail). It shows ONLY gates running RIGHT NOW;
 // settled reviews (second-chief.md) are ordinary artifacts browsed elsewhere and
 // never appear here. The entry is bin/ac-gate-watch.sh (a shim that starts this
-// file through bin/ac-bun.sh); THIS header is the authoritative spec, and the
-// bash original it replaced stays frozen at tests/fixtures/ac-gate-watch.sh as
-// the oracle the differential leg of tests/sh/ac-gate-watch.test.sh holds this
-// module to.
+// file through bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-gate-watch.test.sh is its contract test.
 //
 //   ac-gate-watch.sh [SECS]        default: dashboard, one row per ACTIVE gate
 //   ac-gate-watch.sh --tail        follow the newest active gate's live output,
@@ -171,18 +169,7 @@
 // and TERM and exits 128+n; --once and --tail register no handler and end on
 // the signal's default action.
 //
-// ESCAPE HATCH. A broken board costs a gate only its observer: ac-gate opens it
-// fail-soft and nothing parses what it prints. If a landed change breaks this
-// module, run the frozen original from a scratch bin/ at a physical path:
-//   o=$(cd "$(mktemp -d)" && pwd -P); mkdir "$o/bin"; cp bin/*.sh "$o/bin/"
-//   ln -s "$PWD/src" "$o/src"; ln -s "$PWD/dashboard" "$o/dashboard"
-//   cp tests/fixtures/ac-gate-watch.sh "$o/bin/ac-gate-watch.sh"
-// then "$o/bin/ac-gate-watch.sh" --tail --family <family> (or the dashboard)
-// by hand; a gate started as "$o/bin/ac-gate.sh" opens its board from "$o/bin"
-// too, because the launch line names the bin root the gate started from. The
-// captain's revert of the land is the last resort.
-//
-// AT PARITY (each pinned in the leg until its own fix lands):
+// AT PARITY with the bash this module replaced (each until its own fix lands):
 // - GW3: homeless, the refusal is printed and the board renders `/data`, exit 0.
 // - GW4: a marker whose pid is 0 is live.
 // - GW2/GW8: an interval that is no arithmetic operand ends the dashboard 1 at
@@ -197,48 +184,33 @@
 //   board never closes its pane.
 // - A TAB inside a marker value shifts the row's columns.
 //
-// DIVERGENCES from the frozen original (the leg names each one a row can show):
-// - FAIL-PATH (GW6, GW7, GW10): under a UTF-8 locale the original's BSD tools
-//   aborted on a byte that is no UTF-8 - `cut` cut the activity at it (`cut:
-//   stdin: Illegal byte sequence`), and `sort` dropped EVERY row when one
-//   marker value held one (`sort: Illegal byte sequence`: `0 active`, the
-//   dashboard idling out under a live gate, --tail waiting), which left the
-//   paint's `sed` no such byte to abort on. Here such a byte is one character
-//   to the cut, the rows are ordered by bytes and the frame is painted whole.
+// ALSO:
+// - A byte that is no UTF-8 (GW6, GW7, GW10) is one character to the cut under
+//   a UTF-8 locale, drops no row and is painted with its frame.
 // - TIE ORDER: rows of one mtime are ordered by reverse BYTE order of the whole
-//   line under every locale, where `sort` collated them under UTF-8.
-// - WARN ORDER: markers are walked in byte order of their paths, where bash's
-//   glob followed the locale's collation under UTF-8.
+//   line under every locale.
+// - WARN ORDER: markers are walked in byte order of their paths under every
+//   locale.
 // - SIGNALS: a SIGINT to the board's pid ALONE ends it 130 (the dashboard
-//   restoring the cursor first), where bash swallowed it while its sleep child
-//   ran and went on; ctrl-c, which reaches both, ends both alike. The
-//   dashboard EXITS 128+n after its restore, where bash, its EXIT trap done,
-//   re-raised the signal: the shell's `$?` reads the same, a parent reading the
-//   wait status sees an exit, not a signal. The handlers are installed even
-//   when INT was ignored at entry, which bash would have left ignored.
-// - SHELL-OWN STDERR is not reproduced, the status kept: `${2:?}`'s
-//   `parameter null or not set` is `ERROR: <flag> needs a value` (exit 1
-//   both); the interval's arithmetic error and unbound variable (exit 1 both);
-//   `[`'s `integer expression expected` for a non-integer AC_GATE_WATCH_IDLE
-//   (never closes, both) or an unreadable stream (nothing printed, both);
-//   `sleep: command not found`.
+//   restoring the cursor first). The dashboard EXITS 128+n after its restore:
+//   a parent reading the wait status sees an exit, not a signal. The handlers
+//   are installed even when INT was ignored at entry.
+// - No line of a shell's own is printed: for the interval's arithmetic
+//   (exit 1), for a non-integer AC_GATE_WATCH_IDLE (never closes), for an
+//   unreadable stream (nothing printed) or for a sleep missing from PATH.
 // - HOME RESOLUTION: an AC_HOME cd cannot enter prints the one ERROR line
-//   above, where the shell printed cd's own line at each read of the home (at
-//   start, at the session read, at every render and in the tail's header); a
-//   relative AC_HOME is resolved without CDPATH. A home whose name ends in LF
-//   is read as named, where `$(...)` dropped the LF and read the sibling's
-//   data/.
+//   above, once; a relative AC_HOME is resolved without CDPATH. A home whose
+//   name ends in LF is read as named.
 // - INTERVAL ARITHMETIC: an interval that is a whole expression (`1+1`) or
 //   names a variable holding a number (`waited`, `SECONDS`) ends the
-//   dashboard 1 at its first idle tick, where bash evaluated it.
+//   dashboard 1 at its first idle tick.
 // - BYTES: argv arrives decoded and config/herdr-session is read as UTF-8, so
 //   a pin, an interval, a pane id or a session byte that is no UTF-8 is
 //   U+FFFD; a marker value naming a path with such a byte reaches jq, tail and
 //   cat decoded.
 // - BUN IN THE PANE: the board's pane runs bun; without it on the pane's PATH
 //   the shim's `ERROR: required tool not found: bun` is all the pane shows,
-//   and ac-gate reads that pane dead and replaces it at every run, where the
-//   original needed bash and jq.
+//   and ac-gate reads that pane dead and replaces it at every run.
 // - A caller whose cwd has no name reads relative descriptor paths (and `-`)
 //   from the distro root.
 //
@@ -401,7 +373,20 @@ function markers(): string[] {
     } catch {
       continue;
     }
-    for (const n of names) if (n.startsWith(".gate-running.")) found.push(`${data}/${d}/${n}`);
+    for (const n of names) {
+      if (n.startsWith(".gate-running.")) found.push(`${data}/${d}/${n}`);
+      // A story of an epic runs its gates one level down, in the dir its
+      // `.family` marker names a family (src/brief.ts's header owns the layout).
+      else if (!n.startsWith(".") && d !== "archive" && isFile(`${data}/${d}/${n}/.family`)) {
+        let subs: string[];
+        try {
+          subs = readdirSync(fsPath(`${data}/${d}/${n}`), { encoding: "latin1" });
+        } catch {
+          continue;
+        }
+        for (const s of subs) if (s.startsWith(".gate-running.")) found.push(`${data}/${d}/${n}/${s}`);
+      }
+    }
   }
   return found.sort();
 }
@@ -414,8 +399,10 @@ function activeRows(): string[] {
   const lines: string[] = [];
   for (const m of markers()) {
     if (!isFile(m) || !markerLive(m)) continue;
+    // The marker's own dir names the family (a story's sits inside its epic's).
     // A name of LFs only left `$(dirname)` the data dir itself.
-    const fam = m.slice(data.length + 1, m.lastIndexOf("/")).replace(/\n+$/, "") || "data";
+    const dir = m.slice(0, m.lastIndexOf("/"));
+    const fam = dir.slice(dir.lastIndexOf("/") + 1).replace(/\n+$/, "") || "data";
     if (pinFam !== "" && pinFam !== fam) continue;
     const stage = meta(m, "stage");
     if (pinStage !== "" && pinStage !== stage) continue;

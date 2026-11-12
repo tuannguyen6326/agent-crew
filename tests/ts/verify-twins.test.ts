@@ -1,13 +1,14 @@
-// verify-twins.test.ts - the `// --- verify twins ---` block of src/lib.ts held
-// to the LIVE bash it twins, which bin/ac-verify.sh (and bin/ac-pane-agent.sh)
-// keeps calling: verdictJson (ac_verdict_json, V rows), transcriptFinalEpoch
+// verify-twins.test.ts - the verify twins, src/lib-verify.ts: verdictJson
+// (ac_verdict_json's, V rows) held to the answers the comment above it states;
+// the rest held to the LIVE bash they twin, which bin/ac-verify.sh (and
+// bin/ac-pane-agent.sh) keeps calling: transcriptFinalEpoch
 // (ac_transcript_final_epoch, E rows), chiefBusyHold and chiefBusyLeave
 // (ac_chief_busy_hold / ac_chief_busy_leave, B and L rows), roomReviewRulings
 // (ac_room_review_rulings, R rows), harnessPaneArm (ac_harness_pane_arm, H
 // rows) and backendCapturePane (backend_capture_pane, C rows). The entry's
 // own contract is tests/sh/ac-verify.test.sh's.
 //
-// DISPUTED: the implementation of each helper (the bash vs src/lib.ts)
+// DISPUTED: the implementation of each live-bash helper (the bash vs src/lib-verify.ts)
 // HELD-CONSTANT: one side root per side and row, seeded alike by the same bash snippet (a home at <side>/home with config/backend, state/ and data/); argv; env (PATH = a stub dir - sleep logging to <side>/sleep.log and returning, a fake herdr and orca logging their argv to <side>/herdr.log and <side>/orca.log - then the host's bun and jq, then /bin and /usr/bin without herdr, orca, docker, codegraph or sleep; LC_ALL=C unless a row names a locale; HOME and TMPDIR the test root; AC_HOME the side's home; SIDE the side root); cwd (the distro root); stdin (/dev/null); stdout, stderr and the status (the side root spelled S, the side process's pid PID) and the side root's world after the call - every path with its mode and bytes - compared whole. A row naming a shell-own line asserts it on the bash side and drops it there before the comparison (the twin writes none: SHELL-OWN STDERR).
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -16,7 +17,7 @@ import { join } from "node:path";
 
 const ROOT = realpathSync(join(import.meta.dir, "..", ".."));
 const BIN = join(ROOT, "bin");
-const LIB = join(ROOT, "src", "lib.ts");
+const LIB = join(ROOT, "src", "lib-verify.ts");
 const ROOTUSER = process.getuid?.() === 0;
 const W = realpathSync(mkdtempSync(join(tmpdir(), "ac-verify-twins-")));
 afterAll(() => {
@@ -52,9 +53,9 @@ tool(
 const PATH = `${TOOLS}:${BASE}`;
 
 type Row = {
-  // the bash call after the libs are sourced, its arguments "$@", S the side root
-  bash: string;
-  // the twin's body: L is src/lib.ts, A the arguments, S the side root, out(buf) writes stdout
+  // the bash call after the libs are sourced, its arguments "$@", S the side root; none for a row only the twin runs
+  bash?: string;
+  // the twin's body: L is src/lib-verify.ts, A the arguments, S the side root, out(buf) writes stdout
   twin: string;
   args?: string[];
   // a bash snippet run in the side root before the call, SIDE exported
@@ -93,7 +94,7 @@ function world(s: string): string {
   return lines.join("\n");
 }
 
-const LIBS = '. "$0/ac-lib.sh" || exit $?; . "$0/../tests/fixtures/ac-pipeline-lib.sh" || exit $?; . "$0/ac-wake-lib.sh" || exit $?; . "$0/ac-backend.sh" || exit $?';
+const LIBS = '. "$0/ac-lib.sh" || exit $?; . "$0/ac-wake-lib.sh" || exit $?; . "$0/ac-backend.sh" || exit $?';
 
 let rows = 0;
 function side(row: Row, s: string, oracle: boolean): Side {
@@ -113,19 +114,29 @@ function side(row: Row, s: string, oracle: boolean): Side {
   return { out: norm(r.stdout.toString("latin1")), err: norm(r.stderr.toString("latin1")), world: norm(world(s)), status: r.exitCode };
 }
 
+function seeded(label: string, row: Row, s: string): void {
+  mkdirSync(join(s, "home", "config"), { recursive: true });
+  mkdirSync(join(s, "home", "state"), { recursive: true });
+  mkdirSync(join(s, "home", "data"), { recursive: true });
+  writeFileSync(join(s, "home", "config", "backend"), "herdr\n");
+  if (row.seed) {
+    const r = Bun.spawnSync(["/bin/bash", "-c", `set -e; ${row.seed}`], { cwd: s, env: { PATH, HOME: W, SIDE: s }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    if (r.exitCode !== 0) throw new Error(`seed failed for ${label}: ${r.stderr.toString()}`);
+  }
+}
+
+function twin(label: string, row: Row): Side {
+  const s = join(W, `r${rows++}`);
+  seeded(label, row, s);
+  return side(row, s, false);
+}
+
 function same(label: string, row: Row): Side {
   const root = join(W, `r${rows++}`);
   const got: Side[] = [];
   for (const name of ["o", "t"]) {
     const s = join(root, name);
-    mkdirSync(join(s, "home", "config"), { recursive: true });
-    mkdirSync(join(s, "home", "state"), { recursive: true });
-    mkdirSync(join(s, "home", "data"), { recursive: true });
-    writeFileSync(join(s, "home", "config", "backend"), "herdr\n");
-    if (row.seed) {
-      const r = Bun.spawnSync(["/bin/bash", "-c", `set -e; ${row.seed}`], { cwd: s, env: { PATH, HOME: W, SIDE: s }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-      if (r.exitCode !== 0) throw new Error(`seed failed for ${label}: ${r.stderr.toString()}`);
-    }
+    seeded(label, row, s);
     got.push(side(row, s, name === "o"));
   }
   const [o, t] = got as [Side, Side];
@@ -142,34 +153,38 @@ function same(label: string, row: Row): Side {
   return o;
 }
 
-// --- V: ac_verdict_json ------------------------------------------------------
-// The input is a seeded file, so any byte reaches both sides as it is.
-const verdict = (label: string, seed: string, env?: Record<string, string>): Side =>
-  same(label, { seed, env, bash: 'ac_verdict_json <"$S/in"', twin: 'const r = L.verdictJson(readFileSync(S + "/in")); out(r.out); return r.status;' });
+// --- V: ac_verdict_json's twin ----------------------------------------------
+// The input is a seeded file, so any byte reaches the twin as it is; a verdict
+// prints nothing on stderr and exits 0.
+const verdict = (seed: string, out: string, env?: Record<string, string>): void => {
+  const t = twin(seed, { seed, env, twin: 'const r = L.verdictJson(readFileSync(S + "/in")); out(r.out); return r.status;' });
+  expect({ seed, env, out: t.out, err: t.err, status: t.status }).toEqual({ seed, env, out: `${out}|rc=0`, err: "", status: 0 });
+};
 
 test("V: the last JSON object of a final message, through prose and fences", () => {
-  expect(verdict("bare", `printf '{"findings":[],"verdict":"pass"}\\n' >in`).out).toBe('{"findings":[],"verdict":"pass"}\n|rc=0');
-  verdict("fenced", "printf 'Summary first.\\n```json\\n{\"a\": 1,\\n \"b\": [1, 2]}\\n```\\nThanks.\\n' >in");
-  expect(verdict("two objects, the last wins", `printf '{"a":1} and {"b":2}\\n' >in`).out).toBe('{"b":2}\n|rc=0');
-  expect(verdict("braces and an escaped quote inside strings", `printf '%s\\n' 'x {"a":"}{\\"","b":"\\\\"} y' >in`).out).toContain('"b"');
-  expect(verdict("a non-JSON brace region after the object", `printf '{"a":1} then {not json}\\n' >in`).out).toBe('{"a":1}\n|rc=0');
-  verdict("nested", `printf '{"a":{"b":{"c":[{}]}}}\\n' >in`);
-  verdict("a stray close brace first", `printf '} {"a":1}\\n' >in`);
-  verdict("an unterminated string swallows the rest", `printf '{"a":1} "open {"b":2}\\n' >in`);
-  verdict("no final LF", `printf '{"a":1}' >in`);
+  verdict(`printf '{"findings":[],"verdict":"pass"}\\n' >in`, '{"findings":[],"verdict":"pass"}\n');
+  verdict("printf 'Summary first.\\n```json\\n{\"a\": 1,\\n \"b\": [1, 2]}\\n```\\nThanks.\\n' >in", '{"a": 1,\n "b": [1, 2]}\n');
+  verdict(`printf '{"a":1} and {"b":2}\\n' >in`, '{"b":2}\n');
+  verdict(`printf '%s\\n' 'x {"a":"}{\\"","b":"\\\\"} y' >in`, '{"a":"}{\\"","b":"\\\\"}\n');
+  verdict(`printf '{"a":1} then {not json}\\n' >in`, '{"a":1}\n');
+  verdict(`printf '{"a":{"b":{"c":[{}]}}}\\n' >in`, '{"a":{"b":{"c":[{}]}}}\n');
+  verdict(`printf '} {"a":1}\\n' >in`, '{"a":1}\n');
+  // An unterminated string swallows the rest.
+  verdict(`printf '{"a":1} "open {"b":2}\\n' >in`, '{"a":1}\n');
+  verdict(`printf '{"a":1}' >in`, '{"a":1}\n');
 }, 120000);
 
 test("V: nothing when no object parses", () => {
-  expect(verdict("prose only", "printf 'no verdict here\\n' >in").out).toBe("|rc=0");
-  expect(verdict("an array", "printf '[1,2]\\n' >in").out).toBe("|rc=0");
-  expect(verdict("unbalanced", `printf '{"a":1\\n' >in`).out).toBe("|rc=0");
-  expect(verdict("empty", ": >in").out).toBe("|rc=0");
+  verdict("printf 'no verdict here\\n' >in", "");
+  verdict("printf '[1,2]\\n' >in", "");
+  verdict(`printf '{"a":1\\n' >in`, "");
+  verdict(": >in", "");
 }, 120000);
 
 test("V: the locale's awk reads non-ASCII alike", () => {
   for (const loc of ["C", "en_US.UTF-8"]) {
-    verdict(`Vietnamese text (${loc})`, `printf '{"summary":"Ti\\341\\272\\277ng Vi\\341\\273\\207t {ok}"}\\n' >in`, { LC_ALL: loc });
-    verdict(`a byte that is no UTF-8 (${loc})`, `printf '{"summary":"caf\\351"}\\n' >in`, { LC_ALL: loc });
+    verdict(`printf '{"summary":"Ti\\341\\272\\277ng Vi\\341\\273\\207t {ok}"}\\n' >in`, `{"summary":"Ti\xe1\xba\xbfng Vi\xe1\xbb\x87t {ok}"}\n`, { LC_ALL: loc });
+    verdict(`printf '{"summary":"caf\\351"}\\n' >in`, `{"summary":"caf\xe9"}\n`, { LC_ALL: loc });
   }
 }, 120000);
 

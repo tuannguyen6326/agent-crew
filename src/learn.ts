@@ -1,8 +1,6 @@
 // learn.ts - automatic fleet-local Learning. The entry is bin/ac-learn.sh (a
 // shim that starts this file through bin/ac-bun.sh); THIS header is the
-// authoritative spec, and the bash original it replaced stays frozen at
-// tests/fixtures/ac-learn.sh as the oracle the differential leg of
-// tests/sh/ac-learn.test.sh holds this module to.
+// authoritative spec, and tests/sh/ac-learn.test.sh is its contract test.
 //
 //
 // Usage:
@@ -17,7 +15,9 @@
 //   ac-learn.sh maintenance status|resume <txid>|abandon <txid>
 //   ac-learn.sh rotate-pending          # archive Pending past config/learn-pending-budget
 //   ac-learn.sh stale                   # report-only age grade of the always-loaded layer
-//   ac-learn.sh reinforce <slug> --evidence '<line>'  # refresh one learned entry's clock
+//   ac-learn.sh reinforce <slug> --evidence '<line>' [--retire <stale-slug>]
+//                                      # refresh one learned entry's clock,
+//                                      # optionally cutting+archiving another
 //
 // `tick` advances the lock-protected Learning generation/cadence and reports the
 // resulting count. A keyed landing tick is idempotent through state/.learn-ticks.
@@ -128,7 +128,8 @@
 // insertion (every existing line is reproduced exactly once, so no pending
 // source can be lost), carries no opinion about a lesson's own shape, mints the
 // canonical frame when the ledger is absent, and refuses a line that is itself a
-// section marker.
+// section marker. It is the one writer a transaction replays (W3 ONE LOCK
+// ORDER).
 //
 // The apply is RESUMABLE, not all-or-nothing: it mutates N independent files
 // and no shell commits N renames atomically, so each action is idempotent by
@@ -180,9 +181,14 @@
 // `## <name>` heading and `(learned <date>)` provenance itself and REFUSES: a
 // body over 12 lines, a body carrying a `## ` heading (entry spoofing), a
 // duplicate name, a staged file over the 4096-byte always-loaded budget (the
-// refusal names the retire remedy), and any rewrite dropping an existing entry
-// without retired accounting (crewmateLearnedNoLoss, src/lib.ts - defense in depth for
-// future curate rewrites). Evidence compaction is identical to a skill land -
+// refusal names the retire remedy: the candidate's own optional `retire:
+// <slug>` header, consumed only by `kind: crewmate` - the named live entry is
+// cut from the staged file and its body archived to
+// records/learnings-archive/<slug>.md in the SAME transaction, read back as
+// the retired evidence crewmateLearnedNoLoss checks against), and any rewrite
+// dropping an existing entry without retired accounting (crewmateLearnedNoLoss,
+// src/lib.ts - defense in depth for future curate rewrites). Evidence
+// compaction is identical to a skill land -
 // archive + `[distilled -> <name>]` pointer - with the pointer's first link
 // `[lesson](../CREWMATE-learned.md)` since no skill store exists. The file
 // rides recordsBackup's (src/lib.ts) reversibility floor and each planning run keeps a
@@ -292,6 +298,13 @@
 // of the layer: it rewrites the date line to `(learned <orig>, reinforced
 // <today>)` under <home>/CREWMATE-learned.md.lock, requires a single-line
 // evidence it prints rather than stores, and refuses an entry with no clock.
+// An optional `--retire <stale-slug>` rides the SAME locked rewrite: the
+// named entry is cut out whole and archived (learn_crewmate_retire_entry /
+// learn_crewmate_retire_archive below), freeing the bytes a same-day clock or
+// a tight budget would otherwise refuse - the one case `current === today`
+// does not short-circuit, since nothing else can ask for a retire alone.
+// A crewmate candidate's own optional `retire:` header pairs the SAME cut and
+// archive with a land instead (prepareCandidatePlan's crewmate case).
 //
 // PREAMBLE AND EXIT. Before any verb the fleet backend is resolved as
 // sourcing ac-backend.sh resolved it (backendName): an unsupported name in
@@ -315,32 +328,11 @@
 // a capture. `suite` arms its snapshot removal the same way before the
 // snapshot exists. No other verb registers a handler.
 //
-// ESCAPE HATCH. `note` and `tick` sit on every solo landing's own path (the
-// solo landing check refuses a slice without its lesson, and teardown runs
-// the tick), so a landed change that breaks this module is worked around with
-// the frozen original from a scratch bin/ at a PHYSICAL path:
-//   o=$(cd "$(mktemp -d)" && pwd -P); mkdir "$o/bin"; cp bin/*.sh "$o/bin/"
-//   ln -s "$PWD/src" "$o/src"; ln -s "$PWD/dashboard" "$o/dashboard"
-//   cp tests/fixtures/ac-learn.sh "$o/bin/ac-learn.sh"
-//   cat tests/fixtures/ac-maintenance-retired.sh >>"$o/bin/ac-maintenance-lib.sh"
-// then AC_HOME=<home> "$o/bin/ac-learn.sh" note|tick|run|maintenance ...; a
-// solo landing's tick through "$o/bin/ac-teardown.sh" <id> (its STARTED_BIN
-// is $o/bin) or a by-hand "$o/bin/ac-learn.sh" tick <id> after the teardown's
-// WARN; the drain's autoroom by hand from the copy. The copy bakes no bin path
-// into anything it writes; its suite root is the copy dir, which has no git
-// HEAD (the suite gate, off by default, would pin `no-head`). No knob
-// overrides this entry's path. Each run's and each transaction's tarball (`tar -xzf
-// <arc> -C <home>`) undoes a mutation; the captain's revert of the land is the
-// last resort.
-//
-// AT PARITY (each pinned in the leg until its own fix lands):
+// AT PARITY with the bash original, and deliberately left unasserted by the
+// contract test (each until its own fix lands):
 // - W1: a note word holding LF passes the whole-word marker refusal, so a
 //   `## Distilled` inside it lands as a line of its own and the next
 //   transaction drops every Pending line below it unarchived.
-// - W3: note and rotate take .learn-note.lock and reinforce its own lock,
-//   never the transaction's .maintenance.lock, so a note landing between a
-//   plan's staging and its apply HOLDS the transaction or costs the
-//   candidate at the gate.
 // - The preparer inside `run` keeps the bash's errexit-asleep context: a
 //   failing step goes on and only a refusal rejects the candidate, while
 //   `land`'s preparer ends at its first failing step.
@@ -363,59 +355,71 @@
 // - The scout meta's backend= is the fleet's own (W2, fixed in the bash
 //   before it froze).
 //
-// DIVERGENCES from the original (the leg names each one a row can show):
+// ALSO:
 // - BUN: every verb needs bun (the shim's `ERROR: required tool not found:
-//   bun`, exit 1), where note, tick, stale, maintenance status and
-//   rotate-pending ran without it.
+//   bun`, exit 1).
 // - HOME RESOLUTION and W10: no home is one refusal at the first home read,
-//   exit 1 (autoroom: exit 0), where tick printed three, autoroom two, land
-//   went on through several, and run and suite reached the host root; an
-//   AC_HOME cd cannot enter is `ERROR: AC_HOME is not a readable directory:
-//   <h>`.
+//   exit 1 (autoroom: exit 0); an AC_HOME cd cannot enter is `ERROR: AC_HOME
+//   is not a readable directory: <h>`.
 // - W5 BYTES: every awk is spawned with its program unchanged under LC_ALL=C
-//   and every grep over a ledger, candidate or report is read as bytes, where
-//   the bash's awk under a UTF-8 caller aborted at an invalid byte (towc) and
-//   the errexit-asleep preparer staged the cut ledger as a continue.
+//   and every grep over a ledger, candidate or report is read as bytes.
 // - W11: the bracket grammars - a tick key, a slug, a transaction id, a
 //   subject, a retro member id, note's flag refusal - are read per their text
-//   (C), where bash's brackets followed LC_COLLATE under a UTF-8 locale.
+//   (C).
 // - W12 EXCLUSIVE TEMPS: every `<f>.tmp.$$` write (the tick stamps, the scout
 //   meta and handle, the reinforce and note rewrites, the ask receipt, the
 //   suite pin and verdict) and the staged pointer rewrite's fixed
 //   <run>/work/pointers.next.tsv.tmp (a name in the run dir the scout writes,
 //   written before any gate judges the plan) go through a temp created
 //   exclusively (<f>.tmp.<pid>, then .<n>), so a link planted there is never
-//   written through; the written file keeps the umask's mode, as the bash's did.
+//   written through; the written file keeps the umask's mode.
 // - W4 (fixed): reinforce refuses, nothing written, a refresh that would grow
-//   CREWMATE-learned.md past its 4096-byte budget; the bash grew it unchecked.
+//   CREWMATE-learned.md past its 4096-byte budget.
+// - RETIRE (residual of W4, fixed): a stale entry can now actually be removed
+//   from CREWMATE-learned.md - a crewmate candidate's `retire: <slug>` header
+//   pairs it with the land, and `reinforce <slug> --retire <stale-slug>`
+//   pairs it with a clock refresh - archiving the retired body to
+//   records/learnings-archive/<stale-slug>.md and reading that file back
+//   through crewmateLearnedNoLoss.
 // - THE POINTER TRIGGER: a skill candidate needs `trigger:` and its pointer
 //   is composed from it, and every CREWMATE-learned.md rewrite shortens an
-//   over-cap pointer already there; the bash composed the pointer from the
-//   description and ignored a trigger header.
+//   over-cap pointer already there.
 // - W13 ORDER: globs, the printed candidate list, the report walks, the
 //   archived room pick, the pointer sort and the maintenance status rows are
-//   in BYTE order, where the bash followed LC_COLLATE and `find` printed
-//   directory order.
+//   in BYTE order.
+// - TWO CANDIDATES ON ONE NAME: inside `run` the first candidate (W13 order)
+//   claiming a subject keeps it and each later claimant gets `<subject>.<k>`
+//   (k = 2, 3, ...) - its own gates/, plan, staged copy, candidate copy and
+//   `<run>-<subject>.<k>` transaction - so every gated candidate keeps its own
+//   plan and receipt. `.` is outside the slug grammar, so `<name>.<k>` never
+//   equals a valid name.
+// - W3 ONE LOCK ORDER: a ledger plan is staged (the read, the base kept, the
+//   rewrite's old_sha256) and applied under .learn-note.lock, taken before
+//   the transaction's .maintenance.lock and never after it, and nothing is
+//   held across the gate. Pending lines a note added while the gate judged
+//   are lifted out before the hash-bound apply and put back verbatim after
+//   it, accepted only when note's insertion of them over the base reproduces
+//   the live ledger byte for byte; any other ledger change refuses the plan
+//   before its first action. The lines are first written to
+//   <run>/work/<subject>.notes-replayed, so a process killed before the
+//   put-back leaves them there.
 // - SHELL-OWN STDERR: bash's arithmetic, redirect, test and cd diagnostics and
 //   its job notice for a suite runner ended at the ceiling (`Terminated: 15`)
-//   are not reproduced, the status kept; a gate, Curate or spawn that cannot
-//   start is named by /bin/sh, not bash.
+//   are not printed, the status kept; a gate, Curate or spawn that cannot
+//   start is named by /bin/sh.
 // - BYTES: argv and the environment arrive decoded, so a byte that is no
 //   UTF-8 in a note line, a key, an evidence line or a knob reaches the files
-//   (and an awk -v value) as U+FFFD; a stale scene date is cut at 10 bytes,
-//   where BSD cut counted characters under a UTF-8 locale.
+//   (and an awk -v value) as U+FFFD; a stale scene date is cut at 10 bytes.
 // - A line a lib twin writes to stderr itself (crewmateLearnedNoLoss's grep
 //   over an unreadable live layer) reaches the caller's stderr even inside a
-//   run's preparer, where the bash's went to the subject's prepare.err.
-// - SIGNALS: INT alone ends a run 130 where bash swallowed it while waiting on
-//   the scout; a signal landing while a candidate is prepared takes effect
-//   once the whole preparer has run, where bash acted after the current
-//   command (the extra staged files stay under the run dir); suite's poll
-//   sleep is an awaited child, so a TERM there takes effect at once where
-//   bash waited out the current `sleep 1`.
+//   run's preparer.
+// - SIGNALS: INT alone ends a run 130 while it waits on the scout; a signal
+//   landing while a candidate is prepared takes effect once the whole
+//   preparer has run (the extra staged files stay under the run dir); suite's
+//   poll sleep is an awaited child, so a TERM there takes effect at once.
 // - SUITE LAUNCH: the runner starts in a process group of its own through a
-//   `/bin/bash -c 'set -m; ...'` launcher - one process more in its tree than
-//   the bash's background job, reaped with it at the ceiling.
+//   `/bin/bash -c 'set -m; ...'` launcher - one process more in its tree,
+//   reaped with it at the ceiling.
 //
 // CALLERS: src/teardown.ts runs `tick <id>` for every solo slice (its failure
 // already the soft `WARN: learning tick ... failed`), the solo session and
@@ -445,22 +449,10 @@ import {
   backendWindowNew,
   commandV,
   configReadSoft,
-  crewmateLearnedNoLoss,
-  curateDue,
-  curateTick,
   enterCaller,
   exclusiveTemp,
-  learnDue,
-  learnGeneration,
-  learnMeta,
-  learnReset,
-  learnTick,
-  learnTickKeyed,
   lockAcquire,
   lockRelease,
-  maintenanceApply,
-  maintenanceGateFailureReason,
-  maintenanceIncomplete,
   metaGet,
   metaSet,
   nowRaw,
@@ -481,6 +473,8 @@ import {
   wakePublish,
   writeAll,
 } from "./lib.ts";
+import { curateDue, maintenanceApply, maintenanceGateFailureReason } from "./lib-curate.ts";
+import { crewmateLearnedNoLoss, curateTick, learnDue, learnGeneration, learnMeta, learnReset, learnTick, learnTickKeyed, maintenanceIncomplete } from "./lib-learn.ts";
 
 // The lib's AC_MAINTENANCE_QUOTE_MIN (tests/ts/learn.test.ts holds the two
 // together).
@@ -880,8 +874,10 @@ Pass 2 reads its output.
   Propose per stale entry, in \`report.md\` under \`## Always-loaded staleness\`
   (report-only, the chief applies - exactly like scene proposals):
   \`reinforce <slug> - evidence: <the window pointer>\` when evidence exists,
-  \`retire <slug> - <why>\` when none does (the retire itself rides the
-  existing 4096-budget pairing rule at the next land, never a new path).
+  \`retire <slug> - <why>\` when none does - the chief runs \`ac-learn.sh
+  reinforce <fresh-slug> --retire <slug> --evidence '<why>'\` to free its
+  bytes directly, or names it as THIS run's own crewmate candidate's
+  \`retire:\` header when one is being proposed anyway.
 - \`sources/scenes.md\` - the fleet's L2 SCENE store index (one line per scene:
   slug, heat, updated, summary), plus its count against \`config/scene-max\`. A
   scene is a consolidated TOPIC file a reader opens on purpose - the layer
@@ -1025,6 +1021,7 @@ Crewmate-lesson candidate (always-loaded method lesson, CREWMATE-learned.md):
     kind: crewmate
     name: <slug, lowercase [a-z0-9-]>
     description: <one line - what behavior this lesson corrects>
+    retire: <slug of a STALE entry to retire - optional, omit when none>
     ===sources===
     <date><TAB><short hook><TAB><exact learnings.md bullet line, verbatim>
     ===crewmate===
@@ -1039,7 +1036,9 @@ Crewmate-lesson candidate (always-loaded method lesson, CREWMATE-learned.md):
   unrewritten; first-hand \`## Lessons\` report lines are EVIDENCE you cite,
   never text you copy through).
 - The file has a hard 4096-byte whole-file budget: when your entry would
-  exceed it, pair the candidate with a retire proposal in your report.
+  exceed it, name a STALE entry's slug as this candidate's own \`retire:\`
+  header - the land removes and archives it in the SAME transaction, never a
+  separate proposal applied by hand.
 - \`===sources===\` works exactly as for a skill; retro-only leaves it EMPTY.
 
 Rule candidate:
@@ -1748,8 +1747,9 @@ function cmdStale(emit: (s: string) => void, lax: boolean): void {
     emit(`  -- ${n} entries, ${stale} stale --\n`);
     if (stale > 0) {
       emit("  a STALE entry must re-prove itself: reinforce it on INDEPENDENT current evidence\n");
-      emit("    (ac-learn.sh reinforce <slug> --evidence '<what this window proved>') or retire it\n");
-      emit("    at the next land (the 4096-budget pairing rule) - never keep it by inertia alone.\n");
+      emit("    (ac-learn.sh reinforce <slug> --evidence '<what this window proved>'), or retire it\n");
+      emit("    directly - 'ac-learn.sh reinforce <fresh-slug> --retire <slug> --evidence ...' or a\n");
+      emit("    crewmate candidate's own 'retire:' header - never keep it by inertia alone.\n");
     }
   }
   const sdir = `${recordsD()}/scenes`;
@@ -1797,10 +1797,15 @@ function grepWhole(file: string, pattern: string): boolean {
 function cmdReinforce(args: string[]): void {
   let slug = "";
   let evidence = "";
+  let retireSlug = "";
   for (let i = 0; i < args.length; ) {
     const a = b8(args[i]!);
     if (a === "--evidence") {
       evidence = args[i + 1] !== undefined ? b8(args[i + 1]!) : "";
+      if (i + 2 > args.length) dieB(`${a} needs a value`);
+      i += 2;
+    } else if (a === "--retire") {
+      retireSlug = args[i + 1] !== undefined ? b8(args[i + 1]!) : "";
       if (i + 2 > args.length) dieB(`${a} needs a value`);
       i += 2;
     } else if (a.startsWith("-")) dieB(`unknown flag: ${a}`);
@@ -1811,15 +1816,16 @@ function cmdReinforce(args: string[]): void {
     }
   }
   if (slug === "") dieB("usage: ac-learn.sh reinforce <slug> --evidence '<what this window proved>'");
-  if (evidence === "") dieB("reinforce REQUIRES --evidence: plausibility, importance, prior knowledge, and the entry's own text are not evidence - name what THIS window actually exercised, confirmed, or re-derived. The evidence rides the receipt (and your room post), never the file: bytes there are always-loaded budget.");
+  if (evidence === "") dieB("reinforce REQUIRES --evidence: plausibility, importance, prior knowledge, and the entry's own text are not evidence - name what THIS window actually exercised, confirmed, or re-derived (or, when pairing --retire, why the RETIRED entry no longer earns its bytes). The evidence rides the receipt (and your room post), never the file: bytes there are always-loaded budget.");
   if (/[\n\r]/.test(evidence)) dieB("--evidence must be a single line");
+  if (retireSlug !== "" && retireSlug === slug) dieB(`--retire cannot name the same slug being reinforced ('${slug}')`);
   const live = `${home()}/CREWMATE-learned.md`;
   if (!isFile(live)) dieB("no CREWMATE-learned.md in this home - nothing to reinforce");
   if (!grepWhole(live, `## ${slug}`)) dieB(`no entry '## ${slug}' in CREWMATE-learned.md (ac-learn.sh stale lists them)`);
   const today = isoNow().slice(0, 10);
   const current = entryDate(live, slug);
   if (current === "") dieB(`entry '## ${slug}' carries no '(learned <date>)' line to refresh - nothing written`);
-  if (current === today) {
+  if (current === today && retireSlug === "") {
     out(`already reinforced today (${today}) - clock unchanged; evidence noted on the receipt: ${evidence}\n`);
     return;
   }
@@ -1830,10 +1836,26 @@ function cmdReinforce(args: string[]): void {
   closeSync(t.fd);
   must(st);
   const tmp = b8(t.path);
-  if (sameBytes(live, tmp)) {
+  const dateChanged = !sameBytes(live, tmp);
+  if (!dateChanged && retireSlug === "") {
     rmF(tmp);
     unlock(lk);
     dieB(`reinforce composed no change for '## ${slug}' despite a clock at ${current} - report this (nothing written)`);
+  }
+  let retiredBlock = "";
+  if (retireSlug !== "") {
+    const cut = retireCrewmateEntry(read(tmp) ?? "", retireSlug);
+    if (cut === null) {
+      rmF(tmp);
+      unlock(lk);
+      dieB(`--retire: no entry '## ${retireSlug}' in CREWMATE-learned.md (ac-learn.sh stale lists them, nothing written)`);
+    }
+    if (!put(tmp, cut.rest)) {
+      rmF(tmp);
+      unlock(lk);
+      dieB("--retire: the trimmed CREWMATE-learned.md could not be written (nothing written)");
+    }
+    retiredBlock = cut.block;
   }
   const size = statOf(tmp)?.size ?? 0;
   if (size > 4096) {
@@ -1841,9 +1863,16 @@ function cmdReinforce(args: string[]): void {
     unlock(lk);
     dieB(`reinforce would grow CREWMATE-learned.md to ${size} bytes, past its 4096-byte always-loaded budget (nothing written)`);
   }
+  if (retireSlug !== "" && !retireArchive(`${recordsD()}/learnings-archive/${retireSlug}.md`, retireSlug, retiredBlock)) {
+    rmF(tmp);
+    unlock(lk);
+    dieB(`--retire: '${retireSlug}' could not be archived to records/learnings-archive/${retireSlug}.md (nothing written)`);
+  }
   must(run(["mv", tmp, live]).status);
   unlock(lk);
-  out(`reinforced ${slug} (clock -> ${today}) on evidence: ${evidence}\n`);
+  if (dateChanged) out(`reinforced ${slug} (clock -> ${today}) on evidence: ${evidence}\n`);
+  else out(`${slug}'s clock is already at ${today} - unchanged; evidence noted on the receipt: ${evidence}\n`);
+  if (retireSlug !== "") out(`retired ${retireSlug} (archived to records/learnings-archive/${retireSlug}.md)\n`);
   out("post the evidence to the owning room/report - the file deliberately does not store it\n");
 }
 
@@ -1881,14 +1910,46 @@ function cmdNote(args: string[]): void {
   if (!nonEmpty(ledger) && !put(ledger, "# Learning Ledger\n\n## Pending\n\n")) fatal(1);
   const add = mktemp() ?? fatal(1);
   if (!put(add, lines.map((l) => `${l}\n`).join(""))) fatal(1);
-  const t = tempFile(ledger) ?? fatal(1);
-  const st = run(awk([["add", add]], NOTE_AWK, [ledger]), { stdout: t.fd }).status;
-  closeSync(t.fd);
-  must(st);
-  must(run(["mv", b8(t.path), ledger]).status);
+  must(pendingInsert(ledger, add));
   rmF(add);
   unlock(lk);
   out(`appended ${args.length} line(s) under ## Pending in ${ledger}\n`);
+}
+
+// note's insertion of the lines in <add> into <ledger>, through an exclusive
+// temp and a spawned mv; the first failing status, 1 when no temp could be made.
+function pendingInsert(ledger: string, add: string): number {
+  const t = tempFile(ledger);
+  if (t === null) return 1;
+  const st = run(awk([["add", add]], NOTE_AWK, [ledger]), { stdout: t.fd }).status;
+  closeSync(t.fd);
+  if (st !== 0) return st;
+  return run(["mv", b8(t.path), ledger]).status;
+}
+
+// The lines a note inserted into <base> to make <ledger>, or null when note's
+// insertion of them over <base> does not reproduce <ledger> byte for byte.
+function notedSince(base: string, ledger: string): string | null {
+  const live = read(ledger);
+  if (live === null) return null;
+  const b = readLines(base);
+  const v = readLines(live);
+  let at = b.indexOf("## Distilled");
+  if (at < 0) at = b.length;
+  while (at > 0 && b[at - 1] === "") at--;
+  const n = v.length - b.length;
+  if (n <= 0) return null;
+  const noted = v.slice(at, at + n).map((l) => `${l}\n`).join("");
+  const baseF = mktemp();
+  const add = mktemp();
+  const replay = mktemp();
+  try {
+    if (baseF === null || add === null || replay === null || !put(baseF, base) || !put(add, noted)) return null;
+    if (runTo(replay, awk([["add", add]], NOTE_AWK, [baseF])) !== 0) return null;
+    return read(replay) === live ? noted : null;
+  } finally {
+    rmF(...[baseF, add, replay].filter((f): f is string => f !== null));
+  }
 }
 
 // --- rotate-pending: bound the Pending body so DISTILL stays citable ---------
@@ -2303,13 +2364,14 @@ function quoteUnverified(bullet: string): string[] {
   return flags;
 }
 
-// learn_quote_unverified_count <plan> <run>: the `quote-unverified:` lines the
-// plan's append-archive action adds (staged minus live).
-function quoteUnverifiedCount(plan: string, rundir: string): string {
-  const field = (f: string): string => subst(run(["jq", "-r", `.actions[] | select(.op == "append-archive") | .${f}`, plan], { stdout: "pipe" }).out);
+// learn_quote_unverified_count <plan> <run> <name>: the `quote-unverified:`
+// lines <name>'s own append-archive action adds (staged minus live) - never
+// a retire's, when the land pairs one onto a second archive target.
+function quoteUnverifiedCount(plan: string, rundir: string, name: string): string {
+  const target = `records/learnings-archive/${name}.md`;
+  const field = (f: string): string => subst(run(["jq", "-r", "--arg", "target", target, `.actions[] | select(.op == "append-archive" and .target == $target) | .${f}`, plan], { stdout: "pipe" }).out);
   const staged = field("staged");
   if (staged === "") return "0";
-  const target = field("target");
   const countIn = (p: string): string => {
     const t = read(p);
     return t === null ? "" : String(t.split("\n").filter((l) => l.startsWith("quote-unverified: ")).length);
@@ -2350,15 +2412,52 @@ function crewmateBase(): string {
   return "# Fleet-learned crewmate lessons\n<!-- written only by ac-learn.sh transactions; captains edit CREWMATE.md instead -->\n";
 }
 
-// learn_crewmate_learned_guard <staged> <run>: the 4096-byte budget, the
-// no-silent-loss check, and a .prev copy of the live file under the run.
-function crewmateGuard(staged: string, rundir: string): void {
+// learn_crewmate_retire_entry <content> <slug>: <content> with the whole
+// `## <slug>` entry (its heading through the line before the next `## ` or
+// EOF) cut out, plus that block verbatim; null when no such entry exists. A
+// crewmate body can never itself carry a `## ` line (land refuses one that
+// does), so the next `## ` line is always the following entry or the pointer
+// section - never this one's own body. <slug> must be an agentskills slug
+// (rejects the pointer section's own heading line outright, which holds
+// spaces and is not an entry).
+function retireCrewmateEntry(content: string, slug: string): { rest: string; block: string } | null {
+  if (!validSlug(slug)) return null;
+  const lines = content.split("\n");
+  const start = lines.indexOf(`## ${slug}`);
+  if (start < 0) return null;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (lines[i]!.startsWith("## ")) {
+      end = i;
+      break;
+    }
+  }
+  return { rest: [...lines.slice(0, start), ...lines.slice(end)].join("\n"), block: lines.slice(start, end).join("\n") };
+}
+
+// learn_crewmate_retire_archive <dest> <slug> <block>: <block> appended under
+// a `## retired <date>` heading to <dest> (its name's own evidence archive, or
+// a fresh file with a skill archive's default title when it had none yet) -
+// the no-loss destination crewmateLearnedNoLoss reads back.
+function retireArchive(dest: string, slug: string, block: string): boolean {
+  if (mkdirP(dirname(dest)) !== 0) return false;
+  if (!isFile(dest) && !put(dest, `# Learning Evidence: ${slug}\n`)) return false;
+  return put(dest, `\n## retired ${isoNow().slice(0, 10)}\n\n${block}\n`, true);
+}
+
+// learn_crewmate_learned_guard <staged> <run> [<retired>]: the 4096-byte
+// budget, the no-silent-loss check (against <retired>, the archive this same
+// write staged a just-retired entry's text into, when one is named), and a
+// .prev copy of the live file under the run.
+function crewmateGuard(staged: string, rundir: string, retired = ""): void {
   const live = `${home()}/CREWMATE-learned.md`;
   if ((statOf(staged)?.size ?? 0) > 4096) {
     const entries = isFile(live) ? learnedSlugs(live).map((s) => `${s} `).join("") : "";
-    dieB(`staged CREWMATE-learned.md exceeds its 4096-byte always-loaded budget - pair the new entry with a retire of one of: ${entries === "" ? "none " : entries}(nothing written)`);
+    dieB(
+      `staged CREWMATE-learned.md exceeds its 4096-byte always-loaded budget - pair the new entry with a retire of one of: ${entries === "" ? "none " : entries}(nothing written) - a crewmate candidate's own 'retire: <slug>' header, or 'ac-learn.sh reinforce <slug> --retire <stale-slug> --evidence ...' first to free bytes.`,
+    );
   }
-  if (!crewmateLearnedNoLoss(u8(live), u8(staged), "")) dieB("staged CREWMATE-learned.md drops an existing '## <slug>' entry with no retired accounting (nothing written)");
+  if (!crewmateLearnedNoLoss(u8(live), u8(staged), retired === "" ? "" : u8(retired))) dieB("staged CREWMATE-learned.md drops an existing '## <slug>' entry with no retired accounting (nothing written)");
   if (isFile(live)) {
     step(mkdirP(`${rundir}/backup`));
     step(run(["cp", live, `${rundir}/backup/CREWMATE-learned.md.prev`]).status);
@@ -2379,16 +2478,18 @@ function planAction(actions: string, op: string, target: string, staged: string,
 const PLAN_JQ = `{schema:"agentcrew.maintenance-plan/v1",mode:"learning",run_id:$run_id,
       subject:$subject,input_manifest_sha256:$manifest,actions:.}`;
 
-// learn_prepare_candidate_plan <cand> <authority> [<owning-run>]: the staged
-// files, plan and candidate copy of one subject; [run, plan, copy] on success.
-// Every refusal is a die (thrown); LAX decides what any other failure does.
-function prepareCandidatePlan(cand: string, authority: string, owning: string): [string, string, string] {
+// learn_prepare_candidate_plan <cand> <authority> [<owning-run> <run-subject>]:
+// the staged files, plan and candidate copy of one subject; [run, plan, copy,
+// the ledger the plan was staged from] on success. Every refusal is a die
+// (thrown); LAX decides what any other failure does.
+function prepareCandidatePlan(cand: string, authority: string, owning: string, runSubject = ""): [string, string, string, string | null] {
   if (!commandV("jq")) dieB("jq is required for maintenance plans");
   const kind = candidateHeader(cand, "kind");
   const name = candidateHeader(cand, "name");
   let desc = "";
   let trigger = "";
   let subject = "";
+  let retire = "";
   const slugRule = "lowercase [a-z0-9-], <=64 chars, no leading/trailing/consecutive hyphen";
   switch (kind) {
     case "skill":
@@ -2398,7 +2499,7 @@ function prepareCandidatePlan(cand: string, authority: string, owning: string): 
       if (!validDescription(desc)) dieB("skill candidate 'description:' must be non-empty and <=1024 chars (spec-required)");
       if (!validTrigger(trigger)) dieB(`skill candidate 'trigger:' must be non-empty, <=${TRIGGER_MAX} bytes and not start with 'when' - it is the always-loaded pointer line (got: '${trigger}', nothing written)`);
       if (exists(`${skillsD()}/${name}`)) dieB(`refusing to clobber an existing skill store at ${skillsD()}/${name}`);
-      subject = name;
+      subject = runSubject || name;
       break;
     case "patch": {
       if (!validSlug(name)) dieB(`patch candidate 'name:' must be an agentskills slug: ${slugRule} (got: '${name}')`);
@@ -2418,16 +2519,18 @@ function prepareCandidatePlan(cand: string, authority: string, owning: string): 
       if (!validSlug(tname)) dieB(`refusing to patch '${name}': target frontmatter 'name:' is not an agentskills slug (got: '${tname}')`);
       if (!validDescription(tdesc)) dieB(`refusing to patch '${name}': target frontmatter 'description:' is empty or >1024 chars`);
       if (!subst(candidateSection(cand, "patch")).startsWith("## ")) dieB("patch '===patch===' body must lead with a '## ' labeled subsection heading (nothing written)");
-      subject = name;
+      subject = runSubject || name;
       break;
     }
     case "crewmate":
       desc = candidateHeader(cand, "description");
+      retire = candidateHeader(cand, "retire");
       if (!validSlug(name)) dieB(`crewmate candidate 'name:' must be an agentskills slug: ${slugRule} (got: '${name}')`);
       if (!validDescription(desc)) dieB(`crewmate candidate 'description:' must be non-empty and <=1024 chars (got: '${desc}')`);
       if (isFile(`${home()}/CREWMATE-learned.md`) && grepWhole(`${home()}/CREWMATE-learned.md`, `## ${name}`))
         dieB(`CREWMATE-learned.md already carries '## ${name}' - curate the existing entry instead of re-landing it (nothing written)`);
-      subject = name;
+      if (retire !== "" && retire === name) dieB(`crewmate candidate 'retire:' cannot name its own '${name}' (nothing written)`);
+      subject = runSubject || name;
       break;
     case "rule":
       subject = `rule-${now()}`;
@@ -2501,9 +2604,20 @@ function prepareCandidatePlan(cand: string, authority: string, owning: string): 
       if (body.split("\n").some((l) => l.startsWith("## "))) dieB(`crewmate '===crewmate===' body must be lesson prose only - the transaction composes the '## ${name}' heading itself (nothing written)`);
       if (body.split("\n").length > 12) dieB("crewmate '===crewmate===' body is over 12 lines - a lesson that long is a skill or a doc (nothing written)");
       step(put(stagedCml, `${crewmateBase()}\n## ${name}\n\n${body}\n\n(learned ${isoNow().slice(0, 10)})\n`) ? 0 : 1);
+      let retiredStaged = "";
+      if (retire !== "") {
+        const cut = retireCrewmateEntry(read(stagedCml) ?? "", retire);
+        if (cut === null) dieB(`crewmate candidate 'retire: ${retire}' names no existing '## ${retire}' entry in CREWMATE-learned.md (ac-learn.sh stale lists them, nothing written)`);
+        step(put(stagedCml, cut.rest) ? 0 : 1);
+        const liveArchive = `${recordsD()}/learnings-archive/${retire}.md`;
+        retiredStaged = `${staged}/records/learnings-archive/${retire}.md`;
+        if (isFile(liveArchive)) step(run(["cp", liveArchive, retiredStaged]).status);
+        if (!retireArchive(retiredStaged, retire, cut.block)) step(1);
+      }
       shortenPointers(stagedCml);
-      crewmateGuard(stagedCml, rundir);
+      crewmateGuard(stagedCml, rundir, retiredStaged);
       step(planAction(actions, "rewrite-crewmate-learned", "CREWMATE-learned.md", `${stagedPrefix}/CREWMATE-learned.md`, rundir));
+      if (retire !== "") step(planAction(actions, "append-archive", `records/learnings-archive/${retire}.md`, `${stagedPrefix}/records/learnings-archive/${retire}.md`, rundir));
       break;
     }
     case "rule": {
@@ -2530,20 +2644,68 @@ function prepareCandidatePlan(cand: string, authority: string, owning: string): 
     }
   }
 
+  let base: string | null = null;
   if (kind === "skill" || kind === "patch" || kind === "crewmate") {
     const learnings = `${recordsD()}/learnings.md`;
     const archive = `${recordsD()}/learnings-archive/${name}.md`;
     archiveStage(candidateCopy, name, archive, `${staged}/records/learnings-archive/${name}.md`, txid, gateRel, candidateRel);
-    ledgerStage(candidateCopy, name, learnings, `${staged}/records/learnings.md`, `${rundir}/work`, kind === "crewmate" ? "[lesson](../CREWMATE-learned.md)" : "");
-    pointerEvidenceCheck(learnings, `${staged}/records/learnings.md`, archive, `${staged}/records/learnings-archive/${name}.md`, name);
-    step(planAction(actions, "append-archive", `records/learnings-archive/${name}.md`, `${stagedPrefix}/records/learnings-archive/${name}.md`, rundir));
-    if (kind !== "crewmate") step(planAction(actions, kind === "skill" ? "write-skill" : "patch-skill", `skills/${name}/SKILL.md`, `${stagedPrefix}/skills/${name}/SKILL.md`, rundir));
-    step(planAction(actions, "rewrite-ledger", "records/learnings.md", `${stagedPrefix}/records/learnings.md`, rundir));
+    // The staged ledger, the base kept for applyPlan and the rewrite's
+    // old_sha256 must describe one ledger, so no note lands between them.
+    const lk = `${stateD()}/.learn-note.lock`;
+    if (!lock(lk, 30)) dieB(`learnings ledger lock ${lk} could not be acquired within 30s - the plan for ${subject} was not staged`);
+    try {
+      base = read(learnings);
+      ledgerStage(candidateCopy, name, learnings, `${staged}/records/learnings.md`, `${rundir}/work`, kind === "crewmate" ? "[lesson](../CREWMATE-learned.md)" : "");
+      pointerEvidenceCheck(learnings, `${staged}/records/learnings.md`, archive, `${staged}/records/learnings-archive/${name}.md`, name);
+      step(planAction(actions, "append-archive", `records/learnings-archive/${name}.md`, `${stagedPrefix}/records/learnings-archive/${name}.md`, rundir));
+      if (kind !== "crewmate") step(planAction(actions, kind === "skill" ? "write-skill" : "patch-skill", `skills/${name}/SKILL.md`, `${stagedPrefix}/skills/${name}/SKILL.md`, rundir));
+      step(planAction(actions, "rewrite-ledger", "records/learnings.md", `${stagedPrefix}/records/learnings.md`, rundir));
+    } finally {
+      unlock(lk);
+    }
   }
 
   step(runTo(planOut, ["jq", "-s", "--arg", "run_id", txid, "--arg", "subject", subject, "--arg", "manifest", sha(candidateCopy) ?? "", PLAN_JQ, actions]) ?? 1);
   rmF(actions);
-  return [rundir, planOut, candidateCopy];
+  return [rundir, planOut, candidateCopy, base];
+}
+
+// The shared transaction over a prepared plan, under the note lock (taken
+// before the transaction's .maintenance.lock, never after it). A ledger that
+// moved since staging only by note insertion has those lines lifted out, so
+// the hash-bound plan applies, and put back verbatim whatever the apply
+// returned; any other change refuses the plan before its first action.
+function applyPlan(plan: string, rundir: string, base: string | null): boolean {
+  const lk = `${stateD()}/.learn-note.lock`;
+  if (!lock(lk, 30)) {
+    warnB(`learnings ledger lock ${lk} could not be acquired within 30s - the plan at ${plan} was not applied`);
+    return false;
+  }
+  try {
+    const p = JSON.parse(read(plan) ?? "{}") as { subject?: string; actions?: { op?: string; old_sha256?: string }[] };
+    const old = p.actions?.find((a) => a.op === "rewrite-ledger")?.old_sha256;
+    const ledger = `${recordsD()}/learnings.md`;
+    if (old === undefined || shaOrAbsent(ledger) === old) return maintenanceApply(u8(plan), u8(rundir));
+    const noted = base === null ? null : notedSince(base, ledger);
+    if (base === null || noted === null) {
+      warnB(`records/learnings.md changed since the plan at ${plan} was staged, and not by a note alone - the plan was refused before its first action`);
+      return false;
+    }
+    // Written before the take-out: a process killed before the put-back
+    // leaves the lifted lines here.
+    const kept = `${rundir}/work/${p.subject}.notes-replayed`;
+    if (!put(kept, noted) || publish(ledger, base) !== 0) {
+      warnB(`the Pending lines noted since the plan at ${plan} was staged could not be set aside - the plan was not applied`);
+      return false;
+    }
+    try {
+      return maintenanceApply(u8(plan), u8(rundir));
+    } finally {
+      if (pendingInsert(ledger, kept) !== 0) warnB(`the Pending lines noted while the gate judged could not be put back into ${ledger} - they are kept in ${kept}`);
+    }
+  } finally {
+    unlock(lk);
+  }
 }
 
 // learn_policy_ask_receipt: the repository-policy ask-captain receipt, through
@@ -2580,6 +2742,7 @@ links: candidate=${candidateRel}${gateLinks}; evidence=${candidateRel}`;
 async function autoApplyCandidates(rundir: string): Promise<boolean> {
   let ok = true;
   let found = false;
+  const claimed = new Set<string>();
   const gate = process.env.AC_GATE ? b8(process.env.AC_GATE) : `${b8(STARTED_BIN)}/ac-gate.sh`;
   for (const cand of glob(rundir, "candidate-", ".md")) {
     if (!isFile(cand)) continue;
@@ -2588,9 +2751,11 @@ async function autoApplyCandidates(rundir: string): Promise<boolean> {
     let subject = candidateHeader(cand, "name");
     if (kind === "rule") subject = `rule-${basename(cand).replace(/\.md$/, "").replace(/^candidate-/, "")}`;
     if (subject === "" || /[^A-Za-z0-9._-]/.test(subject)) subject = `invalid-${(sha(cand) ?? "").slice(0, 12)}`;
+    for (let k = 2, base = subject; claimed.has(subject); k++) subject = `${base}.${k}`;
+    claimed.add(subject);
     mkdirP(`${rundir}/gates/${subject}`);
     const prepErr = `${rundir}/gates/${subject}/prepare.err`;
-    let prepared: [string, string, string] | null = null;
+    let prepared: [string, string, string, string | null] | null = null;
     let fd = -1;
     try {
       fd = openSync(B(prepErr), "w");
@@ -2600,7 +2765,7 @@ async function autoApplyCandidates(rundir: string): Promise<boolean> {
       ERR = fd;
       LAX = true;
       try {
-        prepared = prepareCandidatePlan(cand, "maintenance-gate", rundir);
+        prepared = prepareCandidatePlan(cand, "maintenance-gate", rundir, subject);
       } catch (e) {
         exitOf(e);
       } finally {
@@ -2618,7 +2783,7 @@ async function autoApplyCandidates(rundir: string): Promise<boolean> {
       out(`  revise: ${subject} (candidate/plan validation failed; sources preserved)\n`);
       continue;
     }
-    const [, plan, manifest] = prepared;
+    const [, plan, manifest, base] = prepared;
     const receipt = `${rundir}/gates/${subject}/decision.md`;
     if (kind === "rule") {
       const reason = "A new or changed standing captain rule is captain-owned and cannot auto-apply.";
@@ -2647,8 +2812,8 @@ async function autoApplyCandidates(rundir: string): Promise<boolean> {
       continue;
     }
     if (decision === "continue") {
-      const unverified = quoteUnverifiedCount(plan, rundir);
-      const applied = maintenanceApply(u8(plan), u8(rundir));
+      const unverified = quoteUnverifiedCount(plan, rundir, candidateHeader(cand, "name"));
+      const applied = applyPlan(plan, rundir, base);
       await checkpoint();
       if (!applied) {
         warnB(`continue receipt for ${subject} became stale or its transaction could not complete; obtain a fresh gate decision`);
@@ -2694,16 +2859,16 @@ function cmdLand(args: string[]): void {
   const captured = learnGeneration();
   // The bash read the preparer through `< <(...)`: whatever ended it, the
   // read found no line and errexit ended the land with 1.
-  let prepared: [string, string, string];
+  let prepared: [string, string, string, string | null];
   try {
     prepared = prepareCandidatePlan(cand, "legacy-captain", "");
   } catch (e) {
     exitOf(e);
     return fatal(1);
   }
-  const [rundir, plan] = prepared;
-  const unverified = quoteUnverifiedCount(plan, rundir);
-  if (!maintenanceApply(u8(plan), u8(rundir))) dieB(`maintenance transaction refused candidate plan at ${plan}`);
+  const [rundir, plan, , base] = prepared;
+  const unverified = quoteUnverifiedCount(plan, rundir, candidateHeader(cand, "name"));
+  if (!applyPlan(plan, rundir, base)) dieB(`maintenance transaction refused candidate plan at ${plan}`);
   const r = cadenceCall(() => learnReset(captured));
   if (r === 2) warnB(`landed ${kind}, but its cadence lock was busy; its cadence was preserved instead of reset`);
   else if (r !== 0) warnB(`landed ${kind}, but a newer Learning generation exists; its cadence was preserved instead of reset`);

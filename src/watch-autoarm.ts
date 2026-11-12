@@ -2,9 +2,8 @@
 // watcher instead of the chief remembering to.
 // The entry is bin/ac-watch-autoarm.sh, the fail-open hook shim that starts
 // this file through bin/ac-bun.sh's ac_bun_exec_hook; THIS header is the
-// authoritative spec, and the bash original it replaced stays frozen at
-// tests/fixtures/ac-watch-autoarm.sh as the oracle the differential leg of
-// tests/sh/ac-watch-autoarm.test.sh holds this module to.
+// authoritative spec, and tests/sh/ac-watch-autoarm.test.sh is its contract
+// test.
 //
 // Wired in .claude/settings.json as a Stop hook with "asyncRewake": true and an
 // explicit timeout. Claude Code runs it in the BACKGROUND on every turn end and
@@ -76,6 +75,26 @@
 // does not change what THIS hook reads (a firing standing aside from a
 // predecessor's watcher still gets the `already running` prefix it globs on).
 //
+// AN ORPHANED FIRING (autoarm-orphan-holds-watcher-lock, 2026-10): Claude Code
+// reparents a Stop hook outliving its session to pid 1 (research/firstmate
+// origin/main bin/fm-wake-lib.sh:1810-1814) with its watcher child still alive
+// and the lock still held - a corpse the exit-2 nudge can never reach, because
+// its owning session is gone. Two halves close the gap. The slower one is
+// this hook giving up on its own: stillProvenHolder re-checks, on every pass
+// after the first, THIS firing's own live ancestry against the ONE pid the
+// pre-loop isSessionLockHolder already proved held it - never a fresh read
+// of .session-lock, which a reparented firing's own prior re-arm can have
+// already overwritten with its own identity (ownerGate's ancestry walk falls
+// to its own stable fallback once nothing in the reparented tree matches a
+// harness) - so an orphaned firing stops re-arming a replacement for itself
+// as soon as its current watcher child exits (one AC_HEARTBEAT, not the full
+// AC_AUTOARM_BUDGET). The faster half is the REPLACEMENT session's:
+// ac-watch.sh stamps the arming session's own session-lock pid into
+// $lock/autoarm (its header owns that write and the reclaim it feeds), so a
+// later fleet arm under AC_AUTOARM can tell a live incumbent's session from
+// a dead one's and reclaim the lock immediately instead of waiting out the
+// orphan's next pass.
+//
 // THE ARM ENV is reconstructed on every pass, exactly as the chief would set it
 // by hand (rooms-threads skill): a SCOPED roomchief session arms with
 // AC_WATCH_ONLY=<its watch set> (ac-ready.sh watch-set; the scope itself when
@@ -145,13 +164,6 @@
 // `git revert` the commit that added it. EITHER WAY, arm the watcher by hand
 // afterwards (AGENTS.md section 7) - this hook is what was remembering.
 //
-// A BROKEN PORT. The frozen original needs bash, git and the bash libs beside
-// it (ac-lib.sh's ac_hook_trace, ac-wake-lib.sh's ac_wake_pending, ac-backend.sh
-// for the nudge): while bin/ keeps those, copying
-// tests/fixtures/ac-watch-autoarm.sh over bin/ac-watch-autoarm.sh in the
-// checkout the fleets run restores it whole until the fix lands; the
-// captain's revert of the land is the last resort.
-//
 // Fails open (exit 0) on every missing dependency. A broken continuity hook must
 // leave the fleet exactly as it found it, never wedge the harness.
 // Exit codes: 0 nothing owed / someone else covers / broken dependency / -h,
@@ -183,7 +195,7 @@
 // heartbeat spliced into the sum as text - each operand read by arithValue
 // (src/lib.ts) in that order - and a budget that is no integer arming nothing.
 //
-// AT PARITY (each pinned in the leg until its own fix lands):
+// AT PARITY with the bash this module replaced (each until its own fix lands):
 // - W1 MALFORMED TRACE KEEP: AC_STOPHOOK_LOG_KEEP enters `$(( keep * 2 ))`
 //   after each trace line is written. A malformed number there discards the
 //   top-level command the trace stood in: a stand-aside's exit 0 and a
@@ -206,47 +218,44 @@
 //   probes (0 is this firing's own group), so a lock reading pid=0 or pid=-1
 //   stands every unscoped firing aside as not the holder.
 //
-// DIVERGENCES from the original (the leg names each one a row can show):
+// ALSO:
+// - ORPHAN SELF-CHECK: stillProvenHolder re-runs the pre-loop ancestry walk's
+//   verdict on every owed-loop pass after the first (AN ORPHANED FIRING,
+//   above); no test exercises a session dying mid-loop.
 // - F7 STATUS: the shim answers only the module's 0 or 2, so the 1 of an
 //   unknown argument (its ERROR line still printed) or of W3, and an
-//   identifier's clock status other than 2 (127 for a missing date), exit 0.
-// - BUN: with no bun on PATH the shim exits 0 at once, saying nothing and
-//   arming nothing, where the original armed; a module that cannot load or
-//   crashes exits 0 too, bun's diagnosis on stderr, nothing traced - the
-//   floor the original's missing ac-lib.sh was.
+//   identifier's clock status other than 2 (127 for a missing date), exit 0,
+//   the shim's one line naming the status after the module's stderr.
+// - BUN: with no bun on PATH the shim exits 0 at once, saying so in one
+//   stderr line and arming nothing; a module that cannot load or crashes
+//   exits 0 too, bun's diagnosis and the shim's line on stderr, nothing
+//   traced.
 // - USAGE HEADER: -h prints THIS header.
 // - THE PROCESS: the ancestry walk starts at bun's pid, the shim shell's
-//   child, where the original started at its own shell; the harness the lock
-//   names is an ancestor of both.
+//   child; the harness the lock names is an ancestor of it.
 // - PHYSICAL BIN: ac-watch.sh and ac-ready.sh start from the bin/ bun was
-//   started in (STARTED_BIN, physical), where the original used its own
-//   logical dir - the same files through a symlinked bin/.
+//   started in (STARTED_BIN, physical).
 // - NUDGE DRIVER: the backend driver is src/lib.ts's (backendCall), so the
-//   original's skip when no ac-backend.sh sat beside the hook is gone.
+//   nudge needs no ac-backend.sh beside the hook.
 // - EXPRESSIONS: an AC_HEARTBEAT, AC_STOPHOOK_LOG_KEEP or clock text that is
 //   an arithmetic expression (60*10) rather than one operand reads as
-//   malformed, and an identifier naming a SET variable (HOME, the hook's own
-//   `started`) reads as unbound, where bash evaluated both.
-// - SHELL-OWN STDERR: bash's `unbound variable`, `syntax error in
-//   expression`, `integer expression expected`, `command not found` and
-//   failed-redirection lines are not reproduced.
-// - ORDER: the metas are walked in byte order; under a UTF-8 locale bash
-//   3.2's glob followed collation - the order of the WARN lines and of the
-//   AC_WATCH_SKIP list.
+//   malformed, and an identifier naming a SET variable (HOME) reads as
+//   unbound.
+// - No line of a shell's own is printed for an unbound or malformed operand,
+//   a missing command or a failed redirection.
+// - ORDER: the metas are walked in byte order under every locale - the order
+//   of the WARN lines and of the AC_WATCH_SKIP list.
 // - SCOPE GRAMMAR: the spool the heartbeat check reads is chosen by
-//   AC_SCOPE's grammar per its text (wakePending), where bash 3.2's range
-//   under a UTF-8 locale let an accented letter through.
+//   AC_SCOPE's grammar per its text (wakePending).
 // - HOME RESOLUTION: an AC_HOME whose name ends in LF is the directory it
 //   names, and a relative one is entered without CDPATH; a caller whose cwd
 //   Bun cannot enter resolves no relative AC_HOME (silent).
 // - EXCLUSIVE TEMP: the trace trim's temp is created exclusively
-//   (`<log>.tmp.<pid>[.<n>]`), where the original's `$f.tmp.$$` wrote
-//   through whatever sat there.
+//   (`<log>.tmp.<pid>[.<n>]`).
 // - BYTES: AC_SCOPE, an argument and a state/ entry's name arrive decoded,
 //   so a byte that is not UTF-8 prints as U+FFFD, and one in the watcher's
 //   reason is typed by the nudge as U+FFFD (stderr and the trace keep the
-//   byte); a lock pid of `-l` is no holder, where bash's kill listed its
-//   signals on stdout and read it live.
+//   byte); a lock pid of `-l` is no holder.
 //
 // CALLERS: the Stop wiring of .claude/settings.json, behind its [ -x ] gate
 // (claude-only: asyncRewake exists on no other harness); a chief by hand.
@@ -263,7 +272,6 @@ import {
   metaGet,
   metaIsSelf,
   metaIsVerify,
-  metaPaths,
   physicalDir,
   shellStatus,
   spawnShellSync,
@@ -271,6 +279,7 @@ import {
   testInt,
   wakePending,
 } from "./lib.ts";
+import { metaPaths } from "./lib-wake-drain.ts";
 
 const { args, atCaller } = enterCaller(process.argv.slice(2));
 const arg = args[0] ?? "";
@@ -383,17 +392,53 @@ function ppidOf(p: string): string {
   }
 }
 
+// The UNSCOPED ancestry walk alone - scope!=="" stands aside on a different
+// predicate (family-demoted, above) that this never replaces. A dead or
+// absent holder is fail-open HERE (nothing currently claims the lock, so
+// this firing may proceed) - but that same fail-open answer must never
+// stand for "still the holder" mid-loop: a dead holder is exactly the
+// orphaned case, and re-reading .session-lock fresh on a later pass can see
+// a DIFFERENT lock this firing's own prior re-arm just reclaimed for itself
+// (ownerGate's ancestry walk falls to its own STABLE FALLBACK when nothing
+// in this reparented tree matches a harness, src/lock.ts's header), which
+// would read back as "still fine" for the very firing that is the orphan.
+let provenHolder: string | null = null;
+function isSessionLockHolder(): boolean {
+  const lock = `${sd}/.session-lock`;
+  if (!isFile(lock)) return true;
+  const holder = lockHolder(lock);
+  if (holder === "" || !answersKill0(holder)) return true;
+  for (let p = String(process.pid); p !== "" && (testInt(p) ?? 0n) > 1n; p = ppidOf(p))
+    if (p === holder) {
+      provenHolder = holder;
+      return true;
+    }
+  return false;
+}
+
+// The re-check every pass after the first actually needs: not "does
+// .session-lock currently name a live ancestor" (isSessionLockHolder's
+// question, asked once, above) but "am I STILL a descendant of the ONE pid
+// I already proved held it". Comparing against the pid this firing proved -
+// never a fresh read - is what makes reparenting itself the signal: once the
+// session dies, THIS process's own ancestry no longer passes through it,
+// full stop, regardless of what any later writer stamps into the file. No
+// proven holder (the pre-loop check never matched one) has nothing to
+// defend, so it never trips - the pre-loop check already decided this firing
+// may run.
+function stillProvenHolder(): boolean {
+  if (provenHolder === null) return true;
+  for (let p = String(process.pid); p !== "" && (testInt(p) ?? 0n) > 1n; p = ppidOf(p)) if (p === provenHolder) return true;
+  return false;
+}
+
 block(() => {
   if (scope !== "") {
     if (isFile(`${sd}/${scope}-chief.meta`)) return;
     trace(`verdict=stood-aside reason=family-demoted scope=${where}`);
     process.exit(0);
   }
-  const lock = `${sd}/.session-lock`;
-  if (!isFile(lock)) return;
-  const holder = lockHolder(lock);
-  if (holder === "" || !answersKill0(holder)) return;
-  for (let p = String(process.pid); p !== "" && (testInt(p) ?? 0n) > 1n; p = ppidOf(p)) if (p === holder) return;
+  if (isSessionLockHolder()) return;
   trace("verdict=stood-aside reason=not-lock-holder scope=fleet");
   process.exit(0);
 });
@@ -500,8 +545,19 @@ const started = clock().text;
 process.env.AC_AUTOARM = "1";
 block(() => trace(`verdict=armed reason=loop-start scope=${where} owed=yes`));
 
+// The pre-loop block already ran isSessionLockHolder once for THIS firing;
+// re-running it on the very first pass would check nothing new while still
+// re-reading .session-lock (observable on an unreadable one - sed's own
+// `Permission denied` line - for no reason). Every pass AFTER the first is
+// real re-arming time elapsed since that check.
+let firstPass = true;
 block(() => {
   while (owed()) {
+    if (!firstPass && scope === "" && !stillProvenHolder()) {
+      trace("verdict=stood-aside reason=orphaned-mid-loop scope=fleet");
+      process.exit(0);
+    }
+    firstPass = false;
     const now = clock();
     const end = BigInt.asIntN(64, BigInt.asIntN(64, arith(now.text, now.status) - arith(started, now.status)) + arith(process.env.AC_HEARTBEAT || "600", now.status));
     const limit = testInt(budget);

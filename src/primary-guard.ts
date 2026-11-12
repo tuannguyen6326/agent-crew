@@ -1,10 +1,9 @@
 // primary-guard.ts - PreToolUse hook: refuse a crewmate/roomchief EDITING a
 // file that lives in the PRIMARY checkout but outside its own tree.
-// The entry is bin/ac-primary-guard.sh, the fail-open hook shim that starts
-// this file through bin/ac-bun.sh's ac_bun_exec_hook; THIS header is the
-// authoritative spec, and the bash original it replaced stays frozen at
-// tests/fixtures/ac-primary-guard.sh as the oracle the differential leg of
-// tests/sh/ac-primary-guard.test.sh holds this module to.
+// The entry is bin/ac-primary-guard.sh, the hook shim that starts this file
+// through bin/ac-bun.sh's ac_bun_exec_guard; THIS header is the
+// authoritative spec, and tests/sh/ac-primary-guard.test.sh is its contract
+// test.
 //
 // Wired in .claude/settings.json and .codex/hooks.json under PreToolUse;
 // reads the hook payload JSON on stdin and inspects .tool_name / .tool_input
@@ -51,8 +50,9 @@
 //
 // Fails open: neither crew scalar, a non-matching tool, missing jq, an
 // unparseable payload, an empty path, a target whose parent directory does not
-// exist, or a rev-parse that errors - all exit 0 (no bun, and a module that
-// cannot load, are the shim's). A broken guard must never wedge the harness.
+// exist, or a rev-parse that errors - all exit 0 (a module that cannot load
+// is the shim's, and no bun the shim's refusal). A broken guard must never
+// wedge the harness.
 // Exit codes: 0 allow, 2 deny; nothing on stdout, the refusal three lines on
 // stderr. Files: none.
 //
@@ -64,7 +64,7 @@
 // directory tree in the primary: its parent cannot be entered, so it fails
 // open.
 //
-// THE READS, the original's: the payload is stdin to its end with NULs
+// THE READS: the payload is stdin to its end with NULs
 // dropped and trailing LFs stripped (empty allows); the name is jq's
 // `-r '.tool_name // empty'` and the path jq's `-r '.tool_input.file_path //
 // empty'` (Edit, Write) or `-r '.tool_input.notebook_path // empty'`
@@ -75,35 +75,20 @@
 // the same way, stderr dropped, stdin inherited; the primary is the common
 // dir less its last `/<component>`.
 //
-// A BROKEN PORT. The frozen original needs only bash, jq and git: copying
-// tests/fixtures/ac-primary-guard.sh over bin/ac-primary-guard.sh in the
-// checkout the fleets run (the wiring names that path) restores it whole until
-// the fix lands; the captain's revert of the land is the last resort.
-//
-// AT PARITY (each pinned in the leg until its own fix lands):
+// AT PARITY with the bash original (until its own fix lands):
 // - the path is jq's text: a file_path that is no string is judged by its JSON
 //   text, and a payload holding a second value joins the name jq printed for
 //   both with LF (an `Edit<LF>Edit` name is no tool).
 //
-// DIVERGENCES from the original (the leg names each one a row can show):
-// - BUN: with no bun on PATH the shim allows at once, saying nothing, where
-//   the original judged; a module that cannot load or crashes allows too.
-// - HOME RESOLUTION, for the target's directory: a relative one is entered
-//   without CDPATH, where an exported CDPATH could send the original's cd to a
-//   namesake and its echo made the target a two-line path (`sub/x` from a
-//   worktree, with CDPATH naming the primary, refused there); one spelled as
-//   a cd operand (`-`, `-L`, `-P`) is the directory of that name, where the
-//   original's cd read OLDPWD or an option; one whose name ends in LF is the
-//   directory it names, where the original's `$(...)` dropped the LF and
-//   judged the sibling.
-// - LOGICAL CWD: a relative directory is walked from the physical cwd, where
-//   the original's cd walked `..` from its logical $PWD first - from a cwd
-//   entered through a symlink, `../x` named a different directory there.
-// - A caller whose cwd Bun cannot enter (a name ending in a backslash)
-//   resolves no relative target: it allows.
-// - TEMP: the original fed jq a here-string, a temp file under $TMPDIR, else
-//   /tmp; with neither writable it allowed with bash's own line, where the
-//   port pipes jq's stdin and judges.
+// BUN: with no bun on PATH, or no module file, the shim denies at once with
+// one stderr line naming it; a module that cannot load or crashes allows, with
+// one stderr line.
+// THE TARGET'S DIRECTORY: a relative one is entered without CDPATH (an
+// exported CDPATH never sends it to a namesake) and walked from the physical
+// cwd, so from a cwd entered through a symlink `../x` climbs out of the
+// directory the cwd really is; one spelled as a cd operand (`-`, `-L`, `-P`)
+// is the directory of that name; one whose name ends in LF is the directory it
+// names. jq's stdin is a pipe, so no temp file is needed to judge.
 //
 // CALLERS: the PreToolUse wiring of .claude/settings.json and
 // .codex/hooks.json, each behind its own [ -x ] gate; no script runs it.

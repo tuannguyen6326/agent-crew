@@ -2,8 +2,7 @@
 // shares it), held to its bash original differentially: commandV against
 // bash's `command -v` over one PATH - an executable anywhere, else the first
 // entry that exists, found unless it is a directory. The CLI contracts are
-// tests/sh/ac-lint.test.sh's and tests/sh/ac-page-lint.test.sh's, whose
-// differential legs run the frozen bash originals beside the shims.
+// tests/sh/ac-lint.test.sh's and tests/sh/ac-page-lint.test.sh's.
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

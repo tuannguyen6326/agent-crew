@@ -1,8 +1,6 @@
 // curate.ts - fleet-local Curate maintenance. The entry is bin/ac-curate.sh
 // (a shim that starts this file through bin/ac-bun.sh); THIS header is the
-// authoritative spec, and the bash original it replaced stays frozen at
-// tests/fixtures/ac-curate.sh as the oracle the differential leg of
-// tests/sh/ac-curate.test.sh holds this module to.
+// authoritative spec, and tests/sh/ac-curate.test.sh is its contract test.
 //
 // Usage:
 //   ac-curate.sh learnings              # pointer-integrity check (PROPOSE ONLY)
@@ -58,9 +56,8 @@
 //
 // Automatic changes are first produced in a shadow home, converted into one
 // closed action plan, bound to a deterministic policy receipt, and applied by
-// the shared fleet maintenance transaction (maintenanceApply, src/lib.ts - the
-// one Learning calls too, the twin of the bash ac_maintenance_apply frozen at
-// tests/fixtures/ac-maintenance-retired.sh, the two pinned together by
+// the shared fleet maintenance transaction (maintenanceApply,
+// src/lib-curate.ts - the one Learning calls too, held to its spec by
 // tests/ts/curate.test.ts). That boundary owns the fleet-wide
 // lock, pre-write backup, staged hashes (pre-state hashes bound to the
 // pre-pass snapshot, so a write landing mid-run is refused rather than
@@ -120,22 +117,8 @@
 // read; a signal ends the run at once, 128+n, with no handler (a run dir, a
 // dead-pid lock and, mid-apply, an `applying` journal are what it leaves).
 //
-// ESCAPE HATCH. A broken Curate leaves the Learning DISTILL's caller soft
-// (`WARN: Curate is due ... failed`, cadence stays due) but a WRONG write
-// rewrites the fleet's ledgers. If a landed change breaks this module, run
-// the frozen original from a scratch bin/ at a physical path:
-//   o=$(cd "$(mktemp -d)" && pwd -P); mkdir "$o/bin"; cp bin/*.sh "$o/bin/"
-//   ln -s "$PWD/src" "$o/src"; ln -s "$PWD/dashboard" "$o/dashboard"
-//   cp tests/fixtures/ac-curate.sh "$o/bin/ac-curate.sh"
-//   cat tests/fixtures/ac-maintenance-retired.sh >>"$o/bin/ac-maintenance-lib.sh"
-// then AC_CURATE="$o/bin/ac-curate.sh" bin/ac-learn.sh run (the override
-// Learning reads, src/learn.ts cmdRun), or "$o/bin/ac-curate.sh" <verb>
-// by hand. The copy reaches its own ac-gate.sh and ac-room.sh siblings (shims
-// into "$o/src") and bakes no bin root into anything it writes, so nothing
-// needs rewriting. Each transaction's tarball (`tar -xzf <arc> -C <home>`)
-// undoes a run; the captain's revert of the land is the last resort.
-//
-// AT PARITY (each pinned in the leg until its own fix lands):
+// AT PARITY with the bash original, and deliberately left unasserted by the
+// contract test (each until its own fix lands):
 // - W2: no run-level lock - a run started inside another's window binds its
 //   deterministic plan to its own snapshot and ends HELD, refusing every
 //   later Learning/Curate transaction until `maintenance resume|abandon`.
@@ -169,32 +152,24 @@
 // - grep's reading of a record holding a NUL in its first 32 KB: a printing
 //   grep answers one `Binary file <path> matches` line for the matches.
 //
-// DIVERGENCES from the original (the leg names each one a row can show):
-// - BUN: every verb needs bun now (the shim's `ERROR: required tool not
-//   found: bun`, exit 1, before usage), where learnings, captain, projects
-//   and the skills verbs ran without it and backlog exited 2 at its parser.
+// ALSO:
+// - BUN: every verb needs bun (the shim's `ERROR: required tool not found:
+//   bun`, exit 1, before usage).
 // - HOME RESOLUTION: an AC_HOME cd cannot enter is `ERROR: AC_HOME is not a
-//   readable directory: <h>`, and a relative one is resolved without CDPATH,
-//   where the shell printed cd's own lines (and took cd's echo into the path).
-// - W14: no home is the refusal at the first home read, exit 1 - where
-//   skills-audit globbed the host's `/*` and exited 0, and run printed the
-//   refusal twice and minted `/curate-<epoch>-<pid>`.
+//   readable directory: <h>`, and a relative one is resolved without CDPATH.
+// - W14: no home is the refusal at the first home read, exit 1.
 // - W8 FAIL-PATH and Q4's C reading: records, frontmatter, overlap tokens,
-//   candidate names and the captain greps are read as bytes under any locale,
-//   where a UTF-8 caller's awk aborted at an invalid byte (towc, exit 2), its
-//   tolower/[a-z] reached non-ASCII letters and bash's brackets collated.
+//   candidate names and the captain greps are read as bytes under any locale.
 // - W15 EXCLUSIVE TEMPS: captain.md's and backlog.md's rewrite and every
 //   receipt land through temps created exclusively (<name>.tmp.<pid>, then
 //   .<n>), so a link planted there is never written through; a rewritten
-//   record keeps its mode where the original's temp left it at the umask's
-//   (a 0600 captain.md stays 0600, through `run`'s deterministic moves too;
-//   a semantic subject's rewrite lands with its staged file's mode, as the
-//   original's did).
-// - W18 ORDER: globs, sorts and the moved file list are in byte order, where
-//   the original's followed LC_COLLATE.
-// - SHELL-OWN STDERR is not reproduced, the status kept: bash's arithmetic
+//   record keeps its mode (a 0600 captain.md stays 0600, through `run`'s
+//   deterministic moves too; a semantic subject's rewrite lands with its
+//   staged file's mode).
+// - W18 ORDER: globs, sorts and the moved file list are in byte order.
+// - SHELL-OWN STDERR is not printed, the status kept: bash's arithmetic
 //   (`08: value too great for base`), redirect and test lines, and awk's own
-//   diagnostics; a gate that cannot start is named by /bin/sh, not bash.
+//   diagnostics; a gate that cannot start is named by /bin/sh.
 // - BYTES: argv and environment arrive decoded, so a byte that is no UTF-8 in
 //   a flag, AC_CURATE_KEEP or a path reaches the output, jq and the room as
 //   U+FFFD; an arithmetic input naming a variable ends the run 1.
@@ -218,16 +193,11 @@ import {
   arithValue,
   awkAssign,
   awkNumber,
-  curateDue,
-  curateGeneration,
-  curateReset,
   die,
   enterCaller,
   exclusiveTemp,
   fileMtime,
   iso,
-  maintenanceApply,
-  maintenanceGateFailureReason,
   metaGet,
   nowRaw,
   physicalDir,
@@ -240,6 +210,7 @@ import {
   warn,
   writeAll,
 } from "./lib.ts";
+import { curateDue, curateGeneration, curateReset, maintenanceApply, maintenanceGateFailureReason } from "./lib-curate.ts";
 
 // The lib's AC_MAINTENANCE_QUOTE_MIN (tests/ts/curate.test.ts holds the two
 // together).

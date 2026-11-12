@@ -1,9 +1,8 @@
 // page-lint.ts - PAGE-SYNTAX LINT: catch a syntax error inside a served
 // dashboard page's inline <script> content before it reaches the browser. The
 // entry is bin/ac-page-lint.sh (a shim that starts this file through
-// bin/ac-bun.sh); THIS header is the authoritative spec, and the bash original
-// it replaced stays frozen at tests/fixtures/ac-page-lint.sh as the oracle the
-// differential leg of tests/sh/ac-page-lint.test.sh holds this module to.
+// bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-page-lint.test.sh is its contract test.
 //
 // WHY: dashboard/page.ts's PAGE constant (and dashboard/app.ts's other page
 // builders) hold each page as a template-literal STRING. Everything after the
@@ -76,7 +75,7 @@
 //    scripts)` on stdout. Each <... stderr> is the child's whole text with
 //    NULs dropped and trailing LFs stripped.
 //
-// EXTRACTION is the original's perl program, spawned verbatim: the page
+// EXTRACTION is one spawned perl program: the page
 // slurped, every `/<script\b([^>]*)>(.*?)<\/script>/gs` match walked, a block
 // skipped when its attributes match `/\bsrc\s*=/i` or its body is only
 // whitespace, the rest written to scripts/1.js, 2.js, ... and their count
@@ -99,23 +98,14 @@
 // defect outranks an unrelated page's coverage gap, but exit 1 alone does
 // not promise every page was actually checked; read stderr for that.
 //
-// DIVERGENCES from the original, named in the differential leg: -h prints
-// THIS header where the original printed its bash header; without bun the
-// shim refuses every run - -h and a bad argument included - with `ERROR:
-// required tool not found: bun`, exit 1, where the original checked bun
-// itself (`ac-page-lint.sh: bun not found`, exit 3); a
-// found curl or perl that cannot run leaves its TOOLING ERROR's parentheses
-// empty where the original carried the shell's own `Permission denied` line;
-// a signal ends the run with the status 128+<signal> where bash died by it;
-// without seq(1) on PATH the original's counted loops ran zero times (`could
-// not find a free port`, exit 3) where the port counts its own;
-// the log dump prefixes every byte where BSD sed under a UTF-8 locale stopped
-// at an invalid one (`sed: RE error: illegal byte sequence`); bun build no
-// longer sees a caller's BUN_*/JSC_* names, which bin/ac-bun.sh drops before
-// this module starts (no probed name changed a verdict); a SIGINT the
-// caller's shell left ignored (an async job of a non-interactive shell) now
-// ends the run where the original ran on. An argument that is not UTF-8
-// reaches this module as U+FFFD, and the unknown-arg line prints that.
+// Without bun the shim refuses every run - -h and a bad argument included -
+// with `ERROR: required tool not found: bun`, exit 1; a found curl or perl
+// that cannot run leaves its TOOLING ERROR's parentheses empty; the log dump
+// prefixes every line whatever its bytes; bun build never sees a caller's
+// BUN_*/JSC_* names, which bin/ac-bun.sh drops before this module starts; a
+// SIGINT the caller's shell left ignored (an async job of a non-interactive
+// shell) still ends the run. An argument that is not UTF-8 reaches this
+// module as U+FFFD, and the unknown-arg line prints that.
 //
 // CALLERS: humans after a dashboard page change (CONTRIBUTING.md); no `set -e`
 // caller runs it, so nothing fails soft.

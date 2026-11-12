@@ -4,9 +4,8 @@
 // that run in their own seeded home instead of a project worktree. Refused in
 // a solo session (AC_SOLO=1), whose one write path is ac-self-task.sh.
 // The entry is bin/ac-spawn.sh (a shim that starts this file through
-// bin/ac-bun.sh); THIS header is the authoritative spec, and the bash original
-// it replaced stays frozen at tests/fixtures/ac-spawn.sh as the oracle the
-// differential leg of tests/sh/ac-spawn-differential.test.sh holds this module to.
+// bin/ac-bun.sh); THIS header is the authoritative spec, and the
+// tests/sh/ac-spawn-*.test.sh suites are its contract tests.
 //
 // Usage: ac-spawn.sh <id> <project-name-or-dir> [--scout] [--mode <m>]
 //                    [--harness <claude|codex|opencode|pi|cursor|custom>] [--model <name>]
@@ -177,6 +176,17 @@
 // that has since been re-leased. Absent (old meta, or a pool that predates the
 // id) means teardown returns unconditionally, as it always did.
 //
+// THE LEASE INSTALL (the authoritative contract; the runner is leaseInstall,
+// src/lib.ts): when the project's home yaml declares commands.install, a crew
+// spawn runs it in the fresh lease (herdr or orca) right after the lease and
+// before the seed and the window - a scout, which never builds, skips it. It
+// is a synchronous child bounded by AC_LEASE_INSTALL_TIMEOUT (default 300 s),
+// so a signal held through it acts once it returns. It never refuses the
+// spawn: a non-zero exit, a timeout or a tree it left dirty is one WARN naming
+// the cause, deps=failed in the meta and one DEPENDENCIES sentence in the
+// kickoff prompt; a success is deps=ok; with no command declared nothing runs
+// and no deps= is written.
+//
 // Requires an existing brief, resolved with ac_task_dir: flat data/<id>/brief.md
 // for direct tasks, nested data/<family>/<stage>/brief.md for staged flows,
 // nested data/<family>/tasks/<slug>/brief.md for a scoped chief's fan-out
@@ -186,6 +196,9 @@
 //
 // The backend comes from --backend, else config/backend, else herdr, and is
 // recorded in the task meta so every later script drives the same backend.
+// An explicit --base-branch is recorded too (lease_base=), absent otherwise,
+// so ac-teardown.sh can prove a 0-commit crew/<family> branch merged into
+// THAT base when the primary's own HEAD/upstream never covers it.
 // When config/crew-dispatch.json exists, crew spawns REFUSE to guess the
 // harness: pick a profile with ac-dispatch-select.sh (--list / --rule) and
 // pass --harness/--model/--effort explicitly.
@@ -563,14 +576,14 @@
 //
 // EXIT: 0 spawned, promoted or recovered (strands and unobservable probes
 // included); 1 every ERROR, a value flag missing its value (W14) and a
-// redirection the run could not open; a child's own status where the original's
-// errexit adopted it - the herdr lease (bin/ac-tree.sh get), jq's in window_new
+// redirection the run could not open; a child's own status where the run
+// adopts it - the herdr lease (bin/ac-tree.sh get), jq's in window_new
 // (W5 and the legacy-group sweep's pipeline), sleep's (W6), the unguarded status
 // append (W1a), a stdout closed under the crew or crewdeputy outcome line (W1b),
 // sed's or cut's in the roomchief announce (W9), the skills seed's mkdir, ln or
 // exclude append, a usage count bash's arithmetic refused; 143, 129 and 130 when
 // TERM, HUP or INT ends the run (see SIGNALS).
-// THE CLEANUP TRAP is the original's EXIT trap carried over: one cleanup per
+// THE CLEANUP TRAP: one cleanup per
 // phase - the pre-meta claim from the moment it is taken, then (chief paths)
 // the partial meta, the window and the claim from window-create, or (crew path)
 // the lease, the partial meta, the window once opened and the claim from the
@@ -578,43 +591,26 @@
 // complete. SIGNALS: TERM, HUP and INT are handled; each runs the armed cleanup
 // and exits 128+n. The long waits (the settles, the claim's and the ready
 // loop's ticks, the ultracode pause) are awaited, so a signal acts at once
-// there; inside a child the original ran in `$(...)` (the herdr lease, the
-// orca lease) the signal waits for the child to return, as the original's
-// deferral did (W2). Every other child is synchronous, so the run also turns
+// there; inside the herdr lease or the orca lease the signal waits for the
+// child to return (W2). Every other child is synchronous, so the run also turns
 // the loop once at each phase's edge - before the lease, before the crew
 // path's status line, before each path's disarm, and before a recovery
 // records its window - and a signal held through such a child acts there,
-// under the cleanup the original would have run.
+// under that phase's cleanup.
 //
-// ESCAPE HATCH. A broken port stops every crewmate spawn and roomchief promote
-// on both fleets, crewdeputy spawns and every --recover, and the Learning
-// autoroom - not the solo session's own write path (bin/ac-self-task.sh spawns
-// nothing through it). If a landed change breaks this module, run the frozen
-// original from a scratch bin/ at a physical path:
-//   o=$(cd "$(mktemp -d)" && pwd -P); mkdir "$o/bin"; cp bin/*.sh "$o/bin/"
-//   ln -s "$PWD/src" "$o/src"; ln -s "$PWD/dashboard" "$o/dashboard"
-//   ln -s "$PWD/.agents" "$o/.agents"; cp tests/fixtures/ac-spawn.sh "$o/bin/ac-spawn.sh"
-// then the chief runs AC_HOME=<home> "$o/bin/ac-spawn.sh" <args>. The copy bakes
-// nothing of its own path into the pane (the prompts name bin/... relative to
-// the home, the brief and the kickoff by data path), its siblings are the copy's
-// shims over the live src/, and it writes the same meta, status and handle
-// formats, so a task spawned by either side is torn down, recovered and
-// supervised by the other. One path of the copy does land in a crew worktree:
-// a built-in skill the container's .claude/skills lacks is linked from
-// <copy>/.agents/skills (without that link it is not seeded at all), so keep
-// the copy until those tasks are torn down. The Learning autoroom reaches the copy only when
-// ac-learn.sh runs from it - its hatch is a by-hand `--roomchief learning
-// --system-initiated <ref>` from the copy. The captain's revert of the land is
-// the last resort.
+// This module is every crewmate spawn and roomchief promote on both fleets,
+// every crewdeputy spawn and --recover, and the Learning autoroom - not the
+// solo session's own write path (bin/ac-self-task.sh spawns nothing through it).
 //
-// AT PARITY (each pinned in the leg until its own fix lands):
+// AT PARITY with the bash original, and deliberately left unasserted by the
+// contract tests (each until its own fix lands):
 // - W1: the crew path's post-meta tail is not total - a status log the append
 //   cannot write ends the spawn 1 with the cleanup still armed (the meta
 //   removed, the lease returned, the live tab closed), and a closed stdout ends
 //   it 1 after the meta is durable; the crewdeputy outcome line the same.
 // - W2: the herdr lease is taken before its cleanup is armed - a signal inside
 //   the lease leaves the slot leased with no meta, the claim released (one
-//   before the lease ends the run with nothing leased, as the original did).
+//   before the lease ends the run with nothing leased).
 // - W3: an untrappable death strands the claim, the lease, the tab and the
 //   handle; a re-spawn of the id leases another slot and refuses on the window.
 // - W5: window_new ends the run with jq's status after the tab exists and
@@ -640,37 +636,31 @@
 //   ends the run on a failed exclude append, mkdir or ln, and a learned skill's
 //   `seeded_count=0[89]...` ends it 1 (bash 3.2's arithmetic error).
 //
-// DIVERGENCES from the original (the leg names each one a row can show):
-// - BUN: every path needs bun now (the shim's `ERROR: required tool not found:
-//   bun`, exit 1, before anything), where a herdr spawn reached its lease and an
-//   orca spawn ran whole without it.
-// - SIGNALS: INT to the pid alone runs the cleanup and exits 130, where the
-//   original swallowed it while a foreground child ran and completed (W4); a
+// ALSO:
+// - BUN: every path needs bun (the shim's `ERROR: required tool not found:
+//   bun`, exit 1, before anything).
+// - SIGNALS: INT to the pid alone runs the cleanup and exits 130 (W4); a
 //   TERM or HUP during a synchronous child other than the leases (a herdr RPC,
 //   a room post, a dispatch-select) acts at the run's next wait - a settle, a
 //   tick, a phase-edge turn (SIGNALS above) - so the run may go on past that
-//   child to the end of its phase (a whole recovery notice where the original
-//   left it unsubmitted, the kickoff file and pointer, the crew status line and
-//   START post) and run that phase's cleanup, where the original acted at once
-//   (inside `$(...)`, as the child returned). One after the disarm (the
-//   bookkeeping tail and the outcome line) is not acted on: the run completes
-//   with its own status, where the original ended 128+n there, the task whole
-//   either way.
+//   child to the end of its phase (a whole recovery notice, the kickoff file
+//   and pointer, the crew status line and START post) and run that phase's
+//   cleanup. One after the disarm (the bookkeeping tail and the outcome line)
+//   is not acted on: the run completes with its own status, the task whole.
 // - W10: AC_SCOPE's grammar (the fleet_scope, AC_FLEET_SCOPE, the domain
 //   binding, the window family) is read per its text, [A-Za-z0-9_-] under any
-//   locale, where bash 3.2's ranges admitted an accented letter under UTF-8.
+//   locale.
 // - W13: AC_SPAWN_META_CLAIM_TIMEOUT, AC_SPAWN_META_CLAIM_STALE_GRACE and
-//   AC_STARTUP_DIALOG_BUDGET stay unvalidated with the original's outcomes,
-//   without `[`'s `integer expression expected` lines.
-// - W14 and SHELL-OWN STDERR are not reproduced, the status kept: a value flag
-//   missing its value exits 1 silently (`$2: unbound variable`), and a
-//   redirection the run cannot open (an unwritable handle, kickoff or status
-//   file) exits with the status alone.
-// - The ledger awk's own `can't open file` lines (the domain binding's read, the
-//   epic fence's) are not reproduced, the refusal and its exit 1 are: the
-//   doneline parser runs in this process.
+//   AC_STARTUP_DIALOG_BUDGET stay unvalidated, at parity with the bash
+//   original's outcomes, and print no `integer expression expected` lines.
+// - W14: a value flag missing its value exits 1 silently, and a redirection
+//   the run cannot open (an unwritable handle, kickoff or status file) exits
+//   with the status alone - no shell-own stderr.
+// - An unreadable ledger (the domain binding's read, the epic fence's) is
+//   refused with exit 1 and no tool's own lines: the doneline parser runs in
+//   this process.
 // - EXCLUSIVE TEMP: the port-slot registry's temp is created exclusively (the
-//   lib twin), where the original wrote through a planted `.tmp.$$`.
+//   lib twin).
 // - HOME RESOLUTION: an AC_HOME cd cannot enter is
 //   `ERROR: AC_HOME is not a readable directory: <h>`.
 // - BYTES: argv, the environment and every value read from a brief, a meta, a
@@ -678,14 +668,12 @@
 //   the launch line, the prompts, the metas and the output as U+FFFD, and a
 //   `printf %q` spelling that splits a UTF-8 sequence crosses the argv boundary
 //   decoded.
-// - The pre-meta claim's pid file holds this process's pid, where the original
-//   asked a `sh` child for its parent; both name the process holding the claim.
-// - The original's helpers whose stderr a caller dropped (the kickoff wake's
-//   date and mkdir) keep it here.
-// - A launch template's first word that only a shell function answers (the
-//   original's own, its libraries', or one imported from the environment) is
-//   refused `harness binary not found`; the launch check knows bash 3.2's
-//   reserved words and builtins, then PATH.
+// - The pre-meta claim's pid file holds this process's pid.
+// - The kickoff wake's date and mkdir keep their stderr.
+// - A launch template's first word that only a shell function answers (one
+//   imported from the environment, say) is refused `harness binary not
+//   found`; the launch check knows bash 3.2's reserved words and builtins,
+//   then PATH.
 //
 // CALLERS: the chiefs by hand (crewchief, roomchiefs, domainchiefs, solo chiefs,
 // a deputy's own chief - the task-lifecycle, rooms-threads, brainstorm,
@@ -706,19 +694,12 @@ import { acDoneline, records } from "./backlog.ts";
 import {
   STARTED_BIN,
   arithValue,
-  arrivalWait,
   backendAgentIdle,
   backendCall,
-  backendDialogAnswer,
   backendKillWindow,
   backendName,
-  backendStartupDialogs,
-  backendSubmitVerified,
   backendWindowNew,
-  buildLaunch,
-  claudeConfigEnv,
   commandV,
-  compactPctEnv,
   configDir,
   configReadSoft,
   crewBranch,
@@ -726,12 +707,10 @@ import {
   deputyParse,
   deputyRegistry,
   die,
-  domainBinding,
-  domainParse,
-  domainViewEntry,
   enterCaller,
   envHome,
   epicBaseFor,
+  famDir,
   familyOfId,
   familyOwned,
   fileMtime,
@@ -745,17 +724,10 @@ import {
   nowRaw,
   orcaWorktreeLease,
   orcaWorktreeRelease,
-  paneProfile,
   pidAlive,
   projectConfigFile,
   projectDir,
-  recordLaunchOpts,
   recordsDir,
-  resolveProfile,
-  seedCrewSettings,
-  seedCrewSkills,
-  seedCrewmateMd,
-  seedPortsEnv,
   shellQuote,
   shellStatus,
   spawnShell,
@@ -773,6 +745,9 @@ import {
   warn,
   writeAll,
 } from "./lib.ts";
+import { arrivalWait } from "./lib-send.ts";
+import { backendDialogAnswer, backendStartupDialogs, backendSubmitVerified, buildLaunch, claudeConfigEnv, compactPctEnv, domainBinding, leaseInstall, paneProfile, recordLaunchOpts, resolveProfile, seedCrewSettings, seedCrewSkills, seedCrewmateMd, seedPortsEnv } from "./lib-spawn.ts";
+import { domainParse, domainViewEntry } from "./lib-domain.ts";
 
 // Decoded strings throughout; the lib's byte (latin1) answers cross over here.
 const b8 = (s: string): string => Buffer.from(s, "utf8").toString("latin1");
@@ -1698,7 +1673,7 @@ async function main(argv: string[]): Promise<void> {
     } else die(`room-parallel cap reached: ${nChiefs}/${capV} roomchiefs in flight (${flying.join(", ") || "none"}); demote a landed one (bin/ac-teardown.sh <family>-chief) before promoting ${fam}, or add one past the cap with the captain's sanction (--over-cap '<reason>')`);
 
     // THE ORDER GATE (above): an entry in the room, never the file alone.
-    if (run(["grep", "-q", "^- \\[", `${dataDir()}/${fam}/room.md`], { stdout: "ignore", stderr: "ignore" }).status !== 0)
+    if (run(["grep", "-q", "^- \\[", `${famDir(fam)}/room.md`], { stdout: "ignore", stderr: "ignore" }).status !== 0)
       die(`room ${fam} holds no entry: --roomchief takes no brief - the room IS the brief - so this promote would hand the new chief nothing to read. Post the order into the room FIRST, then promote: bin/ac-room.sh post ${fam} crewchief 'ORDER: <the captain order, verbatim>' && bin/ac-spawn.sh --roomchief ${fam}`);
 
     // THE DERIVED CREWDOMAIN BINDING (above): the family row's own domain:
@@ -1839,7 +1814,7 @@ HANDS, NOT SUBAGENTS: the delegation guard still fences harness subagents from t
     // family thread; its sed and cut stay the bytes' judges (W9).
     if (configReadSoft("remote-mirror", "off") === "chief" && !existsSync(`${sd}/remote-threads/${fam}.thread`)) {
       let snip = "";
-      const room = `${dataDir()}/${fam}/room.md`;
+      const room = `${famDir(fam)}/room.md`;
       if (isFile(room)) {
         const r = run(["sed", "-n", "s/^- \\[[^]]*\\] [^>]*> \\(ORDER.*\\)$/\\1/p", room]);
         ee(r.status);
@@ -1992,6 +1967,8 @@ then spawn again`);
   S.worktree = worktree;
   codegraphWorktree(projectDirC, worktree);
   S.trap = spawnFailedCleanup;
+  const deps = scout ? "" : leaseInstall(id, projectDirC, worktree);
+  await turn();
 
   // The crewmate layer, settings, skills and port slot, where the RESOLVED
   // harness reads them; a fallback path is named in the kickoff prompt.
@@ -2016,6 +1993,7 @@ then spawn again`);
     const ebBranch = u8(eb.entry.split(" ")[0]!);
     prompt += ` INTEGRATION BRANCH: this worktree is cut from ${ebBranch} and your work lands INTO ${ebBranch}, never the default branch - branch crew/${id} from it as usual, and any PR you are told to open targets ${ebBranch}.`;
   }
+  if (deps === "failed") prompt += " DEPENDENCIES: the project's commands.install failed in this worktree - install the project's dependencies yourself before running any test or build, so a missing module is not read as a regression.";
   const fleetEnv = crewEnv({ projectDir: projectDirC });
   ee(sendLine(id, `${launchPromptEnv(harness, prompt)}${u8(claudeConfigEnv())}${CODEGRAPH_ENV}${fleetEnv}${launch}`, true));
   await deliverKickoff(id, harness, prompt);
@@ -2023,7 +2001,10 @@ then spawn again`);
   metaSetHard(S.meta, "backend", backend);
   metaSetHard(S.meta, "window", S.window);
   metaSetHard(S.meta, "worktree", worktree);
-  if (backend === "orca") metaSetHard(S.meta, "worktree_backend", "orca");
+  if (backend === "orca") {
+    metaSetHard(S.meta, "worktree_backend", "orca");
+    if (baseBranchSet) metaSetHard(S.meta, "lease_base", baseBranch);
+  }
   metaSetHard(S.meta, "leases", worktree);
   // lease_ids: the per-ACQUISITION identity of each leases= entry, read from
   // the slot meta (empty when the pool predates lease ids).
@@ -2038,6 +2019,7 @@ then spawn again`);
   metaSetHard(S.meta, "mode", mode);
   metaSetHard(S.meta, "review", review);
   metaSetHard(S.meta, "yolo", yolo);
+  if (deps !== "") metaSetHard(S.meta, "deps", deps);
   recordSid();
   metaSetHard(S.meta, "spawned_at", iso());
   await turn();

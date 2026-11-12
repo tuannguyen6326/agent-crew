@@ -2,17 +2,16 @@
 // checked-out branch: the dashboard Pull button's whole authority, and exactly
 // the sanctioned chief write (fetch, ff-sync - AGENTS.md section 1). The entry
 // is bin/ac-repo-pull.sh (a shim that starts this file through bin/ac-bun.sh);
-// THIS header is the authoritative spec, and the bash original it replaced
-// stays frozen at tests/fixtures/ac-repo-pull.sh as the oracle the
-// differential leg of tests/sh/ac-repo-pull.test.sh holds this module to.
+// THIS header is the authoritative spec, and tests/sh/ac-repo-pull.test.sh its
+// contract test.
 //
 //   ac-repo-pull.sh <repo-root>
 //
 // <repo-root> is any path git's -C accepts, exactly as given: absolute,
 // relative to the caller's cwd, a subdirectory of a work tree, a trailing
 // slash. A relative root stays the CALLER's: enterCaller returns to that cwd,
-// and when bun cannot enter it (a directory name bun misreads, one ending in
-// a backslash) the caller's path bin/ac-bun.sh handed over is joined in front
+// and when bun cannot enter it (bun before 1.4.4 misread a name ending in a
+// backslash) the caller's path bin/ac-bun.sh handed over is joined in front
 // of the root for git alone - the messages still echo the root as given.
 // Extra arguments are ignored; no -h; stdin is never read; AC_HOME is never
 // consulted (a homeless run is legal and identical). Every result is git's:
@@ -61,10 +60,8 @@
 // ERROR: line above reaches the UI as `pull failed` (a dashboard trait this
 // port leaves as it was). No bash or `set -e` caller, no hook.
 //
-// DIVERGENCE from the original, named in the differential leg: a root whose
-// name holds a byte that is not UTF-8 arrives in Bun's argv as U+FFFD, so
-// `not a git repo: <root>` echoes that character where the original echoed
-// the byte (exit status and stdout agree).
+// A root whose name holds a byte that is not UTF-8 arrives in Bun's argv as
+// U+FFFD, so `not a git repo: <root>` echoes that character.
 import { writeSync } from "node:fs";
 import { die, enterCaller, spawnShellSync } from "./lib.ts";
 
@@ -110,7 +107,7 @@ if (def.length === 0) {
   process.exit(0);
 }
 const branch = def.toString();
-// show-ref's stderr passed through in the original (a GIT_TRACE line, say).
+// show-ref's stderr passes through (a GIT_TRACE line, say).
 let shown = 1;
 try {
   shown = spawnShellSync(["git", "-C", gitRoot, "show-ref", "--verify", "--quiet", `refs/remotes/origin/${branch}`], { stdout: "ignore", stderr: "inherit" }).exitCode ?? 1;

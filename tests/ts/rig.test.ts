@@ -2,8 +2,7 @@
 // original differentially: physicalDir against `cd "$1" && pwd -P`, the
 // chdir round-trip ac_home and ac-rig.sh's canon both resolve through. The
 // CLI contract itself (the verb, every refusal, the report lines, exit) is
-// tests/sh/ac-rig.test.sh's, whose differential leg runs the frozen bash
-// original beside the shim.
+// tests/sh/ac-rig.test.sh's.
 import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

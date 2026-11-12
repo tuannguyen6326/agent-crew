@@ -243,7 +243,7 @@ ac_chief_busy_hold() {
   # verifier call) joins <family>'s busy declaration: its holder mark first,
   # then the bound, never shortened - a later bound covers another blocking
   # call still inside its own window. Best-effort like every declaration write.
-  # src/lib.ts's chiefBusyHold and chiefBusyLeave are held to this function and
+  # src/lib-verify.ts's chiefBusyHold and chiefBusyLeave are held to this function and
   # to ac_chief_busy_leave (tests/ts/verify-twins.test.ts).
   local decl prev
   decl="$(ac_chief_busy_path "$1" "$2")"
@@ -637,7 +637,7 @@ ac_room_review_rulings() {
   # accepted chief/gate receipts, and explicit corrections. Empty/missing room
   # yields nothing. Rejected GATE-LOOPED rounds and ordinary narration stay in
   # room-snapshot.md for targeted surrounding context, never default reading.
-  # src/lib.ts's roomReviewRulings spawns this awk verbatim
+  # src/lib-verify.ts's roomReviewRulings spawns this awk verbatim
   # (tests/ts/verify-twins.test.ts).
   local file="$1"
   [ -f "$file" ] || return 0
@@ -732,9 +732,8 @@ ac_room_marker_malformed() {
   # later lines never carry that prefix in the room file either - cmd_post
   # refuses a continuation line of that shape - so ac_room_pending never
   # reads them as a marker regardless of their content.
-  # The room's post (src/room.ts; the frozen original at
-  # tests/fixtures/ac-room.sh called this function) runs these two EREs
-  # through grep - change both together. It REFUSES a malformed marker at
+  # The room's post (src/room.ts) runs these two EREs through grep - change
+  # both together. It REFUSES a malformed marker at
   # authoring time, before the mis-shaped line can hang a room PENDING
   # forever - a DASH where the grammar needs a colon (`DECIDED (captain:
   # "merge") - landing approved...`) settles nothing and never counts, so a
@@ -789,8 +788,8 @@ ac_room_list_rows() {
   # with ac_room_pending and ac_room_handback_families. It runs in bun because
   # the whole room set is read on every call (the dashboard polls it), and the
   # awk pass it replaced was most of `ac-room.sh list`'s time. src/room.ts's
-  # list now reads the same rows in-process; this door stays for the frozen
-  # original (tests/fixtures/ac-room.sh) and the tests that start it.
+  # list now reads the same rows in-process; this door stays for the tests
+  # that start it.
   [ "$#" -gt 0 ] || return 0
   ( . "$(dirname "${BASH_SOURCE[0]}")/ac-bun.sh" && ac_bun_exec src/room.ts rows "$@" )
 }
@@ -809,7 +808,7 @@ ac_room_list_rows() {
 #   - ac-watch.sh's stale/ended arm, the wake it DECLINES to emit (its
 #     SUPERVISING-CHIEF QUIET header owns the reasoning for both).
 #   - ac-wake-drain.sh's IDLE-MAY-BE-WAITING-ON-YOU notice (through the
-#     src/lib.ts twins chiefGateParked and chiefChildLive, pinned to these by
+#     src/lib-wake-drain.ts twins chiefGateParked and chiefChildLive, pinned to these by
 #     tests/ts/wake-drain.test.ts), which re-reads the watcher's OWN
 #     .change-<id> stamp: without the same two suppressions it
 #     resurrects exactly the wake the watcher declined, once per drain forever,
@@ -827,7 +826,7 @@ ac_chief_gate_parked() {
   # ac-room.sh's (data/<family>/room.md). No room means nothing pending.
   case "$1" in *-chief) : ;; *) return 1 ;; esac
   local f
-  f="$(ac_data_dir)/${1%-chief}/room.md"
+  f="$(ac_fam_dir "${1%-chief}")/room.md" || return 1
   [ -f "$f" ] || return 1
   [ "$(ac_room_pending "$f")" -gt 0 ]
 }

@@ -12,10 +12,8 @@
 // `ac-tree.sh list --repo <repo>`, never by re-deriving lease/dirty/broken
 // state itself; age comes from the leased_at/owner_pid fields that wire
 // carries. The entry is bin/ac-pool-health.sh (a shim that starts this file
-// through bin/ac-bun.sh); THIS header is the authoritative spec, and the bash
-// original it replaced stays frozen at tests/fixtures/ac-pool-health.sh as the
-// oracle the differential leg of tests/sh/ac-pool-health.test.sh holds this
-// module to.
+// through bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-pool-health.test.sh its contract test.
 //
 // The aged-leased signal is SUSPICION, not death: an absent state/<id>.meta
 // for the holder proves nothing while the holder may simply not have

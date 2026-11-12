@@ -7,6 +7,11 @@
 // and harnessLaunchable joins facts three bash arms each hold a part of; two
 // twin a port's own bash rather than ac-lib's: leaseAgeSecs (ac-pool-health's
 // reader of an ac_iso stamp) and tabFields (`IFS=$'\t' read -r`).
+// THE FANOUT RULE: a twin that one or two ports alone call, and nothing in
+// this file uses, lives beside its port in src/lib-<port>.ts, importing what
+// it needs from here; this file never imports one back. tests/run-suite.sh
+// --changed selects by import closure, so a twin
+// kept here would make every edit to it select every module's tests.
 
 import { createHash } from "node:crypto";
 import { accessSync, constants, existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
@@ -28,7 +33,7 @@ export function warn(msg: string | Uint8Array): void {
 
 // A message that arrived as bytes (a meta value read as latin1, a path) is
 // written as those bytes; a string is UTF-8 like every other line.
-function prefixed(prefix: string, msg: string | Uint8Array): Uint8Array {
+export function prefixed(prefix: string, msg: string | Uint8Array): Uint8Array {
   return typeof msg === "string"
     ? Buffer.from(`${prefix}${msg}\n`, "utf8")
     : Buffer.concat([Buffer.from(prefix, "utf8"), Buffer.from(msg), Buffer.from("\n")]);
@@ -72,9 +77,10 @@ function metaValue(text: string, key: string): string {
   return v;
 }
 
-// Bun's process.cwd() drops a trailing backslash from the directory's name,
-// so the name it reports counts only once it stats as the directory entered.
-function namedCwd(): string | null {
+// Bun before 1.4.4 reported a directory whose name ends in a backslash as its
+// backslash-less sibling, so the name process.cwd() reports counts only once
+// it stats as the directory entered.
+export function namedCwd(): string | null {
   try {
     const named = process.cwd();
     const a = statSync(named);
@@ -89,8 +95,9 @@ function namedCwd(): string | null {
 // realpath: cd tries the logical spelling (link/.. walks back up the link)
 // before the physical one, needs only search permission, and takes spellings
 // Bun's realpath refuses (over PATH_MAX, a backslash). A directory Bun cannot
-// name (a trailing backslash) is null where cd entered it: failing closed
-// beats reading its sibling. "" is the cwd, the no-op `cd ""` is.
+// name (before 1.4.4, a trailing backslash) is null where cd entered it:
+// failing closed beats reading its sibling. "" is the cwd, the no-op `cd ""`
+// is.
 export function physicalDir(p: string): string | null {
   const here = process.cwd();
   for (const dir of [resolve(p), p]) {
@@ -158,7 +165,7 @@ export function sha256File(path: string): string {
 // its own exit status rather than die here.
 export const NO_HOME = "AC_HOME is not set - set AC_HOME=<fleet home> (the directory holding state/ data/ records/ config/ projects/); the distro checkout is not one";
 
-function homeSubdir(name: string): string {
+export function homeSubdir(name: string): string {
   if (!process.env.AC_HOME) die(NO_HOME);
   const dir = join(envHome(), name);
   mkdirSync(dir, { recursive: true });
@@ -225,15 +232,16 @@ export function leaseAgeSecs(ts: string): number | null {
   return n - Number(then);
 }
 
-// ac_seed_runtime_links's twin, and since the fleet-new port its only form -
-// the bash helper is retired, frozen at tests/fixtures/ac-seed-runtime-links.sh
-// where tests/ts/home-seed.test.ts holds the two together: the executable core
-// linked into a home so a chief runs with cwd = home. A REAL entry is a
+// ac_seed_runtime_links's twin, and since the fleet-new port its only form
+// (tests/ts/home-seed.test.ts holds it): the executable core linked into a
+// home so a chief runs with cwd = home. A REAL entry is a
 // per-home override and is left alone; `ln -sfn` is spawned, not re-done, so
 // a stale or dangling link is repointed exactly as it is there, and its
-// failure ends the run with its status as `set -e` did.
+// failure ends the run with its status as `set -e` did. The .claude link is
+// the home's shape only until its first writing session start, when
+// src/home-carriers.ts replaces it with a real dir that names the home.
 export function seedRuntimeLinks(home: string): void {
-  for (const f of ["bin", "CLAUDE.md", ".claude", "AGENTS.md"]) {
+  for (const f of ["bin", "CLAUDE.md", ".claude", "AGENTS.md", ".agents"]) {
     const p = join(home, f);
     if (existsSync(p) && !lstatSync(p).isSymbolicLink()) continue;
     const r = spawnShellSync(["ln", "-sfn", join(ROOT, f), p], { stdin: "ignore", stdout: "inherit", stderr: "inherit" });
@@ -254,7 +262,7 @@ export function dataDir(): string {
   return homeSubdir("data");
 }
 
-function isFile(p: string | Buffer): boolean {
+export function isFile(p: string | Buffer): boolean {
   try {
     return statSync(p).isFile();
   } catch {
@@ -405,19 +413,43 @@ export function pidAlive(pid: string): boolean {
   }
 }
 
-function lockOwner(dir: string): string {
+function lockFile(dir: string, name: string): string {
   try {
-    return readFileSync(join(dir, "pid"), "latin1").replace(/\n+$/, "");
+    return readFileSync(join(dir, name), "latin1").replace(/\n+$/, "");
+  } catch {
+    return "";
+  }
+}
+const lockOwner = (dir: string): string => lockFile(dir, "pid");
+
+// ac_pid_start's twin: the process's start time as ps prints it, "" when ps
+// cannot say. Compared byte for byte, never parsed - both writers read the
+// same ps - with ps's column padding trimmed, so the width it pads to can
+// never tell two readings of one start apart.
+export function pidStart(pid: string): string {
+  try {
+    const r = spawnShellSync(["/usr/bin/env", "LC_ALL=C", "ps", "-o", "lstart=", "-p", pid], { stdout: "pipe", stderr: "ignore" });
+    return r.exitCode === 0 ? r.stdout.toString("latin1").trim() : "";
   } catch {
     return "";
   }
 }
 
-// ac_lock_stale's twin: a dead owner is stale at once; a dir with no owner yet
-// (an acquirer between its mkdir and its pid write) only after the grace.
+// ac_lock_stale's twin: a dead owner is stale at once, and so is a live pid
+// whose process started after the holder recorded its own start - the OS
+// handed the number to a later process, and kill(pid, 0) would hold the lock
+// for it for ever. A dir with no start file (an older writer's) is judged by
+// liveness alone; a dir with no owner yet (an acquirer between its mkdir and
+// its pid write) only after the grace.
 function lockStale(dir: string): boolean {
   const owner = lockOwner(dir);
-  if (owner !== "") return !pidAlive(owner);
+  if (owner !== "") {
+    if (!pidAlive(owner)) return true;
+    const start = lockFile(dir, "start");
+    if (start === "") return false;
+    const now = pidStart(owner);
+    return now !== "" && now !== start;
+  }
   let mtime: number;
   try {
     mtime = Math.floor(statSync(dir).mtimeMs / 1000);
@@ -459,6 +491,8 @@ export function lockAcquire(dir: string, timeout: number, wait: () => void = () 
     waited++;
   }
   writeFileSync(join(dir, "pid"), `${process.pid}\n`);
+  const start = pidStart(String(process.pid));
+  if (start !== "") writeFileSync(join(dir, "start"), `${start}\n`);
   return true;
 }
 
@@ -467,6 +501,20 @@ export function lockAcquire(dir: string, timeout: number, wait: () => void = () 
 export function lockRelease(dir: string): void {
   const owner = lockOwner(dir);
   if (owner === "" || owner === String(process.pid)) rmSync(dir, { recursive: true, force: true });
+}
+
+// A watch-lock incumbent the autoarm hook marked records the SESSION-LOCK pid
+// of the Stop-hook firing that armed it (src/watch-autoarm.ts's header owns
+// the evidence that session can outlive itself, reparented to init). A
+// mismatch against the CURRENT session-lock pid, or a recorded pid that no
+// longer answers kill -0, either alone proves orphaning - a recorded pid
+// that is coincidentally still live under a mismatch is still a different
+// session, and a dead recorded pid is dead whether or not a later lock
+// holder happens to share its text. No marker (never armed by this hook) is
+// never orphaned - there is no incumbent to reclaim a claim about.
+export function autoarmIncumbentOrphaned(recordedHolder: string, sessionLockPid: string): boolean {
+  if (recordedHolder === "") return false;
+  return recordedHolder !== sessionLockPid || !pidAlive(recordedHolder);
 }
 
 // The delivery-contract value judge, one violation per entry and none when the
@@ -486,13 +534,14 @@ export function contractLint(c: string): string[] {
     const key = i < 0 ? tok : tok.slice(0, i);
     const val = tok.slice(i + 1);
     if (key === "src") want(key, val, "cap|chief|mon|gh|crew|learn");
-    else if (key === "flow") want(key, (flow = val), "direct|staged");
+    else if (key === "flow") want(key, (flow = val), "direct|staged|sdlc");
     else if (key === "mode") want(key, (mode = val), "crew-ship|direct-pr|local-only|feature-pr");
     else if (key === "rev") want(key, (rev = val), "yes|no");
     else if (key === "qa") want(key, val, "yes|no");
     else if (key === "promote") want(key, val, "no", "no (always is the default and is never written)");
   }
   if (flow === "staged" && rev === "no") out.push("flow:staged with rev:no - staged review is mandatory (AGENTS.md section 5)");
+  if (flow === "sdlc" && rev === "no") out.push("flow:sdlc with rev:no - sdlc review is mandatory (AGENTS.md section 5)");
   if (mode === "crew-ship" && rev === "no") out.push("mode:crew-ship with rev:no - crew-ship review is mandatory (AGENTS.md section 5)");
   return out;
 }
@@ -709,8 +758,8 @@ export function wakePublish(sd: string, scope: string, kind: string, id: string,
 // fleet lock, or the scoped lock a legal scope names), null when there is none
 // to nudge - a pid file that is not canonical digits, a dead pid, or a REUSED
 // pid whose `ps -o command=` names no watcher. A watcher the shim started runs
-// as `bun --no-env-file <root>/src/watch.ts <cwd>`, a frozen original copied
-// out as an escape hatch as `bash .../ac-watch.sh`: either is one.
+// as `bun --no-env-file <root>/src/watch.ts <cwd>`, the pre-port bash
+// watcher as `bash .../ac-watch.sh`: either is one.
 export function watcherPid(sd: string, scope: string): string | null {
   const lock = wakeScopeOk(scope) ? `${sd}/.watch-only-${scope}.lock.d` : `${sd}/.watch.lock.d`;
   const pid = lockOwner(lock);
@@ -863,7 +912,7 @@ export function metaLocked(file: string, rewrite: () => void, quiet = false): vo
   }
 }
 
-function metaRewrite(file: string, pairs: (get: (key: string) => string) => [string, string][], quiet = false): void {
+export function metaRewrite(file: string, pairs: (get: (key: string) => string) => [string, string][], quiet = false): void {
   let data: Buffer | null = null;
   let mode: number | null = null;
   try {
@@ -931,7 +980,7 @@ export function stageDirForId(id: string): string {
   return rev === "" ? "" : `${base}/implement${rev}`;
 }
 
-function isDir(p: string): boolean {
+export function isDir(p: string): boolean {
   try {
     return statSync(p).isDirectory();
   } catch {
@@ -939,28 +988,132 @@ function isDir(p: string): boolean {
   }
 }
 
+// ac_fam_dir's twin: the data dir holding a family's files, by what EXISTS -
+// <d>/<fam> when it is there, else the ONE <d>/<epic>/<fam>/ one level down
+// carrying the `.family` marker (a story of an epic lives inside its epic's
+// dir; the marker is what tells it from a crewmate's own work/ or verify/
+// subdir). Two marked dirs throw with ac_die's text, the dirs in byte order;
+// a family nowhere on disk is placed by the live ledger (ledgerEpicOf): a
+// story's path under its epic, else the flat path - so the writer that creates
+// it lands it right, through famDirMint. An unsafe name never reaches the
+// scan, and archive/ is no epic. <d> is the caller's own data-dir read, so a
+// homeless call prints the refusal exactly as often as the bash did and never
+// reaches the ledger.
+export function famDir(fam: string, d: string = dataDir()): string {
+  const flat = `${d}/${fam}`;
+  if (isDir(flat) || fam === "" || /[^a-zA-Z0-9_-]/.test(fam)) return flat;
+  let tops: string[] = [];
+  try {
+    tops = readdirSync(d);
+  } catch {}
+  const hits = tops
+    .filter((t) => t !== "archive" && !t.startsWith(".") && isFile(`${d}/${t}/${fam}/.family`))
+    .sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)))
+    .map((t) => `${d}/${t}/${fam}`);
+  if (hits.length > 1) throw new Error(`ambiguous family data for ${fam}: dirs at both ${hits[0]} and ${hits[1]}`);
+  if (hits.length === 1) return hits[0]!;
+  if (d === "") return flat;
+  const e = ledgerEpicOf(fam);
+  return e === "" ? flat : `${d}/${e}/${fam}`;
+}
+
+// ac_ledger_epic_of's twin: the epic a story belongs to, by the live ledger -
+// the first row with that id carries epic:<e>, <e> is not the id itself, and
+// <e> has a row of its own bracketed [EPIC]; else "". A token naming no [EPIC]
+// row is a stray pointer, never a layout instruction. No ledger, or one that
+// cannot be read, is no epic. Rows are what the awk read (records,
+// acDoneline), the id what `awk -v want=` made of it (awkAssign), and the
+// epic's bytes come back as the UTF-8 the twin's strings are. The ledger is
+// LOOKED AT, never minted: a path resolve must not create records/ (fenceDir
+// would), so the fence's two rungs are spelled here unminted.
+export function ledgerEpicOf(id: string, read?: Ledger): string {
+  let ledger = read;
+  if (ledger === undefined) {
+    const fleet = process.env.AC_FLEET_STATE;
+    let rdir = "";
+    if (!process.env.AC_HOME && fleet) rdir = `${fleet.replace(/\/$/, "")}/../records`;
+    else {
+      const h = softHome(false);
+      rdir = h === "" ? "" : `${h}/records`;
+    }
+    if (rdir === "") return "";
+    ledger = ledgerRead(`${rdir}/backlog.md`);
+  }
+  if (ledger.rc !== 0) return "";
+  const want = awkAssign(Buffer.from(id, "utf8").toString("latin1"));
+  const epics = new Set<string>();
+  let epic: string | undefined;
+  for (const line of records(ledger.text)) {
+    if (!line.startsWith("- [")) continue;
+    const f = acDoneline(line);
+    if (f.terminal === "epic") epics.add(f.id);
+    if (epic === undefined && f.id === want) epic = f.epic;
+  }
+  if (!epic || epic === want || !epics.has(epic)) return "";
+  return Buffer.from(epic, "latin1").toString("utf8");
+}
+
+// ac_fam_dir_mint's twin: famDir with the dir created, a nested one (a story
+// under its epic) marked `.family` so every later read finds it with no
+// ledger - the row is pruned long before the dir is archived.
+export function famDirMint(fam: string, d: string = dataDir()): string {
+  const dir = famDir(fam, d);
+  mkdirSync(dir, { recursive: true });
+  if (dir.startsWith(`${d}/`) && dir.slice(d.length + 1).includes("/")) writeFileSync(`${dir}/.family`, "");
+  return dir;
+}
+
+// The room walkers' `data/*/room.md` glob widened one level: every non-dot
+// entry of <d> as the glob listed it (what lies under it stays the caller's
+// judgement, so a file or a dir named room.md keeps its old effect), plus each
+// dir one level down carrying the `.family` marker - a story of an epic -
+// never under archive/. Byte order of the whole path, so a story follows its
+// epic. No data dir is no family at all.
+export function familyDirs(d: string): string[] {
+  let tops: string[] = [];
+  try {
+    tops = readdirSync(d);
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  for (const t of tops) {
+    if (t.startsWith(".")) continue;
+    out.push(`${d}/${t}`);
+    if (t === "archive") continue;
+    let subs: string[] = [];
+    try {
+      subs = readdirSync(`${d}/${t}`);
+    } catch {
+      continue;
+    }
+    for (const s of subs) if (!s.startsWith(".") && isFile(`${d}/${t}/${s}/.family`)) out.push(`${d}/${t}/${s}`);
+  }
+  return out.sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+}
+
 // ac_task_dir's twin, the brief-layout resolver of src/brief.ts resolved by
 // what EXISTS: the nested stage dir when its brief lives there (a chief's on
-// its FAMILY dir existing - the room is its brief), data/<id>/implement for an
-// unsuffixed id with a brief there, the fan-out data/<base>/tasks/<slug> by
-// longest prefix first, else the flat data/<id>. A brief in both places throws
-// with ac_die's text, the caller deciding what the refusal costs. data/ is
-// minted on the way (ac_data_dir).
+// its FAMILY dir existing - the room is its brief), <family dir>/implement for
+// an unsuffixed id with a brief there, the fan-out <family dir>/tasks/<slug>
+// by longest prefix first, else the id's own family dir (famDir). A brief in
+// both places throws with ac_die's text, the caller deciding what the refusal
+// costs. data/ is minted on the way (ac_data_dir).
 export function taskDir(id: string): string {
   const d = dataDir();
-  const flat = `${d}/${id}`;
+  const flat = famDir(id, d);
   const sub = stageDirForId(id);
   let nested = "";
   let stage = "";
-  let fam = "";
+  let famd = "";
   if (sub !== "") {
-    nested = `${d}/${sub}`;
     stage = sub.slice(sub.indexOf("/") + 1);
-    fam = sub.slice(0, sub.indexOf("/"));
+    famd = famDir(sub.slice(0, sub.indexOf("/")), d);
+    nested = `${famd}/${stage}`;
   } else if (isFile(`${flat}/implement/brief.md`)) {
     nested = `${flat}/implement`;
   }
-  if (nested !== "" && (isFile(`${nested}/brief.md`) || (stage === "chief" && isDir(`${d}/${fam}`)))) {
+  if (nested !== "" && (isFile(`${nested}/brief.md`) || (stage === "chief" && isDir(famd)))) {
     if (isFile(`${flat}/brief.md`)) throw new Error(`ambiguous task data for ${id}: briefs at both ${nested} and ${flat}`);
     return nested;
   }
@@ -969,9 +1122,10 @@ export function taskDir(id: string): string {
     while (base.lastIndexOf("-") !== -1) {
       base = base.slice(0, base.lastIndexOf("-"));
       const slug = id.slice(base.length + 1);
-      if (!isFile(`${d}/${base}/tasks/${slug}/brief.md`)) continue;
-      if (isFile(`${flat}/brief.md`)) throw new Error(`ambiguous task data for ${id}: briefs at both ${d}/${base}/tasks/${slug} and ${flat}`);
-      return `${d}/${base}/tasks/${slug}`;
+      famd = famDir(base, d);
+      if (!isFile(`${famd}/tasks/${slug}/brief.md`)) continue;
+      if (isFile(`${flat}/brief.md`)) throw new Error(`ambiguous task data for ${id}: briefs at both ${famd}/tasks/${slug} and ${flat}`);
+      return `${famd}/tasks/${slug}`;
     }
   }
   return flat;
@@ -1043,12 +1197,60 @@ export function statusAppend(id: string, line: string, unguarded = false): boole
   return ok;
 }
 
+// classifyCi: pr-check.ts's reading of `gh pr view <url> --json
+// statusCheckRollup` into the ci= recorded on the task meta (--pr-ready's
+// gate, src/teardown.ts). statusCheckRollup mixes two GitHub GraphQL shapes
+// (docs.github.com/en/graphql/reference/objects#checkrun and
+// #statuscontext): a CheckRun's `status` (CheckStatusState: QUEUED,
+// IN_PROGRESS, COMPLETED, WAITING, PENDING, REQUESTED -
+// reference/enums#checkstatusstate) gates whether its `conclusion`
+// (CheckConclusionState: ACTION_REQUIRED, CANCELLED, FAILURE, NEUTRAL,
+// SKIPPED, STALE, STARTUP_FAILURE, SUCCESS, TIMED_OUT -
+// reference/enums#checkconclusionstate) is final; a legacy StatusContext
+// carries only `state` (StatusState: ERROR, EXPECTED, FAILURE, PENDING,
+// SUCCESS - reference/enums#statusstate), no separate status/conclusion
+// split. An empty rollup is `none` - no check has registered, so nothing has
+// verified the PR. A real failure (CheckRun conclusion FAILURE, CANCELLED,
+// ACTION_REQUIRED, STARTUP_FAILURE, TIMED_OUT, or StatusState FAILURE/ERROR)
+// makes the whole rollup `failing`, checked first - a green sibling must
+// never hide a real failure. Short of that, an entry not yet COMPLETED (or a
+// StatusContext PENDING/EXPECTED), one whose conclusion is outside the ok set
+// (SUCCESS/NEUTRAL/SKIPPED/STALE), or a shape this never names makes it
+// `pending` - the fail-closed default, since a false `green` is the
+// unrecoverable direction here and a stuck `pending` costs nothing
+// (ci=pending keeps today's --pr-ready behavior). Only a non-empty rollup
+// whose every entry reads ok is `green`.
+export function classifyCi(rollup: unknown): "green" | "pending" | "failing" | "none" {
+  if (!Array.isArray(rollup) || rollup.length === 0) return "none";
+  const FAILING = new Set(["FAILURE", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE", "TIMED_OUT"]);
+  const OK = new Set(["SUCCESS", "NEUTRAL", "SKIPPED", "STALE"]);
+  let pending = false;
+  for (const e of rollup) {
+    if (typeof e !== "object" || e === null) {
+      pending = true;
+      continue;
+    }
+    const r = e as Record<string, unknown>;
+    if (typeof r.state === "string") {
+      if (r.state === "FAILURE" || r.state === "ERROR") return "failing";
+      if (r.state !== "SUCCESS") pending = true;
+      continue;
+    }
+    if (r.status !== "COMPLETED") {
+      pending = true;
+      continue;
+    }
+    const c = typeof r.conclusion === "string" ? r.conclusion : "";
+    if (FAILING.has(c)) return "failing";
+    if (!OK.has(c)) pending = true;
+  }
+  return pending ? "pending" : "green";
+}
+
 // --- promote twins ---
 
-// ac_delivery_mode_block's twin (tests/fixtures/ac-pipeline-lib.sh), whose bash copy stays
-// for the frozen originals tests/fixtures/ac-promote.sh and
-// tests/fixtures/ac-brief.sh, which their legs run beside it: two renderers of
-// the one per-mode delivery contract, held together by tests/ts/promote.test.ts.
+// ac_delivery_mode_block's twin (the retired ac-pipeline-lib.sh): the per-mode
+// delivery contract, held to its text by tests/ts/promote.test.ts.
 // No trailing newline, "" for a mode the bash case has no arm for.
 export function deliveryModeBlock(mode: string, branch: string, base: string, integ: string, loop: string): string {
   switch (mode) {
@@ -1095,8 +1297,8 @@ export function familyOfId(id: string): string {
   const stage = sub.slice(sub.indexOf("/") + 1);
   if (/^implement-r[0-9]{1,2}$/.test(stage)) return fam;
   const rev = /^(.*)-r[0-9]{1,2}$/.exec(stage);
-  if (rev) return isDir(`${softSubdir("data", true)}/${fam}/${rev[1]}`) ? fam : id.slice(0, id.lastIndexOf("-r"));
-  return isDir(`${softSubdir("data", true)}/${sub}`) ? fam : id;
+  if (rev) return isDir(`${famDir(fam, softSubdir("data", true))}/${rev[1]}`) ? fam : id.slice(0, id.lastIndexOf("-r"));
+  return isDir(`${famDir(fam, softSubdir("data", true))}/${stage}`) ? fam : id;
 }
 
 // ac_crew_branch's twin: the ONE crew-branch derivation.
@@ -1310,8 +1512,8 @@ export function shellStatus(r: { exitCode: number | null; signalCode?: string | 
   return r.exitCode ?? 128 + ((osConstants.signals as Record<string, number>)[r.signalCode ?? ""] ?? 0);
 }
 
-// ac_redact_publish's twin (tests/fixtures/ac-pipeline-lib.sh, whose frozen
-// bash copy holds its own tests): the same four sed expressions, SPAWNED,
+// ac_redact_publish's twin (the retired ac-pipeline-lib.sh): the same four
+// sed expressions, SPAWNED,
 // because what they match is sed's under the caller's locale - HOME is spliced into a BRE
 // (`.` one character under UTF-8, one byte under C) and `[:space:]` is Unicode
 // white space under UTF-8 (a NBSP ends no userinfo there), the reason jq stays
@@ -1370,7 +1572,7 @@ export function cksumPosix(bytes: Uint8Array): number {
 // the bash evaluated is one data-dir read here, so a homeless call prints the
 // refusal as often as the bash did and goes on with the dir-less path.
 export function roomFile(fam: string): string {
-  const live = `${softSubdir("data", true)}/${fam}/room.md`;
+  const live = `${famDir(fam, softSubdir("data", true))}/room.md`;
   if (isFile(live)) return live;
   if (/[^a-zA-Z0-9_-]/.test(fam)) return live;
   const archive = `${softSubdir("data", true)}/archive`;
@@ -1385,9 +1587,21 @@ export function roomFile(fam: string): string {
     const f = join(archive, y, fam, "room.md");
     if (isFile(f)) return f;
   }
+  // A story archived WITH its epic (src/archive.ts moves the epic dir whole)
+  // sits one level down, still carrying its marker.
+  for (const y of years) {
+    let epics: string[] = [];
+    try {
+      epics = readdirSync(join(archive, y));
+    } catch {}
+    for (const e of epics.filter((n) => !n.startsWith(".")).sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)))) {
+      const story = join(archive, y, e, fam);
+      if (isFile(join(story, ".family")) && isFile(join(story, "room.md"))) return join(story, "room.md");
+    }
+  }
   for (let base = fam; base.includes("-"); ) {
     base = base.slice(0, base.lastIndexOf("-"));
-    if (isFile(`${softSubdir("data", true)}/${base}/tasks/${fam.slice(base.length + 1)}/brief.md`)) return roomFile(base);
+    if (isFile(`${famDir(base, softSubdir("data", true))}/tasks/${fam.slice(base.length + 1)}/brief.md`)) return roomFile(base);
   }
   return live;
 }
@@ -1757,7 +1971,7 @@ function intIgnorePrefix(): string[] {
 
 // `$(...)`'s reading of a child's stdout: NULs dropped, trailing LFs stripped,
 // the bytes kept (latin1).
-function capturedText(b: Buffer): string {
+export function capturedText(b: Buffer): string {
   return b.toString("latin1").replace(/\0/g, "").replace(/\n+$/, "");
 }
 
@@ -1950,131 +2164,11 @@ export function repoRoot(dir: string): string | null {
 
 // --- merge-local twins ---
 
-const lat = (s: string): string => Buffer.from(s, "utf8").toString("latin1");
+export const lat = (s: string): string => Buffer.from(s, "utf8").toString("latin1");
 
-// A string in awk arithmetic (onetrue awk's getfval is atof): strtod's longest
-// numeric PREFIX - `17x` is 17, a hex or inf/nan spelling counts - and 0 when
-// there is none, so a header line's epoch reads 0.
-function awkAtof(s: string): number {
-  const m = /^[ \t\n\v\f\r]*([+-]?)(?:0[xX]([0-9a-fA-F]+)|((?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)|([iI][nN][fF])|[nN][aA][nN])/.exec(s);
-  if (!m) return 0;
-  const sign = m[1] === "-" ? -1 : 1;
-  if (m[2] !== undefined) return sign * parseInt(m[2], 16);
-  if (m[3] !== undefined) return sign * Number(m[3]);
-  return m[4] !== undefined ? sign * Infinity : NaN;
-}
-
-// awk's %d: the number cast to a 64-bit integer.
-function awkInt(x: number): bigint {
-  if (x >= 2 ** 63) return 2n ** 63n - 1n;
-  if (x < -(2 ** 63)) return -(2n ** 63n);
-  return Number.isNaN(x) ? 0n : BigInt(Math.trunc(x));
-}
-
-const landingsPath = (): string => `${softSubdir("state", true)}/.landings`;
-
-const sleepOne = (): void => {
+export const sleepOne = (): void => {
   spawnShellSync(["sleep", "1"], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
 };
-
-// ac_landing_overlaps' awk over state/.landings, `<family>\t<age>\t<path>` per
-// record: the epoch read as awk reads it, the family compared numerically when
-// both sides look numeric (`07` is the family `7`), the path matched as a
-// whole third field. An unreadable ledger throws awk's status 2 (its own
-// `can't open file` line is not reproduced).
-export function landingOverlaps(max: number, excl: string, paths: string[]): string[] {
-  const f = landingsPath();
-  if (!isFile(f) || paths.length === 0) return [];
-  const now = awkAtof(awkAssign(nowRaw()));
-  let text: string;
-  try {
-    text = readFileSync(f, "latin1");
-  } catch {
-    throw Object.assign(new Error(`cannot read ${f}`), { code: "EAWK", status: 2 });
-  }
-  const plist = lat(paths.join("\n")).replace(/\n+$/, "");
-  const want = new Set(plist === "" ? [] : plist.split("\n"));
-  const ex = awkAssign(lat(excl));
-  const exN = awkNumber(ex);
-  const hits: string[] = [];
-  for (const r of records(text)) {
-    const [f1 = "", f2 = "", f3 = ""] = r.split("\t");
-    const age = now - awkAtof(f1);
-    if (!(age < max) || !want.has(f3)) continue;
-    const n2 = exN === null ? null : awkNumber(f2);
-    if (n2 !== null && exN !== null ? !(n2 - exN < 0 || n2 - exN > 0) : f2 === ex) continue;
-    hits.push(`${f2}\t${awkInt(age)}\t${f3}`);
-  }
-  return hits;
-}
-
-// ac_landing_warn's twin (no entry calls the bash copy, nor the
-// ac_landing_overlaps under it, now): one
-// `LANDING-OVERLAP: <path> landed <h>h ago by family <f> - required reading:
-// <room>` WARN per record younger than a day from another family touching one
-// of <paths>, read back as `IFS=$'\t' read -r` reads it - so a record with an
-// EMPTY family shifts its age into the family and its path into the age.
-// Where the bash's errexit ended the run it throws with the status: 2 for an
-// unreadable ledger, 1 for an age the shell's arithmetic refused under
-// nounset - here any but a plain decimal (the shell evaluated the shifted path
-// as an expression, so `p` or `UID` read as numbers there; not reproduced).
-export function landingWarn(fam: string, paths: string[]): void {
-  for (const hit of landingOverlaps(86400, fam, paths)) {
-    const [pf, age, p] = tabFields(hit, 3) as [string, string, string];
-    if (age !== "" && !/^-?(0|[1-9][0-9]*)$/.test(age)) throw Object.assign(new Error(`arithmetic on ${age}`), { code: "EARITH", status: 1 });
-    const hours = age === "" ? 0n : BigInt(age) / 3600n;
-    const room = lat(roomFile(Buffer.from(pf, "latin1").toString("utf8")));
-    warn(Buffer.from(`LANDING-OVERLAP: ${p} landed ${hours}h ago by family ${pf} - required reading: ${room}`, "latin1"));
-  }
-}
-
-// ac_landing_record's twin (no entry calls the bash copy now): under
-// state/.landings.lock (10 s through a spawned `sleep`, then the UNSERIALIZED
-// WARN and the write anyway) the ledger is rewritten with its records older
-// than 7 days pruned by awk's reading and `<now>\t<fam>\t<path>` appended per
-// path, <now> as ac_now spelled it. The temp is created EXCLUSIVELY
-// (`<ledger>.tmp.<pid>`, the next name on EEXIST - the bash wrote through a
-// planted sibling) and a spawned `mv` renames it over the ledger: false when
-// the mv failed, the bash's return 1. Where the bash's errexit ended the run
-// it throws with the status, the lock left held as it was there: 2 for an
-// unreadable ledger, 1 for a temp that cannot be created.
-export function landingRecord(fam: string, paths: string[]): boolean {
-  if (paths.length === 0) return true;
-  const f = landingsPath();
-  const lock = `${f}.lock`;
-  const locked = lockAcquire(lock, 10, sleepOne);
-  if (!locked)
-    warn(`landing ledger: ${lock} could not be acquired within 10s - recording UNSERIALIZED, so a concurrent landing's records may be lost and its <24h LANDING-OVERLAP warn may not fire for them`);
-  const now = nowRaw();
-  const nowN = awkAtof(awkAssign(now));
-  let body = "";
-  if (isFile(f)) {
-    let text: string;
-    try {
-      text = readFileSync(f, "latin1");
-    } catch {
-      throw Object.assign(new Error(`cannot read ${f}`), { code: "EAWK", status: 2 });
-    }
-    for (const r of records(text)) if (nowN - awkAtof(r.split("\t")[0]!) <= 604800) body += `${r}\n`;
-  }
-  for (const p of paths) body += `${now}\t${lat(fam)}\t${lat(p)}\n`;
-  let tmp = `${f}.tmp.${process.pid}`;
-  for (let i = 1; ; i++) {
-    try {
-      writeFileSync(tmp, Buffer.from(body, "latin1"), { flag: "wx" });
-      break;
-    } catch (e) {
-      if ((e as { code?: string }).code !== "EEXIST") throw Object.assign(e as object, { status: 1 });
-      tmp = `${f}.tmp.${process.pid}.${i}`;
-    }
-  }
-  let status = 127;
-  try {
-    status = shellStatus(spawnShellSync(["mv", tmp, f], { stdin: "ignore", stdout: "inherit", stderr: "inherit" }));
-  } catch {}
-  if (locked) lockRelease(lock);
-  return status === 0;
-}
 
 // ac_project_config_name's twin: the basename of the main repo dir git's
 // common dir names, so a linked worktree answers its main repo, its trailing
@@ -2091,38 +2185,6 @@ function projectConfigName(repo: string): string | null {
   return Buffer.from(base, "latin1").toString("utf8").replace(/\n+$/, "");
 }
 
-// ac_knowledge_warn's twin (no entry calls the bash copy now): the KNOWLEDGE-GAP
-// WARN when <fam> left no live `- ... | by: <fam>` entry in the project's
-// repo-knowledge record - the suffix compared as a string (awk -v read its
-// escapes), the scan stopped at `## Superseded`. Silent for an empty family,
-// a <repo> that is no directory or no repo. The remedy names
-// <STARTED_BIN>/ac-know.sh, the bin/ of ac_root, and the physical home. An
-// unreadable record is no entry (awk's own line is not reproduced).
-export function knowledgeWarn(fam: string, repo: string): void {
-  if (fam === "" || repo === "" || !isDir(repo)) return;
-  let repoOk = false;
-  try {
-    repoOk = spawnShellSync(["git", "-C", repo, "rev-parse", "--git-dir"], { stdin: "inherit", stdout: "ignore", stderr: "ignore" }).exitCode === 0;
-  } catch {}
-  if (!repoOk) return;
-  const name = projectConfigName(repo);
-  if (name === null) return;
-  const rec = `${softSubdir("records", false)}/repo-knowledge/${name}.md`;
-  let text = "";
-  try {
-    if (isFile(rec)) text = readFileSync(rec, "latin1");
-  } catch {}
-  const suffix = awkAssign(lat(`| by: ${fam}`));
-  for (const r of records(text)) {
-    if (r.startsWith("## Superseded")) break;
-    if (r.startsWith("- ") && r.endsWith(suffix)) return;
-  }
-  const home = softHome(true);
-  warn(
-    `KNOWLEDGE-GAP: family ${fam} is landing on ${name} with no repo-knowledge entry -\nrecord what it learned (${STARTED_BIN}/ac-know.sh add --home ${home} --repo ${repo} --family ${fam} --src-file <path>:<line> --fact '<what you learned>')\nor dismiss if it learned nothing about the codebase. Record: ${rec}`,
-  );
-}
-
 // --- wake-drain twins ---
 
 // AC_BUSY_RE's default (bin/ac-harness.sh) and AC_CAPTAIN_RE's (bin/ac-lib.sh),
@@ -2134,21 +2196,7 @@ export const BUSY_RE = process.env.AC_BUSY_RE || "esc (to )?interrupt|Working\u2
 export const CAPTAIN_RE =
   process.env.AC_CAPTAIN_RE || "^[^[:alpha:][:digit:]\"'`=+#/*-]*(done|needs-decision|blocked|failed|paused|merged|checks-passed):([[:space:]]|$)";
 
-const cutNul = (s: string): string => s.replace(/\0[\s\S]*$/, "");
-
-// `"$sd"/*.meta` as a bash loop walked it: every non-dot name ending .meta, in
-// byte order (the glob followed the locale's collation); the caller tests
-// `[ -e ]`.
-export function metaPaths(sd: string): string[] {
-  let names: string[] = [];
-  try {
-    names = readdirSync(sd);
-  } catch {}
-  return names
-    .filter((n) => !n.startsWith(".") && n.endsWith(".meta"))
-    .sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)))
-    .map((n) => `${sd}/${n}`);
-}
+export const cutNul = (s: string): string => s.replace(/\0[\s\S]*$/, "");
 
 // ac_meta_is_self's twin: kind= is exactly `self` as ac_meta_get's awk read it
 // (cut at a NUL); an absent, kind-less or unreadable meta is none, silently.
@@ -2161,7 +2209,7 @@ export function metaIsSelf(file: string): boolean {
   }
 }
 
-type ProbeIo = { stdin: "inherit" | "ignore"; stdout: "inherit" | "ignore" };
+export type ProbeIo = { stdin: "inherit" | "ignore"; stdout: "inherit" | "ignore" };
 
 // `( AC_BACKEND="${b:-herdr}"; export AC_BACKEND; backend_window_alive
 // <target> ) 2>/dev/null`, <b> the meta's backend= read as `ac_meta_get ...
@@ -2169,7 +2217,7 @@ type ProbeIo = { stdin: "inherit" | "ignore"; stdout: "inherit" | "ignore" };
 // herdr): AC_BACKEND set to the text <b>'s bytes spell, as the shell's export
 // did, for the ONE backendCall, a subshell call as the `( )` made it, and
 // restored after; true only for status 0.
-function windowAliveAs(m: string, target: string, io: ProbeIo): boolean {
+export function windowAliveAs(m: string, target: string, io: ProbeIo): boolean {
   let b = "";
   try {
     accessSync(m, constants.R_OK);
@@ -2183,69 +2231,6 @@ function windowAliveAs(m: string, target: string, io: ProbeIo): boolean {
     if (saved === undefined) delete process.env.AC_BACKEND;
     else process.env.AC_BACKEND = saved;
   }
-}
-
-// ac_chief_child_live's twin: <id> is a <fam>-chief with a LIVE member - over
-// metaPaths, a verifier skipped and the chief's own pane skipped first, an id
-// familyOfId reads as <fam>, else a fleet_scope= of <fam> read LOUD (an
-// unreadable member warns `cannot read meta file` and is no member) - each
-// probed by windowAliveAs with the caller's stdin and stdout; the first live
-// member answers.
-export function chiefChildLive(sd: string, id: string, io: ProbeIo): boolean {
-  if (!id.endsWith("-chief")) return false;
-  const fam = id.slice(0, -"-chief".length);
-  for (const m of metaPaths(sd)) {
-    if (!existsSync(m) || metaIsVerify(m)) continue;
-    const cid = m.slice(sd.length + 1, -".meta".length).replace(/\n+$/, "");
-    if (cid === `${fam}-chief`) continue;
-    if (familyOfId(cid) !== fam) {
-      let scope = "";
-      try {
-        scope = cutNul(metaGet(m, "fleet_scope"));
-      } catch {}
-      if (scope !== fam) continue;
-    }
-    if (windowAliveAs(m, cid, io)) return true;
-  }
-  return false;
-}
-
-// ac_chief_gate_parked's twin: <id> is a <fam>-chief whose LIVE room
-// (<data>/<fam>/room.md, data/ minted as `$(ac_data_dir)` minted it) still
-// holds an unanswered GATE/ASK (roomPendingLines' count). A room it cannot read
-// is not parked, after ac_room_scan's grep printed its own refusal - spawned
-// again for that line, under C; the `[` line bash added there is the shell's.
-export function chiefGateParked(id: string): boolean {
-  if (!id.endsWith("-chief")) return false;
-  const f = `${softSubdir("data", true)}/${id.slice(0, -"-chief".length)}/room.md`;
-  const open = roomPendingLines(f);
-  if (open !== null) return open !== "";
-  try {
-    spawnShellSync(["/usr/bin/env", "LC_ALL=C", "grep", "-a", "-H", "-E", "--", "^- \\[[^]]*\\] [^>]*> (GATE|ASK|DECIDED)", f], {
-      stdin: "inherit",
-      stdout: "ignore",
-      stderr: "inherit",
-    });
-  } catch {}
-  return false;
-}
-
-// The dead-claim sweep's verdict on a claim dir's pid (src/wake-drain.ts):
-// KEPT while it is not this process, is alive (pidAlive) and its `ps -o
-// command= -p <pid>` either cannot be read - failing toward live - or names a
-// drainer: the bash entry by its name, or this module, which a drainer the
-// shim started runs as `bun --no-env-file <root>/src/wake-drain.ts <cwd>`.
-// Matching the entry name alone would read a live TS drainer as a reused pid
-// and hand its claimed records to a second drain, which emits them again.
-export function claimLive(pid: string): boolean {
-  if (pid === String(process.pid) || !pidAlive(pid)) return false;
-  let r: ReturnType<typeof Bun.spawnSync> | null = null;
-  try {
-    r = spawnShellSync(["ps", "-o", "command=", "-p", pid], { stdin: "inherit", stdout: "pipe", stderr: "ignore" });
-  } catch {}
-  if (r === null || shellStatus(r) !== 0) return true;
-  const cmd = capturedText(Buffer.from(r.stdout));
-  return cmd.includes("ac-wake-drain") || cmd.includes("/src/wake-drain.ts");
 }
 
 // --- deputy twins ---
@@ -2326,16 +2311,14 @@ export function deputyParse(file = ""): string[] | null {
   return isFile(file) ? ["awk", DEPUTY_PARSE_AWK, file] : null;
 }
 
-function mkdirP(dir: string): void {
+export function mkdirP(dir: string): void {
   try {
     spawnShellSync(["mkdir", "-p", dir], { stdin: "inherit", stdout: "ignore", stderr: "inherit" });
   } catch {}
 }
 
-// ac_records_backup's twin (the bash one is frozen at
-// tests/fixtures/ac-maintenance-retired.sh for the oracles) as `$(...)` ran
-// it, errexit asleep: records/ (`[ -d ] || mkdir -p`), skills/ and
-// state/backups/ minted
+// ac_records_backup's twin as `$(...)` ran it, errexit asleep: records/
+// (`[ -d ] || mkdir -p`), skills/ and state/backups/ minted
 // by spawned mkdir -p, a failure being mkdir's own line and no stop. The
 // archive <state>/backups/<prefix>-<ac_now>[-<n>].tar.gz is CLAIMED first by
 // an exclusive create - two backups in one second share an epoch, and tar
@@ -2399,32 +2382,29 @@ export function recordsBackup(prefix: string): string | null {
 
 // --- qa-gate twins ---
 // The qa.require_for_ship merge gate src/merge-local.ts and src/pr-merge.ts
-// run: tests/fixtures/ac-qa-lib.sh's ac_qa_required, ac_qa_gate_ok, ac_qa_gate_matrix
-// and ac_qa_attestation_parse, which stay as the oracles
-// tests/ts/qa-gate.test.ts holds these to (the parser stays live for
-// the frozen ac-qa.sh and ac-verify.sh oracles too). The sha, paths and printed values are
+// run: twins of the retired ac-qa-lib.sh's ac_qa_required, ac_qa_gate_ok,
+// ac_qa_gate_matrix and ac_qa_attestation_parse, held to the answers their
+// comments state by tests/ts/qa-gate.test.ts. The sha, paths and printed values are
 // bytes (latin1); <repo>, <task> and the repo name and root git answers are
 // native strings, which APFS makes round-trip (it refuses a name that is no
-// UTF-8, EILSEQ). Files are read in the C locale, as the oracle's awk
+// UTF-8, EILSEQ). Files are read in the C locale, as the bash's awk
 // readings and its spelled-out name class read them under any locale: a NBSP
 // is no space there, so a NBSP-indented require_for_ship closes the qa block
-// (not enforced) on both sides. Named divergences: under a UTF-8 locale the
+// (not enforced). Named divergences: under a UTF-8 locale the
 // bash's glob lists the scoped candidates in collation order (`a` before
 // `B`), here in byte order - the same pairs and skips, in another order; the
 // bash reads the matrix rows through a here-doc temp (a bad TMPDIR falls
 // back to /tmp) - with none to be had its loop would read no row and pass
 // `all 0` - unprobed, and nothing here needs a temp (fail-closed).
 
-const latBuf = (s: string): Buffer => Buffer.from(s, "latin1");
-const QA_SEGMENT = /^[A-Za-z0-9_-]+$/;
-
+export const latBuf = (s: string): Buffer => Buffer.from(s, "latin1");
 // ac_project_config_file's twin, the name resolved before the home is looked
 // at: <home>/projects/<name>.yaml when it is a regular file, else null. A
 // regular file at the RETIRED <home>/config/projects/<name>.yaml is checked
 // first: `loud` (the bash's bare call) writes ac_die's line and throws status
 // 1, the exit of the whole shell; quiet (a `$(...)` with stderr dropped) it
 // is null like a homeless or unenterable home.
-function qaConfigFile(repo: string, loud: boolean): string | null {
+export function qaConfigFile(repo: string, loud: boolean): string | null {
   const n = projectConfigName(repo);
   if (n === null) return null;
   const name = lat(n);
@@ -2445,350 +2425,14 @@ function qaConfigFile(repo: string, loud: boolean): string | null {
   return isFile(latBuf(canonical)) ? canonical : null;
 }
 
-// ac_qa_required's twin: is the gate ENFORCED for <repo>? A policy that
-// cannot be read writes its refusal and throws status 1, as the RETIRED copy
-// does: a `git --version` that does not start or fails (no repo resolves to a
-// policy), then a <repo>/.git that exists (`[ -e ]`) where git cannot name
-// the repo, then a canonical yaml that is a regular file and cannot be read.
-// The config is resolved loud, then quiet, and read as `$(cat)` read it. Then
-// the grammar over that text and one LF, in the C locale: a column-0 `qa:`
-// with optional space and an optional `#` comment or a flow mapping's `{`
-// opens the block, a later column-0 line that is no comment closes it. A key
-// is `require_for_ship`, bare or quoted with `"` or `'`, optional space, a
-// colon, looked for in each block line's whole text (the flow header's too,
-// a comment's too): at the line's start past its indent (the value runs to
-// the line's end), or past a `{` or `,` and optional space (the value ends at
-// the next `,` or `}`). ANY key whose value - a comment (`#` after a space)
-// cut, `"` and `'` deleted, its ends trimmed - is no false spelling enforces;
-// no key is not enforced.
-export function qaRequired(repo: string): boolean {
-  let gitRuns = false;
-  try {
-    gitRuns = spawnShellSync(["git", "--version"], { stdin: "inherit", stdout: "ignore", stderr: "ignore" }).exitCode === 0;
-  } catch {}
-  if (!gitRuns) {
-    writeSync(2, `ERROR: qa.require_for_ship: git did not run (is it on PATH?), so the project policy for '${repo}' cannot be resolved - refusing the merge rather than reading it as not enforced\n`);
-    throw Object.assign(new Error("git did not run"), { status: 1 });
-  }
-  if (existsSync(`${repo}/.git`) && projectConfigName(repo) === null) {
-    writeSync(
-      2,
-      `ERROR: qa.require_for_ship: git could not read the repo at '${repo}' (it holds .git, but git rev-parse failed there - a corrupt repo, or one safe.directory refuses), so its project policy cannot be resolved - refusing the merge rather than reading it as not enforced\n`,
-    );
-    throw Object.assign(new Error("git could not read the repo"), { status: 1 });
-  }
-  qaConfigFile(repo, true);
-  const cfg = qaConfigFile(repo, false);
-  let text = "";
-  if (cfg !== null) {
-    try {
-      text = capturedText(readFileSync(latBuf(cfg)));
-    } catch {
-      writeSync(2, latBuf(`ERROR: qa.require_for_ship: the project policy ${cfg} cannot be read - refusing the merge rather than reading it as not enforced\n`));
-      throw Object.assign(new Error(`unreadable project policy ${cfg}`), { status: 1 });
-    }
-  }
-  const on = (v: string): boolean =>
-    !/^(false|False|FALSE|no|No|NO|off|Off|OFF)$/.test(
-      v
-        .replace(/[ \t\n\v\f\r]#[\s\S]*/, "")
-        .replace(/["']/g, "")
-        .replace(/^[ \t\n\v\f\r]+/, "")
-        .replace(/[ \t\n\v\f\r]+$/, ""),
-    );
-  let inq = false;
-  for (let l of records(`${text}\n`)) {
-    if (/^qa:[ \t\n\v\f\r]*(#[\s\S]*)?$/.test(l)) {
-      inq = true;
-      continue;
-    }
-    if (/^[^ \t\n\v\f\r#]/.test(l)) inq = /^qa:[ \t\n\v\f\r]*\{/.test(l);
-    if (!inq) continue;
-    const block = /^[ \t\n\v\f\r]+(?:require_for_ship|"require_for_ship"|'require_for_ship')[ \t\n\v\f\r]*:/.exec(l);
-    if (block && on(l.slice(block[0].length))) return true;
-    for (let m; (m = /[{,][ \t\n\v\f\r]*(?:require_for_ship|"require_for_ship"|'require_for_ship')[ \t\n\v\f\r]*:/.exec(l)); ) {
-      l = l.slice(m.index + m[0].length);
-      if (on(l.replace(/[,}][\s\S]*/, ""))) return true;
-    }
-  }
-  return false;
-}
-
-// ac_knowledge_scopes' twin: its stdout and stderr bytes (latin1) and its
-// status. 0 with the live map's `<scope>\t<app>,<app>` rows, or with none (no
-// repo name, no record, no live `- scope` line); 2 for AMBIGUOUS - a malformed
-// live `- scope` line, or each repeat of a name after its first line (that
-// first line reprinted every time) - with the AMBIGUOUS header and those lines
-// on stderr and no row, or for a record it cannot read (awk's own `can't open`
-// lines are not reproduced). records/ is minted once the name resolves
-// (ac_knowledge_file's `$(ac_records_dir)`). The scan stops at `## Superseded`;
-// ` | src: ` cuts the rest of a line, a CR included as awk's `.` takes one.
-// The record is read as BYTES, in the C locale the gate's call sets: under a
-// UTF-8 caller locale (the bash ac-qa.sh's calls) its awk aborts on a byte that
-// is no UTF-8 (towc, exit 2) - named, the "read bytes" precedent.
-export function knowledgeScopes(repo: string): { status: 0 | 2; out: string; err: string } {
-  const none = { status: 0 as const, out: "", err: "" };
-  const name = projectConfigName(repo);
-  if (name === null) return none;
-  const rec = latBuf(`${lat(softSubdir("records", false))}/repo-knowledge/${lat(name)}.md`);
-  if (!isFile(rec)) return none;
-  let text: string;
-  try {
-    text = readFileSync(rec, "latin1");
-  } catch {
-    return { status: 2, out: "", err: "" };
-  }
-  const first = new Map<string, string>();
-  const bad: string[] = [];
-  let rows = "";
-  for (const line of records(text)) {
-    if (line.startsWith("## Superseded")) break;
-    if (!line.startsWith("- scope ")) continue;
-    const subj = line.slice("- scope ".length).replace(/ \| src: [\s\S]*$/, "");
-    const i = subj.indexOf(" = ");
-    const scope = subj.slice(0, i);
-    const apps = subj.slice(i + 3).replace(/[ \t]/g, "");
-    if (i < 0 || !QA_SEGMENT.test(scope) || apps === "" || !apps.split(",").every((a) => QA_SEGMENT.test(a))) bad.push(line);
-    else if (first.has(scope)) bad.push(first.get(scope)!, line);
-    else {
-      first.set(scope, line);
-      rows += `${scope}\t${apps}\n`;
-    }
-  }
-  if (bad.length === 0) return { status: 0, out: rows, err: "" };
-  return { status: 2, out: "", err: `ac_knowledge_scopes: the scope map is AMBIGUOUS - refusing rather than picking a winner:\n${bad.map((l) => `  ${l}\n`).join("")}` };
-}
-
-// ac_yaml_has <cfg> qa.scopes, its awk's descent: a `scopes:` key PRESENT
-// (children or not) one level under a column-0 `qa:`. Blank and comment lines
-// are skipped, the indent is the leading SPACES / 2 floored, a key is
-// `^[A-Za-z0-9_-]+:`, a shallower key ends the descent. A yaml it cannot read
-// is absent, as awk's exit 2 was.
-function qaScopesDeclared(cfg: string): boolean {
-  let text: string;
-  try {
-    text = readFileSync(latBuf(cfg), "latin1");
-  } catch {
-    return false;
-  }
-  const parts = ["qa", "scopes"];
-  let depth = 0;
-  for (const line of records(text)) {
-    if (/^[ \t\n\v\f\r]*(#|$)/.test(line)) continue;
-    const spaces = /^ */.exec(line)![0].length;
-    const key = /^[A-Za-z0-9_-]+(?=:)/.exec(line.slice(spaces));
-    if (!key) continue;
-    const ind = Math.floor(spaces / 2);
-    if (ind < depth) depth = ind;
-    if (ind === depth && key[0] === parts[depth]) {
-      if (depth + 1 === parts.length) return true;
-      depth++;
-    }
-  }
-  return false;
-}
-
-const QA_KEYS = new Set(["schema", "outcome", "run", "task", "completed_at", "source_sha", "profile_key", "profile_sha256", "config_sha256", "cases_passed", "cases_total", "scope", "app", "qa_rule", "e2e_repo", "e2e_sha"]);
-
-// ac_qa_attestation_parse's twin: null when the v2 marker holds for <sha>
-// (and <scope>/<app>, or flat when <scope> is ""), else the bash's
-// AC_QA_ATTESTATION_ERROR text, the checks in its order. Lines are what
-// `IFS= read -r` gave - each cut at its first NUL, an unterminated last one
-// read unless that leaves it empty - split at the first `=`. A marker that
-// cannot be read has no lines (`unsupported schema`; the shell's own
-// redirection line is not reproduced). Each count is canonical decimal (no
-// leading zero, so at least 1) or `invalid case counts`.
-export function qaAttestationParse(file: string, sha: string, scope: string, app: string, psha = "", e2e = ""): string | null {
-  let size = -1;
-  try {
-    const st = statSync(latBuf(file));
-    if (st.isFile()) size = st.size;
-  } catch {}
-  if (size < 0) return "not a regular file";
-  if (size === 0) return "empty marker";
-  let text = "";
-  try {
-    text = readFileSync(latBuf(file), "latin1");
-  } catch {}
-  const lines = text.split("\n").map((l) => l.split("\0", 1)[0]!);
-  if (lines[lines.length - 1] === "") lines.pop();
-  const kv = new Map<string, string>();
-  for (const line of lines) {
-    const eq = line.indexOf("=");
-    if (eq < 0) return "malformed line";
-    const key = line.slice(0, eq);
-    if (!QA_KEYS.has(key)) return `unknown key '${key}'`;
-    if (kv.has(key)) return `duplicate key '${key}'`;
-    kv.set(key, line.slice(eq + 1));
-  }
-  const v = (k: string): string => kv.get(k) ?? "";
-  if (v("schema") !== "agentcrew.qa-attestation/v2") return "unsupported schema";
-  if (v("outcome") !== "passed") return "outcome is not passed";
-  if (!v("run") || !v("task") || !v("completed_at")) return "missing run/task/completed_at";
-  if (v("source_sha") !== sha) return "source_sha mismatch";
-  if (!v("profile_key") || !v("profile_sha256") || !v("config_sha256")) return "missing profile/config identity";
-  if (!/^[1-9][0-9]*$/.test(v("cases_passed")) || !/^[1-9][0-9]*$/.test(v("cases_total"))) return "invalid case counts";
-  if (v("cases_passed") !== v("cases_total")) return "case counts differ";
-  if (scope !== "") {
-    if (v("scope") !== scope || v("app") !== app) return "scope/app body mismatch";
-  } else if (kv.has("scope") || kv.has("app")) return "flat marker carries scope/app";
-  const rule = v("qa_rule");
-  if (kv.has("qa_rule") && rule !== "default" && (/[^0-9]/.test(rule) || rule === "0" || rule === "")) return "invalid qa_rule";
-  if ((kv.has("e2e_repo") || kv.has("e2e_sha")) && (!v("e2e_repo") || !v("e2e_sha"))) return "partial E2E identity";
-  if (psha !== "" && v("profile_sha256") !== psha) return "profile hash mismatch";
-  if (e2e !== "" && v("e2e_sha") !== e2e) return "E2E hash mismatch";
-  return null;
-}
-
-const QA_MATRIX_JQ = '.required_profiles[]? | [.profile_key // "", .profile_sha256 // "", .e2e_sha // ""] | @tsv';
-
-// ac_qa_gate_matrix's twin, the required-profile arm: jq SPAWNED with the
-// bash's program (number spellings, several documents and errors are jq's),
-// any failure or no row the EMPTY refusal; each row read as `IFS=$'\t' read
-// -r` (tabFields - a missing field shifts the next into it); a key's LAST two
-// segments name the `<sha>.<scope>.<app>` marker; the first unmet row refuses.
-function qaGateMatrix(manifest: string, dir: string, sha: string): boolean {
-  let rows = "";
-  try {
-    const r = spawnShellSync(["jq", "-r", QA_MATRIX_JQ, latBuf(manifest).toString("utf8")], { stdin: "inherit", stdout: "pipe", stderr: "ignore" });
-    if (r.exitCode === 0) rows = capturedText(Buffer.from(r.stdout));
-  } catch {}
-  if (rows === "") {
-    warn(latBuf(`qa.require_for_ship: the task's required-profile manifest is empty or unreadable (${manifest}) - refusing rather than merging against an undefined required set`));
-    return false;
-  }
-  const sha12 = shellPrefix(sha, 12);
-  let n = 0;
-  let satisfied = "";
-  for (const row of rows.split("\n")) {
-    const [key, psha, e2e] = tabFields(row, 3) as [string, string, string];
-    if (key === "") {
-      warn(latBuf(`qa.require_for_ship: a required-profile manifest entry has no profile_key (${manifest}) - refusing rather than guessing which profile it means`));
-      return false;
-    }
-    n++;
-    const app = key.slice(key.lastIndexOf("/") + 1);
-    const rest = key.includes("/") ? key.slice(0, key.lastIndexOf("/")) : key;
-    const scope = rest.slice(rest.lastIndexOf("/") + 1);
-    for (const [seg, what] of [
-      [scope, "scope"],
-      [app, "app"],
-    ]) {
-      if (QA_SEGMENT.test(seg!)) continue;
-      warn(latBuf(`qa.require_for_ship: required profile '${key}' does not parse to <project>/<scope>/<app> (${what} segment invalid) - fix the task manifest`));
-      return false;
-    }
-    const marker = `${dir}/${sha}.${scope}.${app}`;
-    if (!isFile(latBuf(marker))) {
-      warn(latBuf(`qa.require_for_ship: required profile '${key}' has no passing crew-qa attestation for ${sha12} - run crew-qa for EVERY required profile at this head before merging`));
-      return false;
-    }
-    const err = qaAttestationParse(marker, sha, scope, app, psha, e2e);
-    if (err !== null) {
-      warn(latBuf(`qa.require_for_ship: the attestation for '${key}' is invalid (${err}) - re-run crew-qa for this exact profile and head`));
-      return false;
-    }
-    satisfied += ` ${key}`;
-  }
-  writeSync(1, latBuf(`qa: all ${n} required profile(s) satisfied for ${sha12}:${satisfied}\n`));
-  return true;
-}
-
-// ac_qa_gate_ok's twin: true = open (not enforced, or proven), false =
-// refused, its WARN written; the RETIRED die is qaRequired's throw. The
-// markers are <main>/.crew/qa/passed, <main> the dirname of git's common dir
-// (a linked worktree's main repo), <repo> as given when git cannot say. A
-// task whose family holds data/<family>/qa/manifest.json (data/ minted on
-// the way) is judged by the matrix alone. Otherwise the mode is read
-// TWO-SIDED, the scope map and the yaml's qa.scopes: both silent is FLAT (the
-// bare <sha> marker), one alone the MODE MISMATCH, both SCOPED - every
-// regular `<sha>.<scope>.<app>` in byte order (the oracle's C glob), a name
-// off that grammar or a body the parse refuses skipped and named, a
-// directory skipped unnamed, the proven pairs printed. The bash's `command
-// -v ac_yaml_has` refusal has no twin: nothing here is sourced.
-export function qaGateOk(repo: string, sha: string, task = ""): boolean {
-  if (!qaRequired(repo)) return true;
-  const dir = `${lat(repoRoot(repo) ?? repo)}/.crew/qa/passed`;
-  if (task !== "") {
-    const manifest = `${lat(softSubdir("data", true))}/${lat(familyOfId(task))}/qa/manifest.json`;
-    if (isFile(latBuf(manifest))) return qaGateMatrix(manifest, dir, sha);
-  }
-  const map = knowledgeScopes(repo);
-  const mapScoped = map.out !== "";
-  if (map.status === 2) {
-    warn(
-      "qa.require_for_ship: the project's scope map is AMBIGUOUS (two live entries for one scope, or a malformed line) - refusing the merge rather than guessing which profile a marker proves. Fix it with bin/ac-know.sh scope-proposal, then re-run: bin/ac-know.sh verify",
-    );
-    return false;
-  }
-  const cfg = qaConfigFile(repo, false);
-  const yamlScoped = cfg !== null && qaScopesDeclared(cfg);
-  const sha12 = shellPrefix(sha, 12);
-  const bare = latBuf(`${dir}/${sha}`);
-  if (!mapScoped && !yamlScoped) {
-    if (isFile(bare)) {
-      const err = qaAttestationParse(`${dir}/${sha}`, sha, "", "");
-      if (err === null) return true;
-      warn(latBuf(`qa.require_for_ship: ignored invalid flat QA attestation for ${sha12}: ${err}`));
-    }
-    warn(latBuf(`qa.require_for_ship: no passing crew-qa run recorded for ${sha12} - run crew-qa on this head before merging`));
-    return false;
-  }
-  if (!mapScoped || !yamlScoped) {
-    warn(
-      mapScoped
-        ? "qa.require_for_ship: MODE MISMATCH - the repo-knowledge record declares scopes but the fleet-home config carries no qa.scopes block, so this project is neither cleanly flat nor cleanly scoped and no marker can be read against a mode. Refusing the merge."
-        : "qa.require_for_ship: MODE MISMATCH - the fleet-home config declares scopes but the repo-knowledge record declares NONE, so this project is neither cleanly flat nor cleanly scoped and no marker can be read against a mode. Refusing the merge.",
-    );
-    return false;
-  }
-  let names: string[] = [];
-  try {
-    // Bun hands the names back as Uint8Array, whose toString ignores "latin1".
-    names = readdirSync(latBuf(dir), { encoding: "buffer" }).map((b) => Buffer.from(b).toString("latin1"));
-  } catch {}
-  let pairs = "";
-  let skipped = "";
-  for (const entry of names.filter((e) => e.startsWith(`${sha}.`)).sort()) {
-    const m = `${dir}/${entry}`;
-    if (!isFile(latBuf(m))) continue;
-    // `$(basename "$m")` lost the name's trailing LFs.
-    const base = entry.replace(/\n+$/, "");
-    const rest = base.slice(sha.length + 1);
-    const dot = rest.indexOf(".");
-    const scope = rest.slice(0, dot);
-    const app = rest.slice(dot + 1);
-    if (dot < 0 || app.includes(".") || !QA_SEGMENT.test(scope) || !QA_SEGMENT.test(app)) {
-      skipped += ` ${base}`;
-      continue;
-    }
-    const err = qaAttestationParse(m, sha, scope, app);
-    if (err === null) pairs += ` ${scope}/${app}`;
-    else skipped += ` ${base}(${err})`;
-  }
-  if (pairs !== "") {
-    writeSync(1, latBuf(`qa: passed profiles for ${sha12}:${pairs}\n`));
-    return true;
-  }
-  const bareSaid = isFile(bare)
-    ? " A bare sha-only marker IS on disk; it names no scope+app, so it proves nothing about WHICH profile ran and cannot satisfy the gate here - re-run crew-qa naming the scope and app."
-    : "";
-  warn(
-    latBuf(
-      `qa.require_for_ship: no passing crew-qa run recorded for ${sha12} on this SCOPED project - a run must name the scope+app it proved.${bareSaid}${skipped === "" ? "" : ` Malformed markers ignored:${skipped}`}`,
-    ),
-  );
-  return false;
-}
-
 // --- backend twins ---
 
 type BackendFn = "window_alive" | "target" | "focus" | "capture" | "mark_wait" | "clear_wait" | "agent_blocked" | "harness_up" | "send_key" | "send_line";
-type Stdio = "inherit" | "ignore" | "pipe";
+export type Stdio = "inherit" | "ignore" | "pipe";
 
 // One spawned child as a shell stage: its status (shellStatus), its stdout
 // when piped.
-function stage(cmd: string[], stdin: "inherit" | "ignore" | Buffer, stdout: Stdio, stderr: "inherit" | "ignore"): { status: number; out: Buffer } {
+export function stage(cmd: string[], stdin: "inherit" | "ignore" | Buffer, stdout: Stdio, stderr: "inherit" | "ignore"): { status: number; out: Buffer } {
   let r: ReturnType<typeof Bun.spawnSync> | null = null;
   try {
     r = spawnShellSync(cmd, { stdin, stdout, stderr });
@@ -2797,13 +2441,13 @@ function stage(cmd: string[], stdin: "inherit" | "ignore" | Buffer, stdout: Stdi
 }
 
 // A here-string's jq: <text> and a LF on stdin.
-function jqOver(args: string[], text: string, stdout: Stdio, stderr: "inherit" | "ignore"): { status: number; out: Buffer } {
+export function jqOver(args: string[], text: string, stdout: Stdio, stderr: "inherit" | "ignore"): { status: number; out: Buffer } {
   return stage(["jq", ...args], Buffer.from(`${text}\n`, "latin1"), stdout, stderr);
 }
 
 // A field read as bytes goes to a child's argv decoded: a byte that is not
 // UTF-8 reaches it as U+FFFD where the bash passed the byte (W17, named).
-const argvOf = (b: string): string => Buffer.from(b, "latin1").toString("utf8");
+export const argvOf = (b: string): string => Buffer.from(b, "latin1").toString("utf8");
 
 // ac_backend as the route read it (`b="$(ac_backend)" || exit 1`, errexit
 // asleep): AC_BACKEND verbatim, else config/backend (configReadSoft), else
@@ -2917,16 +2561,16 @@ const IDLE_GLYPH = lat("✳");
 // orca_title_spinner's prefixes: claude's spinner glyphs, then codex's braille
 // block by its lead bytes (E2 A0-A3), whichever cell the animation shows.
 const SPINNERS = ["◐", "◓", "◑", "◒", "✻", "✽", "✢", "✶", "·", "⏺"].map(lat).concat(["\xe2\xa0", "\xe2\xa1", "\xe2\xa2", "\xe2\xa3"]);
-const spins = (title: string): boolean => SPINNERS.some((g) => title.startsWith(g));
+export const spins = (title: string): boolean => SPINNERS.some((g) => title.startsWith(g));
 // The key spellings herdr_key_name and orca_send_key_pane both case on, by
 // herdr's name for each.
-const keyNamed = (k: string): "enter" | "escape" | "ctrl+c" | null =>
+export const keyNamed = (k: string): "enter" | "escape" | "ctrl+c" | null =>
   ["Enter", "enter"].includes(k) ? "enter" : ["Escape", "escape", "Esc", "esc"].includes(k) ? "escape" : ["C-c", "c-c", "ctrl+c", "Ctrl+C"].includes(k) ? "ctrl+c" : null;
 // The composer readings run under LC_ALL=C: [:space:] is the ASCII six, and a
 // glyph is its bytes.
 const C_SPACE = /[ \t\n\v\f\r]/g;
 const RULE_RUN = new RegExp(`(?:${lat("─")}){8,}`);
-const PROMPT_ROW = new RegExp(`^[ \\t\\n\\v\\f\\r]*${lat("❯")}`);
+const PROMPT_ROW = new RegExp(`^[ \\t\\n\\v\\f\\r]*${lat("❯")}(?:${lat("\u00a0")})?`);
 // The locale bash counts a string's length and offsets in, by its name:
 // LC_ALL, else LC_CTYPE, else LANG. A UTF-8 name the host has no locale for
 // left bash counting bytes (probed: xx_YY.UTF-8) - named.
@@ -2976,9 +2620,9 @@ export function backendCall(
   return { status, exited: false, out: Buffer.concat(chunks) };
 }
 
-type VerbIo = Parameters<typeof backendCall>[2];
+export type VerbIo = Parameters<typeof backendCall>[2];
 
-function herdrVerb(fn: BackendFn, args: string[], io: VerbIo, say: (b: Buffer) => void): number {
+export function herdrVerb(fn: BackendFn, args: string[], io: VerbIo, say: (b: Buffer) => void): number {
   const id = args[0] ?? "";
   const report = io.stderr === "inherit";
   const top = io.subshell ? "ignore" : (io.stdin ?? "inherit");
@@ -3105,15 +2749,16 @@ function herdrVerb(fn: BackendFn, args: string[], io: VerbIo, say: (b: Buffer) =
 // `sleep "${AC_SEND_SETTLE:-0.4}"`: PATH's sleep, as the driver ran it, the
 // knob read per pause; its complaint on the caller's stderr, its status
 // ignored.
-function settle(stderr: "inherit" | "ignore"): void {
+export function settle(stderr: "inherit" | "ignore"): void {
   stage(["sleep", process.env.AC_SEND_SETTLE || "0.4"], "ignore", "ignore", stderr);
 }
 
 // herdr_composer_text_pane's twin: the claude composer between the last two
 // rules of the --ansi read's last <rows> lines, the dim hint, every SGR, CR and
-// the first row's ❯ stripped; status 2 when the read failed, 1 when no two
-// ordered rules frame it. Two adjacent rules gave sed a range ending before
-// its start, which printed that start alone - the second rule.
+// the first row's ❯ and the NBSP after it stripped; status 2 when the read
+// failed, 1 when no two ordered rules frame it. Two adjacent rules gave sed a
+// range ending before its start, which printed that start alone - the second
+// rule.
 function composerText(p: string, rows: number, stderr: "inherit" | "ignore"): { status: number; text: string } {
   const read = herdrCli(["pane", "read", argvOf(p), "--source", "recent", "--lines", "200", "--ansi"], "ignore", "pipe");
   if (read.status !== 0) return { status: 2, text: "" };
@@ -3153,7 +2798,7 @@ function composerClear(p: string, presses: number, top: "inherit" | "ignore", st
 
 // backend_submit_verified_herdr's twin: the handle re-read, then the raw-pane
 // verifier.
-function submitVerified(id: string, top: "inherit" | "ignore", stderr: "inherit" | "ignore"): number {
+export function submitVerified(id: string, top: "inherit" | "ignore", stderr: "inherit" | "ignore"): number {
   return submitVerifiedPane(argvOf(paneField(id, 1, stderr === "inherit")), top, stderr);
 }
 
@@ -3161,7 +2806,7 @@ function submitVerified(id: string, top: "inherit" | "ignore", stderr: "inherit"
 // 15 lines read, the Enter pressed (its status ignored, even when the read
 // failed), then up to seven probes a settle apart - 0 the render changed, 1 it
 // never did, 2 a read failed. An empty pane is never read.
-function submitVerifiedPane(p: string, top: "inherit" | "ignore", stderr: "inherit" | "ignore"): number {
+export function submitVerifiedPane(p: string, top: "inherit" | "ignore", stderr: "inherit" | "ignore"): number {
   const render = (): string | null => {
     if (p === "") return null;
     const read = herdrCli(["pane", "read", p, "--source", "recent", "--lines", "200"], "ignore", "pipe");
@@ -3181,7 +2826,7 @@ function submitVerifiedPane(p: string, top: "inherit" | "ignore", stderr: "inher
   return 1;
 }
 
-function orcaVerb(fn: BackendFn, args: string[], io: VerbIo, say: (b: Buffer) => void): number {
+export function orcaVerb(fn: BackendFn, args: string[], io: VerbIo, say: (b: Buffer) => void): number {
   const id = args[0] ?? "";
   const report = io.stderr === "inherit";
   const stdin = io.stdin ?? "inherit";
@@ -3265,7 +2910,7 @@ function orcaVerb(fn: BackendFn, args: string[], io: VerbIo, say: (b: Buffer) =>
 // UTF-8 locale, bytes under any other (`${text:off:512}`) - with PATH's
 // `sleep 0.05` between them, every status ignored. A cut inside a character
 // sends each half as U+FFFD where the bash sent the half's bytes (named).
-function orcaType(h: string, text: string, stdin: "inherit" | "ignore", stderr: "inherit" | "ignore"): void {
+export function orcaType(h: string, text: string, stdin: "inherit" | "ignore", stderr: "inherit" | "ignore"): void {
   const utf8 = utf8Locale();
   const units = utf8 ? [...text] : [...lat(text)];
   for (let off = 0; off < units.length; ) {
@@ -3321,7 +2966,7 @@ function orcaPending(h: string, text: string, stdin: "inherit" | "ignore"): bool
 // changed - then, for a text, while the text still sits pending, up to two
 // retry Enters, each behind the dialog guard and followed by a settle; still
 // pending after both, 1.
-function orcaSubmitVerified(h: string, text: string, stdin: "inherit" | "ignore", stderr: "inherit" | "ignore"): number {
+export function orcaSubmitVerified(h: string, text: string, stdin: "inherit" | "ignore", stderr: "inherit" | "ignore"): number {
   if (orcaDialog(h, stdin)) return 3;
   const pre = orcaScreen(h, stdin);
   orcaJson(["terminal", "send", "--terminal", h, "--enter"], stdin);
@@ -3348,7 +2993,7 @@ function orcaSubmitVerified(h: string, text: string, stdin: "inherit" | "ignore"
 // title's glyph, then tui-idle's 1000 ms wait - the raw `orca terminal wait`,
 // no ok test - and for a codex identity a 40-line screen taken before it and
 // compared after a timed-out one.
-function orcaAgentIdle(h: string, stdin: "inherit" | "ignore", stderr: "inherit" | "ignore"): boolean {
+export function orcaAgentIdle(h: string, stdin: "inherit" | "ignore", stderr: "inherit" | "ignore"): boolean {
   const show = orcaJson(["terminal", "show", "--terminal", h], stdin);
   if (show === null || jqOver(["-e", ".result.terminal.agentWait != null"], show, "ignore", "ignore").status === 0) return false;
   const title = capturedText(jqOver(["-r", ".result.terminal.title // empty"], show, "pipe", stderr).out);
@@ -3530,92 +3175,6 @@ export function herdrCloseDefaultTabs(ws: string): number {
   return ids.status;
 }
 
-// --- send twins ---
-
-// ac_bare_marker_verbs' twin (bin/ac-lib.sh keeps the bash one and its
-// contract): the bare marker verbs <text> carries, one per line, deduped by
-// awk's $1 in first-seen order, null for none. The verb list is the `(...)`
-// group of CAPTAIN_RE by the bash's own sed; one that is empty or holds any
-// byte but a-z, `|` and `-` is unparseable - none - read by that text under
-// every locale (bash 3.2's case range collated under UTF-8 and let an
-// uppercase verb pass: named). grep and awk are spawned under the caller's
-// locale, so [[:space:]] is the class they read (NBSP under UTF-8 only).
-export function bareMarkerVerbs(text: string): string | null {
-  const verbs = capturedText(stage(["sed", "-n", "s/.*(\\([^)]*\\)):.*/\\1/p"], Buffer.from(`${CAPTAIN_RE}\n`), "pipe", "inherit").out);
-  if (verbs === "" || /[^a-z|-]/.test(verbs)) return null;
-  const hits = stage(["grep", "-oE", `(${verbs}):([[:space:]]|$)`], Buffer.from(`${text}\n`), "pipe", "inherit");
-  const tokens = capturedText(stage(["awk", "!seen[$1]++ { print $1 }"], hits.out, "pipe", "inherit").out);
-  return tokens === "" ? null : tokens;
-}
-
-// ac_claude_last_typed_turn's jq program, byte for byte (tests/ts/send.test.ts
-// lifts it out of bin/ac-lib.sh, whose function stays live for ac-spawn).
-const LAST_TYPED_TURN = `
-    [.[] | select(.type == "user" and .promptSource == "typed"
-                  and .origin.kind == "human"
-                  and (.message.content | type) == "string")]
-    | last | .message.content // empty
-  `;
-
-// ac_claude_transcript_path's twin: the one `<root>/*/<sid>.jsonl` that
-// exists, <root> AC_CLAUDE_TRANSCRIPT_ROOT, else <CLAUDE_CONFIG_DIR, else
-// HOME/.claude>/projects, its trailing LFs cut as the bash's `$(...)` cut
-// them; null for none, two or more, or HOME unset where it was needed (the
-// bash's `set -u` ended the reading there). <sid> is bytes (latin1), and so
-// is the answer.
-export function claudeTranscriptPath(sid: string): string | null {
-  const home = process.env.HOME;
-  const cfg = process.env.CLAUDE_CONFIG_DIR || (home === undefined ? null : `${home}/.claude`);
-  const root = process.env.AC_CLAUDE_TRANSCRIPT_ROOT || (cfg === null ? null : `${cfg}/projects`);
-  if (root === null) return null;
-  const r = lat(root).replace(/\n+$/, "");
-  let names: Uint8Array[] = [];
-  try {
-    names = readdirSync(Buffer.from(r, "latin1"), { encoding: "buffer" });
-  } catch {}
-  const hits = names
-    .map((n) => Buffer.from(n).toString("latin1"))
-    .filter((n) => !n.startsWith(".") && existsSync(Buffer.from(`${r}/${n}/${sid}.jsonl`, "latin1")));
-  return hits.length === 1 ? `${r}/${hits[0]}/${sid}.jsonl` : null;
-}
-
-// ac_claude_last_typed_turn's twin: `tail -n 200 <file> | jq -rs <program>`,
-// both spawned, their stderr dropped; null when either fails (pipefail) or
-// the answer reads empty, else the turn as `$(...)` read it (latin1).
-function claudeLastTypedTurn(path: string): string | null {
-  const tail = stage(["tail", "-n", "200", argvOf(path)], "ignore", "pipe", "ignore");
-  const turn = stage(["jq", "-rs", LAST_TYPED_TURN], tail.out, "pipe", "ignore");
-  if (tail.status !== 0 || turn.status !== 0) return null;
-  const out = capturedText(turn.out);
-  return out === "" ? null : out;
-}
-
-// ac_arrival_wait's twin (ac-lib.sh's claude transcript arrival check; the
-// bash stays live for ac-spawn): did <text>, its trailing LFs cut as the
-// transcript reader cuts the arrived turn's, ARRIVE as the session's last
-// typed human turn? Up to seven reads a settle apart (PATH's sleep, as the
-// bash ran it), returning at the first match: 0 CONFIRMED; 1 REFUTED - some
-// turn was read and none matched, `last` the last one read (the bash's
-// AC_ARRIVAL_LAST); 2 UNOBSERVABLE - no <sid> (bytes, latin1), no single
-// transcript, or no turn read at all.
-export function arrivalWait(sid: string, text: string): { status: number; last: string } {
-  const expected = lat(text).replace(/\n+$/, "");
-  if (sid === "") return { status: 2, last: "" };
-  const path = claudeTranscriptPath(sid);
-  if (path === null) return { status: 2, last: "" };
-  let last = "";
-  for (let reads = 1; ; reads++) {
-    const cur = claudeLastTypedTurn(path);
-    if (cur !== null) {
-      last = cur;
-      if (last === expected) return { status: 0, last: "" };
-    }
-    if (reads >= 7) break;
-    settle("inherit");
-  }
-  return { status: last === "" ? 2 : 1, last };
-}
-
 // --- domain twins ---
 import { basename } from "node:path";
 import { readlinkSync } from "node:fs";
@@ -3623,223 +3182,6 @@ import { readlinkSync } from "node:fs";
 // src/domain.ts derives a package path from `$(ac_home)` as the bash did:
 // the refusal printed and "" when the home cannot be named.
 export { softHome };
-
-// ac_domain_registry's twin: `<records>/crewdomains.md`, records/ minted;
-// homeless, the refusal printed and `/crewdomains.md`.
-export function domainRegistry(): string {
-  return `${softSubdir("records", true)}/crewdomains.md`;
-}
-
-// ac_domain_parse's program, byte for byte: tests/ts/domain.test.ts lifts it
-// out of bin/ac-lib.sh, whose function stays live for ac-spawn and the
-// dashboard's pin. Its comments quote words in backticks, which a template
-// literal cannot hold raw.
-const BT = "`";
-const DOMAIN_PARSE_AWK = String.raw`
-    function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
-    function bad(reason) { printf "INVALID\t%s\t\t\t%s\n", $0, reason }
-    {
-      if (substr($0, 1, 2) != "- ") next
-      rest = substr($0, 3)
-      if (rest !~ / \(added [^)]*\)$/) { bad("missing \"(added ...)\""); next }
-      sub(/ \(added [^)]*\)$/, "", rest)
-
-      # Drop the ONE legitimate keyed field, then any keyed token left over is a
-      # field this grammar does not have. Checked BEFORE the scope split so a
-      # ${BT}home:${BT} line is refused by name rather than by a downstream symptom.
-      probe = rest
-      sub(/ - scope:/, "", probe)
-      if (match(probe, / - [a-zA-Z][a-zA-Z0-9_-]*:/)) {
-        bad("unknown field \"" substr(probe, RSTART + 3, RLENGTH - 3) "\""); next
-      }
-
-      p = index(rest, " - scope:")           # 9 chars
-      if (p == 0) { bad("missing \"scope:\" field"); next }
-      head = substr(rest, 1, p - 1)
-      scope = trim(substr(rest, p + 9))
-
-      q = index(head, " - ")                 # id, then the free-text charter
-      if (q > 0) { id = trim(substr(head, 1, q - 1)); charter = trim(substr(head, q + 3)) }
-      else { id = trim(head); charter = "" }
-      if (charter == "") { bad("missing charter field"); next }
-
-      # [a-z0-9-], TIGHTER than the loose read-path charset the deputy parser
-      # uses, and equal to what ${BT}new${BT} mints - because a crewdomain id is
-      # CONCATENATED into a package path. A parser calling ${BT}Payments${BT} VALID
-      # would hand an id to a path verb that refuses it, and ${BT}list${BT} (which may
-      # never exit non-zero) would then die on the digest. One charset, both
-      # ends. NOTE: no apostrophes in this block - the awk program is inside a
-      # shell single-quoted string, and one would close it.
-      if (id !~ /^[a-z0-9-]+$/) { bad("bad id charset"); next }
-      if (id in seen) { bad("duplicate id"); next }
-      seen[id] = 1
-      printf "VALID\t%s\t%s\t%s\t\n", id, charter, scope
-    }
-  `;
-
-// ac_domain_parse's twin as the argv it ran - `awk <program> <file>` under
-// the caller's locale, so a byte that is not UTF-8 aborts it under a UTF-8
-// one (towc, exit 2) as it did the bash - for a caller to run and read.
-// <file> defaults to domainRegistry(); null when it is no regular file, where
-// the bash returned 0 with no record.
-export function domainParse(file = ""): string[] | null {
-  if (file === "") file = domainRegistry();
-  return isFile(file) ? ["awk", DOMAIN_PARSE_AWK, file] : null;
-}
-
-// ac_domain_name_ok's twin: `''`, `/`, `.` and `..` refused, then the C
-// locale's [a-z0-9-] - so the charset is the text's under any locale.
-export function domainNameOk(name: string): boolean {
-  return /^[a-z0-9-]+$/.test(name);
-}
-
-// ac_backlog_id_ok's twin, the same rule for a backlog row id.
-export function backlogIdOk(id: string): boolean {
-  return /^[a-z0-9-]+$/.test(id);
-}
-
-// `cd -P <p> && pwd -P`: entered as the kernel resolves it, links and `..`
-// physically, never the lexical spelling physicalDir tries first.
-function cdPhysical(p: string): string | null {
-  const here = process.cwd();
-  try {
-    process.chdir(p);
-    return namedCwd();
-  } catch {
-    return null;
-  } finally {
-    process.chdir(here);
-  }
-}
-
-// `$(dirname ...)`, `$(basename ...)` and `$(readlink ...)` lost a trailing LF.
-const noLF = (s: string): string => s.replace(/\n+$/, "");
-
-// ac_domain_view_entry's twin: one projects/ view entry of <dom> classified as
-// the capture read it - `ok`, `not-symlink`, `dangling`, `outside <target>`
-// or `mismatch <target>`. The link chain is followed one hop at a time (its
-// target resolved against the link's own physical dir) and stops the moment a
-// hop lands in the physical <home>/projects - a fleet clone that is itself a
-// symlink is trusted there - or after 16 hops (dangling); the landing point
-// must sit under that dir and equal <clones>/<entry> as a literal string.
-// Homeless, the refusal printed and the entry read under `/crewdomains`.
-export function domainViewEntry(dom: string, entry: string): string {
-  const home = softHome(true);
-  const link = `${home}/crewdomains/${dom}/projects/${entry}`;
-  const isLink = (p: string): boolean => {
-    try {
-      return lstatSync(p).isSymbolicLink();
-    } catch {
-      return false;
-    }
-  };
-  if (!isLink(link)) return "not-symlink";
-  if (!existsSync(link)) return "dangling";
-  const clones = cdPhysical(`${home}/projects`) ?? `${home}/projects`;
-  let t = link;
-  let hops = 0;
-  let landed = false;
-  while (isLink(t) && hops < 16) {
-    let d = cdPhysical(noLF(dirname(t)));
-    if (d === null) return "dangling";
-    let rl: string;
-    try {
-      rl = noLF(readlinkSync(t));
-    } catch {
-      return "dangling";
-    }
-    t = rl.startsWith("/") ? rl : `${d}/${rl}`;
-    hops++;
-    d = cdPhysical(noLF(dirname(t)));
-    if (d === null) return "dangling";
-    if (d === clones) {
-      t = `${d}/${noLF(basename(t))}`;
-      landed = true;
-      break;
-    }
-  }
-  if (!landed) {
-    if (hops >= 16) return "dangling";
-    const d = cdPhysical(noLF(dirname(t)));
-    if (d === null) return "dangling";
-    t = `${d}/${noLF(basename(t))}`;
-  }
-  if (!`${t}/`.startsWith(`${clones}/`)) return noLF(`outside ${t}`);
-  if (t !== `${clones}/${entry}`) return noLF(`mismatch ${t}`);
-  return "ok";
-}
-
-// ac_domain_qa_repo's twin: the main repo root of the project <dom>'s
-// package member `qa-repo` names, null for none. The name is the member's
-// first line with every [:space:] deleted by a spawned `tr` - the caller's
-// locale decides what a space is, and under UTF-8 tr cuts at a byte that is
-// not UTF-8 with its own line - then `[ -e <pkg>/projects/<name> ]` and
-// projectDir (the physical path). Homeless, the refusal (stderr allowing) and
-// null. <stderr> "ignore" is the caller that ran it under 2>/dev/null.
-export function domainQaRepo(dom: string, stderr: "inherit" | "ignore" = "inherit"): string | null {
-  if (!domainNameOk(dom)) return null;
-  const home = softHome(stderr === "inherit");
-  if (home === "") return null;
-  const pkg = `${home}/crewdomains/${dom}`;
-  let head = Buffer.alloc(0);
-  try {
-    const b = readFileSync(`${pkg}/qa-repo`);
-    const lf = b.indexOf(10);
-    head = lf < 0 ? b : b.subarray(0, lf + 1);
-  } catch {}
-  let r: ReturnType<typeof Bun.spawnSync> | null = null;
-  try {
-    r = spawnShellSync(["tr", "-d", "[:space:]"], { stdin: head, stdout: "pipe", stderr });
-  } catch {}
-  const name = r === null ? "" : capturedText(Buffer.from(r.stdout));
-  if (name === "") return null;
-  const path = `${pkg}/projects/${Buffer.from(name, "latin1").toString("utf8")}`;
-  if (!existsSync(path)) return null;
-  return projectDir(path);
-}
-
-// ac_domain_tally's twin over the ledger's grammar in-process (records() +
-// acDoneline(), the AC_DONELINE_AWK reading under LC_ALL=C):
-// `<queued> <in flight> <done>` for the rows whose domain - their own token,
-// else their epic row's - is <name> (every domain for ""), the section read
-// from the last `## In flight` / `## Queued` / `## Done` PREFIX (any other
-// `## ` line ends it), a [failed]/[abandoned] Done row not counted; `0 0 0`
-// with no ledger. A ledger it cannot read is null, with the parser's own
-// refusal where the original printed awk's `can't open file`.
-export function domainTally(name: string): string | null {
-  const f = `${softSubdir("records", true)}/backlog.md`;
-  if (!isFile(f)) return "0 0 0";
-  let text: string;
-  try {
-    text = readFileSync(f, "latin1");
-  } catch {
-    writeSync(2, Buffer.from(`ERROR: cannot read ${lat(f)}\n`, "latin1"));
-    return null;
-  }
-  const recs = records(text);
-  const dom = new Map<string, string>();
-  for (const r of recs) {
-    if (!r.startsWith("- [")) continue;
-    const o = acDoneline(r);
-    if (o.domain !== "") dom.set(o.id, o.domain);
-  }
-  const n: Record<string, number> = { q: 0, i: 0, d: 0 };
-  let sec = "";
-  for (const r of recs) {
-    if (r.startsWith("## ")) sec = "";
-    if (r.startsWith("## In flight")) sec = "i";
-    else if (r.startsWith("## Queued")) sec = "q";
-    else if (r.startsWith("## Done")) sec = "d";
-    else if (r.startsWith("- [") && sec !== "") {
-      const o = acDoneline(r);
-      const d = o.domain === "" && o.epic !== "" ? dom.get(o.epic) ?? "" : o.domain;
-      if (d === "" || (name !== "" && d !== name)) continue;
-      if (sec === "d" && (o.terminal === "failed" || o.terminal === "abandoned")) continue;
-      n[sec]!++;
-    }
-  }
-  return `${n.q} ${n.i} ${n.d}`;
-}
 
 // --- ledger lock ---
 // The backlog lock as src/task.ts takes it - <dir> is a ledger's
@@ -3890,9 +3232,11 @@ function sparseExcluded(wt: string, path: string): boolean {
 // ac_worktree_status's twin (no entry runs the bash since src/teardown.ts):
 // every git is the PATH's, so a wrapper sees what each side hashes. <wt> is a path
 // as given, the answer bytes (latin1) - git status's porcelain with submodule
-// ignores overridden, an `H  <path>` per file whose assume-unchanged or
-// skip-worktree bit hides an edit, a deletion or a mode/type change from it,
-// an `O  <op>` per operation git left in progress - and status git status's.
+// ignores overridden and untracked files listed whatever the repo's
+// status.showUntrackedFiles says (a reset's clean would discard one it hid),
+// an `H  <path>` per file whose assume-unchanged or skip-worktree bit hides
+// an edit, a deletion or a mode/type change from it, an `O  <op>` per
+// operation git left in progress - and status git status's.
 // A path whose bytes are not UTF-8 reaches git's argv as U+FFFD.
 export function worktreeStatus(wt: string): { status: number; out: string } {
   const g = (args: string[], stdin: "inherit" | Buffer = "inherit"): { status: number; out: Buffer } => {
@@ -3903,7 +3247,7 @@ export function worktreeStatus(wt: string): { status: number; out: string } {
     return { status: shellStatus(r), out: r ? Buffer.from(r.stdout) : Buffer.alloc(0) };
   };
   const cap = (b: Buffer): string => capturedText(b);
-  const st = g(["status", "--porcelain", "--ignore-submodules=none"]);
+  const st = g(["status", "--porcelain", "--ignore-submodules=none", "--untracked-files=normal"]);
   let out = st.out.toString("latin1");
   const fm = g(["config", "--get", "core.fileMode"]);
   const filemode = cap(fm.status === 0 ? fm.out : Buffer.concat([fm.out, Buffer.from("true")]));
@@ -3992,13 +3336,6 @@ export { trimShellSpaceBytes };
 
 // --- teardown twins ---
 
-// ac_task_stamps' twin: every per-id watcher stamp in <sd>, the one reap list
-// (ac-watch and ac-done write them).
-const TASK_STAMPS = ["hash", "change", "seen", "seen-hash", "stale", "gone", "ask", "unobservable", "report-hash", "superseded", "busy", "busy-stalled"];
-export function taskStamps(sd: string, id: string): string[] {
-  return TASK_STAMPS.map((b) => `${sd}/.${b}-${id}`);
-}
-
 // <base>.<pid>, or <base>.<pid>.<n> past a name already taken, created
 // EXCLUSIVELY - the originals' `<base>.$$` wrote through whatever sat there.
 export function exclusiveTemp(base: string): { path: string; fd: number } {
@@ -4018,159 +3355,6 @@ export function exclusiveTemp(base: string): { path: string; fd: number } {
 // rest; the write that cannot continue throws.
 export function writeAll(fd: number, b: Uint8Array): void {
   for (let off = 0; off < b.length; ) off += writeSync(fd, b, off, b.length - off);
-}
-
-// ac_port_slot_release's twin: <wt>'s row dropped from state/port-slots.tsv
-// under the registry's lock (10 PATH `sleep 1` waits), never a failure - no
-// home, no registry or a lock not taken (W20) leave it, silently. The rows are
-// awk's `$2 != w` (-v escapes and all), spawned; its output goes to an
-// exclusive <reg>.tmp.<pid> given the registry's mode (the bash's temp left
-// it umask's) and is renamed over it by a spawned mv. An awk that fails, or a
-// temp that cannot take all its bytes, leaves that temp and the registry as
-// they were, as the bash's `awk >tmp && mv` did; so does a lock whose pid
-// cannot be written (the bash's ac_lock_acquire answered 1 there).
-export function portSlotRelease(wt: string): void {
-  const sd = softSubdir("state", false);
-  if (sd === "") return;
-  const reg = `${sd}/port-slots.tsv`;
-  if (!isFile(reg)) return;
-  const lock = `${reg}.lock`;
-  let held = false;
-  try {
-    held = lockAcquire(lock, 10, sleepOne);
-  } catch {}
-  if (!held) return;
-  try {
-    let t: { path: string; fd: number };
-    try {
-      t = exclusiveTemp(`${reg}.tmp`);
-    } catch {
-      return;
-    }
-    const r = stage(["awk", "-F\\t", "-v", `w=${wt}`, "$2 != w", reg], "inherit", "pipe", "inherit");
-    let whole = true;
-    try {
-      writeAll(t.fd, r.out);
-    } catch {
-      whole = false;
-    } finally {
-      closeSync(t.fd);
-    }
-    if (r.status !== 0 || !whole) return;
-    try {
-      chmodSync(t.path, statSync(reg).mode & 0o7777);
-    } catch {}
-    stage(["mv", t.path, reg], "inherit", "inherit", "inherit");
-  } finally {
-    lockRelease(lock);
-  }
-}
-
-// `awk <prog> <file>` as the gate's tests ran it - under the caller's locale,
-// or LC_ALL=C for `c` - its own stderr the caller's: true on exit 0.
-function awkFinds(prog: string, vars: [string, string][], file: string, c = false): boolean {
-  const awk = ["awk", ...vars.flatMap(([k, v]) => ["-v", `${k}=${v}`]), prog, file];
-  return stage(c ? ["/usr/bin/env", "LC_ALL=C", ...awk] : awk, "inherit", "ignore", "inherit").status === 0;
-}
-
-// ac_solo_landing_check's twin, the kind=self knowledge-loop gate: the one
-// line `knowledge loop: lessons=<l> repo-knowledge=<f> done-row=<d>` (or
-// `landed-receipt=<d>` for a <scope>) appended to <id>'s status record, its
-// failure ignored, and printed on stdout, then `missing - the solo contract
-// owes these at landing:` and the command for each missing write; true when
-// none is missing, and for an empty <id> with nothing done. lessons: waived,
-// or yes when records/learnings.md before `## Distilled` holds a `### `
-// heading containing `(solo <id>)` or any line containing `(by: <id>,`;
-// repo-knowledge: waived, or yes when <repo> is a directory git names a config
-// name for and its records/repo-knowledge/<name>.md before `## Superseded`
-// holds a `- ` line ending `| by: <id>`; the third: a scoped slice's room
-// entry `- [` holding `> LANDED: <id> ` or `> UNLANDABLE: <id> `, else a line
-// under `## Done` starting `- [x] <id> `. Each test is the original's awk,
-// spawned (the last two under LC_ALL=C, as there), so an unreadable record
-// prints awk's own line and reads as missing. The hints name the bin/ of
-// STARTED_BIN, `date -u +%Y-%m-%d` (spawned) and the physical home. Every
-// argument is text (UTF-8). <before>, given, runs just ahead of the record
-// with the verdict, so a caller's own lines land before it - and only when
-// they should.
-export function soloLandingCheck(id: string, repo: string, noLesson: string, noFact: string, scope: string, before?: (pass: boolean) => void): boolean {
-  if (id === "") return true;
-  const recs = softSubdir("records", false);
-  const led = `${recs}/learnings.md`;
-  let lessons = "none";
-  if (noLesson !== "") lessons = "waived";
-  else if (
-    isFile(led) &&
-    awkFinds(
-      "\n      /^## Distilled/ { exit }\n      /^### / && index($0, tag) { found = 1; exit }\n      index($0, by) { found = 1; exit }\n      END { exit(found ? 0 : 1) }",
-      [["tag", `(solo ${id})`], ["by", `(by: ${id},`]],
-      led,
-    )
-  )
-    lessons = "yes";
-  let facts = "none";
-  if (noFact !== "") facts = "waived";
-  else if (repo !== "" && isDir(repo)) {
-    const name = projectConfigName(repo);
-    const rec = name === null ? "" : `${softSubdir("records", false)}/repo-knowledge/${name}.md`;
-    if (
-      rec !== "" &&
-      isFile(rec) &&
-      awkFinds(
-        "\n      /^## Superseded/ { exit }\n      /^- / && substr($0, length($0) - length(suffix) + 1) == suffix { found = 1; exit }\n      END { exit(found ? 0 : 1) }",
-        [["suffix", `| by: ${id}`]],
-        rec,
-      )
-    )
-      facts = "yes";
-  }
-  let done = "none";
-  let line: string;
-  let bl = "";
-  if (scope !== "") {
-    const room = roomFile(scope);
-    if (
-      room !== "" &&
-      isFile(room) &&
-      awkFinds(
-        "\n        /^- \\[/ && (index($0, landed) || index($0, unland)) { found = 1; exit }\n        END { exit(found ? 0 : 1) }",
-        [["landed", `> LANDED: ${id} `], ["unland", `> UNLANDABLE: ${id} `]],
-        room,
-        true,
-      )
-    )
-      done = "yes";
-    line = `knowledge loop: lessons=${lessons} repo-knowledge=${facts} landed-receipt=${done}`;
-  } else {
-    bl = `${softSubdir("records", false)}/backlog.md`;
-    if (
-      isFile(bl) &&
-      awkFinds(
-        "\n        /^## Done/ { in_done = 1; next }\n        /^## / { in_done = 0 }\n        in_done && index($0, row) == 1 { found = 1; exit }\n        END { exit(found ? 0 : 1) }",
-        [["row", `- [x] ${id} `]],
-        bl,
-        true,
-      )
-    )
-      done = "yes";
-    line = `knowledge loop: lessons=${lessons} repo-knowledge=${facts} done-row=${done}`;
-  }
-  const root = STARTED_BIN.slice(0, -"/bin".length);
-  let hint = "";
-  if (lessons === "none") {
-    const day = capturedText(stage(["date", "-u", "+%Y-%m-%d"], "inherit", "pipe", "inherit").out);
-    hint += `\n  lesson: ${root}/bin/ac-learn.sh note '### ${day} (solo ${id})' '- <one method lesson>'   (or --no-lesson '<why nothing new>')`;
-  }
-  if (facts === "none") hint += `\n  repo fact: ${root}/bin/ac-know.sh add --home ${softHome(true)} --repo ${repo || "<repo>"} --family ${id} --src-file <path>:<line> --fact '<verified fact>'   (or --no-fact '<why none verified>')`;
-  if (done !== "yes") {
-    if (scope !== "")
-      hint += `\n  landed receipt: ${root}/bin/ac-room.sh post ${scope} ${scope}-chief 'LANDED: ${id} - <outcome>'   (the crewchief moves the backlog row at your hand-back)\n  ...or, when the slice CANNOT land: ${root}/bin/ac-room.sh post ${scope} ${scope}-chief 'UNLANDABLE: ${id} - <why>; crewchief to land'   (NEVER rebase to force it: a scoped actor is withheld --no-ff on purpose, and a rebase changes the sha a review receipt binds by. The slice STAYS IN FLIGHT until the crewchief lands crew/${id} --no-ff; this teardown keeps refusing 'unlanded work' until then, and passes on this receipt afterwards)`;
-    else hint += `\n  done row: append '- [x] ${id} - <outcome>' under ## Done in ${bl}`;
-  }
-  before?.(hint === "");
-  statusAppend(id, lat(line));
-  writeSync(1, `${line}\n`);
-  if (hint !== "") writeSync(1, `missing - the solo contract owes these at landing:${hint}\n`);
-  return hint === "";
 }
 
 // backend_kill_window's twin, both drivers, routed as backendCall routes (a
@@ -4423,7 +3607,7 @@ export function chiefBusyHeld(sd: string, fam: string, famData: string, quiet = 
 const TRANSCRIPT_FINAL_JQ = `[.[] | select(.type == "assistant")] | last
           | .message.content | map(select(.type == "text") | .text) | join("\\n")`;
 
-// ac_transcript_final's twin (tests/fixtures/ac-pipeline-lib.sh): the pane agent's last
+// ac_transcript_final's twin (the retired ac-pipeline-lib.sh): the pane agent's last
 // assistant message, jq SPAWNED as `$(...)` read it - its status kept, so a
 // transcript that is missing or no JSON ends a caller under errexit as it did
 // there. The text is bytes (latin1).
@@ -4435,9 +3619,8 @@ export function transcriptFinal(file: string): { status: number; text: string } 
   return { status: shellStatus(r), text: r ? capturedText(Buffer.from(r.stdout)) : "" };
 }
 
-// ac_maintenance_plan_validate's closed schema, verbatim (the bash one frozen
-// at tests/fixtures/ac-maintenance-retired.sh): jq's own reading of the plan
-// is the judge.
+// ac_maintenance_plan_validate's closed schema, verbatim: jq's own reading of
+// the plan is the judge.
 const PLAN_SCHEMA_JQ = `length == 1 and (.[0] |
     type == "object"
     and keys == ["actions","input_manifest_sha256","mode","run_id","schema","subject"]
@@ -4473,7 +3656,7 @@ const PLAN_SCHEMA_JQ = `length == 1 and (.[0] |
     ))
   `;
 
-const isLink = (p: string): boolean => {
+export const isLink = (p: string): boolean => {
   try {
     return lstatSync(p).isSymbolicLink();
   } catch {
@@ -4483,7 +3666,7 @@ const isLink = (p: string): boolean => {
 
 // ac_maintenance_path_plain's twin: no EXISTING component of <rel> under the
 // physical <root> is a link; an empty component fails.
-function maintenancePathPlain(root: string, rel: string): boolean {
+export function maintenancePathPlain(root: string, rel: string): boolean {
   let cur = physicalDir(root);
   if (cur === null) return false;
   for (const part of rel === "" ? [] : rel.split("/")) {
@@ -4569,9 +3752,7 @@ export function herdrTabOpen(ses: string, label: string, cwd: string, ws: string
 
 // --- curate twins ---
 // (The bash originals of the cadence and transaction twins here and under
-// `// --- learn twins ---` were retired from bin/ac-maintenance-lib.sh; they
-// are frozen at tests/fixtures/ac-maintenance-retired.sh, which
-// tests/ts/curate.test.ts and tests/ts/learn.test.ts hold the twins to.)
+// `// --- learn twins ---` were retired from bin/ac-maintenance-lib.sh.)
 
 // AC_SKILLS_ARCHIVE_BASENAME: the reserved subdir of skills/ that Curate
 // moves retired packages into; the seed and the brain index skip it by name.
@@ -4587,249 +3768,9 @@ export function fileMtime(path: string | Buffer): string | null {
   }
 }
 
-const curateMeta = (): string => `${softSubdir("state", true)}/.curate.meta`;
-
-function metaGetSoft(file: string, key: string): string {
-  try {
-    return metaGet(file, key);
-  } catch {
-    return "";
-  }
-}
-
-// ac_meta_set's failure is the bash caller's ignored status: its warning or
-// mv's own line is already on stderr, and the sequence goes on.
-function metaSetSoft(file: string, key: string, value: string): void {
-  try {
-    metaSet(file, key, value);
-  } catch {}
-}
-
-// ac_curate_generation's twin: the meta's generation, "0" unless digits.
-export function curateGeneration(): string {
-  const g = metaGetSoft(curateMeta(), "generation");
-  return /^[0-9]+$/.test(g) ? g : "0";
-}
-
-// ac_curate_due's twin: [runs_since, curate-every], "0" and "5" unless digits.
-export function curateDue(): [string, string] {
-  const cur = metaGetSoft(curateMeta(), "runs_since");
-  const every = configReadSoft("curate-every", "5");
-  return [/^[0-9]+$/.test(cur) ? cur : "0", /^[0-9]+$/.test(every) ? every : "5"];
-}
-
-// ac_curate_reset's twin, under state/.curate-cadence.lock (10 PATH `sleep 1`
-// waits): false, warned, when the lock is not taken; false when <expected>
-// names an older generation; else generation+1 (`$((current + 1))`, so a
-// leading 0 reads octal and an 8 or 9 behind it THROWS EARITH with the lock
-// still held, where the shell's arithmetic error ended the script), runs_since
-// 0 and last_run stamped, each write's own failure ignored as the bash's was.
-export function curateReset(expected = ""): boolean {
-  const f = curateMeta();
-  const lock = `${softSubdir("state", true)}/.curate-cadence.lock`;
-  if (!lockAcquire(lock, 10, sleepOne)) {
-    warn(`curate reset: cadence lock ${lock} could not be acquired within 10s - the learning-run counter was NOT reset and its generation did NOT advance, so a due Curate pass stays due. This is a lock failure, not a newer cadence generation.`);
-    return false;
-  }
-  const current = curateGeneration();
-  if (expected !== "" && expected !== current) {
-    lockRelease(lock);
-    return false;
-  }
-  metaSetSoft(f, "generation", String(BigInt.asIntN(64, arithValue(current) + 1n)));
-  metaSetSoft(f, "runs_since", "0");
-  metaSetSoft(f, "last_run", nowRaw());
-  lockRelease(lock);
-  return true;
-}
-
-// ac_maintenance_gate_failure_reason's twin, keyed on the gate's exit only.
-export function maintenanceGateFailureReason(rc: number | string): string {
-  switch (String(rc)) {
-    case "4":
-      return "The maintenance gate is disabled (config/gate-agent=off).";
-    case "3":
-      return "The maintenance gate ran but produced no usable decision (an engine failure, an invalid response, a timeout, or a declared environment-error).";
-    default:
-      return `The maintenance gate rejected its own invocation before it could run (usage or input error, exit ${rc}).`;
-  }
-}
-
-// ac_maintenance_incomplete_other's twin: some OTHER transaction dir under
-// <root> (byte order) holds a journal that is neither complete nor abandoned;
-// an unreadable journal is ac_meta_get's warning and reads unsettled.
-function maintenanceIncompleteOther(root: string, current: string): boolean {
-  if (!isDir(root)) return false;
-  let names: string[] = [];
-  try {
-    names = readdirSync(root);
-  } catch {}
-  for (const n of names.filter((x) => !x.startsWith(".")).sort()) {
-    const dir = `${root}/${n}`;
-    if (!isDir(dir) || dir === current) continue;
-    if (!isFile(`${dir}/journal`)) continue;
-    const s = metaGetSoft(`${dir}/journal`, "status");
-    if (s !== "complete" && s !== "abandoned") return true;
-  }
-  return false;
-}
-
-// _ac_maintenance_hold's twin: the journal keeps the claim and says how much
-// landed, then the one warning naming the verbs that settle it.
-function maintenanceHold(journal: string, txn: string, committed: number, total: string, why: string): void {
-  const txid = basename(txn);
-  metaSetSoft(journal, "held_committed", String(committed));
-  metaSetSoft(journal, "held_reason", Buffer.from(why, "utf8").toString("latin1"));
-  warn(`maintenance transaction ${txid} is HELD (${why}): ${committed} of its ${total} action(s) are already committed to disk and are NOT rolled back. It stays claimed, so every other Learning/Curate transaction refuses until it is settled. Fix the cause and replay it (already-applied actions are skipped by hash), or drop it and keep the record: bin/ac-learn.sh maintenance resume ${txid} | bin/ac-learn.sh maintenance abandon ${txid}`);
-}
-
-const shaSoft = (f: string): string => {
-  try {
-    return sha256File(f);
-  } catch {
-    return "";
-  }
-};
-
-// ac_maintenance_apply's twin - the fleet-wide writer Learning and Curate
-// call, beside the bash one the frozen oracles keep, so the two must leave
-// the same claim, journal (key order included), backup and file bytes: a
-// journal either side writes, the other resumes. The plan is validated (maintenancePlanValidate), the claim taken
-// under state/.maintenance.lock (30 PATH `sleep 1` waits) and refused for a
-// different recorded plan or another unsettled transaction; the journal
-// records plan_sha256, plan, run, actions_total and status=applying before the
-// first write, then the backup (recordsBackup <mode>, once per transaction).
-// Each action is skipped when its target already holds new_sha256, applied
-// when it holds old_sha256 (cp to <target>.maintenance.<pid>.<idx>, rehashed,
-// mv over it - all spawned, so a link planted at the temp is written through
-// as the bash's was), and a move-skill then removes its live source and every
-// directory it empties below skills/. Every failure past the claim HOLDS the
-// transaction with the bash's reason text. False wherever the bash returned 1.
-export function maintenanceApply(plan: string, run: string): boolean {
-  if (!maintenancePlanValidate(plan, run)) return false;
-  const home = softHome(true);
-  const root = `${softSubdir("state", true)}/.maintenance-transactions`;
-  mkdirP(root);
-  const jqr = (prog: string): string => capturedText(stage(["jq", "-r", prog, plan], "inherit", "pipe", "inherit").out);
-  const runId = jqr(".run_id");
-  const subject = jqr(".subject");
-  const mode = jqr(".mode");
-  const txn = `${root}/${runId}-${subject}`;
-  const journal = `${txn}/journal`;
-  const lock = `${softSubdir("state", true)}/.maintenance.lock`;
-  const planSha = shaSoft(plan);
-  if (planSha === "") return false;
-
-  if (isFile(journal) && metaGetSoft(journal, "status") === "complete") {
-    const recorded = metaGetSoft(journal, "plan_sha256");
-    if (recorded === planSha) return true;
-    warn(`maintenance apply: transaction ${runId}-${subject} already completed a different plan (plan_sha256 ${recorded}, this one ${planSha}), so this plan was not applied. A transaction replays only the plan it recorded - this is a changed plan under a reused run id, not a busy lock or a stale receipt.`);
-    return false;
-  }
-  if (!lockAcquire(lock, 30, sleepOne)) {
-    warn(`maintenance apply: writer lock ${lock} could not be acquired within 30s - another Learning/Curate transaction holds it, so ${runId}-${subject} was neither claimed nor written. This is a busy lock, not a stale receipt or a refused plan.`);
-    return false;
-  }
-  if (!maintenancePlanValidate(plan, run)) {
-    lockRelease(lock);
-    return false;
-  }
-  mkdirP(txn);
-  const recorded = metaGetSoft(journal, "plan_sha256");
-  if (recorded !== "" && recorded !== planSha) {
-    warn(`maintenance apply: transaction ${runId}-${subject} already recorded a different plan (plan_sha256 ${recorded}, this one ${planSha}), so this plan was neither claimed nor written. A transaction replays only the plan it recorded - this is a changed plan under a reused run id, not a busy lock or a stale receipt.`);
-    lockRelease(lock);
-    return false;
-  }
-  if (maintenanceIncompleteOther(root, txn)) {
-    warn(`maintenance apply: another Learning/Curate transaction is still unsettled, so ${runId}-${subject} was neither claimed nor written. This is another transaction's claim, not a stale receipt or a refused plan - bin/ac-learn.sh maintenance status names it, and resume or abandon settles it.`);
-    lockRelease(lock);
-    return false;
-  }
-
-  const lat = (s: string): string => Buffer.from(s, "utf8").toString("latin1");
-  const planAbs = `${physicalDir(dirname(plan)) ?? ""}/${basename(plan)}`;
-  const runAbs = physicalDir(run) ?? "";
-  const total = jqr(".actions | length");
-  metaSetSoft(journal, "plan_sha256", planSha);
-  metaSetSoft(journal, "plan", lat(planAbs));
-  metaSetSoft(journal, "run", lat(runAbs));
-  metaSetSoft(journal, "actions_total", total);
-  metaSetSoft(journal, "status", "applying");
-  const held = (idx: number, why: string): false => {
-    maintenanceHold(journal, txn, idx, total, why);
-    lockRelease(lock);
-    return false;
-  };
-  let backup = metaGetSoft(journal, "backup");
-  if (backup === "") {
-    const b = recordsBackup(mode);
-    if (b === null) return held(0, "the pre-mutation backup could not be taken");
-    backup = b;
-    metaSetSoft(journal, "backup", backup);
-  } else if (!isFile(Buffer.from(backup, "latin1"))) {
-    return held(0, "the recorded pre-mutation backup is missing");
-  }
-
-  const run1 = (cmd: string[], stderr: "inherit" | "ignore" = "inherit"): number => stage(cmd, "inherit", "inherit", stderr).status;
-  const rows = stage(["jq", "-r", ".actions[] | [.op,.target,.old_sha256,.new_sha256,.staged] | @tsv", plan], "inherit", "pipe", "inherit").out.toString("latin1").split("\n").slice(0, -1);
-  let idx = 0;
-  for (const row of rows) {
-    const [op, target, oldSha, newSha, staged] = tabFields(row.split("\0", 1)[0]!, 5) as [string, string, string, string, string];
-    const targetAbs = `${home}/${target}`;
-    const stagedAbs = `${run}/${staged}`;
-    let actual: string;
-    if (isFile(targetAbs) && !isLink(targetAbs)) {
-      actual = shaSoft(targetAbs);
-      if (actual === "") return held(idx, `target ${target} could not be hashed`);
-    } else if (!existsSync(targetAbs)) {
-      actual = "-";
-    } else {
-      return held(idx, `target ${target} is not a plain file`);
-    }
-    if (actual !== newSha) {
-      if (actual !== oldSha) return held(idx, `target ${target} no longer matches the state the plan was staged against`);
-      if (run1(["mkdir", "-p", dirname(targetAbs)]) !== 0) return held(idx, `the directory for ${target} could not be created`);
-      if (!maintenancePathPlain(home, target)) return held(idx, `a path component of ${target} is a symlink`);
-      const tmp = `${targetAbs}.maintenance.${process.pid}.${idx}`;
-      if (run1(["cp", stagedAbs, tmp]) !== 0) return held(idx, `the staged bytes for ${target} could not be copied`);
-      if (shaSoft(tmp) !== newSha) {
-        run1(["rm", "-f", tmp]);
-        return held(idx, `the copied bytes for ${target} do not match the planned hash`);
-      }
-      if (run1(["mv", tmp, targetAbs]) !== 0) {
-        run1(["rm", "-f", tmp]);
-        return held(idx, `${target} could not be replaced atomically`);
-      }
-    }
-    if (op === "move-skill") {
-      const prefix = `skills/${SKILLS_ARCHIVE}/`;
-      if (!target.startsWith(prefix) || !target.slice(prefix.length).includes("/")) return held(idx, `the live source for ${target} could not be inferred`);
-      const source = `skills/${target.slice(prefix.length)}`;
-      const sourceAbs = `${home}/${source}`;
-      if (isFile(sourceAbs) && !isLink(sourceAbs)) {
-        if (shaSoft(sourceAbs) !== newSha) return held(idx, `live source ${source} does not match the archived bytes`);
-        if (run1(["rm", sourceAbs]) !== 0) return held(idx, `live source ${source} could not be removed`);
-      } else if (existsSync(sourceAbs) || isLink(sourceAbs)) {
-        return held(idx, `live source ${source} is not a plain file`);
-      }
-      // Only directories the move emptied go; a failed rmdir means another
-      // file remains there and is kept.
-      for (let dir = dirname(sourceAbs); dir !== `${home}/skills`; dir = dirname(dir)) {
-        if (run1(["rmdir", dir], "ignore") !== 0) break;
-      }
-    }
-    metaSetSoft(journal, `action_${idx}`, "complete");
-    idx++;
-  }
-  metaSetSoft(journal, "status", "complete");
-  lockRelease(lock);
-  return true;
-}
-
 // --- ship twins ---
 
-// tests/fixtures/ac-pipeline-lib.sh's ac_yaml_get awk program, verbatim (the shell's
+// The retired ac-pipeline-lib.sh's ac_yaml_get awk program, verbatim (the shell's
 // '\'' is the ' here): its line filter, indent arithmetic and unquote, and its
 // towc abort on an invalid byte under the caller's UTF-8 locale, stay awk's.
 const YAML_GET_AWK = `
@@ -5005,19 +3946,15 @@ export function projectConfigFile(repo: string, quiet = false): string | null {
 }
 
 // --- spawn twins ---
-// The bash helpers the frozen tests/fixtures/ac-spawn.sh leans on, which the
-// frozen oracles of ac-learn, ac-pane-agent and ac-verify keep calling
-// (src/self-task.ts calls the twins): each twin is pinned to the live helper
-// by tests/ts/spawn-twins.test.ts, in the call context that oracle gave it (a
-// `$(...)` capture, a `||` guard, or bare under errexit - named per twin,
-// since one helper behaves differently in each).
+// Twins of the bash helpers the retired bash spawn leaned on (src/spawn.ts
+// and src/self-task.ts call the twins): each twin is pinned to
+// the live helper by tests/ts/spawn-twins.test.ts, in the call context the
+// bash spawn gave it (a `$(...)` capture, a `||` guard, or bare under errexit
+// - named per twin, since one helper behaves differently in each).
 import { ftruncateSync, rmdirSync } from "node:fs";
 
-type SpawnIo = { stdin?: "inherit" | "ignore"; stderr: "inherit" | "ignore" };
-type Ended = { status: number; exited: boolean };
-
-const SEED_STAMPS = ".claude/.ac-seed";
-const SEED_FALLBACK = ".claude/CREWMATE.md";
+export type SpawnIo = { stdin?: "inherit" | "ignore"; stderr: "inherit" | "ignore" };
+export type Ended = { status: number; exited: boolean };
 
 // ac_die inside a driver the caller ran bare: the line, then the shell gone.
 function died(msg: string | Uint8Array): Ended {
@@ -5025,484 +3962,9 @@ function died(msg: string | Uint8Array): Ended {
   return { status: 1, exited: true };
 }
 
-// ac_harness_instruction_file's twin as `$(...)` ran it: the file the harness
-// loads, relative to its worktree ("" reads claude); a harness neither
-// built-in nor given a config/launch-<h> template is the ERROR line and null -
-// the die ended only the substitution.
-export function harnessInstructionFile(h: string): string | null {
-  const name = h || "claude";
-  if (["codex", "opencode", "pi", "cursor"].includes(name)) return "AGENTS.md";
-  if (name === "claude" || isFile(`${softHome(true)}/config/launch-${name}`)) return ".claude/CLAUDE.md";
-  writeSync(2, prefixed("ERROR: ", `unknown harness '${name}': no registry entry (bin/ac-harness.sh) and no config/launch-${name} template - refusing to guess which instruction file it loads`));
-  return null;
-}
-
 // ac_harness_startup_key's twin.
 export function harnessStartupKey(h: string): string {
   return h === "codex" ? "Enter" : "";
-}
-
-// ac_record_launch_opts' twin: only what the harness's built-in launch applies
-// is written - model, then effort, one metaSet each (values decoded, written as
-// their UTF-8 bytes); <applied> "" reads <effort>. A refused write throws as
-// metaSet does: the errexit caller ended there.
-export function recordLaunchOpts(meta: string, harness: string, model: string, effort: string, applied = ""): void {
-  const set = (k: string, v: string): void => {
-    if (v !== "") metaSet(meta, k, lat(v));
-  };
-  const eff = applied || effort;
-  if (harness === "claude") {
-    set("model", model);
-    set("effort", effort);
-  } else if (harness === "codex" || harness === "pi") {
-    set("model", model);
-    set("effort", eff);
-  } else if (harness === "opencode" || harness === "cursor") set("model", model);
-}
-
-// ac_compact_pct_env's twin as `$(...)` ran it: `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=<p> `
-// for a config/compact-pct of 1-100 as `[ -ge ]` reads it (007 is 7), "" when
-// unset; any other value is the reason line on stderr - no WARN prefix - and
-// "". The digit grammar is read per the text (bash 3.2's [!0-9] collated
-// under UTF-8 - named); past int64 `[`'s own line is not reproduced.
-export function compactPctEnv(): string {
-  const p = configReadSoft("compact-pct", "");
-  if (p === "") return "";
-  const n = /^[0-9]+$/.test(p) ? testInt(p) : null;
-  if (n !== null && n >= 1n && n <= 100n) return `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=${p} `;
-  writeSync(2, `config/compact-pct: ${p} is not 1-100 - claude keeps its default threshold\n`);
-  return "";
-}
-
-// ac_claude_config_env's twin, bytes (latin1) out: `CLAUDE_CONFIG_DIR=<%q> `
-// when the variable is set non-empty, then always
-// `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 `.
-export function claudeConfigEnv(): string {
-  const d = process.env.CLAUDE_CONFIG_DIR;
-  return `${d ? `CLAUDE_CONFIG_DIR=${shellQuote(lat(d))} ` : ""}CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 `;
-}
-
-// ac_build_launch's twin as `$(...)` ran it: the built-in launch command for
-// <h>, its parts concatenated unquoted as given; a resume id wins over a
-// session id. Any other harness is the ERROR line naming <config>/launch-<h>
-// and null - config/ minted on the way, as ac_config_dir did.
-export function buildLaunch(h: string, m = "", e = "", rsid = "", sid = ""): string | null {
-  const opt = (flag: string, v: string): string => (v === "" ? "" : ` ${flag} ${v}`);
-  switch (h) {
-    case "claude":
-      return `claude --permission-mode auto${rsid ? opt("--resume", rsid) : opt("--session-id", sid)}${opt("--model", m)}${opt("--effort", e)}`;
-    case "codex":
-      return `codex -c check_for_update_on_startup=false${opt("-m", m)}${e === "" ? "" : ` -c model_reasoning_effort=${e}`}`;
-    case "opencode":
-      return `opencode${opt("-m", m)}`;
-    case "pi":
-      return `pi --tui-mode regular${opt("--model", m)}${opt("--thinking", e)}`;
-    case "cursor":
-      return `cursor-agent --yolo${opt("--model", m)}`;
-  }
-  writeSync(2, prefixed("ERROR: ", `no launch template for harness '${h}'; create ${softSubdir("config", true)}/launch-${h}`));
-  return null;
-}
-
-// ac_resolve_profile's twin as `$(...)` ran it, bytes (latin1) out: the argv
-// parsed as the bash parsed it, then `harness=<h>\tmodel=<m>\teffort=<e>` (the
-// capture's reading, no LF) and 0. --rule resolves through
-// <ac_root>/bin/ac-dispatch-select.sh --rule <n> - its stderr the caller's,
-// its failure the status - read as `IFS=$'\t' read -r` reads the first line,
-// a knob named explicitly winning per knob; with no rule and no harness a
-// config/crew-dispatch.json refuses and config/crew-harness (else claude)
-// answers. A refusal is the ERROR line and status 1.
-export function resolveProfile(args: string[]): { status: number; out: string } {
-  const vals = new Map([["--rule", ""], ["--harness", ""], ["--model", ""], ["--effort", ""]]);
-  const refuse = (msg: string): { status: number; out: string } => {
-    writeSync(2, prefixed("ERROR: ", msg));
-    return { status: 1, out: "" };
-  };
-  for (let i = 0; i < args.length; i += 2) {
-    const a = args[i]!;
-    if (!vals.has(a)) return refuse(`ac_resolve_profile: unknown arg ${a}`);
-    if (i + 1 >= args.length) return refuse(`${a} needs a value`);
-    vals.set(a, lat(args[i + 1]!));
-  }
-  let [h, m, e] = [vals.get("--harness")!, vals.get("--model")!, vals.get("--effort")!];
-  const rule = vals.get("--rule")!;
-  if (rule !== "") {
-    const r = stage([`${STARTED_BIN}/ac-dispatch-select.sh`, "--rule", argvOf(rule)], "inherit", "pipe", "inherit");
-    if (r.status !== 0) return { status: r.status, out: "" };
-    const [ph, pm, pe] = tabFields(capturedText(r.out).split("\n")[0]!, 3) as [string, string, string];
-    const strip = (v: string, k: string): string => (v.startsWith(k) ? v.slice(k.length) : v);
-    h ||= strip(ph, "harness=");
-    m ||= strip(pm, "model=");
-    e ||= strip(pe, "effort=");
-  } else if (h === "") {
-    if (isFile(`${softSubdir("config", true)}/crew-dispatch.json`))
-      return refuse("config/crew-dispatch.json is configured: pick a profile (bin/ac-dispatch-select.sh --list, then --rule <n>) and pass --harness/--model/--effort explicitly");
-    h = lat(configReadSoft("crew-harness", "claude"));
-  }
-  return { status: 0, out: `harness=${h}\tmodel=${m}\teffort=${e}` };
-}
-
-// ac_pane_profile's twin as `$(...)` ran it: <ac_root>/bin/ac-dispatch-select.sh
-// --pane <kind>, its stdout as the capture read it (latin1), its stderr where
-// the call site sent it, its status.
-export function paneProfile(kind: string, stderr: "inherit" | "ignore" = "inherit"): { status: number; out: string } {
-  const r = stage([`${STARTED_BIN}/ac-dispatch-select.sh`, "--pane", kind], "inherit", "pipe", stderr);
-  return { status: r.status, out: capturedText(r.out) };
-}
-
-// ac_domain_binding's twin, decoded: AC_DOMAIN when set non-empty, else - for
-// an AC_SCOPE inside [A-Za-z0-9_-]+, read per the text (W10) - the domain= of
-// state/<scope>-chief.meta, an unreadable one warned and read as none; ""
-// when neither answers.
-export function domainBinding(): string {
-  if (process.env.AC_DOMAIN) return process.env.AC_DOMAIN;
-  const scope = process.env.AC_SCOPE ?? "";
-  if (!wakeScopeOk(scope)) return "";
-  try {
-    return argvOf(metaGet(`${softSubdir("state", true)}/${scope}-chief.meta`, "domain"));
-  } catch {
-    return "";
-  }
-}
-
-// `cat <src> >[>]<dst>`: the shell's open of <dst> (a failure skips cat, its
-// own line not reproduced), then cat spawned into it.
-function catInto(src: string, dst: string, append = false): void {
-  let fd: number;
-  try {
-    fd = openSync(dst, append ? "a" : "w");
-  } catch {
-    return;
-  }
-  try {
-    spawnShellSync(["cat", src], { stdin: "inherit", stdout: fd, stderr: "inherit" });
-  } catch {
-  } finally {
-    closeSync(fd);
-  }
-}
-
-const rmF = (p: string): number => stage(["rm", "-f", p], "inherit", "inherit", "inherit").status;
-const gitExclude = (wt: string): string | null => {
-  const g = stage(["git", "-C", wt, "rev-parse", "--path-format=absolute", "--git-path", "info/exclude"], "inherit", "pipe", "ignore");
-  return g.status === 0 ? capturedText(g.out) : null;
-};
-// `grep -qxF <line> <excl> 2>/dev/null || printf '<line>\n' >>"$excl"`: 0 when
-// the line is there or appended, 1 when the append failed.
-function excludeLine(excl: string, line: string): number {
-  if (stage(["grep", "-qxF", line, argvOf(excl)], "inherit", "ignore", "ignore").status === 0) return 0;
-  try {
-    appendFileSync(latBuf(excl), Buffer.from(`${line}\n`, "utf8"));
-    return 0;
-  } catch {
-    return 1;
-  }
-}
-
-// ac_seed_exclude's twin: `/<rel>` in the repo's info/exclude (git's absolute
-// --git-path - a linked worktree's lands in its main repo); 0 when git names
-// no exclude file, else excludeLine's answer.
-function seedExclude(wt: string, rel: string): number {
-  const excl = gitExclude(wt);
-  return excl === null ? 0 : excludeLine(excl, `/${rel}`);
-}
-
-// ac_seed_disposable's twin: `$(head -n 1 <file>)` opens with ac-verify's
-// neutralized mark.
-function seedDisposable(file: string): boolean {
-  return capturedText(stage(["head", "-n", "1", file], "inherit", "pipe", "ignore").out).startsWith("# Neutralized by ac-verify:");
-}
-
-// ac_seed_install's twin, errexit asleep as every caller ran it: <staged>
-// installed as <wt>/<rel> when the seed owns that path - nothing there,
-// ac-verify's neutralized stub, or a file still hashing to its stamp
-// (.claude/.ac-seed/<rel, / as %>.sha256; a suffix-less legacy stamp migrated
-// when it verifies, removed either way) - then the stamp rewritten and both
-// exclude lines ensured. The answer is the bash's status: 0 when <rel> holds
-// the staged bytes already, 1 for a path someone else owns (left as it is) or
-// a hash that could not be taken, else the second exclude line's - 1 when the
-// exclude file could not take it, though the file was installed (kept). The
-// hash is in process; cat, mkdir -p and rm -f are spawned.
-function seedInstall(wt: string, rel: string, staged: string): number {
-  const dst = `${wt}/${rel}`;
-  const legacy = `${wt}/${SEED_STAMPS}/${rel.replaceAll("/", "%")}`;
-  const stamp = `${legacy}.sha256`;
-  const want = shaSoft(staged);
-  if (want === "") return 1;
-  const catText = (f: string): string => capturedText(stage(["cat", f], "inherit", "pipe", "inherit").out);
-  if (existsSync(dst) && !seedDisposable(dst)) {
-    let have: string;
-    if (isFile(stamp)) {
-      have = shaSoft(dst);
-      if (have === "" || have !== catText(stamp)) return 1;
-    } else if (isFile(legacy)) {
-      have = shaSoft(dst);
-      if (have === "") return 1;
-      if (have !== catText(legacy)) {
-        rmF(legacy);
-        return 1;
-      }
-      try {
-        writeFileSync(stamp, `${have}\n`);
-      } catch {}
-      rmF(legacy);
-    } else return 1;
-    if (have === want) return 0;
-  }
-  stage(["mkdir", "-p", dirname(dst), `${wt}/${SEED_STAMPS}`], "inherit", "inherit", "inherit");
-  catInto(staged, dst);
-  try {
-    writeFileSync(stamp, `${want}\n`);
-  } catch {}
-  rmF(legacy);
-  seedExclude(wt, rel);
-  return seedExclude(wt, `${SEED_STAMPS}/`);
-}
-
-// ac_seed_crewmate_md's twin as `$(...)` ran it (errexit asleep), paths
-// decoded: the layers there are - <container>/.claude/CLAUDE.md,
-// CREWMATE-learned.md, CREWMATE.md, crewdomains/<domainBinding>/CREWMATE.md,
-// in that order - composed once in a spawned `mktemp ${TMPDIR:-/tmp}/ac-seed.XXXXXX`
-// (one layer as is; several each behind `<!-- agent-crew seed: <label>
-// <path> -->`, a blank line between), installed at the harness's instruction
-// file or, when someone else owns that, at .claude/CREWMATE.md - whose path is
-// then the answer. "" otherwise: no layer, mktemp failed, or neither install
-// took. An unknown harness is harnessInstructionFile's ERROR line and an
-// install at the worktree itself, which never takes (kept).
-export function seedCrewmateMd(wt: string, harness = ""): string {
-  const fleet = `${softHome(true)}/CREWMATE.md`;
-  const cont = `${dirname(softHome(true))}/.claude/CLAUDE.md`;
-  const learned = `${softHome(true)}/CREWMATE-learned.md`;
-  const bound = domainBinding();
-  const dom = bound === "" ? "" : `${softHome(true)}/crewdomains/${bound}/CREWMATE.md`;
-  const rel = harnessInstructionFile(harness) ?? "";
-  const layers = (
-    [
-      [cont, "container"],
-      [learned, "fleet-learned"],
-      [fleet, "fleet"],
-      [dom, "crewdomain"],
-    ] as [string, string][]
-  ).filter(([f]) => f !== "" && isFile(f));
-  if (layers.length === 0) return "";
-  const made = stage(["mktemp", `${process.env.TMPDIR || "/tmp"}/ac-seed.XXXXXX`], "inherit", "pipe", "inherit");
-  if (made.status !== 0) return "";
-  const staged = argvOf(capturedText(made.out));
-  if (layers.length === 1) catInto(layers[0]![0], staged);
-  else
-    layers.forEach(([src, label], i) => {
-      try {
-        appendFileSync(staged, `${i === 0 ? "" : "\n"}<!-- agent-crew seed: ${label} ${src} -->\n`);
-      } catch {}
-      catInto(src, staged, true);
-    });
-  let out = "";
-  if (seedInstall(wt, rel, staged) !== 0 && seedInstall(wt, SEED_FALLBACK, staged) === 0) out = SEED_FALLBACK;
-  rmF(staged);
-  return out;
-}
-
-// ac_seed_crew_settings' twin: settings.json and settings.local.json each from
-// <home>/.claude/<file> - unless that dir resolves into the distro checkout
-// (the runtime link, whose settings are the chief's) - else from
-// <container>/.claude/<file>, a source that is no file skipped; each through
-// seedInstall, its answer ignored.
-export function seedCrewSettings(wt: string): void {
-  let homeDir = `${softHome(true)}/.claude`;
-  if (isDir(homeDir)) {
-    const p = physicalDir(homeDir) ?? "";
-    const root = STARTED_BIN.slice(0, -"/bin".length);
-    if (p === root || p.startsWith(`${root}/`)) homeDir = "";
-  }
-  for (const rel of ["settings.json", "settings.local.json"]) {
-    let src = `${homeDir}/${rel}`;
-    if (homeDir === "" || !isFile(src)) src = `${dirname(softHome(true))}/.claude/${rel}`;
-    if (isFile(src)) seedInstall(wt, `.claude/${rel}`, src);
-  }
-}
-
-// ac_meta_set under a caller's `2>/dev/null`: metaSet's lock and rewrite with
-// its refusal silent; false when nothing was written. A failed rename's mv
-// line is not silenced (named).
-function metaSetQuiet(file: string, key: string, value: string): boolean {
-  const cut = file.lastIndexOf("/");
-  const dir = cut < 0 ? "." : file.slice(0, cut);
-  const lock = `${dir}/.${file.slice(cut + 1)}.lock`;
-  try {
-    accessSync(dir, constants.W_OK | constants.X_OK);
-    if (!lockAcquire(lock, 10, sleepOne)) return false;
-  } catch {
-    return false;
-  }
-  try {
-    metaRewrite(file, () => [[key, value]]);
-    return true;
-  } catch {
-    return false;
-  } finally {
-    lockRelease(lock);
-  }
-}
-
-// ac_skill_usage_bump's twin, silent: <dir>/.usage.meta's seeded_count + 1 (a
-// count that is not digits reads 0, `$(( ))` reads a leading 0 as octal) and
-// last_seeded = ac_now, a refused write ending the bump. A count the
-// arithmetic refuses (a leading 0, then an 8 or 9) ENDED bash 3.2 itself,
-// status 1, whatever guarded the call: false here.
-function skillUsageBump(dir: string): boolean {
-  if (dir === "" || !isDir(dir)) return true;
-  const meta = `${dir}/.usage.meta`;
-  let cur = "";
-  try {
-    accessSync(meta, constants.R_OK);
-    cur = metaGet(meta, "seeded_count");
-  } catch {}
-  let next: bigint;
-  try {
-    next = BigInt.asIntN(64, arithValue(/^[0-9]+$/.test(cur) ? cur : "0") + 1n);
-  } catch {
-    return false;
-  }
-  if (metaSetQuiet(meta, "seeded_count", String(next))) metaSetQuiet(meta, "last_seeded", nowRaw());
-  return true;
-}
-
-// The non-dot entries of <dir> as `"$dir"/*` lists them, in byte order (the
-// glob collated under UTF-8 - named, the ORDER rule).
-function globEntries(dir: string): string[] {
-  let names: string[] = [];
-  try {
-    names = readdirSync(dir);
-  } catch {}
-  return names
-    .filter((n) => !n.startsWith("."))
-    .sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)))
-    .map((n) => `${dir}/${n}`);
-}
-
-// ac_seed_crew_skills' twin as an errexit caller (ac-spawn.sh, ac-self-task.sh)
-// ran it: symlinks in .claude/skills (.agents/skills for codex) - a dangling
-// link there removed first, then each AC_CREW_SKILLS name (split on blanks,
-// never globbed - named) from <container>/.claude/skills else
-// <ac_root>/.agents/skills, then each directory of skills/ but the archive
-// (every NEW one bumping its .usage.meta). A name a link or file already
-// claims is skipped; every link the seed owns gets its info/exclude line under
-// the skills dir's physical path inside the worktree (/<skrel> before it
-// exists, none when it resolves outside). The answer is 0, or the status the
-// caller ended with: a spawned rm -f, mkdir -p or ln -s that failed, an
-// exclude line not appended (1), a usage count bash's arithmetic refused (1).
-export function seedCrewSkills(wt: string, harness = ""): number {
-  const skrel = harness === "codex" ? ".agents/skills" : ".claude/skills";
-  const skdir = `${wt}/${skrel}`;
-  const excl = gitExclude(wt) ?? "";
-  let pfx = `/${skrel}`;
-  if (isDir(skdir)) {
-    pfx = "";
-    const root = physicalDir(wt) ?? "";
-    const sk = physicalDir(skdir) ?? "";
-    if (root !== "" && sk.startsWith(`${root}/`)) pfx = `/${sk.slice(root.length + 1)}`;
-    for (const dst of globEntries(skdir)) {
-      if (!isLink(dst) || existsSync(dst)) continue;
-      const s = rmF(dst);
-      if (s !== 0) return s;
-    }
-  }
-  // One name: linked when nothing is there yet, then its exclude line.
-  const seed = (src: string, name: string, bump: boolean): number => {
-    const dst = `${skdir}/${name}`;
-    if (!existsSync(dst) && !isLink(dst)) {
-      for (const cmd of [["mkdir", "-p", skdir], ["ln", "-s", src, dst]]) {
-        const s = stage(cmd, "inherit", "inherit", "inherit").status;
-        if (s !== 0) return s;
-      }
-      if (bump && !skillUsageBump(src)) return 1;
-    }
-    return isLink(dst) && excl !== "" && pfx !== "" ? excludeLine(excl, `${pfx}/${name}`) : 0;
-  };
-  for (const name of (process.env.AC_CREW_SKILLS || "crew-ship crew-verify crew-qa domain-e2e document").split(/[ \t\n]+/)) {
-    if (name === "") continue;
-    let src = `${dirname(softHome(true))}/.claude/skills/${name}`;
-    if (!isDir(src)) src = `${STARTED_BIN.slice(0, -"/bin".length)}/.agents/skills/${name}`;
-    if (!isDir(src)) continue;
-    const s = seed(src, name, false);
-    if (s !== 0) return s;
-  }
-  for (const src of globEntries(softSubdir("skills", true))) {
-    const name = basename(src);
-    if (!isDir(src) || name === SKILLS_ARCHIVE) continue;
-    const s = seed(src, name, true);
-    if (s !== 0) return s;
-  }
-  return 0;
-}
-
-// ac_port_slot_allocate's twin as `$(...)` ran it: under the registry lock (10
-// PATH `sleep 1` waits) the rows whose worktree is no directory dropped by the
-// bash's own awk (spawned, its `system("test -d ...")` and all) into an
-// EXCLUSIVE <reg>.tmp.<pid> (named) that a spawned mv renames over the
-// registry, then <wt>'s slot: its row's first field, else the lowest integer
-// awk finds no row for, appended with ac_iso. null, nothing written, for a
-// lock not taken - homeless too: the refusal printed, `/port-slots.tsv.lock`
-// waited on, as ac_port_registry's printf went on with the empty state dir.
-function portSlotAllocate(wt: string, proj: string): string | null {
-  const reg = `${softSubdir("state", true)}/port-slots.tsv`;
-  const lock = `${reg}.lock`;
-  let held = false;
-  try {
-    held = lockAcquire(lock, 10, sleepOne);
-  } catch {}
-  if (!held) return null;
-  try {
-    if (!isFile(reg))
-      try {
-        writeFileSync(reg, "");
-      } catch {}
-    try {
-      const t = exclusiveTemp(`${reg}.tmp`);
-      let r: ReturnType<typeof Bun.spawnSync> | null = null;
-      try {
-        r = spawnShellSync(["awk", "-F\\t", '{ if ($2 != "" && system("test -d \\"" $2 "\\"") == 0) print }', reg], { stdin: "inherit", stdout: t.fd, stderr: "ignore" });
-      } catch {}
-      if (shellStatus(r) !== 0) ftruncateSync(t.fd, 0);
-      closeSync(t.fd);
-      stage(["mv", t.path, reg], "inherit", "inherit", "inherit");
-    } catch {}
-    let taken = capturedText(stage(["awk", "-F\\t", "-v", `w=${wt}`, "$2 == w { print $1; exit }", reg], "inherit", "pipe", "inherit").out);
-    if (taken === "") {
-      let slot = 1n;
-      while (stage(["awk", "-F\\t", "-v", `s=${slot}`, "$1 == s { found = 1 } END { exit(found ? 0 : 1) }", reg], "inherit", "ignore", "inherit").status === 0) slot++;
-      try {
-        appendFileSync(reg, `${slot}\t${wt}\t${proj}\t${argvOf(iso())}\n`);
-      } catch {}
-      taken = String(slot);
-    }
-    return taken;
-  } finally {
-    lockRelease(lock);
-  }
-}
-
-// ac_seed_ports_env's twin as `... >/dev/null || ac_warn` ran it:
-// <wt>/.crew/ports.env for <wt>'s slot - AC_PORT_BASE (20000) + slot*100, a
-// hundred ports, read by bash's arithmetic (arithValue THROWS where bash 3.2
-// ended) - .crew/ excluded, and the range `<lo>-<hi>` as the answer; null for
-// a worktree that is no directory or no slot. mkdir -p is spawned; a ports.env
-// the shell could not write is skipped, as its redirect was.
-export function seedPortsEnv(wt: string, proj = ""): string | null {
-  if (!isDir(wt)) return null;
-  const slot = portSlotAllocate(wt, proj);
-  if (slot === null) return null;
-  const lo = BigInt.asIntN(64, arithValue(process.env.AC_PORT_BASE || "20000") + arithValue(slot) * 100n);
-  const hi = BigInt.asIntN(64, lo + 99n);
-  stage(["mkdir", "-p", `${wt}/.crew`], "inherit", "inherit", "inherit");
-  try {
-    writeFileSync(
-      `${wt}/.crew/ports.env`,
-      latBuf(`# agent-crew port slot - one fleet-wide slot per leased worktree; every listener this worktree starts binds inside this range.\nAC_PORT_SLOT=${slot}\nAC_PORT_RANGE=${lo}-${hi}\nPORT=${lo}\n`),
-    );
-  } catch {}
-  seedExclude(wt, ".crew/");
-  return `${lo}-${hi}`;
 }
 
 // orca_resolve_group's twin: the nearest ancestor of <path> (itself first)
@@ -5510,6 +3972,42 @@ export function seedPortsEnv(wt: string, proj = ""): string | null {
 function orcaResolveGroup(path: string): string {
   for (let p = path; p !== "" && p !== "/"; p = dirname(p)) if (orcaJson(["worktree", "show", "--worktree", `path:${p}`], "inherit") !== null) return p;
   return path;
+}
+
+// orca_node_jq verbatim (bin/ac-backend-orca.sh): the entries sharing one
+// path, and the one named after the fleet - PIN, AMBIG or NONE.
+const ORCA_NODE_JQ = `[.result.worktrees[]? | select(.path == $p)] as $all
+  | ($all | map(select((.displayName // "") as $d | ($d | endswith($f))
+      and (($d | length) == ($f | length) or ($d[:(($d | length) - ($f | length))] | .[-1:] | IN("/", " ")))))) as $hit
+  | if ($hit | length) == 1 then "PIN\\t" + $hit[0].id + "\\t" + ($hit[0].displayName // "")
+    elif ($all | length) > 1 then "AMBIG\\t" + ($all | length | tostring) + "\\t" + ($hit | length | tostring)
+      + "\\t" + ($all | map(.id + " (" + (.displayName // "") + ")") | join("; "))
+    else "NONE" end`;
+
+// orca_home_node's twin: the selector a home pane is created at when
+// config/orca-node is absent - the fleet-named entry at the home's resolvable
+// ancestor, written to config/orca-node and announced (one fleet-named entry),
+// else the ancestor's path selector, warned when several entries share it
+// (the deputy-under-parent case the pin exists for) or when the list failed.
+// The verdict is read as `IFS=<tab> read -r kind a b c` read it: the last
+// field keeps every further tab.
+function orcaHomeNode(homeP: string): string {
+  const anc = orcaResolveGroup(homeP);
+  const fleet = fleetName();
+  const list = orcaJson(["worktree", "list"], "inherit");
+  if (list === null) {
+    warn(latBuf(`orca-node not pinned - orca worktree list failed; the pane goes to path:${anc}`));
+    return `path:${anc}`;
+  }
+  const verdict = capturedText(jqOver(["-r", "--arg", "p", anc, "--arg", "f", fleet, ORCA_NODE_JQ], list, "pipe", "inherit").out);
+  const [kind = "", a = "", b = "", ...more] = verdict.split("\t");
+  if (kind === "PIN") {
+    writeFileSync(join(configDir(), "orca-node"), latBuf(`id:${a}\n`));
+    writeSync(2, latBuf(`orca-node: pinned id:${a} (${b})\n`));
+    return `id:${a}`;
+  }
+  if (kind === "AMBIG") warn(latBuf(`orca-node not pinned - ${a} Orca entries share ${anc}, ${b} named '${fleet}': ${more.join("\t")} - write config/orca-node by hand`));
+  return `path:${anc}`;
 }
 
 // orca_tab_handles' twin: jq's stdout (latin1) - the sorted handles of <tab>
@@ -5549,16 +4047,26 @@ function firstNewLine(before: string, after: string): string {
 // state/.orca-split.lock (41 tries 0.25 s of PATH sleep apart, then unlocked;
 // the rmdir then frees whoever held it - kept), the new handle read as the
 // tab's list after less before; else a terminal created at config/orca-node
-// or the home's node, its tab recorded. The command defaults to
-// `cd '<dir>' && exec ${SHELL:-/bin/zsh}`, the id (family ladder and title)
-// to `agent`.
+// or the node orcaHomeNode derives, its tab recorded. An explicit command
+// rides create/split --command; without one the pane is moved to <dir> by a
+// `cd '<dir>'` TYPED and submitted through the send queue, because Orca types
+// --command only once the shell prompt is up (measured 2026-10-30, 1.4.244)
+// and the caller's launch line, sent right after placement, landed in front
+// of it on one shell line - the typed cd shares the launch line's queue, so
+// it runs first. The id (family ladder and title) defaults to `agent`.
 export function orcaPlacePane(dir: string, cmd = "", agent = ""): string | null {
-  const command = cmd || `cd '${dir}' && exec \${SHELL:-/bin/zsh}`;
+  const commandArgs = cmd === "" ? [] : ["--command", cmd];
   const id = agent || "agent";
   const dirP = physicalDir(dir) ?? dir;
   const homeP = process.env.AC_HOME ? (physicalDir(process.env.AC_HOME) ?? "") : "";
+  const typeCd = (handle: string): void => {
+    if (cmd !== "") return;
+    const typed = orcaJson(["terminal", "send", "--terminal", argvOf(handle), "--text", `cd '${dir}'`], "inherit");
+    const entered = typed === null ? null : orcaJson(["terminal", "send", "--terminal", argvOf(handle), "--enter"], "inherit");
+    if (entered === null) warn(`could not type the cd into orca terminal ${handle} - the pane may sit at its node's root instead of ${dir}`);
+  };
   const create = (node: string): { handle: string; tab: string } | null => {
-    const out = orcaJson(["terminal", "create", "--worktree", node, "--title", `crew:${fleetName()}/${id}`, "--command", command], "inherit");
+    const out = orcaJson(["terminal", "create", "--worktree", node, "--title", `crew:${fleetName()}/${id}`, ...commandArgs], "inherit");
     if (out === null) {
       warn(`orca terminal create failed for ${dir} (is the Orca runtime running - orca open / orca serve - and the repo registered: orca repo add --path <repo>?)`);
       return null;
@@ -5569,6 +4077,7 @@ export function orcaPlacePane(dir: string, cmd = "", agent = ""): string | null 
       warn("could not parse orca terminal create output");
       return null;
     }
+    typeCd(handle);
     return { handle, tab };
   };
   if (dirP !== homeP) {
@@ -5599,7 +4108,7 @@ export function orcaPlacePane(dir: string, cmd = "", agent = ""): string | null 
       } catch {}
     };
     const before = capturedText(latBuf(orcaTabHandles(tab)));
-    if (orcaJson(["terminal", "split", "--terminal", argvOf(base), "--direction", "vertical", "--command", command], "inherit") === null) {
+    if (orcaJson(["terminal", "split", "--terminal", argvOf(base), "--direction", "vertical", ...commandArgs], "inherit") === null) {
       unlock();
       warn(latBuf(`orca terminal split failed (family tab ${tab})`));
       return null;
@@ -5610,9 +4119,10 @@ export function orcaPlacePane(dir: string, cmd = "", agent = ""): string | null 
       warn(latBuf(`could not identify the split pane in family tab ${tab}`));
       return null;
     }
+    typeCd(handle);
     return `${handle} ${tab}`;
   }
-  const c = create(configReadSoft("orca-node", "") || `path:${orcaResolveGroup(homeP)}`);
+  const c = create(configReadSoft("orca-node", "") || orcaHomeNode(homeP));
   if (c === null) return null;
   try {
     writeFileSync(famf, latBuf(`${c.tab}\n`));
@@ -5648,9 +4158,9 @@ function sweepLegacyGroups(fleet: string): number {
 // a workspace or tab create that failed, a create answer jq could not read
 // (jq's own line) or holding no ids, a placement that failed, a handle the
 // shell could not write (its own line not reproduced). With `errexit` false it
-// is the self-task start's `( ... ) || ac_die` subshell (the frozen
-// tests/fixtures/ac-self-task.sh) or ac-learn.sh's suite launch inside its
-// gate's `if ! ...="$(...)"` (tests/fixtures/ac-learn.sh), errexit asleep: the
+// is the self-task start's `( ... ) || ac_die` subshell (src/self-task.ts)
+// or ac-learn.sh's suite launch inside its
+// gate's capture (the bash's `if ! ...="$(...)"`), errexit asleep: the
 // sweep's, both ids' jq and herdrCloseDefaultTabs' statuses go unread (an
 // empty id is the parse ERROR), and a workspace that did not resolve is
 // `could not resolve herdr workspace '<label>'`.
@@ -5693,7 +4203,7 @@ export function backendWindowNew(id: string, dir: string, errexit = true): Ended
   return { status: 0, exited: false };
 }
 
-const AGENT_STATUS_JQ = '[.. | .agent_status? // empty] | map(select(. != "")) | first // empty';
+export const AGENT_STATUS_JQ = '[.. | .agent_status? // empty] | map(select(. != "")) | first // empty';
 
 // backend_dialog_answer_pane_{herdr,orca}'s twin, one RAW pane (decoded): 0
 // one named dialog answered with the key safe on it - herdr's `agent explain`
@@ -5701,7 +4211,7 @@ const AGENT_STATUS_JQ = '[.. | .agent_status? // empty] | map(select(. != "")) |
 // codex-hooks-review-prompt, each taking 2 - 1 nothing pending, 2 a dialog it
 // cannot name, 3 unobservable (no pane, a failed read or press). herdr
 // focuses the tab `pane get` names, best-effort, before its press.
-function dialogAnswerPane(b: string, p: string, io: SpawnIo): number {
+export function dialogAnswerPane(b: string, p: string, io: SpawnIo): number {
   const top = io.stdin ?? "inherit";
   if (p === "") return 3;
   if (b === "orca") {
@@ -5730,18 +4240,11 @@ export function backendDialogAnswerPane(pane: string, io: SpawnIo): Ended {
   return b === null ? { status: 1, exited: true } : { status: dialogAnswerPane(b, pane, io), exited: false };
 }
 
-// backend_dialog_answer's twin: the routed raw-pane answer for the pane the
-// task's handle names.
-export function backendDialogAnswer(id: string, io: SpawnIo): Ended {
-  const b = backendRoute(io.stderr);
-  return b === null ? { status: 1, exited: true } : { status: dialogAnswerPane(b, argvOf(paneField(id, 1, io.stderr === "inherit")), io), exited: false };
-}
-
 // backend_agent_idle_pane_{herdr,orca}'s twin, one RAW pane (decoded): 0
 // idle. herdr: `pane get`'s agent_status is idle or done (jq's stderr the
 // caller's); orca: the TUI read idle (orcaAgentIdle). No pane, or a failed
 // read, is 1.
-function agentIdlePane(b: string, p: string, io: SpawnIo): number {
+export function agentIdlePane(b: string, p: string, io: SpawnIo): number {
   if (p === "") return 1;
   if (b === "orca") return orcaAgentIdle(p, io.stdin ?? "inherit", io.stderr) ? 0 : 1;
   const get = herdrCli(["pane", "get", p], "ignore", "pipe");
@@ -5750,42 +4253,11 @@ function agentIdlePane(b: string, p: string, io: SpawnIo): number {
   return s === "idle" || s === "done" ? 0 : 1;
 }
 
-// backend_agent_idle_pane's twin, routed per call over a raw pane id.
-export function backendAgentIdlePane(pane: string, io: SpawnIo): Ended {
-  const b = backendRoute(io.stderr);
-  return b === null ? { status: 1, exited: true } : { status: agentIdlePane(b, pane, io), exited: false };
-}
-
 // backend_agent_idle's twin: the routed raw-pane reading for the pane the
 // task's handle names.
 export function backendAgentIdle(id: string, io: SpawnIo): Ended {
   const b = backendRoute(io.stderr);
   return b === null ? { status: 1, exited: true } : { status: agentIdlePane(b, argvOf(paneField(id, 1, io.stderr === "inherit")), io), exited: false };
-}
-
-// backend_submit_verified's twin (id-keyed), routed per call: one Enter whose
-// render must react - 0 accepted, 1 stranded, 2 unreadable, and on orca 3 a
-// dialog owns the pane; orca re-presses (at most twice) while <text> still
-// sits in its composer, herdr ignores <text>.
-export function backendSubmitVerified(id: string, text: string, io: SpawnIo): Ended {
-  const b = backendRoute(io.stderr);
-  if (b === null) return { status: 1, exited: true };
-  const top = io.stdin ?? "inherit";
-  if (b === "herdr") return { status: submitVerified(id, top, io.stderr), exited: false };
-  return { status: orcaSubmitVerified(argvOf(paneField(id, 1, io.stderr === "inherit")), text, top, io.stderr), exited: false };
-}
-
-// backend_send_key under `|| true`, routed per call: herdr focuses the
-// handle's tab and presses whatever the focus answered (backendCall's
-// send_key stops at a failed focus, as an errexit caller did).
-function keyPress(id: string, key: string, io: SpawnIo): Ended {
-  const b = backendRoute(io.stderr);
-  if (b === null) return { status: 1, exited: true };
-  const vio: VerbIo = { stdin: io.stdin, stdout: "ignore", stderr: io.stderr };
-  if (b === "orca") return { status: orcaVerb("send_key", [id, key], vio, () => {}), exited: false };
-  herdrVerb("focus", [id], vio, () => {});
-  const keyName = keyNamed(key) ?? key.replace(/\n+$/, "");
-  return { status: herdrCli(["pane", "send-keys", argvOf(paneField(id, 1, io.stderr === "inherit")), keyName], io.stdin ?? "inherit", "ignore").status, exited: false };
 }
 
 // ac_startup_dialogs' twin, over the caller's three verbs - <answer> (a
@@ -5840,17 +4312,6 @@ export function startupDialogs(answer: (h: string) => Ended, send: (h: string, k
     const s = stage(["sleep", "1"], "inherit", "inherit", "inherit").status;
     if (s !== 0 && errexit) return { status: s, exited: true };
   }
-}
-
-// backend_startup_dialogs' twin: the sequence over the id-keyed verbs - the
-// task's handle answered, keyed and probed (the raw-pane sequence is
-// backendStartupDialogsPane's).
-export function backendStartupDialogs(id: string, harness: string, io: SpawnIo): Ended {
-  const up = (h: string): Ended => {
-    const r = backendCall("harness_up", [h], { stdin: io.stdin, stdout: "ignore", stderr: io.stderr });
-    return { status: r.status, exited: r.exited };
-  };
-  return startupDialogs((h) => backendDialogAnswer(h, io), (h, k) => keyPress(h, k, io), up, id, harness);
 }
 
 // orca_worktree_lease's twin as `$(...)` ran it (errexit asleep): the path of
@@ -5928,229 +4389,6 @@ export function orcaWorktreeLease(id: string, repo: string, override = ""): { st
   return { status: 0, out: path };
 }
 
-// --- learn twins ---
-
-// ac_learn_meta / ac_learn_ticks twins: the dot-files under state/ (minted),
-// outside the state/*.meta crewmate namespace.
-export const learnMeta = (): string => `${softSubdir("state", true)}/.learn.meta`;
-export const learnTicks = (): string => `${softSubdir("state", true)}/.learn-ticks`;
-const learnCadenceLock = (): string => `${softSubdir("state", true)}/.learn-cadence.lock`;
-
-// `{ ... } >"$f.tmp.$$"; mv "$f.tmp.$$" "$f"`: <fill> writes the temp, made
-// exclusively (<f>.tmp.<pid>, then .<n>) where the bash's name was written
-// through, and a spawned mv renames it; mv's status, 1 when no temp could be
-// made (the bash's redirect failed and its mv found nothing to move).
-function viaTemp(f: string, fill: (fd: number) => void): number {
-  let t: { path: string; fd: number };
-  try {
-    t = exclusiveTemp(`${f}.tmp`);
-  } catch {
-    return 1;
-  }
-  try {
-    fill(t.fd);
-  } finally {
-    closeSync(t.fd);
-  }
-  return stage(["mv", t.path, f], "inherit", "inherit", "inherit").status;
-}
-
-// One spawned child writing to <fd>, its stdin the caller's; its status.
-function stageTo(cmd: string[], fd: number): number {
-  let r: ReturnType<typeof Bun.spawnSync> | null = null;
-  try {
-    r = spawnShellSync(cmd, { stdin: "inherit", stdout: fd, stderr: "inherit" });
-  } catch {}
-  return shellStatus(r);
-}
-
-// ac_learn_migrate's twin: a meta holding the legacy `stows` key carries its
-// count to `debriefs` (unless debriefs is already set - never clobbered) and
-// loses every `stows=` line through a spawned `grep -v`, whose own failure is
-// ignored as `|| true` ignored it.
-export function learnMigrate(f: string): void {
-  if (!isFile(f)) return;
-  const old = metaGetSoft(f, "stows");
-  if (old === "") return;
-  if (metaGetSoft(f, "debriefs") === "") metaSetSoft(f, "debriefs", old);
-  viaTemp(f, (fd) => {
-    stageTo(["grep", "-v", "^stows=", f], fd);
-  });
-}
-
-// `$((n + 1))` over a digits-only count: a leading 0 reads octal, and an 8 or
-// 9 behind it throws EARITH where the shell's arithmetic error ended it.
-const plusOne = (n: string): string => String(BigInt.asIntN(64, arithValue(n) + 1n));
-const digitsOr = (v: string, d: string): string => (/^[0-9]+$/.test(v) ? v : d);
-
-// ac_learn_count_one's twin, for a caller already holding the cadence lock:
-// migrate, then generation (rewritten as read) and debriefs+1.
-export function learnCountOne(): void {
-  const f = learnMeta();
-  learnMigrate(f);
-  const cur = digitsOr(metaGetSoft(f, "debriefs"), "0");
-  const gen = digitsOr(metaGetSoft(f, "generation"), "0");
-  metaSetSoft(f, "generation", gen);
-  metaSetSoft(f, "debriefs", plusOne(cur));
-}
-
-// ac_learn_tick's twin under state/.learn-cadence.lock (10 PATH `sleep 1`
-// waits): false, warned, when the lock is not taken; else counted.
-export function learnTick(): boolean {
-  const lock = learnCadenceLock();
-  if (!lockAcquire(lock, 10, sleepOne)) {
-    warn(`learning tick: cadence lock ${lock} could not be acquired within 10s - the debrief counter was NOT advanced. Missing a tick only delays the next distill (the LEVEL trigger still fires); it never loses a landing outright, but a caller that assumes success will believe the counter moved when it did not.`);
-    return false;
-  }
-  learnCountOne();
-  lockRelease(lock);
-  return true;
-}
-
-// ac_learn_generation's twin: the meta's generation, "0" unless digits.
-export function learnGeneration(): string {
-  return digitsOr(metaGetSoft(learnMeta(), "generation"), "0");
-}
-
-const TICK_HIT_AWK = "BEGIN { w[k] } ($2 in w) && now - $1 < win { hit = 1 } END { if (!hit) exit 1 }";
-
-// ac_learn_tick_keyed's twin, its status as learn_cadence_call reads it: 0
-// when <key>'s claim was fresh and the counter advanced, 1 when <key> is
-// stamped inside 24 h (silent), 2 where the bash returned 1 having spoken - a
-// busy cadence lock (warned) or a stamp whose mv failed (mv's own line). Both
-// awks are spawned as the bash ran them (`in`, never ==, so `07` is not `7`),
-// under LC_ALL=C: the stamp file is read as bytes. The stamp (the file's live
-// rows plus `<now>\t<key>`) lands through an exclusive temp and a spawned mv
-// BEFORE the count.
-export function learnTickKeyed(key: string): number {
-  const f = learnTicks();
-  const lock = learnCadenceLock();
-  if (!lockAcquire(lock, 10, sleepOne)) {
-    warn(`learning tick: cadence lock ${lock} could not be acquired within 10s - landing '${key}' was NOT claimed. Missing a tick only delays the next distill (the LEVEL trigger still fires); counting one twice consumes a retro window and cannot be undone.`);
-    return 2;
-  }
-  const now = nowRaw();
-  const awk = ["/usr/bin/env", "LC_ALL=C", "awk", "-F\t", "-v", `now=${now}`];
-  if (isFile(f) && stage([...awk, "-v", `k=${key}`, "-v", "win=86400", TICK_HIT_AWK, f], "inherit", "inherit", "inherit").status === 0) {
-    lockRelease(lock);
-    return 1;
-  }
-  const mv = viaTemp(f, (fd) => {
-    if (isFile(f)) stageTo([...awk, "-v", "win=86400", "now - $1 < win", f], fd);
-    writeAll(fd, Buffer.from(`${now}\t${key}\n`, "latin1"));
-  });
-  if (mv === 0) learnCountOne();
-  lockRelease(lock);
-  return mv === 0 ? 0 : 2;
-}
-
-// ac_learn_due's twin: [debriefs (the legacy stows when unset), learn-every],
-// "0" and "8" unless digits. Reads only.
-export function learnDue(): [string, string] {
-  const m = learnMeta();
-  let cur = metaGetSoft(m, "debriefs");
-  if (cur === "") cur = metaGetSoft(m, "stows");
-  return [digitsOr(cur, "0"), digitsOr(configReadSoft("learn-every", "8"), "8")];
-}
-
-// ac_learn_reset's twin under the cadence lock, its status as
-// learn_cadence_call reads it: 2 for a lock not taken (warned), 1 when
-// <expected> names an older generation (silent), else 0 - the migrate, then
-// generation+1 (bash arithmetic, as curateReset), debriefs 0 and last_run
-// stamped. The landing stamps are deliberately left alone.
-export function learnReset(expected = ""): number {
-  const f = learnMeta();
-  const lock = learnCadenceLock();
-  if (!lockAcquire(lock, 10, sleepOne)) {
-    warn(`learning reset: cadence lock ${lock} could not be acquired within 10s - the debrief counter was NOT reset and its generation did NOT advance, so a due DISTILL cycle stays due. This is a lock failure, not a newer cadence generation.`);
-    return 2;
-  }
-  learnMigrate(f);
-  const current = learnGeneration();
-  if (expected !== "" && expected !== current) {
-    lockRelease(lock);
-    return 1;
-  }
-  metaSetSoft(f, "generation", plusOne(current));
-  metaSetSoft(f, "debriefs", "0");
-  metaSetSoft(f, "last_run", nowRaw());
-  lockRelease(lock);
-  return 0;
-}
-
-// ac_curate_tick's twin, under state/.curate-cadence.lock: false, warned,
-// when the lock is not taken; else generation (as read) and runs_since+1.
-export function curateTick(): boolean {
-  const f = curateMeta();
-  const lock = `${softSubdir("state", true)}/.curate-cadence.lock`;
-  if (!lockAcquire(lock, 10, sleepOne)) {
-    warn(`curate tick: cadence lock ${lock} could not be acquired within 10s - the learning-run counter was NOT advanced. Missing a tick only delays the next Curate pass, but a caller that assumes success will believe the counter moved when it did not.`);
-    return false;
-  }
-  const cur = digitsOr(metaGetSoft(f, "runs_since"), "0");
-  const gen = digitsOr(metaGetSoft(f, "generation"), "0");
-  metaSetSoft(f, "generation", gen);
-  metaSetSoft(f, "runs_since", plusOne(cur));
-  lockRelease(lock);
-  return true;
-}
-
-// ac_skills_dir's twin: <home>/skills, minted.
-export function skillsDir(): string {
-  return homeSubdir("skills");
-}
-
-// ac_maintenance_incomplete's twin: one `<txid>\t<status>\t<committed>\t<plan>`
-// row per transaction dir under <root> whose journal is neither complete nor
-// abandoned - status `unknown` when unset, committed the run of leading
-// `action_<i>=complete` keys, plan `-` when unset - the dirs in byte order
-// (W13: the bash's glob followed LC_COLLATE). Bytes (latin1) out.
-export function maintenanceIncomplete(root: string): string[] {
-  if (!isDir(root)) return [];
-  let names: string[] = [];
-  try {
-    names = readdirSync(root);
-  } catch {}
-  const rows: string[] = [];
-  for (const n of names.filter((x) => !x.startsWith(".")).sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)))) {
-    const dir = `${root}/${n}`;
-    const journal = `${dir}/journal`;
-    if (!isDir(dir) || !isFile(journal)) continue;
-    const status = metaGetSoft(journal, "status");
-    if (status === "complete" || status === "abandoned") continue;
-    let done = 0;
-    while (metaGetSoft(journal, `action_${done}`) === "complete") done++;
-    const plan = metaGetSoft(journal, "plan");
-    rows.push(`${lat(n)}\t${status || "unknown"}\t${done}\t${plan || "-"}`);
-  }
-  return rows;
-}
-
-// ac_crewmate_learned_no_loss's twin: true when every `## ` line of <live>
-// (as grep prints them - a NUL in its head makes that one `Binary file`
-// line) is a whole line of <staged>, or its slug occurs in <retired>; a
-// missing <live> passes, a missing <staged> fails.
-export function crewmateLearnedNoLoss(live: string, staged: string, retired: string): boolean {
-  if (!isFile(live)) return true;
-  if (!isFile(staged)) return false;
-  const heads = capturedText(stage(["grep", "^## ", live], "inherit", "pipe", "inherit").out);
-  if (heads === "") return true;
-  const lines = (p: string): string[] => {
-    try {
-      return readFileSync(p).toString("latin1").split("\n");
-    } catch {
-      return [];
-    }
-  };
-  const have = new Set(lines(staged));
-  for (const head of heads.split("\n")) {
-    if (have.has(head)) continue;
-    if (retired !== "" && isFile(retired) && lines(retired).some((l) => l.includes(head.replace(/^## /, "")))) continue;
-    return false;
-  }
-  return true;
-}
-
 // --- partials twins ---
 
 // ac_claude_transcript_root's twin: AC_CLAUDE_TRANSCRIPT_ROOT, else
@@ -6183,156 +4421,10 @@ export { orcaJson };
 // (tests/ts/verify-twins.test.ts).
 
 
-// ac_verdict_json's string-aware awk, verbatim: the brace depth, the string
-// and escape states and the NUL after every top-level object are awk's, in
-// the caller's locale.
-const VERDICT_AWK = String.raw`
-    { buf = buf $0 "\n" }
-    END {
-      n = length(buf); depth = 0; instr = 0; esc = 0; start = 0
-      for (i = 1; i <= n; i++) {
-        c = substr(buf, i, 1)
-        if (instr) {
-          if (esc) { esc = 0 }
-          else if (c == "\\") { esc = 1 }
-          else if (c == "\"") { instr = 0 }
-          continue
-        }
-        if (c == "\"") { instr = 1; continue }
-        if (c == "{") { if (depth == 0) start = i; depth += 1 }
-        else if (c == "}" && depth > 0) {
-          depth -= 1
-          if (depth == 0) { printf "%s%c", substr(buf, start, i - start + 1), 0; start = 0 }
-        }
-      }
-    }
-  `;
-
-// ac_verdict_json's twin as its pipefail callers read it: <input> (what the
-// bash read on stdin) through the spawned awk, then each NUL-terminated
-// candidate - `read -r -d ''` leaves an unterminated tail unread - offered to a
-// spawned `jq -e 'type == "object"'` as its bytes, the LAST one it accepts
-// answered with a LF, nothing when none. The status is awk's when awk failed,
-// else 0. Bytes in, bytes out.
-export function verdictJson(input: Buffer): { status: number; out: Buffer } {
-  const a = stage(["awk", VERDICT_AWK], input, "pipe", "inherit");
-  const cands = a.out.toString("latin1").split("\0");
-  cands.pop();
-  let best = "";
-  for (const c of cands) if (stage(["jq", "-e", 'type == "object"'], latBuf(c), "ignore", "ignore").status === 0) best = c;
-  return { status: a.status, out: best === "" ? Buffer.alloc(0) : latBuf(`${best}\n`) };
-}
-
-const TRANSCRIPT_EPOCH_JQ = `[.[] | select(.type == "assistant")] | last | .timestamp // ""`;
-
-// ac_transcript_final_epoch's twin: the last assistant message's own
-// .timestamp through a spawned jq, read as `$(... || true)` read it, then the
-// iso-epoch verb's isoEpoch in process: the epoch second and a LF (status 0),
-// or nothing (status 1) for an empty stamp or one outside its calendar
-// grammar. The bash starts that verb through bun with its stderr dropped, so
-// its bun-less arm answered 1 silently; nothing here starts bun.
-export function transcriptFinalEpoch(file: string): { status: number; out: string } {
-  const ts = capturedText(stage(["jq", "-rs", TRANSCRIPT_EPOCH_JQ, file], "inherit", "pipe", "ignore").out);
-  const epoch = ts === "" ? null : isoEpoch(Buffer.from(ts, "latin1").toString("utf8"));
-  return epoch === null ? { status: 1, out: "" } : { status: 0, out: `${epoch}\n` };
-}
-
-// ac_chief_busy_hold's twin (bin/ac-wake-lib.sh owns the declaration's
-// contract): this process's holder mark `pid=<pid>` first, then <until> over a
-// declaration whose `$(cat)` text - anything but ASCII digits read as 0 - is
-// below it, so a later bound is never shortened; a comparison `[` cannot make
-// (a value past its range) writes, as its error status did. Every write best
-// effort. The shell's own lines are not reproduced: `[`'s, and a failed
-// write's, which its `2>/dev/null` - placed after the failing `>` - never
-// silenced.
-export function chiefBusyHold(sd: string, fam: string, until: string): void {
-  const decl = chiefBusyPath(sd, fam);
-  try {
-    writeFileSync(`${sd}/.chief-busy-holder.${fam}.${process.pid}`, `pid=${process.pid}\n`);
-  } catch {}
-  let prev = "";
-  try {
-    prev = capturedText(readFileSync(decl));
-  } catch {}
-  if (prev === "" || /[^0-9]/.test(prev)) prev = "0";
-  const p = testInt(prev);
-  const u = testInt(until);
-  if (p === null || u === null || p < u)
-    try {
-      writeFileSync(decl, `${until}\n`);
-    } catch {}
-}
-
-// ac_chief_busy_leave's twin: this process's holder mark goes (a spawned
-// `rm -f`), and the declaration with it unless chiefBusyHeld finds a live
-// holder left - under <famData>/.gate-lock when <famData> is a directory and
-// the lock is had within 10 PATH `sleep 1` waits, unlocked otherwise, as
-// ac-gate.sh takes it at its exit. `quiet` is the caller's `2>/dev/null`.
-export function chiefBusyLeave(sd: string, fam: string, famData: string, quiet = false): void {
-  const err = quiet ? "ignore" : "inherit";
-  stage(["rm", "-f", `${sd}/.chief-busy-holder.${fam}.${process.pid}`], "inherit", "inherit", err);
-  const lock = `${famData}/.gate-lock`;
-  const locked = isDir(famData) && lockAcquire(lock, 10, sleepOne);
-  if (!chiefBusyHeld(sd, fam, famData, quiet)) stage(["rm", "-f", chiefBusyPath(sd, fam)], "inherit", "inherit", err);
-  if (locked) lockRelease(lock);
-}
-
-// ac_room_review_rulings' awk, verbatim, run under LC_ALL=C as there.
-const ROOM_RULINGS_AWK = String.raw`
-    /^- \[[^]]*\] [^>]*> (GATE|ASK):/ { print; next }
-    /^- \[[^]]*\] [^>]*> DECIDED( [A-Za-z0-9_-]+)?( \([^)]*\))?:/ { print; next }
-    /^- \[[^]]*\] [^>]*> (TRIAGE|SELF-APPROVED):/ { print; next }
-    /^- \[[^]]*\] [^>]*> GATE-PASSED \(auto\):/ { print; next }
-    /^- \[[^]]*\] [^>]*> CORRECTION( \([^)]*\))?:/ { print; next }
-  `;
-
-// ac_room_review_rulings' twin: nothing (status 0) unless <file> is a regular
-// file (`[ -f ]`), else the awk's stdout bytes and status.
-export function roomReviewRulings(file: string): { status: number; out: Buffer } {
-  if (!isFile(file)) return { status: 0, out: Buffer.alloc(0) };
-  return stage(["/usr/bin/env", "LC_ALL=C", "awk", ROOM_RULINGS_AWK, file], "inherit", "pipe", "inherit");
-}
-
-// ac_harness_pane_arm's twin (bin/ac-harness.sh owns the arm map): null where
-// the bash returned 1.
-export function harnessPaneArm(h: string): "session" | "crewmate" | null {
-  if (h === "claude") return "session";
-  return ["codex", "opencode", "pi", "cursor"].includes(h) ? "crewmate" : null;
-}
-
-// backend_capture_pane's twin, the read addressed by RAW pane id - a pane with
-// no state/.pane-<id> handle, a pane agent's or a verifier's: the route as
-// backendCall reads it (a refused name exits, 1), an empty <pane> 1, then the
-// driver's read - herdr `pane read <pane> --source recent --lines <n>` (n the
-// lines when testInt reads them at least 200, else 200; stdin /dev/null and
-// stderr dropped, as inside its `$( )`), failing 1, then `tail -n <lines>`
-// over that text and a LF; orca `terminal read --terminal <pane> --limit
-// <lines> --screen` through orcaJson, failing 1, then `jq -r
-// '.result.terminal.tail[]?'` over it. The status is tail's or jq's. <lines>
-// empty is 40.
-export function backendCapturePane(pane: string, lines: string, io: { stdin?: "inherit" | "ignore"; stdout: Stdio; stderr: "inherit" | "ignore" }): { status: number; exited: boolean; out: Buffer } {
-  const b = backendRoute(io.stderr);
-  if (b === null) return { status: 1, exited: true, out: Buffer.alloc(0) };
-  const none = { status: 1, exited: false, out: Buffer.alloc(0) };
-  if (pane === "") return none;
-  const n = lines || "40";
-  if (b === "herdr") {
-    const want = testInt(n);
-    const read = herdrCli(["pane", "read", pane, "--source", "recent", "--lines", want !== null && want >= 200n ? n : "200"], "ignore", "pipe");
-    if (read.status !== 0) return none;
-    const t = stage(["tail", "-n", n], latBuf(`${capturedText(read.out)}\n`), io.stdout, io.stderr);
-    return { status: t.status, exited: false, out: t.out };
-  }
-  const out = orcaJson(["terminal", "read", "--terminal", pane, "--limit", n, "--screen"], io.stdin ?? "inherit");
-  if (out === null) return none;
-  const t = jqOver(["-r", ".result.terminal.tail[]?"], out, io.stdout, io.stderr);
-  return { status: t.status, exited: false, out: t.out };
-}
-
 // herdr_focus_pane's twin: the tab `pane get` names (both reads /dev/null
 // inside their `$( )`), focused; 1 when no tab answered, else the focus's
 // status.
-function herdrFocusPane(p: string, top: "inherit" | "ignore"): number {
+export function herdrFocusPane(p: string, top: "inherit" | "ignore"): number {
   const tab = capturedText(stage(["jq", "-r", ".result.pane.tab_id // empty"], herdrCli(["pane", "get", p], "ignore", "pipe").out, "pipe", "ignore").out);
   return tab === "" ? 1 : herdrCli(["tab", "focus", argvOf(tab)], top, "ignore").status;
 }
@@ -6388,59 +4480,6 @@ export function backendSendKeyPane(pane: string, key: string, io: SpawnIo): Ende
   return { status: herdrCli(["pane", "send-keys", pane, keyNamed(key) ?? key.replace(/\n+$/, "")], top, "ignore").status, exited: false };
 }
 
-// backend_send_line_pane's twin, routed per call over a raw pane id, silent:
-// no pane 1; herdr types <text>, settles and verifies one Enter, then focuses
-// and verifies one more, that retry's verdict the answer (0 accepted, 1
-// stranded, 2 unreadable); orca types it in chunks, settles and verifies the
-// Enter with <text> - a dialog-owned pane (3) answers 1 with no retry, any
-// other failure gets a terminal switch and one more verify whose verdict,
-// 3 included, is the answer.
-export function backendSendLinePane(pane: string, text: string, io: SpawnIo): Ended {
-  const b = backendRoute(io.stderr);
-  if (b === null) return { status: 1, exited: true };
-  if (pane === "") return { status: 1, exited: false };
-  const top = io.stdin ?? "inherit";
-  if (b === "herdr") {
-    herdrCli(["pane", "send-text", pane, text], top, "ignore");
-    settle(io.stderr);
-    if (submitVerifiedPane(pane, top, io.stderr) === 0) return { status: 0, exited: false };
-    herdrFocusPane(pane, top);
-    return { status: submitVerifiedPane(pane, top, io.stderr), exited: false };
-  }
-  orcaType(pane, text, top, io.stderr);
-  settle(io.stderr);
-  const rc = orcaSubmitVerified(pane, text, top, io.stderr);
-  if (rc === 0) return { status: 0, exited: false };
-  if (rc === 3) return { status: 1, exited: false };
-  orcaJson(["terminal", "switch", "--terminal", pane], top);
-  return { status: orcaSubmitVerified(pane, text, top, io.stderr), exited: false };
-}
-
-// backend_agent_status_pane's twin, routed per call over a raw pane id: the
-// word and a LF, status 0. herdr: `pane get`'s agent_status (jq's stderr
-// dropped), `unknown` for no pane, a failed read or no status; orca: blocked
-// for a pending wait, unknown for no pane, an unreadable or disconnected
-// terminal, idle when the TUI reads idle (orcaAgentIdle), working for a
-// spinner title, else unknown.
-export function backendAgentStatusPane(pane: string, io: SpawnIo): { status: number; exited: boolean; out: Buffer } {
-  const b = backendRoute(io.stderr);
-  if (b === null) return { status: 1, exited: true, out: Buffer.alloc(0) };
-  const say = (w: string): { status: number; exited: boolean; out: Buffer } => ({ status: 0, exited: false, out: latBuf(`${w}\n`) });
-  if (pane === "") return say("unknown");
-  if (b === "herdr") {
-    const get = herdrCli(["pane", "get", pane], "ignore", "pipe");
-    if (get.status !== 0) return say("unknown");
-    return say(capturedText(jqOver(["-r", AGENT_STATUS_JQ], capturedText(get.out), "pipe", "ignore").out) || "unknown");
-  }
-  const top = io.stdin ?? "inherit";
-  const show = orcaJson(["terminal", "show", "--terminal", pane], top);
-  if (show === null) return say("unknown");
-  if (jqOver(["-e", ".result.terminal.agentWait != null"], show, "ignore", "ignore").status === 0) return say("blocked");
-  if (jqOver(["-e", ".result.terminal.connected == true"], show, "ignore", "ignore").status !== 0) return say("unknown");
-  if (orcaAgentIdle(pane, top, io.stderr)) return say("idle");
-  return say(spins(capturedText(jqOver(["-r", ".result.terminal.title // empty"], show, "pipe", io.stderr).out)) ? "working" : "unknown");
-}
-
 // backend_startup_dialogs_pane's twin: ac_startup_dialogs' sequence over the
 // raw-pane verbs - answered, keyed and probed by <pane> - as the pane agent
 // ran it, bare without errexit.
@@ -6449,7 +4488,7 @@ export function backendStartupDialogsPane(pane: string, harness: string, io: Spa
 }
 
 // --- qa twins ---
-// tests/fixtures/ac-pipeline-lib.sh's two other readers of the flat YAML subset, which
+// The retired ac-pipeline-lib.sh's two other readers of the flat YAML subset, which
 // the bash ac-qa.sh called (tests/ts/qa-lib.test.ts): yamlGet's siblings, each
 // awk program the bash's verbatim and spawned in the caller's locale as
 // yamlGet's is - its leading LF and indent included, since awk's own error
@@ -6533,6 +4572,39 @@ export async function familyOwned(id: string, sd: string): Promise<boolean> {
 // tests/ts/watch.test.ts.
 export const DECISION_RE =
   process.env.AC_DECISION_RE || "^[^[:alpha:][:digit:]\"'`=+#/*-]*(needs-decision|blocked|checks-passed):([[:space:]]|$)";
+
+// True once a line's own `until <epoch>` clause is no later than now. A
+// line naming no `until` never expires - it defers for the worker's word
+// alone, not a self-declared deadline. A 9+ digit run is required so a
+// plain date, clock time or small count in the same sentence ("until
+// 2026-11-01", "until 10:30", "until 3 tests pass") is never misread as an
+// already-elapsed unix epoch; today's epoch is 10 digits.
+export function pausedWaitExpired(line: string): boolean {
+  const m = /\buntil\s+([0-9]{9,})\b/.exec(line);
+  if (m === null) return false;
+  const until = testInt(m[1]!);
+  const now = testInt(nowRaw());
+  return until !== null && now !== null && now >= until;
+}
+
+// rowContractForId's row-returning twin: the whole `- [ ] `/`- [x] ` ledger
+// line for <id>, its own row first, else its family's (the same
+// stageDirForId fallback) - null when neither exists or the ledger could
+// not be read. src/watch.ts's STALE DEFERRAL header owns the backlog-hold
+// read this feeds.
+export function rowForId(id: string, ledger: Ledger): string | null {
+  if (ledger.rc !== 0) return null;
+  const rows = records(ledger.text).filter((l) => /^- \[[ x]\] /.test(l));
+  const rowOf = (want: string): string | undefined => {
+    const w = awkAssign(Buffer.from(want, "utf8").toString("latin1"));
+    for (const l of rows) if (acDoneline(l).id === w) return l;
+    return undefined;
+  };
+  const exact = rowOf(id);
+  if (exact !== undefined) return exact;
+  const sub = stageDirForId(id);
+  return sub === "" ? null : rowOf(sub.slice(0, sub.indexOf("/"))) ?? null;
+}
 
 // ac_watcher_beat_path's twin: the liveness beacon of a scope under <sd>, the
 // fleet's for a scope wakeScopeOk refuses. Pure.

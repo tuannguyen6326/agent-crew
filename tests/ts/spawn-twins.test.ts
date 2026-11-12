@@ -1,8 +1,7 @@
-// spawn-twins.test.ts - the spawn twins of src/lib.ts held to the LIVE bash
-// helpers they twin, which the frozen oracles of ac-learn, ac-pane-agent and
-// ac-verify keep calling, each run in the call context the frozen oracle
-// (tests/fixtures/ac-spawn.sh) gives it: inside `$(...)`, behind `||`, or
-// bare under errexit (`set -e`, the status read by an EXIT trap).
+// spawn-twins.test.ts - the spawn twins of src/lib.ts and src/lib-spawn.ts held to the LIVE bash
+// helpers they twin, each run in the call context the retired bash spawn
+// gave it: inside `$(...)`, behind `||`, or bare under errexit (`set -e`, the
+// status read by an EXIT trap).
 // bin/ac-harness.sh: harnessInstructionFile,
 // harnessStartupKey, recordLaunchOpts; bin/ac-lib.sh: compactPctEnv,
 // domainBinding, seedCrewmateMd (and the install, exclude and disposable
@@ -16,7 +15,7 @@
 // (less the shell's own `line N:` lines), the status, the stub log and the
 // side's tree; a lease row also the repo's refs and worktrees.
 //
-// DISPUTED: the implementation of each helper (the live bash vs src/lib.ts's spawn twins)
+// DISPUTED: the implementation of each helper (the live bash vs the spawn twins of src/lib.ts and src/lib-spawn.ts)
 // HELD-CONSTANT: one side root per side and row seeded alike (a home at <side>/home with state/ records/ data/ config/, the container .claude at <side>/.claude, worktrees and repos under <side>, the stubs' sentinels, call counters and log at <side>/stub, TMPDIR at <side>/tmp); argv; env (PATH = refusing claude/codex/opencode/pi/cursor-agent/docker/codegraph/gh stand-ins, then herdr, orca, sleep and date stubs, the host's jq and git, bun alone, /bin plus /usr/bin without those names - no row can reach a real backend or harness; LC_ALL=C unless a row names UTF-8; HOME an empty dir; STUB_DIR, TMPDIR, AC_HOME unless homeless, fixed git identities and dates, the row's own names); cwd (the distro root, so ac_root and STARTED_BIN name one bin/); stdin (/dev/null).
 import { afterAll, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
@@ -27,6 +26,7 @@ import { join } from "node:path";
 const ROOT = realpathSync(join(import.meta.dir, "..", ".."));
 const BIN = join(ROOT, "bin");
 const LIB = join(ROOT, "src", "lib.ts");
+const LIBS = join(ROOT, "src", "lib-spawn.ts");
 const W = realpathSync(mkdtempSync(join(tmpdir(), "ac-spawn-twins-ts-")));
 const ROOTED = process.getuid?.() === 0;
 afterAll(() => {
@@ -149,7 +149,7 @@ const GIT_ENV = { GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_N
 type Row = {
   // the bash call, after sourcing ac-lib.sh and ac-backend.sh, its arguments "$@"
   bash: string;
-  // the twin's body: L is src/lib.ts, A the arguments, say/sayU write latin1/UTF-8
+  // the twin's body: L is src/lib.ts merged with src/lib-spawn.ts, A the arguments, say/sayU write latin1/UTF-8
   twin: string;
   args?: string[];
   seed?: (s: string) => void;
@@ -226,7 +226,7 @@ function read(f: string): string {
 const git = (dir: string, args: string[]): string =>
   Bun.spawnSync(["git", "-C", dir, ...args], { env: { PATH: PATHS.all, HOME: NOHOME, ...GIT_ENV }, stdin: "ignore", stdout: "pipe", stderr: "pipe" }).stdout.toString("latin1");
 
-const PRE = `import { writeSync } from "node:fs"; const L = await import(${JSON.stringify(LIB)}); const say = (s) => void writeSync(1, Buffer.from(s, "latin1")); const sayU = (s) => void writeSync(1, Buffer.from(s, "utf8"));`;
+const PRE = `import { writeSync } from "node:fs"; const L = { ...await import(${JSON.stringify(LIB)}), ...await import(${JSON.stringify(LIBS)}) }; const say = (s) => void writeSync(1, Buffer.from(s, "latin1")); const sayU = (s) => void writeSync(1, Buffer.from(s, "utf8"));`;
 
 let rows = 0;
 function side(row: Row, s: string, oracle: boolean): Side {
@@ -436,6 +436,10 @@ test("seedCrewSettings copies each settings file from the fleet, else the contai
   same("the container's two", { ...set, seed: (s) => (wt(s), cont(s)) });
   same("the fleet's settings.json, the container's local", { ...set, seed: (s) => (wt(s), cont(s), put(s, "home/.claude/settings.json", '{"f":1}\n')) });
   same("a home .claude linked into the distro is no fleet layer", { ...set, seed: (s) => (wt(s), cont(s), link(s, join(ROOT, ".claude"), "home/.claude")) });
+  // The real dir bin/ac-home-carriers.sh makes of it: settings.json the
+  // distro link, settings.local.json the home's AC_HOME carrier.
+  same("a home .claude that names itself is no fleet layer", { ...set, seed: (s) => (wt(s), cont(s), link(s, join(ROOT, ".claude/settings.json"), "home/.claude/settings.json"), put(s, "home/.claude/settings.local.json", '{"env":{"AC_HOME":"/h"}}\n')) });
+  same("the carrier beside a real fleet settings.json override never seeds", { ...set, seed: (s) => (wt(s), cont(s), put(s, "home/.claude/settings.json", '{"f":1}\n'), put(s, "home/.claude/settings.local.json", '{"env":{"AC_HOME":"/h"}}\n')) });
   same("a repo-shipped settings.json is left", { ...set, seed: (s) => (wt(s), cont(s), put(s, "wt/.claude/settings.json", '{"repo":1}\n')) });
   same("the seed's own copy refreshed", { ...set, seed: (s) => (wt(s), cont(s), stamped(s, ".claude/settings.json", '{"old":1}\n')) });
   same("a source that is a directory", { ...set, seed: (s) => (wt(s), mkdirSync(join(s, ".claude/settings.json"), { recursive: true })) });
@@ -459,6 +463,11 @@ test("seedCrewSkills links the crew skills where the harness scans and excludes 
   same("a learned skill already linked is not bumped", { ...sk, seed: (s) => (wt(s), learned(s), link(s, "@S/home/skills/l2", "wt/.claude/skills/l2")) });
   same("a dangling link is removed and relinked", { ...sk, seed: (s) => (wt(s), link(s, "@S/gone", "wt/.claude/skills/crew-ship"), link(s, "@S/gone", "wt/.claude/skills/retired")) });
   same("a repo-shipped skill keeps its name and gets no line", { ...sk, seed: (s) => (wt(s), put(s, "wt/.claude/skills/crew-qa/SKILL.md", "shipped\n")) });
+  same("a repo-shipped skill is the codex source", { ...sk, args: ["@S/wt", "codex"], seed: (s) => (wt(s), put(s, "wt/.claude/skills/sdlc/SKILL.md", "shipped\n"), put(s, ".claude/skills/sdlc/SKILL.md", "c\n")) });
+  same("a seeded codex link is relinked when the repo ships the skill later", { ...sk, args: ["@S/wt", "codex"], seed: (s) => (wt(s), put(s, ".claude/skills/sdlc/SKILL.md", "c\n"), link(s, "@S/.claude/skills/sdlc", "wt/.agents/skills/sdlc"), put(s, "wt/.claude/skills/sdlc/SKILL.md", "shipped\n")) });
+  same("a seeded link is relinked when the container gains the skill later", { ...sk, seed: (s) => (wt(s), link(s, "@S/elsewhere/crew-ship", "wt/.claude/skills/crew-ship"), mkdirSync(join(s, "elsewhere/crew-ship"), { recursive: true }), put(s, ".claude/skills/crew-ship/SKILL.md", "c\n")) });
+  same("a tracked project link keeps its target", { ...sk, seed: (s) => { wt(s); put(s, "wt/project-skills/sdlc/SKILL.md", "p\n"); link(s, "../../project-skills/sdlc", "wt/.claude/skills/sdlc"); git(join(s, "wt"), ["add", "-f", "-A"]); git(join(s, "wt"), ["commit", "-qm", "x"]); put(s, ".claude/skills/sdlc/SKILL.md", "c\n"); } });
+  same("a repo-shipped skill that is a link is not the codex source", { ...sk, args: ["@S/wt", "codex"], seed: (s) => (wt(s), put(s, ".claude/skills/sdlc/SKILL.md", "c\n"), link(s, "@S/.claude/skills/sdlc", "wt/.claude/skills/sdlc")) });
   same("a skills dir linked inside the worktree", { ...sk, seed: (s) => (wt(s), mkdirSync(join(s, "wt/agents-skills")), link(s, "../agents-skills", "wt/.claude/skills")) });
   same("a skills dir linked outside the worktree", { ...sk, seed: (s) => (wt(s), mkdirSync(join(s, "outside")), link(s, "@S/outside", "wt/.claude/skills")) });
   same("a worktree that is no repo", { ...sk, seed: (s) => mkdirSync(join(s, "wt")) });
@@ -618,6 +627,15 @@ test("backendWindowNew orca: worktree panes under their node, home panes in thei
   same("a worktree pane whose node resolves", { ...WN, env: ORCA_, seed: (s) => (wtDir(s), put(s, "stub/worktree-show.1.out", '{"ok":true,"result":{}}\n')) });
   same("a home pane creates its family tab", HOMEPANE);
   same("a home pane at config/orca-node", { ...HOMEPANE, seed: (s) => put(s, "home/config/orca-node", "id:node-1\n") });
+  const nodes = (...e: [string, string][]): string => `{"ok":true,"result":{"worktrees":[${e.map(([id, name]) => `{"id":"${id}","path":"@S/home","displayName":"${name}"}`).join(",")}]}}\n`;
+  const pinned = same("a home pane auto-pinned to the node named after the fleet", { ...HOMEPANE, seed: (s) => put(s, "stub/worktree-list.out", nodes(["r::@S/home", "ac other"], ["r::@S/home::workspace:w2", "ac other/home"])) });
+  expect(pinned.o.err).toContain("orca-node: pinned id:r::S/home::workspace:w2 (ac other/home)\n");
+  expect(pinned.o.world).toContain('home/config/orca-node 644 = "id:r::S/home::workspace:w2\\n"');
+  const ambig = same("a home pane among two nodes named after the fleet: the path, warned", { ...HOMEPANE, seed: (s) => put(s, "stub/worktree-list.out", nodes(["r::@S/home", "ac home"], ["r::@S/home::workspace:w2", "x home"])) });
+  expect(ambig.o.err).toContain("WARN: orca-node not pinned - 2 Orca entries share S/home, 2 named 'home': r::S/home (ac home); r::S/home::workspace:w2 (x home) - write config/orca-node by hand\n");
+  same("a home pane at one node not named after the fleet", { ...HOMEPANE, seed: (s) => put(s, "stub/worktree-list.out", nodes(["r::@S/home", "ac homely"])) });
+  same("a home pane whose node list fails", { ...HOMEPANE, seed: (s) => put(s, "stub/worktree-list.rc", "1\n") });
+  same("a home pane, UTF-8 node names", { ...HOMEPANE, lc: "en_US.UTF-8", seed: (s) => put(s, "stub/worktree-list.out", nodes(["r::@S/home", "ac caf\xc3\xa9"], ["r::@S/home::workspace:w2", "caf\xc3\xa9/home"])) });
   same("a home pane joins its family tab by split", { ...HOMEPANE, seed: famTab });
   same("a family tab with no live handle is created afresh", { ...HOMEPANE, seed: (s) => put(s, "home/state/.orca-fam-fam", "tabGone\n") });
   same("a split that fails", { ...HOMEPANE, seed: (s) => (famTab(s), put(s, "stub/terminal-split.rc", "1\n")) });

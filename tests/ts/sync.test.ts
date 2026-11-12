@@ -3,8 +3,7 @@
 // (a directory argument first, then projects/<name>; the MAIN repo root for a
 // linked worktree; the physical path for a symlink; the homeless refusal the
 // `[ -d "$(ac_projects_dir)/$arg" ]` test swallows). The CLI contract itself
-// (every line, stderr, exit, the bounded fetch) is tests/sh/ac-sync.test.sh's,
-// whose differential leg runs the frozen bash original beside the shim.
+// (every line, stderr, exit, the bounded fetch) is tests/sh/ac-sync.test.sh's.
 import { afterAll, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

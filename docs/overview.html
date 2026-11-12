@@ -380,8 +380,8 @@
   <h2>Task lifecycle</h2>
   <p class="sub">Every captain order is triaged at intake, before any brief: the captain's words, then a config pin, then the chief's receipted triage.</p>
 
-  <div class="diagram" aria-label="Flows: direct goes straight to execution, staged adds a gated design crewmate, epic fans out into scheduled stories">
-    <svg viewBox="0 0 860 240" role="img">
+  <div class="diagram" aria-label="Flows: direct goes straight to execution, staged adds a gated design crewmate, sdlc is staged with its artifact chain committed in the main repository, epic fans out into scheduled stories">
+    <svg viewBox="0 0 860 340" role="img">
       <text class="t1" x="10" y="38">direct</text>
       <rect class="nbox accent" x="120" y="16" width="130" height="36" rx="8"/>
       <text class="t1 accent" x="185" y="39" text-anchor="middle">chief</text>
@@ -421,8 +421,23 @@
       <text class="t2" x="620" y="233" text-anchor="middle">story 3 …</text>
       <text class="t2" x="700" y="200">gated map, then stories</text>
       <text class="t2" x="700" y="215">push-scheduled by ac-ready.sh</text>
+
+      <text class="t1" x="10" y="298">sdlc</text>
+      <rect class="nbox accent" x="120" y="276" width="130" height="36" rx="8"/>
+      <text class="t1 accent" x="185" y="299" text-anchor="middle">chief</text>
+      <path class="edge march" d="M250 294 L330 294"/>
+      <rect class="nbox dim" x="330" y="276" width="140" height="36" rx="8"/>
+      <text class="t1 good" x="400" y="299" text-anchor="middle">design</text>
+      <circle cx="497" cy="294" r="13" fill="none" style="stroke:var(--warn)" stroke-width="1.2"/>
+      <text class="t1 warn" x="497" y="298" text-anchor="middle" style="font-size:10px">gate</text>
+      <path class="edge march" d="M470 294 L484 294"/>
+      <path class="edge march" d="M510 294 L590 294"/>
+      <rect class="nbox dim" x="590" y="276" width="150" height="36" rx="8"/>
+      <text class="t1 good" x="665" y="299" text-anchor="middle">execution</text>
+      <text class="t2" x="400" y="262" text-anchor="middle">intent / spec / plan / test plan, each an artifact beside its report</text>
+      <text class="t2" x="665" y="330" text-anchor="middle">chain committed before any code</text>
     </svg>
-    <p class="cap">A direct task that sprouts requirement questions is upgraded to staged; the chief never downgrades on its own. An order with several independently-landable deliverables, or deliverables in more than one repo, is an epic (<code>config/epic-parallel</code>, default 2 stories in flight). The heavy values — <code>flow:staged</code>, <code>mode:crew-ship</code>, <code>qa:yes</code>, a discretionary <code>rev:yes</code> — need the captain's confirmation or a row pin, and <code>ac-brief.sh</code> enforces it. Law: the <code>intake-triage</code> skill.</p>
+    <p class="cap">A direct task that sprouts requirement questions is upgraded to staged; the chief never downgrades on its own. Sdlc is staged with its record kept in the main repository: intent, spec, plan and the QA test plan are committed under <code>docs/features/&lt;feature&gt;/changes/&lt;change&gt;/</code> before any code, and a QA report closes the chain (<a href="sdlc-flow.md">sdlc-flow.md</a>). An order with several independently-landable deliverables, or deliverables in more than one repo, is an epic (<code>config/epic-parallel</code>, default 2 stories in flight). The heavy values — <code>flow:staged</code>, <code>flow:sdlc</code>, <code>mode:crew-ship</code>, <code>qa:yes</code>, a discretionary <code>rev:yes</code> — need the captain's confirmation or a row pin, and <code>ac-brief.sh</code> enforces it. Law: the <code>intake-triage</code> skill.</p>
   </div>
 
   <h3>One task, birth to teardown</h3>
@@ -555,7 +570,7 @@
 
 <section id="validate">
   <h2>Review &amp; the crew-ship pipeline</h2>
-  <p class="sub">Review is a derived obligation, not a stage: <code>yes</code> for staged and <code>crew-ship</code>, <code>no</code> by default otherwise.</p>
+  <p class="sub">Review is a derived obligation, not a stage: <code>yes</code> for staged, sdlc and <code>crew-ship</code>, <code>no</code> by default otherwise.</p>
   <p>Each round is one fresh pane agent reviewing a committed tree at an exact ref
   (<code>ac-verify.sh codereview</code>). Round 1 reviews the full diff; later rounds verify the
   previous round's open findings and review only the interdiff. Any commit after review, docs
@@ -721,7 +736,9 @@
   As a claude Stop hook it judges only human-read sessions — a solo session, or a chief at the
   fleet home — and shows its advice to the human, not the model. Crewmates are judged by the
   watcher instead, which appends the note to a quiet wake; the chief decides whether to send
-  <code>/compact</code>. Only <code>config/jev=on</code> can advise.</p>
+  <code>/compact</code>. Under <code>config/compact-auto=on</code> the fleet sends it itself, for
+  a roomchief from its Stop hook and for a claude crewmate from that quiet wake, whose note then
+  reads <code>compact=auto</code>. Only <code>config/jev=on</code> can advise.</p>
 </section>
 
 <section id="dashboard">
@@ -756,7 +773,7 @@
                              <span class="c"># repo-knowledge/, scenes/</span>
   data/
     &lt;id&gt;/brief.md            <span class="c"># direct task (report.md beside it)</span>
-    &lt;family&gt;/&lt;stage&gt;/        <span class="c"># staged flow: spec/ arch/ plan/ implement/ qa/</span>
+    &lt;family&gt;/&lt;stage&gt;/        <span class="c"># staged and sdlc flows: spec/ arch/ plan/ implement/ qa/</span>
     &lt;family&gt;/room.md         <span class="c"># the family's room</span>
   projects/&lt;name&gt;/           <span class="c"># clones, read-only to the chief</span>
   projects/&lt;name&gt;.yaml       <span class="c"># per-project pipeline config, home-only</span>

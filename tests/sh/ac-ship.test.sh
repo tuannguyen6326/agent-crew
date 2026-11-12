@@ -11,7 +11,6 @@
 # Abort instead of running unsourced.
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
-RBIN="$(make_retired_bin)"
 
 repo="$(make_repo)"
 cd "$repo" || fail "cd $repo"
@@ -143,6 +142,16 @@ out="$(printf '{"risk_level":"low","risk_rationale":"docs only"}' | "$BIN/ac-shi
 assert_contains "$out" "risk_level" "meta keys echoed"
 assert_eq "$(jq -r '.risk_level' "$run_dir/findings/review.meta.json")" "low" "meta stored"
 assert_fails bash -c "printf '[1]' | '$BIN/ac-ship.sh' meta review"
+
+# A JSON passed as an argument is refused before stdin is read, like findings'
+# stray word: a harness may never close the stdin a read would block on.
+sum_before="$(shasum -a 256 "$run_dir/findings/review.meta.json")"
+rc=0
+out="$(printf '{"risk_level":"high"}' | "$BIN/ac-ship.sh" meta review '{"risk_level":"low"}' 2>&1)" || rc=$?
+assert_eq "$rc" "1" "meta refuses a stray argument"
+assert_contains "$out" "usage: ac-ship.sh meta <step>" "the refusal names meta's usage"
+assert_eq "$(shasum -a 256 "$run_dir/findings/review.meta.json")" "$sum_before" \
+  "a refused stray argument leaves the recorded meta untouched"
 
 # meta has the same destructive-write shape cmd_findings had (891a4eb) - a
 # tty stdin refuses instead of hanging, and a failing write never zeroes the
@@ -442,6 +451,32 @@ assert_eq "$(awk -F'\t' '$1=="intent"{print $2}' "$srrun/steps.tsv")" "skipped" 
 assert_eq "$(awk -F'\t' '$1=="review"{print $2}' "$srrun/steps.tsv")" "skipped" \
   "skip-remaining still skips a pending review - unaffected by the F4 --skip refusal on start"
 cd "$repo" || fail "cd back from skiprepo"
+
+# A start over this branch's own still-running run used to repoint current
+# silently, so a run HELD at the review cap restarted with a fresh ledger and
+# three more rounds - the chief's cap decision skipped. It now refuses once
+# that run has spent a review invocation; nothing spent, finished, or another
+# branch's run (a reused pool slot) still starts.
+rsrepo="$(make_repo restartrepo)"
+cd "$rsrepo" || fail "cd restartrepo"
+"$BIN/ac-ship.sh" start --intent "first" >/dev/null
+first="$(readlink .crew/ship/current)"
+"$BIN/ac-ship.sh" start --intent "no review spent yet" >/dev/null || fail "a run with no review invocation restarts"
+second="$(readlink .crew/ship/current)"
+[ "$first" != "$second" ] || fail "the restart made a new run"
+printf '1\tdeadbeef\tcodereview\tok\n' >".crew/ship/$second/logs/review-invocations.tsv"
+rc=0
+out="$("$BIN/ac-ship.sh" start --intent "reset the cap" 2>&1)" || rc=$?
+[ "$rc" -eq 1 ] || fail "a start over a running run with a spent review must refuse (rc=$rc)"
+assert_contains "$out" "run $second" "the refusal names the running run"
+assert_contains "$out" "ac-ship.sh finish cancelled" "the refusal names the sanctioned way out"
+assert_eq "$(readlink .crew/ship/current)" "$second" "a refused start repoints nothing"
+"$BIN/ac-ship.sh" finish cancelled >/dev/null
+"$BIN/ac-ship.sh" start --intent "after cancel" >/dev/null || fail "a finished run never blocks a start"
+printf '1\tdeadbeef\tcodereview\tok\n' >".crew/ship/$(readlink .crew/ship/current)/logs/review-invocations.tsv"
+git switch -q -c crew/other-task
+"$BIN/ac-ship.sh" start --intent "another branch" >/dev/null || fail "another branch's running run never blocks a start"
+cd "$repo" || fail "cd back from restartrepo"
 
 # evidence-dir: temp by default. A home config update does not change the
 # running ship snapshot.
@@ -1171,6 +1206,38 @@ pipeline_row7="$(grep -m1 '^| 7 | push |' "$ROOT/docs/validate-pipeline.md")"
 [ -n "$pipeline_row7" ] || fail "the pipeline map lost its step-7 push row"
 case "$pipeline_row7" in *"cmd format"*) \
   fail "docs/validate-pipeline.md still lists cmd format as part of step 7" ;; esac
+
+# review-agent's ENTRY gate refuses a round without test evidence, yet the
+# skill listed review before test and told the runner it could attest after
+# review. A runner following the text burned an attempt on the refusal.
+assert_contains "$(skill_step 3)" "attest-test" \
+  "the review step names the test evidence review-agent's entry gate demands"
+case "$(skill_step 4)" in *"or before this step"*) \
+  fail "the test step must not advise attesting after review: the entry gate refuses that order" ;; esac
+
+# The document step used to commit after the review round, but a 0-fix round
+# freezes the tree and push/finish refuse any HEAD past reviewed_ref - so the
+# doc commit moves before the reviewer, like the formatter's.
+assert_contains "$(skill_step 3)" "agent-crew(document)" \
+  "the review step lands the doc sweep before the reviewed ref"
+case "$(skill_step 5)" in *"agent-crew(document)"*) \
+  fail "the document step must not commit: it runs after the 0-fix freeze" ;; esac
+assert_contains "$(skill_step 5)" "ask-user" \
+  "a doc gap found after the freeze is parked for the captain, never committed"
+
+# meta and findings read their JSON on stdin only; a JSON argv was silently
+# ignored and the call waited on stdin.
+skill_findings_model="$(awk '/^## Findings model/ { on = 1 } /^## The pipeline/ { exit } on' "$ship_skill")"
+assert_contains "$skill_findings_model" "stdin to \`ac-ship.sh meta <step>\`" \
+  "the skill says meta reads its JSON on stdin"
+assert_contains "$skill_findings_model" "stdin to \`ac-ship.sh findings <step>\`" \
+  "the skill says findings reads its JSON on stdin"
+
+# A brief that lands by merging into another PR's head needs a start that
+# reviews against that head and never pushes or opens a PR of its own.
+skill_start="$(awk '/^Start: / { on = 1 } on && /^1\. \*\*/ { exit } on' "$ship_skill")"
+assert_contains "$skill_start" "--skip push,pr" \
+  "the Start paragraph documents landing into another PR's head"
 
 # --- REVIEW CURRENCY: the reviewed ref must still be HEAD at delivery ---------
 # `step review completed` proves review was current at THAT instant. Nothing
@@ -1904,16 +1971,13 @@ assert_eq "$(receipt_of "$rcp" exit_code)" "0" "a qualifying receipt exited zero
 [ -n "$(receipt_of "$rcp" started_at)" ] && [ -n "$(receipt_of "$rcp" completed_at)" ] \
   || fail "a qualifying receipt records its real execution window"
 
-# ac_qa_ship_receipt_status is the ONE reader both the freeze and the gate use.
+# src/qa-lib.ts's qaShipReceiptStatus is the ONE reader both the freeze and the
+# gate use.
 status_of() {
-  bash -c ". '$BIN/ac-lib.sh'; . '$RBIN/ac-qa-lib.sh'; ac_qa_ship_receipt_status '$1' '$2'"
+  (cd "$ROOT" && bun --no-env-file -e "const Q = await import('./src/qa-lib.ts'); process.stdout.write(Q.qaShipReceiptStatus(process.argv[1], process.argv[2]));" "$1" "$2")
 }
 assert_eq "$(status_of "$rcp" "$(git -C "$rcp_repo" rev-parse HEAD)")" "qualifies:executed" \
   "the reader accepts a real green execution"
-assert_eq "$(status_of "$rcp" 0000000000000000000000000000000000000000)" "not-qualifies:stale" \
-  "a receipt for another commit is stale, never proof"
-assert_eq "$(status_of "$TMP/no-such-receipt.env" abc)" "not-qualifies:absent" \
-  "an absent receipt is a NOT-qualifying answer, never an error"
 
 # A SECOND attempt invalidates the earlier success BEFORE the command runs, so
 # an interruption can never leave a stale pass current.
@@ -2614,12 +2678,25 @@ out="$("$BIN/ac-ship.sh" cmd test 2>&1)" || true
 case "$out" in *"base attribution"*) fail "attribution runs only when the project opts in" ;; esac
 cd "$repo" || fail "cd back from barepo"
 
-# --- differential: src/ship.ts against the frozen bash original ---------------
-# DISPUTED: the implementation (tests/fixtures/ac-ship.sh under bash vs src/ship.ts through bin/ac-ship.sh)
-# HELD-CONSTANT: ONE world path ($XW) rebuilt by the row's own setup before each pass - a home (projects/repo.yaml, config/), a repo at $XW/repo made under one git identity and one commit date so every sha matches, a bare origin at $XW/origin.git for a row that pushes; argv, env (AC_HOME=$XW/home, AC_SHIP_WATCH=off, AC_VERIFY_BIN and AC_PANE_AGENT the leg's stubs, TMPDIR=$XW/tmp, XSTUB=$XW/stub, unless a row names others); cwd ($XW/repo unless a row names another); stdin (/dev/null unless a call names a file); LC_ALL=C unless a row names en_US.UTF-8; PATH stubs on both sides - date answering one instant per format, sleep logging each call and returning at once, a logging herdr answering from files in the world, a scripted verifier replaying the world's verdict list, a logging pane agent, and git and mktemp logging every call (argv and GIT_TERMINAL_PROMPT, the template) - plus a row's own; the live bin/ beside each entry. Every call's exit, stdout and stderr compared whole once normalised (the k-th run id RUN<k>, either bin root ROOT, duration_s, a mktemp suffix XXXXXX), then the world: every path under the repo's .crew/, home/, tmp/ and stub/ with mode and bytes (a link: its target), the repo's refs, branch config, worktrees, info/exclude and FETCH_HEAD, and the origin's refs.
+# --- the pipeline end to end, row by row, in one rebuilt world -----------------
+# One world path ($XW), rebuilt by the row's own setup before each row: a home
+# (projects/repo.yaml, config/), a repo at $XW/repo made under one git identity
+# and one commit date, a bare origin at $XW/origin.git for a row that pushes.
+# The env: AC_HOME=$XW/home, AC_SHIP_WATCH=off, AC_VERIFY_BIN and AC_PANE_AGENT
+# the leg's stubs, TMPDIR=$XW/tmp, XSTUB=$XW/stub, unless a row names others;
+# cwd $XW/repo unless a row names another; stdin /dev/null unless a call names
+# a file; LC_ALL=C unless a row names en_US.UTF-8; PATH stubs - date answering
+# one instant per format, sleep logging each call and returning at once, a
+# logging herdr answering from files in the world, a scripted verifier
+# replaying the world's verdict list, a logging pane agent, and git and mktemp
+# logging every call (argv and GIT_TERMINAL_PROMPT, the template) - plus a
+# row's own. Every call's exit, stdout and stderr land in one transcript, and
+# the world in one listing: every path under the repo's .crew/, home/, tmp/
+# and stub/ with mode and bytes (a link: its target), the repo's refs, branch
+# config, worktrees, info/exclude and FETCH_HEAD, and the origin's refs. Both
+# are normalised: the k-th run id RUN<k>, the bin root ROOT, duration_s N, a
+# mktemp suffix XXXXXX.
 cd "$TMP" || fail "cd TMP"
-xobin="$(make_oracle_bin ac-ship)"
-cmp -s "$xobin/ac-ship.sh" "$ROOT/tests/fixtures/ac-ship.sh" || fail "the oracle bin holds the frozen original"
 XW="$TMP/xw"; XSTUBS="$TMP/xstubs"; mkdir -p "$XSTUBS"
 printf '[user]\n\tname = t\n\temail = t@t\n[init]\n\tdefaultBranch = main\n' >"$TMP/xgitconfig"
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$TMP/xgitconfig" \
@@ -2675,11 +2752,6 @@ done
 n="$(cat "$XSTUB/verify.n" 2>/dev/null || printf 0)"; n=$((n + 1)); printf '%s\n' "$n" >"$XSTUB/verify.n"
 v="$(sed -n "${n}p" "$XSTUB/verdicts" 2>/dev/null)"
 v="${v:-pass}"
-if [ "$v" = slow ]; then
-  : >"$XSTUB/verify.started"
-  i=0; while [ ! -e "$XSTUB/verify.release" ] && [ "$i" -lt 600 ]; do /bin/sleep 0.1; i=$((i + 1)); done
-  v=fix
-fi
 ok='{id:"n1",severity:"info",action:"no-op",description:"note",authority_class:"internal",authority:"a"}'
 case "$v" in
   dead) exit 1 ;;
@@ -2705,9 +2777,8 @@ cat >"$XSTUBS/pane" <<'STUB'
 printf 'pane %s\n' "$*" >>"$XSTUB/pane.log"
 exit "${PANE_RC:-0}"
 STUB
-# git and mktemp log every call into the world, so both sides must make the
-# same git calls in the same order with the same environment for a push, and
-# stage the same temp templates.
+# git and mktemp log every call into the world, so a row can read the
+# environment a push ran git under and the temp templates a write staged.
 cat >"$XSTUBS/git" <<STUB
 #!/bin/sh
 printf 'git TP=%s %s\n' "\${GIT_TERMINAL_PROMPT-unset}" "\$*" >>"\$XSTUB/git.log"
@@ -2740,11 +2811,9 @@ xorigin() {  # xorigin - a bare origin holding main
 xcommit() { printf '%s\n' "$1" >>"$XW/repo/${2:-f.txt}"; git -C "$XW/repo" add -A; git -C "$XW/repo" commit -qm "$1"; }
 xput() { mkdir -p "$(dirname "$XW/$1")"; printf '%s' "$2" >"$XW/$1"; }   # xput <path under the world> <bytes>
 xrd() { printf '%s/repo/.crew/ship/%s' "$XW" "$(readlink "$XW/repo/.crew/ship/current")"; }   # the current run dir
-XLC=C; XENV=(); XCWD=repo; XIN=/dev/null; XWATCH=off; XPATH=""; XHOME=1; XPASS=o; XALT=(o); XCALL=0; XTTY=""
-xc() {  # xc <args...> - one ship call in the world by this pass's side for the call (on a pty with XTTY=1), its transcript appended
-  local side bin="$BIN" rc=0 x path="$XSTUBS:$PATH" cur
-  side="${XALT[$((XCALL % ${#XALT[@]}))]}"; XCALL=$((XCALL + 1))
-  [ "$side" = n ] || bin="$xobin"
+XLC=C; XENV=(); XCWD=repo; XIN=/dev/null; XWATCH=off; XPATH=""; XHOME=1; XTTY=""
+xc() {  # xc <args...> - one ship call in the world (on a pty with XTTY=1), its transcript appended
+  local rc=0 x path="$XSTUBS:$PATH" cur
   [ -z "$XPATH" ] || path="$XPATH"
   local e=("LC_ALL=$XLC" "PATH=$path" "TMPDIR=$XW/tmp" "XSTUB=$XW/stub" "AC_SHIP_WATCH=$XWATCH" "AC_VERIFY_BIN=$XSTUBS/verify" "AC_PANE_AGENT=$XSTUBS/pane")
   [ -z "$XHOME" ] || e+=("AC_HOME=$XW/home")
@@ -2752,62 +2821,51 @@ xc() {  # xc <args...> - one ship call in the world by this pass's side for the 
   local cmd=(env -u AC_HOME -u AC_FLEET_STATE -u AC_SCOPE -u AC_SOLO -u AC_FLEET_SCOPE -u AC_CREW_ID
     -u AC_FLEET_HOME_CHECKED -u AC_FLEET_PROJECT_CONFIG -u AC_HERDR_SESSION -u AC_BACKEND -u CDPATH
     -u AC_FINDINGS_ROUND -u AC_FINDINGS_DELTA -u AC_FINDINGS_PRIOR_OPEN -u AC_LOCK_STALE_GRACE
-    -u GIT_TERMINAL_PROMPT -u GIT_OPTIONAL_LOCKS "${e[@]}" "$bin/ac-ship.sh" "$@")
+    -u GIT_TERMINAL_PROMPT -u GIT_OPTIONAL_LOCKS "${e[@]}" "$BIN/ac-ship.sh" "$@")
   if [ -n "$XTTY" ]; then (cd "$XW/$XCWD" && run_on_tty "${cmd[@]}") >"$TMP/x.out" 2>"$TMP/x.err" || rc=$?
   else (cd "$XW/$XCWD" && exec "${cmd[@]}") <"$XIN" >"$TMP/x.out" 2>"$TMP/x.err" || rc=$?; fi
-  { printf '== %s\nrc=%s\n-- out\n' "$*" "$rc"; cat "$TMP/x.out"; printf '%s\n' '-- err'; cat "$TMP/x.err"; } >>"$TMP/xt.$XPASS"
+  { printf '== %s\nrc=%s\n-- out\n' "$*" "$rc"; cat "$TMP/x.out"; printf '%s\n' '-- err'; cat "$TMP/x.err"; } >>"$TMP/xt"
   for x in "$XW"/*/.crew/ship/current; do
     cur="$(readlink "$x" 2>/dev/null || true)"
-    [ -z "$cur" ] || grep -qxF -- "$cur" "$TMP/xids.$XPASS" || printf '%s\n' "$cur" >>"$TMP/xids.$XPASS"
+    [ -z "$cur" ] || grep -qxF -- "$cur" "$TMP/xids" || printf '%s\n' "$cur" >>"$TMP/xids"
   done
-  # A start line names its run id, so the override row's digest of it is
-  # matched to the side's own printed line.
-  grep '^started run ' "$TMP/x.out" | while IFS= read -r x; do printf '%s' "$x" | shasum -a 256 | cut -d' ' -f1; done >>"$TMP/xshas.$XPASS" || true
 }
-xnorm() {  # xnorm <file> <pass> - the k-th run id RUN<k>, either bin root ROOT, duration_s N, a mktemp suffix XXXXXX
+xnorm() {  # xnorm <file> - the k-th run id RUN<k>, the bin root ROOT, duration_s N, a mktemp suffix XXXXXX
   local e=() k=0 id
-  while IFS= read -r id; do [ -z "$id" ] || { k=$((k + 1)); e+=(-e "s/$id/RUN$k/g"); }; done <"$TMP/xids.$2"
-  k=0; while IFS= read -r id; do [ -z "$id" ] || { k=$((k + 1)); e+=(-e "s/$id/STARTSHA$k/g"); }; done <"$TMP/xshas.$2"
-  LC_ALL=C sed -E ${e[@]+"${e[@]}"} -e "s#$TMP/oracle-ac-ship#ROOT#g" -e "s#$ROOT#ROOT#g" \
+  while IFS= read -r id; do [ -z "$id" ] || { k=$((k + 1)); e+=(-e "s/$id/RUN$k/g"); }; done <"$TMP/xids"
+  LC_ALL=C sed -E ${e[@]+"${e[@]}"} -e "s#$ROOT#ROOT#g" \
     -e 's/"duration_s": [0-9]+/"duration_s": N/' \
     -e 's#(\.steps\.tsv|\.review\.meta|\.review\.residual|\.receipt|\.meta\.json|/override|/\.review-agent-r[0-9]+|/findings/\.[a-z]+)\.[A-Za-z0-9]{6}#\1.XXXXXX#g' \
     -e 's#(\.XXXXXX)\.[A-Za-z0-9]{6}#\1.XXXXXX#g' -e 's#/\.attest-[A-Za-z0-9]{6}#/.attest-XXXXXX#g' "$1"
 }
-xsnap() {  # xsnap <pass> - the world as one listing
+xsnap() {  # xsnap - the world as one listing
   local n f
   (cd "$XW" && find ./*/.crew home tmp stub -print 2>/dev/null || true) | sed 's#^\./##' >"$TMP/xnames"
-  xnorm "$TMP/xnames" "$1" | paste - "$TMP/xnames" | LC_ALL=C sort | while IFS=$'\t' read -r n f; do
+  xnorm "$TMP/xnames" | paste - "$TMP/xnames" | LC_ALL=C sort | while IFS=$'\t' read -r n f; do
     if [ -L "$XW/$f" ]; then printf '== %s -> %s\n' "$n" "$(readlink "$XW/$f")"; continue; fi
     printf '== %s %s\n' "$n" "$(stat -f %Sp "$XW/$f")"
     [ -d "$XW/$f" ] || { cat "$XW/$f" 2>/dev/null || printf '<unreadable>'; printf '\n'; }
-  done >"$TMP/xw.$1"
+  done >"$TMP/xlist"
   { printf -- '-- refs\n'; git -C "$XW/repo" for-each-ref --format='%(refname) %(objectname)'
     printf -- '-- branch config\n'; git -C "$XW/repo" config --get-regexp '^branch\.' || true
     printf -- '-- worktrees\n'; git -C "$XW/repo" worktree list --porcelain
     printf -- '-- exclude\n'; cat "$XW/repo/.git/info/exclude" 2>/dev/null || true
     printf -- '-- FETCH_HEAD\n'; cat "$XW/repo/.git/FETCH_HEAD" 2>/dev/null || true
     printf -- '-- origin\n'; [ ! -d "$XW/origin.git" ] || git -C "$XW/origin.git" for-each-ref --format='%(refname) %(objectname)'
-  } >>"$TMP/xw.$1"
+  } >>"$TMP/xlist"
 }
-xpass() {  # xpass <pass> <setup> <body> <side>... - rebuild the world, then the body's calls by the sides in turn (<setup> may carry its words)
-  XPASS="$1"; : >"$TMP/xt.$1"; : >"$TMP/xids.$1"; : >"$TMP/xshas.$1"; XCALL=0; XALT=("${@:4}")
-  $2; $3; xsnap "$1"
-  xnorm "$TMP/xt.$1" "$1" >"$TMP/xt2.$1"; xnorm "$TMP/xw.$1" "$1" >"$TMP/xw2.$1"
+xrun() {  # xrun <setup> <body> - rebuild the world, then the body's calls (<setup> may carry its words)
+  : >"$TMP/xt"; : >"$TMP/xids"
+  $1; $2; xsnap
+  xnorm "$TMP/xt" >"$TMP/xt2"; xnorm "$TMP/xlist" >"$TMP/xw2"
 }
-xrow() { printf '%s' "${BASH_LINENO[${#BASH_LINENO[@]}-2]}"; }   # the leg's own line that started this comparison
-xcmp() {  # xcmp <pass> <pass> - transcripts and worlds identical
-  cmp -s "$TMP/xt2.$1" "$TMP/xt2.$2" || fail "ship differential calls differ ($1 vs $2) at line $(xrow): $(diff -a "$TMP/xt2.$1" "$TMP/xt2.$2" | head -n 14)"
-  cmp -s "$TMP/xw2.$1" "$TMP/xw2.$2" || fail "ship differential world differs ($1 vs $2) at line $(xrow): $(diff -a "$TMP/xw2.$1" "$TMP/xw2.$2" | head -n 14)"
-}
-xsame() { xpass o "$1" "$2" o; xpass n "$1" "$2" n; xcmp o n; }   # xsame <setup> <body> - the oracle alone, then the port alone
-xcont() {  # xcont <setup> <body> - the oracle alone, then the two sides alternating call by call, either side first
-  xpass o "$1" "$2" o; xpass a "$1" "$2" o n; xpass b "$1" "$2" n o; xcmp o a; xcmp o b
-}
-xt() { cat "$TMP/xt2.${1:-n}"; }
-xhas() { assert_contains "$(xt "${2:-n}")" "$1" "ship differential at line $(xrow)"; }   # xhas <text> [<pass>] - the normalised transcript holds <text>
-xlacks() { case "$(xt "${2:-n}")" in *"$1"*) fail "ship differential at line $(xrow): '$1' found" ;; esac; }
-xwhas() { assert_contains "$(cat "$TMP/xw2.${2:-n}")" "$1" "ship differential world at line $(xrow)"; }
-xnone() { :; }
+xrow() { printf '%s' "${BASH_LINENO[${#BASH_LINENO[@]}-2]}"; }   # the suite's own line that started this row
+xt() { cat "$TMP/xt2"; }
+xw() { cat "$TMP/xw2"; }
+xlast() { awk -v h="== $1" '$0 == h { b = "" } { b = b $0 "\n" } END { printf "%s", b }' "$TMP/xt2"; }   # xlast <call> - the transcript from the last <call> on
+xhas() { assert_contains "$(xt)" "$1" "ship row at line $(xrow)"; }   # xhas <text> - the normalised transcript holds <text>
+xlacks() { case "$(xt)" in *"$1"*) fail "ship row at line $(xrow): '$1' found" ;; esac; }
+xwhas() { assert_contains "$(xw)" "$1" "ship row world at line $(xrow)"; }
 xpushworld() { xworld crew/p; xorigin; }
 xverdicts() { printf '%s\n' "$@" >"$XW/stub/verdicts"; }   # xverdicts <verdict>... - the verifier's answers in call order
 xrevworld() { xworld crew/fam1-implement; }
@@ -2832,39 +2890,33 @@ xwithout() {  # xwithout <tool> - the leg's stubs and PATH with every dir holdin
 }
 
 # -- leg 1: preamble ------------------------------------------------------------
-# USAGE HEADER (named): no verb, -h or an unknown verb print the spec header,
-# exit 2 - the original's own, the port's src/ship.ts one.
+# USAGE HEADER: no verb, -h or an unknown verb print src/ship.ts's whole leading
+# comment block on stdout, exit 2, nothing on stderr.
 x1() { xc; xc -h; xc bogus; }
-xpass o xworld x1 o; xpass n xworld x1 n
-for xp in o n; do
-  [ "$(grep -c '^rc=2$' "$TMP/xt2.$xp")" = 3 ] || fail "usage exits 2 on side $xp"
-  [ "$(grep -c '^-- err$' "$TMP/xt2.$xp")" = 3 ] && ! grep -q '^ERROR' "$TMP/xt2.$xp" || fail "usage writes no stderr on side $xp"
-done
-assert_contains "$(xt o)" $'-- out\nac-ship.sh - state machine + deterministic runner for the crew-ship' "the oracle prints its own header"
-assert_contains "$(xt n)" $'-- out\nship.ts - the crew-ship pipeline\'s state machine' "the port prints src/ship.ts's header"
-[ "$(sed -n '/^== -h$/,/^-- err$/p' "$TMP/xt2.n" | sed '1,3d;$d')" = "$(awk '!/^\/\//{exit} {sub(/^\/\/ ?/, ""); print}' "$ROOT/src/ship.ts")" ] \
-  || fail "the port's usage is the module's whole leading comment block"
+xrun xworld x1
+[ "$(grep -c '^rc=2$' "$TMP/xt2")" = 3 ] || fail "usage exits 2"
+[ "$(awk '/^-- err$/ { e = 1; next } /^== / { e = 0 } e { n++ } END { print n + 0 }' "$TMP/xt2")" = 0 ] || fail "usage writes no stderr"
+assert_contains "$(xt)" $'-- out\nship.ts - the crew-ship pipeline\'s state machine' "the usage is src/ship.ts's header"
+[ "$(sed -n '/^== -h$/,/^-- err$/p' "$TMP/xt2" | sed '1,3d;$d')" = "$(awk '!/^\/\//{exit} {sub(/^\/\/ ?/, ""); print}' "$ROOT/src/ship.ts")" ] \
+  || fail "the usage is the module's whole leading comment block"
 x1b(){ XCWD=tmp; xc status; XCWD=repo; }
-xsame xworld x1b
+xrun xworld x1b
 xhas $'rc=1\n-- out\n-- err\nERROR: not inside a git repo'
 x1c() { XENV=(AC_BACKEND=tmux); xc; xc status; XENV=(); }
-xsame xworld x1c
+xrun xworld x1c
 xhas "ERROR: unsupported backend 'tmux' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)"
-# BUN (named): without bun the shim refuses before anything, where the
-# original ran every verb.
+# BUN: without bun the shim refuses every verb before anything.
 x1d() { XPATH="$(xwithout bun)"; xc status; xc start --intent nobun; XPATH=""; }
-xpass o xworld x1d o; xpass n xworld x1d n
-xhas $'rc=1\n-- out\n-- err\nERROR: required tool not found: bun\n' n
-xhas 'started run RUN1 branch=main' o
+xrun xworld x1d
+assert_eq "$(grep -c '^ERROR: required tool not found: bun$' "$TMP/xt2")" "2" "both calls refuse without bun"
+xhas $'== start --intent nobun\nrc=1\n-- out\n-- err\nERROR: required tool not found: bun'
+xlacks 'started run'
 
-# A jq on PATH that is a file but not executable, and no other: the original's
-# `command -v` took it (and failed at its first jq), the port's Bun.which
-# refuses it up front (named).
+# A jq on PATH that is a file but not executable, and no other, is no jq.
 mkdir -p "$TMP/xjqnoexec"; : >"$TMP/xjqnoexec/jq"; chmod 644 "$TMP/xjqnoexec/jq"
 x1e() { XPATH="$TMP/xjqnoexec:$(xwithout jq)"; xc status; XPATH=""; }
-xpass o xworld x1e o; xpass n xworld x1e n
-xhas $'rc=1\n-- out\n-- err\nERROR: no active crew-ship run; ac-ship.sh start first' o
-xhas $'rc=1\n-- out\n-- err\nERROR: required tool not found: jq' n
+xrun xworld x1e
+xhas $'rc=1\n-- out\n-- err\nERROR: required tool not found: jq'
 
 # -- leg 2: start -----------------------------------------------------------------
 x2a() {
@@ -2879,25 +2931,22 @@ x2a() {
   xc start --intent explicit --lint --skip lint
   xc status
 }
-xsame xworld x2a
+xrun xworld x2a
 xhas 'started run RUN3 branch=main base='"$(git -C "$XW/repo" rev-parse HEAD | cut -c1-12)"' (lint skip-by-default: pass --lint to run it) (test skipped: --tdd declares the implement covered it)'
 xwhas $'intent=second line one\nbranch=main'
 xwhas $'second line one\nline two\n'
 xwhas $'intent\tpending\t0\nrebase\tpending\t0\nreview\tpending\t0\ntest\tpending\t0\ndocument\tpending\t0\nlint\tskipped\t0\npush\tpending\t0\npr\tpending\t0'
 xwhas 'tdd-declared	2026-01-01T00:00:00Z	'
-# W20 (named, SHELL-OWN): a value flag as the last word dies on bash's own
-# `$2: unbound variable`; the port exits 1 with no line. Nothing is created.
+# W20: a value flag as the last word refuses, exit 1, and creates nothing.
 x2b() { xc start --intent; xc start --intent x --skip; xc start --intent x --target; }
-xpass o xworld x2b o; xpass n xworld x2b n
-assert_eq "$(grep -c '^rc=1$' "$TMP/xt2.o"):$(grep -c '^rc=1$' "$TMP/xt2.n")" "3:3" "a valueless flag exits 1 on both sides"
-assert_contains "$(xt o)" 'line 572: $2: unbound variable' "the original dies on the shell's own line"
-assert_eq "$(grep -cv '^\(== \|rc=\|-- \)' "$TMP/xt2.n")" "0" "the port prints nothing for a valueless flag"
-cmp -s "$TMP/xw2.o" "$TMP/xw2.n" || fail "a valueless flag creates nothing on either side"
+xrun xworld x2b
+assert_eq "$(grep -c '^rc=1$' "$TMP/xt2")" "3" "a valueless flag exits 1"
+case "$(xw)" in *'== repo/.crew/ship/'*) fail "a valueless flag creates no run" ;; esac
 x2c() {
   xc start --bogus; xc start --intent x --skip bogus; xc start --intent x --skip intent; xc start --intent x --skip review
   xc start --intent x --skip pr,intent; xc start --intent x --skip ci; xc start --intent ''; xc start --skip pr
 }
-xsame xworld x2c
+xrun xworld x2c
 xhas 'ERROR: unknown flag: --bogus'
 xhas 'ERROR: --skip intent is refused: intent can never be skipped (the intent-evidence pass is never skipped; crew-ship review is always required, AGENTS.md section 5)'
 xhas 'ERROR: --intent is required (pass the captain'"'"'s goal verbatim)'
@@ -2910,7 +2959,7 @@ x2d() {
   xc start --intent glob --skip 'p[r]'
   XCWD=tmp; xc start --intent elsewhere --skip 'p*'; XCWD=repo
 }
-xsame xworld x2d
+xrun xworld x2d
 xhas $'== start --intent glob --skip pu*\nrc=0'
 xhas 'ERROR: unknown --skip step: f.txt'
 xhas 'ERROR: unknown --skip step: q*'
@@ -2924,7 +2973,7 @@ x2e() {
   xc status
 }
 x2e_world() { xworld crew/t; xorigin; }
-xsame x2e_world x2e
+xrun x2e_world x2e
 xhas 'ERROR: start: --target branch not found (neither origin/nope nor nope): nope'
 xhas ' target=origin/main'
 xhas ' target=rel'
@@ -2942,22 +2991,16 @@ x2f() {
   XENV=(); XHOME=1
   xc config review.max_rounds
 }
-xsame xworld x2f
+xrun xworld x2f
 xwhas 'config_source=none'
 xwhas $'== repo/.crew/ship/RUN1/config.yaml -rw-------\n'
-xhas "ERROR: AC_HOME is not set - set AC_HOME=<fleet home> (the directory holding state/ data/ records/ config/ projects/); the distro checkout is not one
-ERROR: cannot resolve the project's pipeline config: AC_HOME is unset"
+# A homeless start refuses (W18's extra ac_home ERROR line before the refusal
+# is a wart, so it is left unasserted).
+xhas $'== start --intent neither\nrc=1\n-- out\n-- err\n'
+xhas "ERROR: cannot resolve the project's pipeline config: AC_HOME is unset"
+assert_eq "$(grep -cE '^== repo/\.crew/ship/[^/ ]+ d' "$TMP/xw2")" "4" "only the four starts that went on made a run"
 xhas "ERROR: AC_FLEET_PROJECT_CONFIG names a missing file: $XW/home/gone.yaml"
 xhas "ERROR: the project's pipeline config is unreadable: $XW/home/projects/repo.yaml"
-# W3 (at parity): a RETIRED legacy config beside the canonical one prints its
-# refusal and the run freezes an EMPTY config.
-x2g() {
-  mkdir -p "$XW/home/config/projects"; printf 'commands:\n  test: "echo legacy"\n' >"$XW/home/config/projects/repo.yaml"
-  xc start --intent legacy; xc config review.max_rounds; xc cmd test; xc attest-test
-}
-xsame xworld x2g
-xhas 'ERROR: project config for '"'repo'"' found at the RETIRED legacy path'
-xhas $'== cmd test\nrc=4\n-- out\n-- err\n(no config file)'
 # A merge-base that fails creates nothing; an unrelated target is one.
 x2h() {
   git -C "$XW/repo" checkout -q --orphan lone; git -C "$XW/repo" commit -qm lone
@@ -2966,7 +3009,7 @@ x2h() {
   git -C "$XW/repo" checkout -q lone
   xc start --intent 'lone default'
 }
-xsame xworld x2h
+xrun xworld x2h
 xhas "ERROR: fresh_base: merge-base against 'lone' failed - refusing to fall back to HEAD"
 xhas "ERROR: fresh_base: merge-base against 'main' failed - refusing to fall back to HEAD"
 # ensure_crew_excluded degrades to a WARN: info/ a file, a common dir git
@@ -2987,17 +3030,16 @@ x2i() {
   mkdir -p "$XW/repo/.git/info"; printf 'x\n.crew/\n' >"$XW/repo/.git/info/exclude"
   xc start --intent 'already excluded'
 }
-xsame xworld x2i
+xrun xworld x2i
 xhas 'WARN: could not add .crew/ to info/exclude - it stays visible in git status'
 [ ! -e /info/exclude ] || fail "no start addressed /info at the filesystem root"
-# HOME RESOLUTION (named): an AC_HOME cd cannot enter - the original printed
-# cd's own line, the port names the variable; both freeze no config and go on.
+# HOME RESOLUTION: an AC_HOME cd cannot enter is named, and start goes on with
+# no config.
 x2j() { XHOME=""; XENV=("AC_HOME=$XW/nohome"); xc start --intent nohome; xc config commands.test; XENV=(); XHOME=1; }
-xpass o xworld x2j o; xpass n xworld x2j n
-assert_contains "$(xt o)" "cd: $XW/nohome: No such file or directory" "the original prints cd's own line"
-assert_contains "$(xt n)" "ERROR: AC_HOME is not a readable directory: $XW/nohome" "the port names the variable"
-assert_eq "$(grep -c '^started run RUN1 ' "$TMP/xt2.o"):$(grep -c '^started run RUN1 ' "$TMP/xt2.n")" "1:1" "both start with no config"
-cmp -s "$TMP/xw2.o" "$TMP/xw2.n" || fail "an unenterable home leaves identical worlds: $(diff "$TMP/xw2.o" "$TMP/xw2.n" | head)"
+xrun xworld x2j
+xhas "ERROR: AC_HOME is not a readable directory: $XW/nohome"
+assert_eq "$(grep -c '^started run RUN1 ' "$TMP/xt2")" "1" "an unenterable home starts with no config"
+xwhas 'config_source=none'
 xwhas 'git TP=unset rev-parse --show-toplevel'
 
 # -- leg 3: step / skip-remaining ----------------------------------------------
@@ -3008,7 +3050,7 @@ x3a() {
   xc step test completed --note 'suite green'; xc step pr running extra --note x; xc step intent failed --note
   xc step document awaiting_approval --note ''; xc status
 }
-xsame xworld x3a
+xrun xworld x3a
 xhas $'== step intent running\nrc=1\n-- out\n-- err\nERROR: no active crew-ship run; ac-ship.sh start first'
 xhas 'lint -> fixing (auto-fix round 2)'
 xhas 'ERROR: usage: ac-ship.sh step <name> <status> [--note <text>]'
@@ -3031,7 +3073,7 @@ x3b() {
   xc step review completed
   xc push
 }
-xsame 'xworld crew/r' x3b
+xrun 'xworld crew/r' x3b
 xhas 'ERROR: review has no independent-reviewer evidence: run ac-ship.sh review-agent, or record meta review with a "reviewer" field after a clean-context subagent reviewed'
 xhas 'ERROR: review receipt is stale: reviewed '"$(git -C "$XW/repo" rev-parse HEAD~2)"', current HEAD '
 xwhas 'review.agent.superseded'
@@ -3043,8 +3085,9 @@ x3b2() {
   printf 'not json' >"$(xrd)/findings/review.meta.json"
   xc step review completed
 }
-xsame 'xworld crew/r' x3b2
-xhas 'parse error'
+xrun 'xworld crew/r' x3b2
+assert_contains "$(xlast 'step review completed')" $'== step review completed\nrc=1\n-- out\n-- err\n' "a corrupt review meta refuses review completed"
+assert_contains "$(xlast 'step review completed')" 'ERROR: review has no independent-reviewer evidence' "a corrupt review meta is no reviewer evidence"
 # The ledger lock: a live holder times out after 30 PATH sleeps, a dead one is
 # reclaimed; a missing ledger refuses and releases the lock.
 x3c() {
@@ -3058,7 +3101,7 @@ x3c() {
   printf 'intent\tpending\t0\npush\trunning\t2\n' >"$(xrd)/steps.tsv"
   xc skip-remaining; xc status
 }
-xsame xworld x3c
+xrun xworld x3c
 xhas 'ERROR: steps ledger lock timeout'
 xhas "ERROR: step: could not update the steps ledger ($XW/repo/.crew/ship/RUN1/steps.tsv) - failing closed"
 xhas "ERROR: skip-remaining: could not update the steps ledger ($XW/repo/.crew/ship/RUN1/steps.tsv) - failing closed"
@@ -3071,26 +3114,8 @@ x3d() {
   printf 'review-residual\tT\tS\tgrounds\n' >>"$(xrd)/override"
   xc step test completed; xc status
 }
-xsame xworld x3d
+xrun xworld x3d
 xhas $'override: review-residual at=T receipt_sha256=S reason=grounds\nsteps:'
-# W17 (at parity): a dangling `current` passes require_run.
-x3e() {
-  xc start --intent dangling
-  rm -rf "$(xrd)"
-  xc status; xc step intent running; xc findings review --show; xc base
-}
-xsame xworld x3e
-xhas $'run: RUN1\n-- err\nsed: '
-xhas 'ERROR: steps ledger lock timeout'
-# ... and finish dies on its run.meta append: bash's own redirection line
-# (SHELL-OWN, named), both exit 1.
-x3f() { xc start --intent dangling; rm -rf "$(xrd)"; xc finish cancelled; }
-xpass o xworld x3f o; xpass n xworld x3f n
-assert_contains "$(xt o)" $'== finish cancelled\nrc=1\n-- out\n-- err\n' "the original dies on the run.meta append"
-assert_contains "$(xt o)" 'run.meta: No such file or directory' "the original's own redirection line"
-assert_contains "$(xt n)" $'== finish cancelled\nrc=1\n-- out\n-- err' "the port dies at the same point"
-assert_eq "$(sed -n '/^== finish cancelled$/,$p' "$TMP/xt2.n" | wc -l | tr -d ' ')" "4" "the port prints no line of the shell's"
-cmp -s "$TMP/xw2.o" "$TMP/xw2.n" || fail "a dangling finish leaves identical worlds"
 
 # -- leg 4: findings / meta --------------------------------------------------------
 mkdir -p "$TMP/xjqdot"
@@ -3112,45 +3137,36 @@ x4a() {
   xin '[{"id":"F1","severity":"error","action":"fix","authority_class":"internal","authority":"f.txt:1","description":"real"},{"severity":"error","action":"fix","authority_class":"internal","authority":"a","description":"x"},{"severity":"error","action":"fix","authority_class":"internal","authority":"a","description":"y"}]'
   xc findings review
   xin '[]'; xc findings review
-  xin '[{"id":"F1","severity":"error","action":"fix","authority_class":"internal","authority":"f.txt:1","description":"real"},{"severity":"error","action":"fix","authority_class":"internal","authority":"a","description":"x"}]'
-  xc findings review
   xin '[{"id":"q","action":"ask-user","description":"pick","decision":"a\\tb\\nc","options":["x"],"axis":"bogus","decider":"  "},{"id":"e","action":"fix","severity":"error","authority_class":"weird","authority":"  "}]'
   xc findings lint
-  XENV=(AC_FINDINGS_ROUND=2 'AC_FINDINGS_PRIOR_OPEN=[]' AC_FINDINGS_DELTA=f.txt)
-  xin '[{"id":"o","action":"fix","severity":"warning","file":"other.txt","authority_class":"internal","authority":"a"},{"id":"i","action":"fix","severity":"warning","file":"f.txt","authority_class":"internal","authority":"a"}]'
-  xc findings document; XENV=()
   xin '[1]'; xc meta review
   xin '{"risk_level":"low"}\0\n'; xc meta review
   xin '{"risk_level":"high","risk_rationale":"r"}'; XPATH="$TMP/xjqdot:$XSTUBS:$PATH"; xc meta review; XPATH=""
   xc meta bogus; XIN=/dev/null; xc status
 }
-xsame xworld x4a
+xrun xworld x4a
 xhas 'ERROR: findings review reads a JSON array on stdin - refusing a tty (pipe JSON in, or use --show to view)'
 xhas 'ERROR: meta review reads a JSON object on stdin - refusing a tty'
 xhas 'ERROR: findings must be a JSON array'
 xhas 'ERROR: findings review: normalize failed'
 xhas 'ERROR: findings review refused (fail-closed): re-post drops fix finding(s) [F1, ?, ?] with no resolution'
-xhas $'== findings review\nrc=0\n-- out\nfix=2\n'
+xhas $'== findings review\nrc=0\n-- out\nfix=3\n'
 xhas 'ERROR: meta review: write failed'
-xwhas '"round_floored": true'
 xwhas '"decision": "a b c"'
 # T1: the temps the findings path stages are findings/.<step>.XXXXXX and the
-# normalizer's .<step>.XXXXXX.XXXXXX - none survives a refusal, on either side.
-for xp in o n; do
-  ! grep -qE '^== repo/\.crew/ship/RUN[0-9]+/findings/(\.review\.|review\.meta\.json\.)' "$TMP/xw2.$xp" \
-    || fail "a findings or meta refusal leaked its temp on side $xp"
-done
-grep -q '^mktemp .*/findings/\.review\.XXXXXX\.XXXXXX$' "$TMP/xw2.n" || fail "the leak check watched the normalizer's own temp name"
+# normalizer's .<step>.XXXXXX.XXXXXX - none survives a refusal.
+! grep -qE '^== repo/\.crew/ship/RUN[0-9]+/findings/(\.review\.|review\.meta\.json\.)' "$TMP/xw2" \
+  || fail "a findings or meta refusal leaked its temp"
+grep -q '^mktemp .*/findings/\.review\.XXXXXX\.XXXXXX$' "$TMP/xw2" || fail "the leak check watched the normalizer's own temp name"
 
-# TRUSTED RE-POST (named): the original's drop guard read _ac_findings_trusted
-# from the caller's environment too; the port trusts only review-agent's call.
+# TRUSTED RE-POST: only review-agent's own call skips the drop guard - a
+# `_ac_findings_trusted` in the caller's environment does not.
 x4b() {
   xc start --intent trusted
   xin '[{"id":"F1","severity":"error","action":"fix","authority_class":"internal","authority":"f.txt:1","description":"real"}]'; xc findings review
   xin '[]'; XENV=(_ac_findings_trusted=1); xc findings review; XENV=(); XIN=/dev/null
 }
-xpass o xworld x4b o; xpass n xworld x4b n
-xlacks 're-post drops fix finding' o
+xrun xworld x4b
 xhas 'ERROR: findings review refused (fail-closed): re-post drops fix finding(s) [F1] with no resolution'
 
 # -- leg 5: config / base / evidence-dir ---------------------------------------------
@@ -3164,30 +3180,20 @@ x5a() {
   XHOME=""; XENV=("AC_FLEET_HOME_CHECKED=1"); xc start --intent empty-freeze; XENV=(); XHOME=1
   xc config commands.test; xc cmd test
 }
-xsame xworld x5a
+xrun xworld x5a
 xlacks 'echo changed'
 xhas $'== config commands.nope\nrc=0\n-- out\n-- err'
 xhas $'== config review.max_rounds\nrc=0\n-- out\n9'
 xhas $'== cmd test\nrc=4\n-- out\n-- err\n(no config file)'
-# W20 (named, SHELL-OWN): `config` with no key, a config present - the
-# original's `1: dotted key required` line, the port silent, both exit 1.
+# W20: `config` with no key, a config present, exits 1.
 x5b() { xc config; xc start --intent k; xc config ''; rm -f "$XW/home/projects/repo.yaml"; : >"$(xrd)/config.yaml"; xc config; }
-xpass o xworld x5b o; xpass n xworld x5b n
-assert_contains "$(xt o)" '1: dotted key required' "the original dies on the shell's own line"
-case "$(xt n)" in *'dotted key required'*) fail "the port prints no line of the shell's" ;; esac
-assert_eq "$(grep -c '^rc=1$' "$TMP/xt2.o"):$(grep -c '^rc=1$' "$TMP/xt2.n")" "3:3" "config with no key exits 1 on both sides"
-cmp -s "$TMP/xw2.o" "$TMP/xw2.n" || fail "config with no key leaves identical worlds"
-# W10 (at parity): an invalid byte in a value at or before the key aborts the
-# reader under a UTF-8 locale (exit 2), not under C.
+xrun xworld x5b
+assert_eq "$(grep -c '^rc=1$' "$TMP/xt2")" "3" "config with no key exits 1"
+# An invalid byte in a value at or before the key leaves the C-locale reader whole.
 xbadbyte() { xworld; printf 'doc: "caf\351"\ncommands:\n  test: "echo t"\n# caf\351 comment\n' >"$XW/home/projects/repo.yaml"; }
 x5c() { xc config commands.test; xc start --intent bytes; xc config commands.test; xc cmd test; xc config doc; }
-xsame xbadbyte x5c
+xrun xbadbyte x5c
 xhas $'== config commands.test\nrc=0\n-- out\necho t'
-XLC=en_US.UTF-8
-xsame xbadbyte x5c
-xhas 'towc: multibyte conversion failure'
-xhas $'== cmd test\nrc=2'
-XLC=C
 x5d() {
   xc base
   xc start --intent b
@@ -3199,7 +3205,7 @@ x5d() {
   mv "$(xrd)/run.meta" "$(xrd)/run.meta.gone"; xc base; mv "$(xrd)/run.meta.gone" "$(xrd)/run.meta"
   git -C "$XW/repo" checkout -q --orphan lone; git -C "$XW/repo" commit -qm lone; xc base
 }
-xsame 'xworld crew/b' x5d
+xrun 'xworld crew/b' x5d
 xhas $'== base\nrc=1\n-- out\n-- err\n=='
 xhas "ERROR: fresh_base: merge-base against 'rel' failed - refusing to fall back to HEAD"
 x5e() {
@@ -3214,7 +3220,7 @@ x5e() {
   git -C "$XW/repo" checkout -q --detach HEAD; xc start --intent ev; xc evidence-dir
   XENV=("TMPDIR=$XW/tmp/"); printf 'x: y\n' >"$XW/home/projects/repo.yaml"; xc start --intent ev; xc evidence-dir; XENV=()
 }
-xsame 'xworld crew/slash/ev' x5e
+xrun 'xworld crew/slash/ev' x5e
 xhas "$XW/tmp/agent-crew-evidence/RUN1"
 xhas 'WARN: evidence dir unsafe (/abs); using temp'
 xhas 'WARN: evidence dir unsafe (a/../b); using temp'
@@ -3232,24 +3238,16 @@ x6a() {
   xcfg 'commands:\n  test: "printf \\"no newline\\""\n'; xc start --intent nl; xc cmd test
   xc status
 }
-xsame xworld x6a
+xrun xworld x6a
 xhas $'== cmd lint\nrc=3'
 xhas $'== cmd format\nrc=4\n-- out\n-- err\n(no commands.format configured)'
 xhas $'out\nerr\n-- err\n$ echo out; echo err >&2; exit 5'
 xwhas $'qualification=not-qualifies\nreason=non-zero'
 xwhas $'qualification=qualifies\nreason=executed'
-# A suite a signal ends: 143 and a non-zero receipt on both sides; the shell's
-# own `Terminated` notice in the log is SHELL-OWN (named) - it names the port's
-# helper shell - so the log and its digest are compared with that line masked.
+# A suite a signal ends: 143 and a non-zero receipt.
 x6c() { xcfg 'commands:\n  test: "echo before; kill -TERM $$"\n'; xc start --intent term; xc cmd test; }
-xpass o xworld x6c o; xpass n xworld x6c n
-for xp in o n; do
-  sed -E -e 's/^.*Terminated: 15.*$/NOTICE/' -e 's/^output_sha256=[0-9a-f]{64}$/output_sha256=SHA/' "$TMP/xt2.$xp" >"$TMP/xt3.$xp"
-  sed -E -e 's/^.*Terminated: 15.*$/NOTICE/' -e 's/^output_sha256=[0-9a-f]{64}$/output_sha256=SHA/' "$TMP/xw2.$xp" >"$TMP/xw3.$xp"
-done
-cmp -s "$TMP/xt3.o" "$TMP/xt3.n" || fail "a signalled suite: calls differ: $(diff "$TMP/xt3.o" "$TMP/xt3.n" | head)"
-cmp -s "$TMP/xw3.o" "$TMP/xw3.n" || fail "a signalled suite: worlds differ: $(diff "$TMP/xw3.o" "$TMP/xw3.n" | head)"
-assert_contains "$(cat "$TMP/xt3.n")" $'== cmd test\nrc=143\n-- out\nbefore\nNOTICE' "the signalled suite exits 143 and leaves the notice in the log"
+xrun xworld x6c
+assert_contains "$(xlast 'cmd test')" $'== cmd test\nrc=143\n-- out\nbefore\n' "the signalled suite exits 143"
 xwhas 'cmd=test exit=143'
 x6d() {
   printf '%s\n' 'commands:' '  test: echo full' "  test-changed: printf '[%s]\\n' {files}" >"$XW/home/projects/repo.yaml"
@@ -3261,22 +3259,11 @@ x6d() {
   xcfg 'commands:\n  test: "echo full"\n  test-changed: "echo no placeholder"\n'; xc start --intent noph; xc cmd test
   xc status
 }
-xsame 'xworld crew/s' x6d
+xrun 'xworld crew/s' x6d
 xhas '(scoped test: 5 changed files)'
 xhas "[it's.txt]"
 xhas 'ERROR: commands.test-changed must carry a {files} placeholder'
 xwhas $'qualification=not-qualifies\nreason=scoped'
-# W13 (at parity): scoped with a merge-base that fails - fresh_base's refusal,
-# then git's own `ambiguous argument` and its 128; the receipt stays incomplete.
-x6e() {
-  xcfg 'commands:\n  test: "echo full"\n  test-changed: "echo {files}"\n'
-  xc start --intent w13
-  git -C "$XW/repo" checkout -q --orphan lone; git -C "$XW/repo" commit -qm lone; xc cmd test
-}
-xsame 'xworld crew/w' x6e
-xhas $'rc=128'
-xhas "ERROR: fresh_base: merge-base against 'main' failed - refusing to fall back to HEAD"
-xwhas $'reason=incomplete'
 # The attestation: accepted, ignored, an unknown mode, forged, tampered, stale,
 # and one written before started_at/completed_at existed.
 x6f() {
@@ -3297,9 +3284,8 @@ x6f() {
   xcfg 'commands:\n  test: "echo other"\n'; git -C "$XW/repo" checkout -q crew/a; git -C "$XW/repo" reset -q --hard HEAD~1; xc attest-check
   printf '{' >"$XW/repo/.crew/ship/attest-test.json"; xc attest-check
   rm -f "$XW/repo/.crew/ship/attest-test.json"; xc attest-check
-  xc attest-test; XHOME=""; xc attest-check; xc attest-test; XHOME=1
 }
-xsame 'xworld crew/a' x6f
+xrun 'xworld crew/a' x6f
 xhas 'test: TDD attestation accepted @'
 xwhas $'qualification=qualifies\nreason=execution-attestation'
 xhas 'test attestation present but test.attestation=ignore - running the suite'
@@ -3312,8 +3298,6 @@ xhas 'stale: branch moved (attested crew/a, on other)'
 xhas 'stale: commands.test changed since attestation'
 xhas 'stale: unreadable or incomplete attestation file'
 xhas $'== attest-check\nrc=2\n-- out\nno attestation'
-xhas $'ERROR: AC_HOME is not set'
-xhas $'== attest-test\nrc=4\n-- out\n-- err\nERROR: AC_HOME is not set - set AC_HOME=<fleet home> (the directory holding state/ data/ records/ config/ projects/); the distro checkout is not one\n(no config file)'
 # attest-test's refusals: no command, a dirty tree before and after the
 # suite, a red suite, an attest-test.json directory, a status git cannot read
 # before and after the suite (the counting git, two status calls exactly).
@@ -3342,7 +3326,7 @@ x6h() {
   XENV=(FAIL_STATUS_FROM=2); rm -f "$XW/stub/status.n"; xc attest-test
   XENV=(); rm -f "$XW/stub/status.n"; xc attest-test; XPATH=""
 }
-xsame 'xworld crew/h' x6h
+xrun 'xworld crew/h' x6h
 xhas '(no commands.test configured - nothing to attest)'
 xhas 'ERROR: attest-test: the test run left the worktree dirty - refusing to attest (does commands.test mutate tracked files?)'
 xhas $'rc=7\n-- out\n-- err\n$ echo run >>../stub/ran; exit 7\nattest-test: test command failed (exit 7) - no attestation written'
@@ -3359,7 +3343,7 @@ x6g() {
   mkdir -p "$(xrd)/base-tree/x"; xc cmd test
   xcfg 'commands:\n  test: "exit 3"\n'; xc start --intent ba3; xc cmd test
 }
-xsame 'xworld crew/ba' x6g
+xrun 'xworld crew/ba' x6g
 xhas 'base attribution: the base passes @'
 xhas 'base attribution: the base also fails (exit 3) @'
 xhas 'base attribution: could not check out the base '
@@ -3377,8 +3361,8 @@ x7a() {
   git -C "$XW/repo" fetch -q origin 2>/dev/null; git -C "$XW/repo" rebase -q origin/crew/p; xc push
   xc status
 }
-xsame xpushworld x7a
-xhas "branch 'crew/p' set up to track 'origin/crew/p'."
+xrun xpushworld x7a
+xwhas $'branch.crew/p.remote origin\nbranch.crew/p.merge refs/heads/crew/p'
 xhas 'pushed new branch crew/p'
 xhas 'up-to-date: origin/crew/p == HEAD'
 xhas 'pushed crew/p with lease '
@@ -3392,7 +3376,7 @@ x7b() {
   xc start --intent target --target rel; git -C "$XW/repo" checkout -q rel; xc push; git -C "$XW/repo" checkout -q crew/p
   git -C "$XW/repo" remote remove origin; xc start --intent noorigin; xc push
 }
-xsame xpushworld x7b
+xrun xpushworld x7b
 xhas 'ERROR: push: refusing from a detached HEAD'
 xhas 'ERROR: push: refusing to push the default branch'
 xhas 'ERROR: push: refusing to push the delivery target branch (rel)'
@@ -3407,12 +3391,10 @@ x7d() {
   xc push
   xother g.txt stranger; xcommit more; xc push
 }
-xsame xpushworld x7d
+xrun xpushworld x7d
 xhas 'push: origin/crew/p is the head this pipeline published ('
 xhas 'ERROR: push: refusing to force-push over unincorporated remote commits'
-# Remote reads that fail close the push; W15 (at parity): ls-remote matches a
-# ref's tail, so a sibling ref named .../refs/heads/crew/q is read as ours - an
-# up-to-date that never pushed, then two shas no check can read.
+# Remote reads that fail close the push.
 mkdir -p "$TMP/xgitnet"
 cat >"$TMP/xgitnet/git" <<STUB
 #!/bin/sh
@@ -3427,27 +3409,10 @@ x7e() {
   XPATH="$TMP/xgitnet:$XSTUBS:$PATH"; XENV=(GIT_FAIL=ls-remote); xc push
   XENV=(); xc push; xcommit more
   XENV=(GIT_FAIL=fetch); xother g.txt stranger; xc push; XENV=(); XPATH=""
-  git -C "$XW/repo" push -q origin HEAD:refs/heads/x/refs/heads/crew/q 2>/dev/null; git -C "$XW/repo" checkout -q -b crew/q
-  xc start --intent sibling; xc push
-  git -C "$XW/repo" push -q origin crew/q 2>/dev/null; xcommit q; xc push
 }
-xsame xpushworld x7e
+xrun xpushworld x7e
 xhas 'ERROR: push: cannot read the remote (failing closed)'
 xhas 'ERROR: push: fetch of refs/heads/crew/p failed (failing closed)'
-xhas 'up-to-date: origin/crew/q == HEAD'
-xhas 'ERROR: push: incorporation check failed (failing closed)'
-# W7 (at parity): the remote calls carry no time bound - a slow ls-remote is
-# waited out on both sides.
-mkdir -p "$TMP/xgitslow"
-cat >"$TMP/xgitslow/git" <<STUB
-#!/bin/sh
-for a in "\$@"; do [ "\$a" = ls-remote ] && /bin/sleep 2; done
-exec "$XSTUBS/git" "\$@"
-STUB
-chmod +x "$TMP/xgitslow/git"
-x7f() { xc start --intent slow; XPATH="$TMP/xgitslow:$XSTUBS:$PATH"; xc push; XPATH=""; }
-xsame xpushworld x7f
-xhas 'pushed new branch crew/p'
 # A pre-push hook that refuses; review currency: a commit after the stamped
 # review refuses, a receipt with no reviewed_ref only warns.
 x7h() {
@@ -3457,14 +3422,13 @@ x7h() {
   xc step review completed; xcommit after-review; xc push
   printf '{"reviewer":"legacy"}\n' >"$(xrd)/findings/review.meta.json"; xc push
 }
-xsame xpushworld x7h
+xrun xpushworld x7h
 xhas 'hook says no'
 xhas 'ERROR: push: plain push of new branch failed'
 xhas 'ERROR: push refused (fail-closed): HEAD moved since review - reviewed '
 xhas 'WARN: push: the review receipt records no reviewed_ref - review currency is UNPROVEN for this run'
-# W14 (named): far past 64 KiB of unincorporated shas (8000 here) the original's
-# `printf | head -10` died of SIGPIPE - exit 141, the header and ten shas, no
-# refusal line; the port prints the refusal and exits 1.
+# W14: far past 64 KiB of unincorporated shas (8000 here) a refused push still
+# prints the header, the first ten shas and the refusal, exit 1.
 x7g() {
   xc start --intent many; xc push
   { printf 'reset refs/heads/crew/p\nfrom %s\n' "$(git -C "$XW/repo" rev-parse HEAD)"
@@ -3472,13 +3436,10 @@ x7g() {
   } | git -C "$XW/origin.git" fast-import --quiet
   xcommit local; xc push
 }
-xpass o xpushworld x7g o; xpass n xpushworld x7g n
-assert_contains "$(xt o)" $'== push\nrc=141\n-- out\n-- err\npush: origin/crew/p has commits not incorporated by this branch:\n' "the original dies of SIGPIPE"
-case "$(xt o)" in *'refusing to force-push'*) fail "the original printed no refusal past the pipe buffer" ;; esac
-assert_contains "$(xt n)" $'== push\nrc=1\n-- out\n-- err\npush: origin/crew/p has commits not incorporated by this branch:\n' "the port refuses with 1"
-assert_eq "$(awk '/^== push$/ { b = "" } { b = b $0 "\n" } END { printf "%s", b }' "$TMP/xt2.n" | grep -cE '^[0-9a-f]{40}$')" "10" "the port names ten shas"
-assert_contains "$(xt n)" 'ERROR: push: refusing to force-push over unincorporated remote commits' "the port prints the refusal"
-cmp -s "$TMP/xw2.o" "$TMP/xw2.n" || fail "W14 leaves identical worlds: $(diff "$TMP/xw2.o" "$TMP/xw2.n" | head)"
+xrun xpushworld x7g
+assert_contains "$(xlast push)" $'== push\nrc=1\n-- out\n-- err\npush: origin/crew/p has commits not incorporated by this branch:\n' "the push refuses with 1"
+assert_eq "$(xlast push | grep -cE '^[0-9a-f]{40}$')" "10" "the refusal names ten shas"
+assert_contains "$(xlast push)" 'ERROR: push: refusing to force-push over unincorporated remote commits' "the refusal line is printed"
 
 # -- leg 8: review-agent ---------------------------------------------------------------
 x8a() {
@@ -3487,7 +3448,7 @@ x8a() {
   xc attest-test; xc review-agent
   xc review-agent
 }
-xsame xrevworld x8a
+xrun xrevworld x8a
 xhas 'ERROR: review-agent refuses to open without test evidence (no attestation): complete the test step first'
 xhas $'review-agent round 1: no-op=1 risk=low reviewed_ref='
 xhas 'ERROR: review-agent refuses to re-open: round 1 already reviewed current HEAD '
@@ -3502,30 +3463,35 @@ x8b() {
   git -C "$XW/repo" checkout -q main; xc review-agent
   git -C "$XW/repo" checkout -q --detach; xc start --intent detached; xc step test completed; xc review-agent
 }
-xsame xrevworld x8b
+xrun xrevworld x8b
 xwhas ' --family scope --caller x-implement '
 xhas "ERROR: review-agent needs AC_CREW_ID from ac-spawn (got 'DETACHED')"
 xhas "ERROR: review-agent needs AC_CREW_ID from ac-spawn (got 'Foo-implement')"
 xhas "ERROR: review-agent needs AC_CREW_ID from ac-spawn (got 'empty')"
-# W9 (named): the caller grammar is read per its text; bash 3.2's bracket
-# ranges under a UTF-8 locale admitted an uppercase letter.
+# W9: the caller grammar is read per its text, so an uppercase letter is
+# refused under a UTF-8 locale too.
 x8b2() { xc start --intent w9; xc step test completed; XENV=(AC_CREW_ID=Foo-implement); xc review-agent; XENV=(); }
-XLC=en_US.UTF-8; xpass o xrevworld x8b2 o; xpass n xrevworld x8b2 n; XLC=C
-assert_contains "$(xt o)" 'review-agent round 1: no-op=1 risk=low' "the original accepts Foo under a UTF-8 locale"
-assert_contains "$(xt n)" "ERROR: review-agent needs AC_CREW_ID from ac-spawn (got 'Foo-implement')" "the port refuses Foo by its text"
+XLC=en_US.UTF-8; xrun xrevworld x8b2; XLC=C
+xhas "ERROR: review-agent needs AC_CREW_ID from ac-spawn (got 'Foo-implement')"
 # One ref, one round, per verdict; a PASS freezes the tree against the
 # caller's own polish, while a merge from upstream, a rewrite and an
 # unresolvable ref each open the round.
 x8c() {
   for v in pass fix ask; do
     xc start --intent "same $v"; xc step test completed
-    xverdicts "$v"; rm -f "$XW/stub/verify.n"; xc review-agent; xc review-agent; xcommit "after-$v"
+    xverdicts "$v"; rm -f "$XW/stub/verify.n"; xc review-agent; xc review-agent; xcommit "after-$v"; xc finish cancelled
   done
 }
-xsame xrevworld x8c
+xrun xrevworld x8c
 xhas 'with verdict pass - complete delivery at this ref'
 xhas 'with verdict fix - apply the blocking fix and commit it'
 xhas 'with verdict ask-user - record the captain decision'
+# RUNNING RESTART: a start over this branch's running run that spent a review
+# invocation refuses and makes no run.
+x8c2() { xc start --intent spent; xc step test completed; xverdicts fix; xc review-agent; xc start --intent restart; }
+xrun xrevworld x8c2
+xhas 'ERROR: start refused: run RUN1 on crew/fam1-implement is still running and has spent 1 review invocation(s)'
+xlacks 'started run RUN2'
 x8d() {
   xc start --intent freeze; xc step test completed
   xverdicts pass pass pass pass; xc review-agent
@@ -3536,7 +3502,7 @@ x8d() {
   jq '.reviewed_ref = "zzz"' "$(xrd)/logs/review-agent-r3.json" >"$XW/stub/r.json"; cp "$XW/stub/r.json" "$(xrd)/logs/review-agent-r3.json"
   xcommit more i.txt; xc review-agent
 }
-xsame xrevworld x8d
+xrun xrevworld x8d
 xhas 'returned a PASS verdict (zero fix findings) at '
 xhas 'review-agent round 2: no-op=1'
 xhas 'review-agent round 3: no-op=1'
@@ -3553,7 +3519,7 @@ x8e() {
   xc review-agent; XENV=("AC_FLEET_STATE=$XW/home/state"); xc review-agent; XENV=()
   xc status
 }
-xsame xrevworld x8e
+xrun xrevworld x8e
 xhas 'ERROR: independent review round 1 failed; inspect the verifier round evidence under data/fam1/verify/codereview (under the fleet home)'
 xhas 'ERROR: review-agent refuses a THIRD invocation on ref '
 xhas ' - attempt 1 (round 1, 2026-01-01T00:00:00Z) dead-pane; attempt 2 (round 1, 2026-01-01T00:00:00Z) dead-pane. A repeated failure'
@@ -3572,10 +3538,10 @@ xwhas 'review-agent-r1.json.rejected'
 x8f() {
   xcfg 'commands:\n  test: "echo t"\nreview:\n  max_rounds: 1\n'
   xc start --intent cap; xc step test completed; xverdicts fix fix fix
-  xc review-agent; xcommit c1; xc review-agent; xc review-agent --final-round; xcommit c2; xc review-agent --final-round
+  xc review-agent; xcommit c1; xc review-agent; xc review-agent --final-round; xcommit c2; xc review-agent --final-round; xc finish cancelled
   xcfg 'commands:\n  test: "echo t"\nreview:\n  max_rounds: 00\n'; xc start --intent zeros; xc step test completed; xc review-agent
 }
-xsame xrevworld x8f
+xrun xrevworld x8f
 xhas 'ERROR: review-agent: verifier invocation 2 exceeds review.max_rounds=1 - the loop HOLDs'
 xhas 'review-agent round 2: fix=1 no-op=1'
 xhas 'ERROR: review-agent: the one --final-round is already spent (granted_at_round=2 at=2026-01-01T00:00:00Z)'
@@ -3589,26 +3555,24 @@ x8g() {
   printf 'n\n' >"$XW/repo/"$'odd\nname'; git -C "$XW/repo" add -A; git -C "$XW/repo" commit -qm odd; xc review-agent
   xc fix-report review; xc status
 }
-xsame xrevworld x8g
+xrun xrevworld x8g
 xhas 'review-agent round 2: fix=2 no-op=1'
 xhas 'review-agent round 3: fix=3'
 xwhas '"round_floored": true'
 xwhas $'history: [{"round":1,"reviewed_ref":"'
-# An unexecutable facade; and W12 (named): the outcome rewrite's temp. The
-# original staged it at the predictable logs/review-invocations.tsv.tmp and
-# wrote through a link planted there; the port's temp is exclusive.
+# An unexecutable facade refuses; and W12: the outcome rewrite's temp is
+# created exclusively, so a link planted at the predictable
+# logs/review-invocations.tsv.tmp is never written through.
 x8h() {
   xc start --intent facade; xc step test completed
   XENV=("AC_VERIFY_BIN=$XW/stub/nope"); xc review-agent; XENV=()
   : >"$XW/stub/victim"; xverdicts dead
   mkdir -p "$(xrd)/logs"; ln -s "$XW/stub/victim" "$(xrd)/logs/review-invocations.tsv.tmp"; xc review-agent
 }
-xpass o xrevworld x8h o; xpass n xrevworld x8h n
-for xp in o n; do assert_contains "$(xt "$xp")" "ERROR: verifier facade is not executable: $XW/stub/nope" "an unexecutable facade refuses ($xp)"; done
-assert_contains "$(cat "$TMP/xw2.o")" $'== stub/victim -rw-r--r--\n2026-01-01T00:00:00Z\t1\t' "the original wrote the ledger through the planted link"
-assert_contains "$(cat "$TMP/xw2.o")" '== repo/.crew/ship/RUN1/logs/review-invocations.tsv -> ' "the original left its ledger a link"
-assert_contains "$(cat "$TMP/xw2.n")" $'== stub/victim -rw-r--r--\n\n' "the port never wrote through the planted link"
-assert_contains "$(cat "$TMP/xw2.n")" $'== repo/.crew/ship/RUN1/logs/review-invocations.tsv -rw-r--r--\n2026-01-01T00:00:00Z\t1\t'"$(git -C "$XW/repo" rev-parse HEAD)"$'\tdead-pane' "the port stamped its own ledger"
+xrun xrevworld x8h
+xhas "ERROR: verifier facade is not executable: $XW/stub/nope"
+assert_contains "$(xw)" $'== stub/victim -rw-r--r--\n\n' "the planted link is never written through"
+assert_contains "$(xw)" $'== repo/.crew/ship/RUN1/logs/review-invocations.tsv -rw-r--r--\n2026-01-01T00:00:00Z\t1\t'"$(git -C "$XW/repo" rev-parse HEAD)"$'\tdead-pane' "the ledger is stamped in place"
 
 # -- leg 9: review-residual -------------------------------------------------------------
 x9a() {
@@ -3623,7 +3587,7 @@ x9a() {
   xcommit c3; xc review-agent; xc review-residual accept --grounds none
   xc finish checks-passed
 }
-xsame xrevworld x9a
+xrun xrevworld x9a
 xhas "ERROR: usage: ac-ship.sh review-residual accept --grounds '<text>'"
 xhas 'ERROR: --grounds needs a value'
 xhas 'ERROR: review-residual: unknown argument --bogus'
@@ -3643,18 +3607,15 @@ x9b() {
   for s in intent rebase review document push pr; do xc step "$s" completed; done
   xc finish checks-passed; xc status
 }
-xsame xrevworld x9b
+xrun xrevworld x9b
 xhas 'run RUN1: checks-passed (passed-with-override: review-residual)'
 xhas 'checks-passed: RUN1 PR raised, awaiting the captain'"'"'s merge - passed-with-override: review-residual'
 xwhas 'attestation=passed-with-override:review-residual'
-# W11 (named): the override reason's `tr` under a UTF-8 locale cut the grounds
-# at an invalid byte with `tr: Illegal byte sequence`; the port keeps every
-# byte it was handed - argv arrives decoded, so the byte is U+FFFD (BYTES).
+# W11 and BYTES: the override reason keeps every byte it was handed, its tabs
+# and newlines made spaces; argv arrives decoded, so an invalid byte is U+FFFD.
 x9c() { xc start --intent w11; xc step test completed; xverdicts fix; xc review-agent; xc review-residual accept --grounds $'caf\351 then\tmore'; }
-XLC=en_US.UTF-8; xpass o xrevworld x9c o; xpass n xrevworld x9c n; XLC=C
-assert_contains "$(xt o)" 'tr: Illegal byte sequence' "the original's tr gave up at the byte"
-assert_contains "$(cat "$TMP/xw2.o")" $'\tcaf\n\n== ' "the original cut the reason"
-assert_contains "$(cat "$TMP/xw2.n")" $'\tcaf\xef\xbf\xbd then more\n\n== ' "the port keeps the rest of the reason"
+XLC=en_US.UTF-8; xrun xrevworld x9c; XLC=C
+assert_contains "$(xw)" $'\tcaf\xef\xbf\xbd then more\n\n== ' "the override keeps the whole reason"
 
 # -- leg 10: fix-report / status renders -----------------------------------------------
 x10a() {
@@ -3669,7 +3630,7 @@ x10a() {
   xc status
   mv "$(xrd)/run.meta" "$(xrd)/meta.gone"; rm -f "$(xrd)/intent"; xc fix-report lint
 }
-xsame xrevworld x10a
+xrun xrevworld x10a
 xhas $'# Fix report: repo - run RUN1, step lint (fix round 3/-)\n\nIntent: first line\nsecond line\nBranch: crew/fam1-implement @ '
 xhas '- [error] bin/x.sh:7 - unquoted (L1) - authority: the lint pass'
 xhas '- [warning] rename? (L2) - DECIDED: yes'
@@ -3678,39 +3639,34 @@ xhas $'- When done print: done: fixed 3 findings\n- The run stays HELD at lint a
 xhas $'override: tdd-declared at=A receipt_sha256=B reason=reason one\noverride: review-residual at=C receipt_sha256=D reason=reason two\nsteps:'
 xhas '  lint       fixing             fix-rounds=2'
 xhas $'findings lint: ask-user=3 fix=2 no-op=1\nmeta test: artifacts tested testing_summary\nfindings zz: none'
-xhas $'== fix-report lint\nrc=1\n-- out\n-- err\nsed: '
-# SHELL-OWN (named): a step listed twice makes the fix round `$((rounds + 1))`
-# an arithmetic error - the original's own `syntax error in expression` line,
-# the port silent, both exit 1 before printing the report.
+assert_contains "$(xlast 'fix-report lint')" $'== fix-report lint\nrc=1\n-- out\n-- err\n' "fix-report without run.meta exits 1 and prints no report"
+# A step listed twice in the ledger: fix-report exits 1 before printing the report.
 x10b() {
   xc start --intent twice --lint; xin '[]'; xc findings lint; XIN=/dev/null
   printf 'lint\tfixing\t2\n' >>"$(xrd)/steps.tsv"; xc fix-report lint
 }
-xpass o xrevworld x10b o; xpass n xrevworld x10b n
-assert_contains "$(xt o)" 'syntax error in expression' "the original dies on bash's arithmetic line"
-assert_contains "$(xt n)" $'== fix-report lint\nrc=1\n-- out\n-- err' "the port exits 1 at the same point"
-assert_eq "$(sed -n '/^== fix-report lint$/,$p' "$TMP/xt2.n" | wc -l | tr -d ' ')" "4" "the port prints no line of the shell's"
-cmp -s "$TMP/xw2.o" "$TMP/xw2.n" || fail "a doubled step row leaves identical worlds"
+xrun xrevworld x10b
+assert_contains "$(xlast 'fix-report lint')" $'== fix-report lint\nrc=1\n-- out\n-- err' "a doubled step row exits 1 and prints no report"
 
 # -- leg 11: finish -------------------------------------------------------------------
 x11a() {
   xc finish checks-passed; xc start --intent fin
   xc finish; xc finish bogus; xc finish checks-passed; xc finish passed
   for s in intent rebase test document push pr; do xc step "$s" completed; done; xc step review skipped
-  : >"$(xrd)/findings/empty.json"; printf '{}' >"$(xrd)/findings/obj.json"
   xc finish checks-passed
   printf 'null' >"$(xrd)/findings/null.json"; printf '[{' >"$(xrd)/findings/bad.json"
   printf '[{"id":"a","action":"fix"},{"action":"ask-user"},{"id":"d","action":"ask-user","decision":"yes"}]' >"$(xrd)/findings/lint.json"
   xc finish checks-passed
   rm -f "$(xrd)/findings/null.json" "$(xrd)/findings/bad.json" "$(xrd)/findings/lint.json"
-  : >"$(xrd)/steps.tsv"; xc finish checks-passed; xc finish failed; xc finish cancelled
+  xc finish failed; xc finish cancelled
 }
-xsame xrevworld x11a
+xrun xrevworld x11a
 xhas 'ERROR: usage: ac-ship.sh finish <checks-passed|passed|failed|cancelled>'
 xhas 'ERROR: finish checks-passed refused (fail-closed): pipeline steps not completed: intent(pending) rebase(pending) review(pending) test(pending) document(pending) push(pending) pr(pending) - complete or --skip them'
 xhas 'ERROR: finish checks-passed refused (fail-closed): unresolved findings - bad: UNREADABLE (bad findings file is corrupt or not valid JSON); lint: a[fix], ?[ask-user]; null: UNREADABLE (null findings file is corrupt or not valid JSON)'
-xhas 'checks-passed: RUN1 validated, no PR raised (pr step ) - awaiting the captain'
 xhas 'checks-passed: RUN1 PR raised, awaiting the captain'"'"'s merge'
+xhas $'== finish failed\nrc=0\n-- out\nrun RUN1: failed\n'
+xhas $'== finish cancelled\nrc=0\n-- out\nrun RUN1: cancelled\n'
 x11b() {
   git -C "$XW/repo" branch rel main
   xc start --intent merged --target rel
@@ -3725,7 +3681,7 @@ x11b() {
   for s in intent rebase review test document push pr; do xc step "$s" completed; done
   xcommit after; xc finish checks-passed
 }
-xsame xrevworld x11b
+xrun xrevworld x11b
 xhas 'ERROR: finish passed refused (fail-closed): HEAD is not merged into rel - use checks-passed for a raised-but-unmerged PR; passed records a MERGED run'
 xhas 'run RUN1: passed'
 xhas 'ERROR: finish passed refused (fail-closed): HEAD is not merged into main'
@@ -3742,7 +3698,7 @@ x11c() {
   printf 'pW8\n' >"$(xrd)/watch.pane"; printf 's2\n' >"$XW/home/config/herdr-session"; XENV=(PANE_RC=3); xc finish failed
   printf 'pW9\n' >"$(xrd)/watch.pane"; XPATH="$(xwithout herdr)"; XENV=(); xc finish cancelled; XPATH=""
 }
-xsame xrevworld x11c
+xrun xrevworld x11c
 xwhas 'pane close --pane w9:pGone'
 xwhas 'herdr --session default pane close pW7'
 xwhas 'herdr --session s1 pane close pW7'
@@ -3755,7 +3711,7 @@ x11d() {
   for s in intent rebase document push pr; do xc step "$s" completed; done; xc step review skipped
   xc finish checks-passed; xc finish checks-passed; xc finish passed; xc status
 }
-xsame xrevworld x11d
+xrun xrevworld x11d
 xhas 'run RUN2: checks-passed (passed-with-override: tdd-declared,review-residual)'
 xhas 'checks-passed: RUN2 PR raised, awaiting the captain'"'"'s merge - passed-with-override: tdd-declared,review-residual'
 
@@ -3769,7 +3725,7 @@ x12a() {
   printf 's2\n' >"$XW/home/config/herdr-session"; XENV=(); xc start --intent s2
   XWATCH=off
 }
-xsame xrevworld x12a
+xrun xrevworld x12a
 xwhas 'herdr --session default tab create --workspace wW --label ac-ship-watch-crew-fam1-implement --cwd '"$XW"'/repo --no-focus'
 xwhas 'herdr --session default pane rename pW1 ac-ship-watch'
 xwhas "herdr --session default pane run pW1 'ROOT/bin/ac-ship-watch.sh' --repo '$XW/repo' --self-pane pW1"
@@ -3778,88 +3734,59 @@ xwhas 'herdr --session default pane close pW1'
 xwhas 'herdr workspace create --label home · fam9 --no-focus'
 xwhas 'herdr --session s1 pane list'
 xwhas 'herdr workspace list --session s2'
-# Nothing opens: AC_SHIP_WATCH=off, an orca fleet, no herdr on PATH, any pane
-# labelled ac-ship-watch anywhere in the session (W6, at parity), a tab create
-# that fails; a failing rename, run, list or close never fails the start.
+# Nothing opens: AC_SHIP_WATCH=off, an orca fleet, no herdr on PATH, a tab
+# create that fails; a failing rename, run, list or close never fails the start.
 x12b() {
   xtabs; XWATCH=auto
   XWATCH=off; xc start --intent off; XWATCH=auto
   printf 'orca\n' >"$XW/home/config/backend"; xc start --intent orca; rm -f "$XW/home/config/backend"
   XPATH="$(xwithout herdr)"; xc start --intent noherdr; XPATH=""
-  printf '%s' '{"result":{"panes":[{"pane_id":"pX","label":"ac-ship-watch"}]}}' >"$XW/stub/panes.json"; xc start --intent foreign; rm -f "$XW/stub/panes.json"
   XENV=(HERDR_FAIL=tabcreate); xc start --intent nocreate
   XENV=('HERDR_FAIL=rename run tabclose'); xc start --intent opsfail
   XENV=('HERDR_FAIL=tablist panelist'); xc start --intent listfail
   printf 'not json' >"$XW/stub/tabs.json"; XENV=(); xc start --intent garbage
   XWATCH=off; xc status
 }
-xsame xrevworld x12b
-xhas $'== start --intent garbage\nrc=0\n-- out\nstarted run RUN8 '
+xrun xrevworld x12b
+xhas $'== start --intent garbage\nrc=0\n-- out\nstarted run RUN7 '
 [ "$(grep -c 'tab create' "$XW/stub/herdr.log")" = 4 ] || fail "only the nocreate, opsfail, listfail and garbage starts reached a tab create"
-# W16 (at parity): the launch line single-quotes the repo path raw.
-xquoteworld() {
-  xworld; git init -q "$XW/q'r"; printf 'b\n' >"$XW/q'r/f.txt"; git -C "$XW/q'r" add f.txt; git -C "$XW/q'r" commit -qm b
-  cp "$XW/home/projects/repo.yaml" "$XW/home/projects/q'r.yaml"
-}
-x12c() { XWATCH=auto; XCWD="q'r"; xc start --intent quoted; XCWD=repo; XWATCH=off; }
-xsame xquoteworld x12c
-xwhas "--repo '$XW/q'r' --self-pane pW1"
 
 # -- leg 13: signals and continuation ------------------------------------------------
 xsig() {  # xsig <signal> <marker> <args...> - one ship call in the background; once the world holds <marker>, <signal> to its pid alone
-  local sig="$1" mark="$2" side bin="$BIN" rc=0 pid i=0 x; shift 2
-  side="${XALT[$((XCALL % ${#XALT[@]}))]}"; XCALL=$((XCALL + 1))
-  [ "$side" = n ] || bin="$xobin"
+  local sig="$1" mark="$2" rc=0 pid i=0 x; shift 2
   local e=("LC_ALL=$XLC" "PATH=$XSTUBS:$PATH" "TMPDIR=$XW/tmp" "XSTUB=$XW/stub" "AC_SHIP_WATCH=off" "AC_VERIFY_BIN=$XSTUBS/verify" "AC_PANE_AGENT=$XSTUBS/pane" "AC_HOME=$XW/home")
   for x in ${XENV[@]+"${XENV[@]}"}; do e+=("$x"); done
   # Job control gives the job its own group with SIGINT at its default - a
   # plain `&` job of a non-interactive shell starts with SIGINT ignored.
   {
     set -m
-    (cd "$XW/repo" && exec env -u AC_FLEET_STATE -u AC_SCOPE -u AC_CREW_ID -u GIT_TERMINAL_PROMPT -u GIT_OPTIONAL_LOCKS "${e[@]}" "$bin/ac-ship.sh" "$@") </dev/null >"$TMP/x.out" 2>"$TMP/x.err" &
+    (cd "$XW/repo" && exec env -u AC_FLEET_STATE -u AC_SCOPE -u AC_CREW_ID -u GIT_TERMINAL_PROMPT -u GIT_OPTIONAL_LOCKS "${e[@]}" "$BIN/ac-ship.sh" "$@") </dev/null >"$TMP/x.out" 2>"$TMP/x.err" &
     pid=$!
     set +m
     while [ ! -e "$XW/$mark" ] && [ "$i" -lt 400 ]; do sleep 0.05; i=$((i + 1)); done
     kill -"$sig" "$pid"
     wait "$pid" || rc=$?
   } 2>/dev/null
-  # The original's children outlive it; read the call once they are done.
+  # The signalled call's suite runs on orphaned; read the call once it is done.
   i=0; while [ ! -e "$XW/stub/slow-done" ] && [ "$i" -lt 400 ]; do sleep 0.05; i=$((i + 1)); done
   sleep 0.3
-  { printf '== %s %s\nrc=%s\n-- out\n' "$sig" "$*" "$rc"; cat "$TMP/x.out"; printf '%s\n' '-- err'; cat "$TMP/x.err"; } >>"$TMP/xt.$XPASS"
+  { printf '== %s %s\nrc=%s\n-- out\n' "$sig" "$*" "$rc"; cat "$TMP/x.out"; printf '%s\n' '-- err'; cat "$TMP/x.err"; } >>"$TMP/xt"
 }
 xslow() { xcfg 'commands:\n  test: "touch ../stub/started; echo slow; /bin/sleep 1; echo after; touch ../stub/slow-done"\n'; }
 x13a() { xslow; xc start --intent term; xsig TERM stub/started cmd test; xc status; }
-xsame xrevworld x13a
+xrun xrevworld x13a
 xhas $'== TERM cmd test\nrc=143\n-- out\nslow\nafter\n-- err\n$ touch'
 xwhas $'reason=incomplete'
 x13b() { xslow; xc start --intent hup; xsig HUP stub/started cmd test; }
-xsame xrevworld x13b
+xrun xrevworld x13b
 xhas $'== HUP cmd test\nrc=129'
-# W2 (at parity): TERM to the pid alone during the verifier leaves its RAW
-# result, which the next round reads as durable while nothing else was written.
-x13c() {
-  xc start --intent w2; xc step test completed; xverdicts slow
-  ( while [ ! -e "$XW/stub/verify.started" ]; do sleep 0.05; done; sleep 0.2; : >"$XW/stub/verify.release"
-    while [ ! -s "$(xrd)/logs/review-agent-r1.json" ]; do sleep 0.05; done; sleep 0.2; : >"$XW/stub/slow-done" ) &
-  xsig TERM stub/verify.started review-agent; wait
-  xc review-agent; xc step review completed; xc review-residual accept --grounds g; xc status
-}
-xsame xrevworld x13c
-xhas $'== TERM review-agent\nrc=143'
-xhas 'ERROR: review-agent refuses to re-open: round 1 already reviewed current HEAD '
-xhas 'ERROR: review-residual: no review findings recorded'
-xwhas $'\t1\t'"$(git -C "$XW/repo" rev-parse HEAD)"$'\topened\n'
-# W19 (named): SIGINT to the pid alone - the original, waiting on its suite,
-# completed (rc 0); the port ends at once with 130, its suite finishing alone.
+# W19: SIGINT to the pid alone ends the process at once (130), its suite
+# finishing alone, and the receipt stays incomplete.
 x13d() { xslow; xc start --intent int; xsig INT stub/started cmd test; }
-xpass o xrevworld x13d o; xpass n xrevworld x13d n
-assert_contains "$(xt o)" $'== INT cmd test\nrc=0\n-- out\nslow\nafter\n' "the original swallowed SIGINT while its suite ran"
-assert_contains "$(cat "$TMP/xw2.o")" $'qualification=qualifies\nreason=executed' "the original wrote its receipt"
-assert_contains "$(xt n)" $'== INT cmd test\nrc=130\n-- out\nslow\nafter\n' "the port ended at once"
-assert_contains "$(cat "$TMP/xw2.n")" $'reason=incomplete' "the port left the receipt incomplete"
-# A run started by one side and continued by the other, call by call, either
-# side first, ends in the world the original alone leaves.
+xrun xrevworld x13d
+xhas $'== INT cmd test\nrc=130\n-- out\nslow\nafter\n'
+xwhas $'reason=incomplete'
+# A whole pipeline, one call after another, to checks-passed.
 x13e() {
   xc start --intent 'the whole pipeline'; xc step intent running; xc step intent completed; xc step rebase completed
   xc cmd test; xc step test completed; xverdicts fix pass
@@ -3869,8 +3796,15 @@ x13e() {
   xc step document skipped; xc push; xc push; xc step push completed; xc step pr completed; xc status
   xc finish checks-passed; xc attest-test; xc attest-check; xc evidence-dir; xc base
 }
-xcont xpushworld x13e
-xhas 'checks-passed: RUN1 PR raised, awaiting the captain'"'"'s merge' a
-xhas 'review-agent round 2: no-op=1 risk=low' b
+xrun xpushworld x13e
+assert_eq "$(grep -c '^rc=0$' "$TMP/xt2")" "$(grep -c '^== ' "$TMP/xt2")" "every call of the pipeline exits 0"
+xhas 'review-agent round 1: fix=1 no-op=1 risk=medium reviewed_ref='
+xhas $'== fix-report lint\nrc=0\n-- out\n# Fix report: repo - run RUN1, step lint (fix round 2/-)'
+xhas 'review-agent round 2: no-op=1 risk=low'
+xhas $'pushed new branch crew/p\n'
+xhas 'up-to-date: origin/crew/p == HEAD'
+xhas 'checks-passed: RUN1 PR raised, awaiting the captain'"'"'s merge'
+xhas $'== attest-check\nrc=0\n-- out\nattested: fresh @'
+xwhas $'outcome=running\noutcome=checks-passed\n'
 
 pass

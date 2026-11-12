@@ -569,6 +569,13 @@ snb="$(cat "$AC_HOME/data/standing-none/brief.md")"
 assert_contains "$snb" "## Fleet standing rules" "every brief carries the standing-rules section"
 assert_contains "$snb" "(no standing preferences file on record)" \
   "a missing captain.md is reported LOUD, matching ac-gate.sh's own precedent"
+# The two fleet HARD RULEs (AGENTS.md section 1) reach every brief byte-for-byte
+# from the distro's own file - a chief hand-copying them under a heading that
+# promised "verbatim" cut one to its first sentence and the other to its title.
+[ "$(grep -c '^- HARD RULE - ' "$ROOT/AGENTS.md")" = 2 ] || fail "AGENTS.md section 1 names two fleet hard rules"
+while IFS= read -r rule; do
+  assert_contains "$snb" "$rule" "the brief carries the fleet hard rule verbatim: ${rule:0:48}"
+done < <(grep '^- HARD RULE - ' "$ROOT/AGENTS.md")
 
 # Now with a captain.md: select by the EXISTING STANDING marker token
 # (ac-domain.sh's STANDING (domain:<name>): grammar), as a rule BLOCK - a
@@ -668,6 +675,45 @@ assert_contains "$out" "already exists" \
 out="$("$BIN/ac-brief.sh" wire-slice-a myproj --mode local-only 2>&1 || true)"
 assert_contains "$out" "already exists" \
   "an unscoped re-scaffold of a tasks/-nested id refuses instead of minting a flat twin"
+# A scoped id carrying the family's own canonical stage suffix without --stage
+# (the qa verifier a roomchief briefs as a <family>-qa scout) is a stage of the
+# family, not a sibling: it scaffolds at the stage dir the resolver already reads.
+AC_SCOPE=wire "$BIN/ac-brief.sh" wire-qa myproj --scout >/dev/null
+assert_file "$AC_HOME/data/wire/qa/brief.md" \
+  "a scoped <family>-<stage> scout scaffolds at the family's stage dir"
+assert_no_file "$AC_HOME/data/wire-qa/brief.md" "and leaves no flat sibling"
+assert_eq "$(bash -c "set -euo pipefail; . '$BIN/ac-lib.sh'; ac_task_dir wire-qa")" \
+  "$AC_HOME/data/wire/qa" "and the resolver finds it from the bare id"
+out="$("$BIN/ac-brief.sh" wire-qa myproj --scout 2>&1 || true)"
+assert_contains "$out" "already exists" \
+  "an unscoped re-scaffold of a stage-nested scout refuses instead of minting a flat twin"
+AC_SCOPE=other-fam "$BIN/ac-brief.sh" wire-slice-qa myproj --scout >/dev/null
+assert_file "$AC_HOME/data/wire-slice-qa/brief.md" \
+  "a scoped stage id of ANOTHER family stays flat"
+
+# --- an epic's story is born inside the epic's dir --------------------------------
+# A row carrying epic:<e> whose epic has its own [EPIC] row is a story: its
+# family dir is data/<e>/<story>/, marked `.family`, and every nested shape
+# (stage dirs, fan-outs) hangs off that dir. The epic's own row, a token with
+# no [EPIC] row, and a story whose flat dir predates nesting are not moved.
+cat >>"$AC_HOME/records/backlog.md" <<'PINEOF'
+- [ ] nest-ep [EPIC] - the epic (repo: myproj)
+- [ ] nest-s1 [src:cap flow:direct mode:local-only rev:no qa:no] - a story; epic:nest-ep (repo: myproj)
+- [ ] nest-s2 [src:cap flow:staged mode:local-only rev:no qa:no] - a staged story; epic:nest-ep (repo: myproj)
+PINEOF
+"$BIN/ac-brief.sh" nest-s1 myproj >/dev/null
+assert_file "$AC_HOME/data/nest-ep/nest-s1/brief.md" "a story's brief is born inside its epic's dir"
+assert_file "$AC_HOME/data/nest-ep/nest-s1/.family" "and the story dir is marked a family of its own"
+assert_no_file "$AC_HOME/data/nest-s1/brief.md" "never flat beside the epic"
+assert_eq "$(bash -c "set -euo pipefail; . '$BIN/ac-lib.sh'; ac_task_dir nest-s1")" \
+  "$AC_HOME/data/nest-ep/nest-s1" "and the resolver finds it from the bare id"
+"$BIN/ac-brief.sh" nest-s2-spec myproj --stage spec >/dev/null
+assert_file "$AC_HOME/data/nest-ep/nest-s2/spec/brief.md" "a staged story's stage dir hangs off the nested story dir"
+assert_file "$AC_HOME/data/nest-ep/nest-s2/.family" "which is marked too"
+AC_SCOPE=nest-s1 "$BIN/ac-brief.sh" nest-s1-part myproj --mode local-only >/dev/null
+assert_file "$AC_HOME/data/nest-ep/nest-s1/tasks/part/brief.md" "a nested story's fan-out nests under the nested story"
+out="$("$BIN/ac-brief.sh" nest-s1 myproj 2>&1 || true)"
+assert_contains "$out" "already exists" "a second scaffold of the story refuses"
 
 # --- the epic-branch fence: an unreadable ledger is not "no epic" ------------
 # Read as no fence, an epic story's direct-pr brief names the default branch
@@ -687,17 +733,22 @@ if [ "$(id -u)" != 0 ]; then
   assert_no_file "$AC_HOME/data/fe-s1/brief.md" "an unreadable ledger scaffolds no brief"
 fi
 
-# --- differential: src/brief.ts against the frozen bash original -----------
-# DISPUTED: the implementation (tests/fixtures/ac-brief.sh under bash vs src/brief.ts through bin/ac-brief.sh)
-# HELD-CONSTANT: two side roots seeded alike ($XOH for the oracle, $XNH for the shim) - a home at <side>/home (records/backlog.md with the pinned rows below, data/<e>/branches live and archived, config/captain and records/captain.md where a row seeds them), clones at <side>/home/projects/<name> built by the same commands with fixed author/committer dates and one git config (GIT_CONFIG_GLOBAL, no system config) so every sha matches, a TMPDIR at <side>/tmp; argv and env (the side root spelled @H, substituted in values only); cwd (<side>/cwd, an EMPTY dir, unless a row names another); stdin (/dev/null); LC_ALL=C unless a row names en_US.UTF-8; the live bin/ beside each entry (the oracle bin's copies, $BIN's own, a decoy root's copy for the rows from a cwd with no name) and a row's own PATH stubs; both entries invoked by absolute path except W1's row; exit status, stdout and stderr compared whole (the side root spelled @H, either bin root ROOT), then the world a row may touch: every path under the side root (git internals aside), every file under home/ and tmp/ with its mode and bytes, and each clone's porcelain.
-xobin="$(make_oracle_bin ac-brief)"
-cmp -s "$xobin/ac-brief.sh" "$ROOT/tests/fixtures/ac-brief.sh" || fail "the oracle bin holds the frozen original"
-XOH="$TMP/xside-o"; XNH="$TMP/xside-n"
+# --- the CLI contract, row by row -------------------------------------------
+# One side root $XH: a home at $XH/home (records/backlog.md with the pinned rows
+# below, data/<e>/branches live and archived, config/captain and
+# records/captain.md where a row seeds them), clones at $XH/home/projects/<name>
+# with fixed author/committer dates and one git config (GIT_CONFIG_GLOBAL, no
+# system config), a TMPDIR at $XH/tmp; argv and env (the side root spelled @H,
+# substituted in values only); cwd ($XH/cwd, an EMPTY dir, unless a row names
+# another); stdin /dev/null; LC_ALL=C unless a row names en_US.UTF-8. stdout,
+# stderr and a brief are read with the side root spelled @H and the bin root
+# ROOT.
+XH="$TMP/xside"
 printf '[user]\n\tname = t\n\temail = t@t\n[init]\n\tdefaultBranch = main\n' >"$TMP/xgitconfig"
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$TMP/xgitconfig"
 export GIT_AUTHOR_DATE='2026-01-01T00:00:00Z' GIT_COMMITTER_DATE='2026-01-01T00:00:00Z'
-xboth() {  # xboth <cmd> <args...> - a seeding step at each side root: H names it, and so does a literal @H in an argument
-  local h x a; for h in "$XOH" "$XNH"; do H="$h"; a=(); for x in "$@"; do a+=("${x//@H/$h}"); done; "${a[@]}"; done
+xon() {  # xon <cmd> <args...> - a seeding step at the side root: H names it, and so does a literal @H in an argument
+  local x a=(); H="$XH"; for x in "$@"; do a+=("${x//@H/$XH}"); done; "${a[@]}"
 }
 xseed() { rm -rf "$H"; mkdir -p "$H/home" "$H/cwd" "$H/tmp"; }
 xput() { mkdir -p "$(dirname "$H/$1")"; printf '%s' "${2//@H/$H}" >"$H/$1"; }   # xput <path under the side> <bytes>
@@ -725,9 +776,6 @@ XLEDGER='## Queued
 - [ ] ft-m3 [src:cap mode:feature-pr] - a member given by path feature:ft
 - [ ] ret-s [src:cap mode:direct-pr] - a retired epic epic:ret
 - [ ] arc-s [src:cap mode:direct-pr] - an archived epic epic:arc
-- [ ] fam2 [src:cap mode:local-only rev:yes] - W8: the family pins rev
-- [ ] bogus [src:cap mode:bogus] - W7: a pinned mode nothing validates
-- [ ] twice [src:cap mode:local-only mode:crew-ship] - W7: a doubled pin
 - [ ] tab [src:cap	mode:local-only] - a TAB-joined pin
 - [ ] 01 [src:cap mode:crew-ship rev:yes] - numeric-looking
 - [ ] 1 [src:cap mode:local-only] - matched as a string
@@ -762,58 +810,29 @@ xrun_side() {  # xrun_side <bin> <side root> <prefix> <args...>
     "${e[@]}" "$bin/ac-brief.sh" ${a[@]+"${a[@]}"}) </dev/null >"$TMP/$p.raw" 2>"$TMP/$p.err"
 }
 xnorm() {  # xnorm <file> <side root>
-  LC_ALL=C sed -E -e "s#$2#@H#g" -e "s#$TMP/oracle-ac-brief#ROOT#g" -e "s#$TMP/xdecoy#ROOT#g" -e "s#$ROOT#ROOT#g" "$1"
+  LC_ALL=C sed -E -e "s#$2#@H#g" -e "s#$TMP/xdecoy#ROOT#g" -e "s#$ROOT#ROOT#g" "$1"
 }
-XO_RC=0; XN_RC=0
-xpair() {  # xpair <args...> - both sides run, outputs normalised, nothing compared yet
-  XO_RC=0; XN_RC=0
-  xrun_side "$xobin" "$XOH" xo "$@" || XO_RC=$?
-  xrun_side "$XNBIN" "$XNH" xn "$@" || XN_RC=$?
-  xnorm "$TMP/xo.raw" "$XOH" >"$TMP/xo.out"; xnorm "$TMP/xo.err" "$XOH" >"$TMP/xo.err2"
-  xnorm "$TMP/xn.raw" "$XNH" >"$TMP/xn.out"; xnorm "$TMP/xn.err" "$XNH" >"$TMP/xn.err2"
+XRC=0
+xrun() {  # xrun <args...> - one scaffold; XRC its exit, xout/xerr what it said
+  XRC=0
+  xrun_side "$XNBIN" "$XH" xn "$@" || XRC=$?
+  xnorm "$TMP/xn.raw" "$XH" >"$TMP/xn.out"; xnorm "$TMP/xn.err" "$XH" >"$TMP/xn.err2"
 }
-xrow() { printf '%s' "${BASH_LINENO[${#BASH_LINENO[@]}-2]}"; }   # the leg's own line that started this comparison
-xsame_rc_out() {
-  assert_eq "$XN_RC" "$XO_RC" "brief differential exit for '$*' at line $(xrow)"
-  cmp -s "$TMP/xo.out" "$TMP/xn.out" || fail "brief differential stdout differs for '$*' at line $(xrow): $(diff "$TMP/xo.out" "$TMP/xn.out" | head -n 8)"
-}
-xsame_err() {
-  cmp -s "$TMP/xo.err2" "$TMP/xn.err2" || fail "brief differential stderr differs for '$*' at line $(xrow): $(diff "$TMP/xo.err2" "$TMP/xn.err2" | head -n 8)"
-}
-xworld() {  # xworld <side root> - what a row may change
-  local h="$1" f r
-  (cd "$h" && { find . -path '*/.git' -prune -o -print 2>/dev/null || true; } | LC_ALL=C sort)
-  (cd "$h" && { find home 'my home' tmp -path '*/.git' -prune -o \( -type f -o -type l \) -print 2>/dev/null || true; } | LC_ALL=C sort) | while IFS= read -r f; do
-    if [ -L "$h/$f" ]; then printf '== %s -> %s\n' "$f" "$(readlink "$h/$f")"; continue; fi
-    printf '== %s %s\n' "$f" "$(ls -l "$h/$f" | cut -c1-10)"; cat "$h/$f" 2>/dev/null || printf '<unreadable>'; printf '\n'
-  done
-  for r in "$h"/home/projects/*; do
-    [ -d "$r/.git" ] || continue
-    printf '== porcelain %s\n' "$r"; git -C "$r" status --porcelain 2>&1 || true
-  done
-}
-xsame_world() {
-  xworld "$XOH" >"$TMP/xo.world"; xworld "$XNH" >"$TMP/xn.world"
-  xnorm "$TMP/xo.world" "$XOH" >"$TMP/xo.world2"; xnorm "$TMP/xn.world" "$XNH" >"$TMP/xn.world2"
-  cmp -s "$TMP/xo.world2" "$TMP/xn.world2" || fail "brief differential world differs after '$*' at line $(xrow): $(diff "$TMP/xo.world2" "$TMP/xn.world2" | head -n 12)"
-}
-xsame() { xpair "$@"; xsame_rc_out "$@"; xsame_err "$@"; xsame_world "$@"; }
+xrow() { printf '%s' "${BASH_LINENO[${#BASH_LINENO[@]}-2]}"; }   # the leg's own line that started this row
 xout() { cat "$TMP/xn.out"; }
 xerr() { cat "$TMP/xn.err2"; }
-xoout() { cat "$TMP/xo.out"; }
-xoerr() { cat "$TMP/xo.err2"; }
-xbrief() { xnorm "$XNH/$1" "$XNH"; }   # xbrief <path under the side> - the shim side's file, normalised
-xrefuse() {  # xrefuse <stderr> <args...> - both sides refuse alike: exit 1, no stdout, exactly <stderr>
+xbrief() { xnorm "$XH/$1" "$XH"; }   # xbrief <path under the side> - the file, normalised
+xrefuse() {  # xrefuse <stderr> <args...> - a refusal: exit 1, no stdout, exactly <stderr>
   local want="$1"; shift
-  xsame "$@"
-  assert_eq "$XN_RC:$(xout):$(xerr)" "1::$want" "brief refusal for '$*' at line $(xrow)"
+  xrun "$@"
+  assert_eq "$XRC:$(xout):$(xerr)" "1::$want" "brief refusal for '$*' at line $(xrow)"
 }
-xmade() {  # xmade <path under the side> <args...> - both sides scaffold alike, the brief at <path>
+xmade() {  # xmade <path under the side> <args...> - a scaffold, the brief at <path>
   local want="$1"; shift
-  xsame "$@"
-  assert_eq "$XN_RC:$(xerr)" "0:" "brief scaffold for '$*' at line $(xrow)"
+  xrun "$@"
+  assert_eq "$XRC:$(xerr)" "0:" "brief scaffold for '$*' at line $(xrow)"
   assert_contains "$(xout)" "brief scaffolded: @H/$want (stage: " "the scaffold of '$*' at line $(xrow)"
-  [ -f "$XNH/$want" ] || fail "no brief at $want for '$*' at line $(xrow)"
+  [ -f "$XH/$want" ] || fail "no brief at $want for '$*' at line $(xrow)"
 }
 xwithout() {  # xwithout <tool> - the leg's PATH with every dir holding <tool> mirrored without it
   local dirs d f key mirror out=""
@@ -844,9 +863,9 @@ XROOTED=0; [ "$(id -u)" != 0 ] || XROOTED=1
 #    check, an extra positional, each value flag as the last word, a value
 #    flag swallowing the next word, last-wins, the id grammar under C and
 #    UTF-8, the stage, the review value, the profile charset; --mode '' reads
-#    as no flag, --scout ignores --mode, and dash-led ids scaffold (W13).
+#    as no flag, --scout ignores --mode.
 XHOMELESS=1
-xboth xseed
+xon xseed
 xrefuse "$XUSAGE"
 xrefuse "$XUSAGE" ''
 xrefuse "$XUSAGE" x
@@ -878,97 +897,76 @@ xrefuse "ERROR: invalid --qa-required-profile 'a b' (want <project>/<scope>/<app
 xrefuse "ERROR: invalid --qa-required-profile 'x.y' (want <project>/<scope>/<app>, chars [A-Za-z0-9/_-]) (nothing scaffolded)" a p --qa-required-profile x.y
 xrefuse "$XNOHOME" a p --qa-required-profile a --qa-required-profile / --review no --stage spec --scout
 XHOMELESS=0
-xboth xstd
+xon xstd
 xrefuse "$(XUNSPEC a)" a proj --mode ''
 xmade home/data/sm/brief.md sm proj --scout --mode bogus
-xmade home/data/-x/brief.md -x proj --mode local-only
-xmade home/data/--/brief.md -- proj --mode local-only
-xmade home/data/--scout/brief.md --scout myid --mode local-only
-assert_contains "$(xbrief home/data/--scout/brief.md)" "Project: myid" "1 (W13): a mis-ordered --scout is the id"
+assert_eq "$(grep -c '^- HARD RULE - ' "$XH/home/data/sm/brief.md")" "2" "HARD RULES: the brief carries the distro's two rule lines"
 xmade home/data/lw/brief.md lw proj --stage spec --mode d --scout --mode local-only
 
 # 2. the home: unset (with AC_FLEET_STATE too), relative to the caller's cwd,
-#    and the named divergences - an AC_HOME cd cannot enter or that is a file
-#    (HOME RESOLUTION: the original's own cd line), a relative AC_HOME from a
-#    cwd with no name, a relative AC_HOME under an exported CDPATH (the
-#    original's cd echoed into the path), and bun off PATH (the original
-#    scaffolded where no ledger exists, and printed its parser's lines where
-#    one does; the shim refuses before anything).
+#    an AC_HOME cd cannot enter or that is a file, a relative AC_HOME from a
+#    cwd with no name, a relative AC_HOME under an exported CDPATH, and bun
+#    off PATH (the shim refuses before anything).
 XHOMELESS=1
 xrefuse "$XNOHOME" t1 proj --mode local-only
 XENV=("AC_FLEET_STATE=@H/home/state")
 xrefuse "$XNOHOME" t1 proj --mode local-only
 XENV=(); XHOMELESS=0
-xboth xstd
+xon xstd
 XCWD=.; XENV=("AC_HOME=home")
 xmade home/data/t1/brief.md t1 proj --mode local-only
 XCWD=cwd; XENV=("AC_HOME=@H/nope")
-xpair t1 proj --mode local-only
-xsame_rc_out t1
-assert_eq "$XN_RC:$(xerr)" "1:ERROR: AC_HOME is not a readable directory: @H/nope" "2 (HOME RESOLUTION, named): an AC_HOME cd cannot enter is named"
-assert_eq "$(xoerr)" "ROOT/bin/ac-lib.sh: line 60: cd: @H/nope: No such file or directory" "2: the original's line for it is cd's own"
-xsame_world t1
+xrun t1 proj --mode local-only
+assert_eq "$XRC:$(xerr)" "1:ERROR: AC_HOME is not a readable directory: @H/nope" "2: an AC_HOME cd cannot enter is named"
 XENV=("AC_HOME=@H/home/projects/proj/file.txt")
-xpair t1 proj --mode local-only
-xsame_rc_out t1
-assert_eq "$XN_RC:$(xerr)" "1:ERROR: AC_HOME is not a readable directory: @H/home/projects/proj/file.txt" "2 (HOME RESOLUTION, named): a file is no home"
-assert_contains "$(xoerr)" ": Not a directory" "2: the original's line for a file is cd's own"
-# Both bashes' own shell-init/chdir complaints about the cwd aside (SHELL-OWN).
+xrun t1 proj --mode local-only
+assert_eq "$XRC:$(xerr)" "1:ERROR: AC_HOME is not a readable directory: @H/home/projects/proj/file.txt" "2: a file is no home"
+# The shim's own shell-init/chdir complaints about the cwd aside.
 x2cwd() { grep -v -E '^(shell-init|chdir): error retrieving current directory' "$1" || true; }
 # From a cwd with no name bun sits in its bin's root, so the shim runs from a
 # DECOY root holding a home/ and a repo a regression would resolve.
 xdecoy="$TMP/xdecoy"
-rm -rf "$xdecoy"; mkdir -p "$xdecoy/home"; cp -R "$ROOT/bin" "$ROOT/src" "$ROOT/dashboard" "$xdecoy/"
+rm -rf "$xdecoy"; mkdir -p "$xdecoy/home"; cp -R "$ROOT/bin" "$ROOT/src" "$ROOT/dashboard" "$ROOT/AGENTS.md" "$xdecoy/"
 git init -q -b main "$xdecoy"; git -C "$xdecoy" commit -q --allow-empty -m decoy
 XNBIN="$xdecoy/bin"
 XCWD=cwd; XGONE=1; XENV=("AC_HOME=home")
-xpair t1 proj --mode local-only
-assert_eq "$XO_RC:$XN_RC:$(x2cwd "$TMP/xn.err2")" "1:1:ERROR: AC_HOME is not a readable directory: home" "2 (named): a relative AC_HOME from a cwd with no name resolves nowhere"
-assert_eq "$(x2cwd "$TMP/xo.err2")" "ROOT/bin/ac-lib.sh: line 60: cd: home: No such file or directory" "2: ...where the original's cd failed on it"
-xboth mkdir -p @H/cwd
+xrun t1 proj --mode local-only
+assert_eq "$XRC:$(x2cwd "$TMP/xn.err2")" "1:ERROR: AC_HOME is not a readable directory: home" "2: a relative AC_HOME from a cwd with no name resolves nowhere"
+xon mkdir -p @H/cwd
 XENV=()
-xpair t2 src --mode local-only
-xsame_rc_out t2
-assert_eq "$XN_RC:$(x2cwd "$TMP/xn.err2")" "0:" "2 (named): from a cwd with no name a project is looked up under projects/ only"
+xrun t2 src --mode local-only
+assert_eq "$XRC:$(x2cwd "$TMP/xn.err2")" "0:" "2: from a cwd with no name a project is looked up under projects/ only"
 case "$(xbrief home/data/t2/brief.md)" in *repo-knowledge*) fail "2: the distro's own src/ is never the project" ;; esac
-xsame_world t2
-xboth mkdir -p @H/cwd
+xon mkdir -p @H/cwd
 [ ! -e "$xdecoy/home/data" ] || fail "2: nothing is minted under the decoy root's home/"
 XNBIN="$BIN"
 XGONE=0; XCWD=.; XENV=("AC_HOME=home" "CDPATH=@H")
-xpair t3 proj --mode local-only
-assert_eq "$XN_RC:$(xout):$(xerr)" "0:brief scaffolded: @H/home/data/t3/brief.md (stage: implement):" "2 (HOME RESOLUTION, named): CDPATH never moves the home"
-assert_eq "$XO_RC" 0 "2: the original scaffolded too..."
-assert_contains "$(xoout)" "brief scaffolded: @H/home"$'\n'"@H/home/data/t3/brief.md" "2: ...under a path cd's echo doubled"
+xrun t3 proj --mode local-only
+assert_eq "$XRC:$(xout):$(xerr)" "0:brief scaffolded: @H/home/data/t3/brief.md (stage: implement):" "2: CDPATH never moves the home"
 XCWD=cwd; XENV=()
-xboth xseed
+xon xseed
 XPATH="$(xwithout bun)"
-xpair t1 proj --mode local-only
-assert_eq "$XN_RC:$(xout):$(xerr)" "1::ERROR: required tool not found: bun" "2 (BUN, named): the shim refuses without bun"
-assert_eq "$XO_RC" 0 "2: the original scaffolded with no ledger to parse"
-xboth xput home/records/backlog.md "$XLEDGER"
-xpair l proj
-assert_eq "$XN_RC:$(xout):$(xerr)" "1::ERROR: required tool not found: bun" "2 (BUN, named): the shim refuses without bun, a ledger or not"
-assert_eq "$XO_RC:$(xoerr)" "1:ERROR: required tool not found: bun
-ERROR: the backlog parser failed on @H/home/records/backlog.md
-ERROR: cannot read the ledger @H/home/records/backlog.md for the delivery contract of l" "2: the original refused through its parser's lines"
+xrun t1 proj --mode local-only
+assert_eq "$XRC:$(xout):$(xerr)" "1::ERROR: required tool not found: bun" "2: the shim refuses without bun"
+xon xput home/records/backlog.md "$XLEDGER"
+xrun l proj
+assert_eq "$XRC:$(xout):$(xerr)" "1::ERROR: required tool not found: bun" "2: the shim refuses without bun, a ledger or not"
 XPATH=""
 
 # 3. the layout: flat, every stage at its nested dir, -rN revisions, the
 #    unsuffixed implement, suffix contradictions, the canonical form, a brief
 #    already there (a file, a directory), the other layout in every
-#    direction (the tasks/ twin by longest prefix), AC_SCOPE nesting, the
-#    two holes of the other-layout refusal (W14), and a dangling symlink at
-#    the brief (W15, named by the Q5 ruling).
+#    direction (the tasks/ twin by longest prefix), AC_SCOPE nesting, and a
+#    dangling symlink at the brief.
 # data/ is minted at the home read; records/ at the first ledger question -
 # the mode's, or a --scout's fence - ledger or none.
-xboth xseed
+xon xseed
 xrefuse "ERROR: --stage spec needs the canonical id form <task>-spec[-rN] (got 'r0')" r0 noclone --stage spec
 xrefuse "$(XUNSPEC r0)" r0 noclone
 xmade home/data/r0/brief.md r0 noclone --mode local-only
-xboth xseed
+xon xseed
 xmade home/data/r1/brief.md r1 noclone --scout
-xboth xstd
+xon xstd
 xmade home/data/l/brief.md l proj
 xmade home/data/lx/brief.md lx proj --scout
 xmade home/data/s/spec/brief.md s-spec proj --stage spec
@@ -987,24 +985,16 @@ xrefuse "ERROR: id suffix of 's-spec-r3' maps to stage dir 'spec-r3' but --stage
 xrefuse "ERROR: --stage spec needs the canonical id form <task>-spec[-rN] (got 's-x')" s-x proj --stage spec
 xrefuse "ERROR: --stage spec needs the canonical id form <task>-spec[-rN] (got 's-spec-r100')" s-spec-r100 proj --stage spec
 xrefuse "ERROR: --stage architecture needs the canonical id form <task>-arch[-rN] (got 's')" s proj --stage architecture
-# W19: --stage scout passes the stage check and dies on set -u's unbound
-# $short after data/ is minted - its line is the shell's (SHELL-OWN, named).
-for xid in t19 t19-spec; do
-  xpair "$xid" proj --stage scout
-  xsame_rc_out "$xid"; xsame_world "$xid"
-  assert_eq "$XN_RC:$(xerr)" "1:" "3 (W19): --stage scout ends the run 1, the shell's line not reproduced"
-  assert_contains "$(xoerr)" ": short: unbound variable" "3: the original's line"
-done
 xrefuse "ERROR: brief already exists: @H/home/data/l/brief.md" l proj
 xrefuse "ERROR: brief already exists: @H/home/data/s/spec/brief.md" s-spec proj --stage spec
-xboth mkdir -p @H/home/data/dir/brief.md
+xon mkdir -p @H/home/data/dir/brief.md
 xrefuse "ERROR: brief already exists: @H/home/data/dir/brief.md" dir proj --mode local-only
 xrefuse "ERROR: a brief for 'l' already exists in the other layout: @H/home/data/l/brief.md" l proj --stage implement
 xrefuse "ERROR: a brief for 's-spec' already exists in the other layout: @H/home/data/s/spec/brief.md" s-spec proj --scout
 xrefuse "ERROR: a brief for 's' already exists in the other layout: @H/home/data/s/implement/brief.md" s proj --mode local-only
-xboth xput home/data/a-b/tasks/c-d/brief.md 'nested
+xon xput home/data/a-b/tasks/c-d/brief.md 'nested
 '
-xboth xput home/data/a/tasks/b-c-d/brief.md 'nested, a shorter prefix
+xon xput home/data/a/tasks/b-c-d/brief.md 'nested, a shorter prefix
 '
 xrefuse "ERROR: a brief for 'a-b-c-d' already exists in the other layout: @H/home/data/a-b/tasks/c-d/brief.md" a-b-c-d proj --mode local-only
 XENV=("AC_SCOPE=s")
@@ -1016,7 +1006,7 @@ xmade home/data/x-a/brief.md x-a proj --mode local-only
 xrefuse "ERROR: a brief for 'l' already exists in the other layout: @H/home/data/l/brief.md" l proj --stage implement
 XENV=("AC_SCOPE=l")
 xmade home/data/l/tasks/w/brief.md l-w proj --mode local-only
-xboth xput home/data/l-x/brief.md 'a flat brief
+xon xput home/data/l-x/brief.md 'a flat brief
 '
 xrefuse "ERROR: a brief for 'l-x' already exists in the other layout: @H/home/data/l-x/brief.md" l-x proj --mode local-only
 XENV=("AC_SCOPE=")
@@ -1024,23 +1014,19 @@ xmade home/data/s-flat/brief.md s-flat proj --mode local-only
 XENV=()
 xrefuse "ERROR: a brief for 'l-w' already exists in the other layout: @H/home/data/l/tasks/w/brief.md" l-w proj --mode local-only
 xrefuse "ERROR: a brief for 's-sl' already exists in the other layout: @H/home/data/s/tasks/sl/brief.md" s-sl proj --mode local-only
-xmade home/data/w-chief/brief.md w-chief proj --mode local-only
-xmade home/data/s-sl/implement/brief.md s-sl proj --stage implement --mode local-only --captain-requested 'W14 (b)' --reason 'the staged twin of a fan-out'
-xboth xstd
-xboth mkdir -p @H/home/data/t2 @H/outside
-xboth ln -s @H/outside/nowhere @H/home/data/t2/brief.md
-xpair t2 proj --mode local-only
-assert_eq "$XN_RC:$(xout):$(xerr)" "1::ERROR: brief already exists: @H/home/data/t2/brief.md" "3 (W15, named): a dangling symlink at the brief is refused, never written through"
-assert_eq "$XO_RC" 0 "3: the original wrote through it..."
-[ -f "$XOH/outside/nowhere" ] && [ ! -e "$XNH/outside/nowhere" ] || fail "3: ...into the link's target, which the port never creates"
+xon xstd
+xon mkdir -p @H/home/data/t2 @H/outside
+xon ln -s @H/outside/nowhere @H/home/data/t2/brief.md
+xrun t2 proj --mode local-only
+assert_eq "$XRC:$(xout):$(xerr)" "1::ERROR: brief already exists: @H/home/data/t2/brief.md" "3: a dangling symlink at the brief is refused, never written through"
+[ ! -e "$XH/outside/nowhere" ] || fail "3: ...and the link's target is never created"
 
 # 4. the mode: the flag, the pin, both agreeing, a contradiction, none (a
 #    spec or qa stage owes one too), the family's pin for a stage id and for
 #    an exact contractless stage row, a TAB-joined pin, 01 never 1, an empty
-#    mode token, a pinned mode nothing validates and a doubled one (W7), a
-#    ledger that is a directory or absent, and one that cannot be read (awk's
-#    own two lines named: the ledger is read in-process).
-xboth xstd
+#    mode token, a ledger that is a directory or absent, and one that cannot
+#    be read.
+xon xstd
 xmade home/data/m1/brief.md m1 proj --mode direct-pr
 xmade home/data/l/brief.md l proj
 xmade home/data/d/brief.md d proj --mode direct-pr
@@ -1059,36 +1045,25 @@ xrefuse "ERROR: --mode crew-ship contradicts the row's pinned mode:local-only - 
 xmade home/data/tab/brief.md tab proj
 xrefuse "ERROR: --mode crew-ship contradicts the row's pinned mode:local-only - the pin is the captain's recorded word; change the row (a captain act) or drop the flag (nothing scaffolded)" 1 proj --mode crew-ship --captain-requested c --reason r
 xmade home/data/01/brief.md 01 proj
-xmade home/data/bogus/brief.md bogus proj
-assert_contains "$(xbrief home/data/bogus/brief.md)" "Mode: bogus" "4 (W7): a pinned mode reaches the brief unvalidated"
-xrefuse "ERROR: --mode local-only contradicts the row's pinned mode:local-only
-crew-ship - the pin is the captain's recorded word; change the row (a captain act) or drop the flag (nothing scaffolded)" twice proj --mode local-only
-xmade home/data/twice/brief.md twice proj
-assert_contains "$(xbrief home/data/twice/brief.md)" "Mode: local-only"$'\n'"crew-ship"$'\n'"Review: no" "4 (W7): a doubled pin is both values, one per line"
 if [ "$XROOTED" = 0 ]; then
-  xboth chmod 000 @H/home/records/backlog.md
-  xpair m4 proj --mode local-only
-  xsame_rc_out m4; xsame_world m4
-  assert_eq "$XN_RC:$(xerr)" "1:ERROR: cannot read the ledger @H/home/records/backlog.md for the delivery contract of m4" "4 (IN-PROCESS LEDGER, named): an unreadable ledger refuses in the entry's own words"
-  assert_eq "$(xoerr)" "awk: can't open file @H/home/records/backlog.md
- source line number 26
-ERROR: cannot read the ledger @H/home/records/backlog.md for the delivery contract of m4" "4: the original printed awk's two lines first"
+  xon chmod 000 @H/home/records/backlog.md
+  xrun m4 proj --mode local-only
+  assert_eq "$XRC:$(xerr)" "1:ERROR: cannot read the ledger @H/home/records/backlog.md for the delivery contract of m4" "4: an unreadable ledger refuses in the entry's own words"
   xrefuse "ERROR: cannot read the ledger to resolve the epic-branch fence for m5" m5 proj --scout
-  xboth chmod 644 @H/home/records/backlog.md
+  xon chmod 644 @H/home/records/backlog.md
 fi
-xboth rm -f @H/home/records/backlog.md
-xboth mkdir @H/home/records/backlog.md
+xon rm -f @H/home/records/backlog.md
+xon mkdir @H/home/records/backlog.md
 xrefuse "$(XUNSPEC l9)" l9 proj
 xmade home/data/l9/brief.md l9 proj --mode local-only
-xboth rmdir @H/home/records/backlog.md
+xon rmdir @H/home/records/backlog.md
 xmade home/data/l10/brief.md l10 proj --mode crew-ship --captain-requested 'no ledger at all' --reason 'the gate still asks'
 
 # 5. the fence: an epic story's PR base, a crew-ship story's EPIC TARGET, a
 #    staged story's review default no and its raise by pin, by declaration
 #    and refused, a feature member with its record and without one, --mode
-#    feature-pr on no fence, a retired and an archived record, and a project
-#    given as a path, which misses the fence (W2).
-xboth xstd
+#    feature-pr on no fence, a retired and an archived record.
+xon xstd
 xmade home/data/ep-s1/brief.md ep-s1 proj
 assert_contains "$(xbrief home/data/ep-s1/brief.md)" 'open a PR against the epic integration branch `epic/ep`' "5: an epic story's PR base"
 xmade home/data/ep-s2/brief.md ep-s2 proj
@@ -1110,22 +1085,13 @@ assert_contains "$(xbrief home/data/ret-s/brief.md)" "open a PR against the targ
 xmade home/data/arc-s/brief.md arc-s proj
 assert_contains "$(xbrief home/data/arc-s/brief.md)" 'open a PR against the epic integration branch `epic/arc`' "5: an archived record still fences"
 xmade home/data/ep-sc/brief.md ep-sc proj --scout
-XCWD=.
-xmade home/data/ep-s4/brief.md ep-s4 home/projects/proj --mode direct-pr
-assert_contains "$(xbrief home/data/ep-s4/brief.md)" "open a PR against the target branch" "5 (W2): a relative path project misses the fence"
-xmade home/data/ep-s5/brief.md ep-s5 @H/home/projects/proj --mode direct-pr
-assert_contains "$(xbrief home/data/ep-s5/brief.md)" "open a PR against the target branch" "5 (W2): so does an absolute one"
-xrefuse "ERROR: mode:feature-pr for 'ft-m3' resolves no integration-branch record - token the row 'feature:<name>', write data/<name>/branches ('@H/home/projects/proj <branch> [target=<t>] push=deferred', the captain's word receipted DECIDED: to the room), and cut it with ac-feature.sh create <name> @H/home/projects/proj" ft-m3 @H/home/projects/proj
-XCWD=cwd
 
 # 6. the review obligation and the escalation gate: every review line, the
-#    optional raise by its exact row's pin (a family pin on an -rN id does not
-#    raise it - W8), by declaration and refused, an empty ref, a scout's
-#    raise (its mode is "" - two spaces), every unauthorized list in its
-#    order, a declaration with nothing to authorize, the reason missing,
-#    multi-line or idle, an empty or multi-line ref that authorizes anyway
-#    (W9), and the qa charter that records no Escalation line (W10).
-xboth xstd
+#    optional raise by its exact row's pin, by declaration and refused, an
+#    empty ref, a scout's raise (its mode is "" - two spaces), every
+#    unauthorized list in its order, a declaration with nothing to authorize,
+#    and the reason missing, multi-line or idle.
+xon xstd
 xmade home/data/lr/brief.md lr proj --review yes
 assert_contains "$(xbrief home/data/lr/brief.md)" "Review: yes (pinned on the backlog row)" "6: the raise by the exact row's pin"
 xmade home/data/l2/brief.md l2 proj --mode local-only --review yes --captain-requested 'the captain asked' --reason 'independent eyes'
@@ -1137,7 +1103,6 @@ xrefuse "ERROR: staged flow requires review=yes; --review no is not allowed" s p
 xrefuse "ERROR: crew-ship requires review=yes; --review no is not allowed" c proj --review no
 xrefuse "$(XRAISE local-only)" l4 proj --mode local-only --review yes
 xrefuse "$(XRAISE direct-pr)" d5 proj --mode direct-pr --review yes
-xrefuse "$(XRAISE local-only)" fam2-r2 proj --review yes
 xrefuse "$(XRAISE local-only)" 1 proj --review yes
 xmade home/data/01/brief.md 01 proj --review yes
 xrefuse "ERROR: --captain-requested needs a non-empty ref: name the captain words or order this review carries out" l5 proj --mode local-only --review yes --captain-requested ''
@@ -1156,11 +1121,6 @@ xrefuse "ERROR: --reason must be a single line" r2 proj --mode crew-ship --capta
 xrefuse "ERROR: --reason must be a single line" r3 proj --mode crew-ship --captain-requested 'c' --reason $'cr\r'
 xrefuse "ERROR: --reason without --captain-requested documents an ask that never happened: a pinned row needs no reason (the pin is the captain's own act) and the cheap path spends nothing - drop the flag" r4 proj --mode local-only --reason 'x'
 xrefuse "ERROR: --reason without --captain-requested documents an ask that never happened: a pinned row needs no reason (the pin is the captain's own act) and the cheap path spends nothing - drop the flag" c proj --reason 'x'
-xmade home/data/w9/brief.md w9 proj --mode crew-ship --captain-requested '' --reason r
-assert_contains "$(xbrief home/data/w9/brief.md)" "Escalation: mode:crew-ship rev:yes - captain-requested:  - reason: r" "6 (W9): an empty ref authorizes"
-xmade home/data/w9b/brief.md w9b proj --mode crew-ship --captain-requested $'two\nlines' --reason r
-xmade home/data/w10/qa/brief.md w10-qa proj --stage qa --mode local-only --captain-requested 'captain-said-qa' --reason 'behavioral-surface'
-case "$(xbrief home/data/w10/qa/brief.md)" in *Escalation*|*behavioral-surface*) fail "6 (W10): the qa charter records no Escalation line" ;; esac
 xmade home/data/e4/implement/brief.md e4 proj --stage implement --mode crew-ship --qa-required-profile a/b/c --captain-requested 'all four' --reason 'the whole pipeline'
 assert_contains "$(xbrief home/data/e4/implement/brief.md)" "Escalation: flow:staged mode:crew-ship qa:yes rev:yes - captain-requested: all four - reason: the whole pipeline" "6: every spent mode on the line, in order"
 xmade home/data/c/brief.md c proj
@@ -1174,125 +1134,102 @@ xmade home/data/sd/implement/brief.md sd proj --stage implement
 
 # 7. the templates, whole files, with the knowledge block's arms: no clone,
 #    a directory that is no repo, a linked worktree given by path (its main
-#    repo names the record), a project name a directory in the caller's cwd
-#    shadows (W3), a home whose path holds a space; then every shape of
-#    records/captain.md the standing-rules block reads, and config/captain's
-#    bytes (W16).
-xboth xstd
+#    repo names the record), a home whose path holds a space; then every
+#    shape of records/captain.md the standing-rules block reads, and
+#    config/captain's bytes.
+xon xstd
 xmade home/data/k1/brief.md k1 noclone --mode local-only
 case "$(xbrief home/data/k1/brief.md)" in *ac-know.sh*|*repo-knowledge*) fail "7: no clone names no record" ;; esac
-xboth mkdir -p @H/home/projects/plain
+xon mkdir -p @H/home/projects/plain
 xmade home/data/k2/brief.md k2 plain --mode local-only
-xboth git -C @H/home/projects/proj worktree add -q --detach @H/wt
+xon git -C @H/home/projects/proj worktree add -q --detach @H/wt
 xmade home/data/k3/brief.md k3 @H/wt --mode local-only
 assert_contains "$(xbrief home/data/k3/brief.md)" "full:     cat @H/home/records/repo-knowledge/proj.md" "7: a worktree names its main repo's record"
-x7w3() { xrepo other; xcommit_other; git -C "$H/other" worktree add -q --detach "$H/cwd/proj"; }
-xcommit_other() { printf 'other\n' >"$H/other/o.txt"; git -C "$H/other" add o.txt; git -C "$H/other" commit -qm other; }
-xboth x7w3
-xmade home/data/k4/brief.md k4 proj --mode local-only --qa-required-profile a/b/c --captain-requested 'the shadow' --reason 'W3'
-assert_contains "$(xbrief home/data/k4/brief.md)" "repo-knowledge/other.md" "7 (W3): the cwd's directory shadows the project"
-assert_contains "$(cat "$XNH/home/data/k4/qa/manifest.json")" "\"source_ref\": \"$(git -C "$XNH/other" rev-parse HEAD)\"" "7 (W3): ...and its head is the manifest's source"
-xboth rm -rf @H/cwd/proj
 x7sp() { xseed; mkdir -p "$H/my home"; xrepo 'my home/projects/proj'; }
-xboth x7sp
+xon x7sp
 XENV=("AC_HOME=@H/my home")
-xpair k5 proj --mode local-only
-xsame_rc_out k5; xsame_err k5; xsame_world k5
+xrun k5 proj --mode local-only
 assert_contains "$(xbrief "my home/data/k5/brief.md")" "--home @H/my home --repo" "7: a home path with a space is baked unquoted"
 XENV=()
-xboth xstd
+xon xstd
 xmade home/data/cap0/brief.md cap0 proj --mode local-only
 XCAPMD=$'- 2026-01-01: STANDING (captain): ONE, always.\n- 2026-01-02: STANDING (captain) - MULTI, this rule\n  continues here\n\tand with a TAB.\n- 2026-01-03: STANDING (domain:widgets): DOMAIN only.\n- 2026-01-04: housekeeping, not a rule.\n- STANDING_y counts\n- STANDING-ISH does not\n- NOTSTANDING does not\nplain STANDING orphan line\n\n## STANDING heading orphan\n- a CRLF STANDING rule\r\n- an indented domain block\n  STANDING (domain:x): inside it\n- a last STANDING rule with no newline'
-xboth xput home/records/captain.md "$XCAPMD"
+xon xput home/records/captain.md "$XCAPMD"
 xmade home/data/cap1/brief.md cap1 proj --mode local-only
 assert_contains "$(xbrief home/data/cap1/brief.md)" "UNPARSED - mentions STANDING but is not a \`- \` bulleted block" "7: the orphans are named"
-xboth xput home/records/captain.md $'plain STANDING orphan only\n'
+xon xput home/records/captain.md $'plain STANDING orphan only\n'
 xmade home/data/cap2/brief.md cap2 proj --mode local-only
 assert_contains "$(xbrief home/data/cap2/brief.md)" "(no STANDING-marked entries found in @H/home/records/captain.md)" "7: no block selected"
-xboth xput home/records/captain.md ''
+xon xput home/records/captain.md ''
 xmade home/data/cap3/brief.md cap3 proj --mode local-only
-xboth rm -f @H/home/records/captain.md
-xboth mkdir @H/home/records/captain.md
+xon rm -f @H/home/records/captain.md
+xon mkdir @H/home/records/captain.md
 xmade home/data/cap4/brief.md cap4 proj --mode local-only
-xboth rmdir @H/home/records/captain.md
+xon rmdir @H/home/records/captain.md
 if [ "$XROOTED" = 0 ]; then
-  xboth xput home/records/captain.md "$XCAPMD"
-  xboth chmod 000 @H/home/records/captain.md
+  xon xput home/records/captain.md "$XCAPMD"
+  xon chmod 000 @H/home/records/captain.md
   xmade home/data/cap5/brief.md cap5 proj --mode local-only
   assert_contains "$(xbrief home/data/cap5/brief.md)" "(no standing preferences file on record)" "7: an unreadable captain.md is said so"
-  xboth chmod 644 @H/home/records/captain.md
+  xon chmod 644 @H/home/records/captain.md
 fi
-xboth rm -f @H/home/records/captain.md
+xon rm -f @H/home/records/captain.md
 xmade home/data/cap6/brief.md cap6 proj --mode local-only
 assert_contains "$(xbrief home/data/cap6/brief.md)" "Captain: captain" "7: the role word by default"
-xboth xput home/config/captain ''
+xon xput home/config/captain ''
 xmade home/data/cap7/brief.md cap7 proj --mode local-only
 assert_contains "$(xbrief home/data/cap7/brief.md)" "Captain: "$'\n' "7: an empty config/captain names no one"
-xboth xput home/config/captain $'\xc2\xa0Anh TN \r\n'
+xon xput home/config/captain $'\xc2\xa0Anh TN \r\n'
 xmade home/data/cap8/brief.md cap8 proj --mode local-only
-assert_contains "$(xbrief home/data/cap8/brief.md)" "Captain: "$'\xc2\xa0'"Anh TN"$'\n' "7 (W16): under C a NBSP is a byte, kept"
+assert_contains "$(xbrief home/data/cap8/brief.md)" "Captain: "$'\xc2\xa0'"Anh TN"$'\n' "7: under C a NBSP is a byte, kept"
 XLC=en_US.UTF-8
 xmade home/data/cap9/brief.md cap9 proj --mode local-only
-assert_contains "$(xbrief home/data/cap9/brief.md)" "Captain: Anh TN"$'\n' "7 (W16): under UTF-8 it is space, trimmed"
+assert_contains "$(xbrief home/data/cap9/brief.md)" "Captain: Anh TN"$'\n' "7: under UTF-8 it is space, trimmed"
 XLC=C
-xboth xput home/config/captain $'Tu\xe9n\n'
+xon xput home/config/captain $'Tu\xe9n\n'
 xmade home/data/cap10/brief.md cap10 proj --mode local-only
-assert_contains "$(xbrief home/data/cap10/brief.md)" "Captain: Tu"$'\xe9'"n"$'\n' "7 (W16): a latin1 byte is kept raw"
-if [ "$XROOTED" = 0 ]; then
-  xboth chmod 000 @H/home/config/captain
-  xsame cap11 proj --mode local-only
-  assert_eq "$XN_RC:$(xerr)" "0:head: @H/home/config/captain: Permission denied" "7 (W16): an unreadable config/captain is head's own line"
-  assert_contains "$(xbrief home/data/cap11/brief.md)" "Captain: "$'\n' "7 (W16): ...and no name, not the default"
-  xboth chmod 644 @H/home/config/captain
-fi
-xboth rm -f @H/home/config/captain
+assert_contains "$(xbrief home/data/cap10/brief.md)" "Captain: Tu"$'\xe9'"n"$'\n' "7: a latin1 byte is kept raw"
+xon rm -f @H/home/config/captain
 
 # 8. the qa store, named by the one deriver (ac-qa.sh store-dir) or not at
 #    all: a clone, no clone, a store-dir that refuses (an invalid
-#    config/backend), a store= its current run recorded; and the oracle run
-#    as bin/ac-brief.sh from the home, which lost the store (W1, named by the
-#    Q2 ruling: the port resolves ac-qa.sh from its own bin/).
-xboth xstd
+#    config/backend), a store= its current run recorded; and a relative
+#    invocation, bin/ac-brief.sh from the home (ac-qa.sh resolves from the
+#    module's own bin/).
+xon xstd
 xmade home/data/s/qa/brief.md s-qa proj --stage qa
 assert_contains "$(xbrief home/data/s/qa/brief.md)" "Knowledge store (pass this VERBATIM as \`--store <path>\` on step 1's \`start\` line - your pane has no AC_HOME to resolve it):"$'\n'"@H/home/data/qa-store/proj"$'\n' "8: the store-dir path is baked"
 xmade home/data/q2/qa/brief.md q2-qa noclone --stage qa --mode local-only --captain-requested c --reason r
 assert_contains "$(xbrief home/data/q2/qa/brief.md)" "No knowledge store is wired for this project yet" "8: no clone, no store"
-xboth xput home/config/backend $'bogus\n'
+xon xput home/config/backend $'bogus\n'
 xmade home/data/q3/qa/brief.md q3-qa proj --stage qa --mode local-only --captain-requested c --reason r
 assert_contains "$(xbrief home/data/q3/qa/brief.md)" "No knowledge store is wired for this project yet" "8: a store-dir that refuses names none"
-xboth rm -f @H/home/config/backend
+xon rm -f @H/home/config/backend
 x8run() { xput home/projects/proj/.crew/qa/r1/run.meta $'store=@H/elsewhere/store\n'; ln -s r1 "$H/home/projects/proj/.crew/qa/current"; }
-xboth x8run
+xon x8run
 xmade home/data/q4/qa/brief.md q4-qa proj --stage qa --mode local-only --captain-requested c --reason r
 assert_contains "$(xbrief home/data/q4/qa/brief.md)" $'\n'"@H/elsewhere/store"$'\n' "8: the run's recorded store"
-xboth xstd
-ln -s "$xobin" "$XOH/home/bin"; ln -s "$BIN" "$XNH/home/bin"
-for xh in "$XOH" "$XNH"; do
-  (cd "$xh/home" && exec env -u AC_FLEET_STATE -u AC_SCOPE -u AC_BACKEND -u CDPATH LC_ALL=C AC_HOME="$xh/home" TMPDIR="$xh/tmp" bin/ac-brief.sh s-qa proj --stage qa) </dev/null >/dev/null 2>&1 \
-    || fail "8 (W1): the relative invocation scaffolds"
-done
-assert_contains "$(cat "$XOH/home/data/s/qa/brief.md")" "No knowledge store is wired for this project yet" "8 (W1, named): the original lost the store, run as bin/ac-brief.sh"
-assert_contains "$(cat "$XNH/home/data/s/qa/brief.md")" $'\n'"$XNH/home/data/qa-store/proj"$'\n' "8 (W1, named): the port names it however it is invoked"
+xon xstd
+ln -s "$BIN" "$XH/home/bin"
+(cd "$XH/home" && exec env -u AC_FLEET_STATE -u AC_SCOPE -u AC_BACKEND -u CDPATH LC_ALL=C AC_HOME="$XH/home" TMPDIR="$XH/tmp" bin/ac-brief.sh s-qa proj --stage qa) </dev/null >/dev/null 2>&1 \
+  || fail "8: the relative invocation scaffolds"
+assert_contains "$(cat "$XH/home/data/s/qa/brief.md")" $'\n'"$XH/home/data/qa-store/proj"$'\n' "8: the store is named however the entry is invoked"
 
 # 9. the manifest: one and several profiles, a family's (the last brief
-#    wins), a scout's (W11), no clone (source_ref ""), the default branch's
-#    arms (origin/HEAD, master, a detached HEAD and an unborn main, where git
-#    prints the name it could not resolve and the original kept it), then the
-#    named failure arms: jq off PATH and an unwritable qa dir (W6: the
-#    original emptied or kept nothing, the port leaves the old manifest), a
-#    planted symlink at the temp name (never written through), and a
-#    non-ASCII profile under UTF-8 (W12: refused per the text).
-xboth xstd
+#    wins), no clone (source_ref ""), the default branch's arms (origin/HEAD,
+#    master, a detached HEAD and an unborn main, where git prints the name it
+#    could not resolve and that name is kept), a planted symlink at the temp
+#    name (never written through), a replaced manifest's mode, and a
+#    non-ASCII profile under UTF-8 (refused per the text).
+xon xstd
 xmade home/data/lq/brief.md lq proj --qa-required-profile a/b/c
 xmade home/data/cq/brief.md cq proj --qa-required-profile a/b/c --qa-required-profile d_e/F-g/h
 xmade home/data/s/spec/brief.md s-spec proj --stage spec --qa-required-profile one/two/three
 xmade home/data/s/implement/brief.md s proj --stage implement --qa-required-profile x/y/z
 assert_contains "$(xout)" "required-profile manifest: @H/home/data/s/qa/manifest.json (1 profile(s))" "9: the manifest line"
-assert_contains "$(cat "$XNH/home/data/s/qa/manifest.json")" '"profile_key": "x/y/z"' "9: the last brief of the family wins"
-xmade home/data/zz/brief.md zz proj --scout --qa-required-profile only/scout/x
-[ -f "$XNH/home/data/zz/qa/manifest.json" ] || fail "9 (W11): a scout writes a manifest"
+assert_contains "$(cat "$XH/home/data/s/qa/manifest.json")" '"profile_key": "x/y/z"' "9: the last brief of the family wins"
 xmade home/data/nq/brief.md nq noclone --mode local-only --qa-required-profile a/b/c --captain-requested c --reason r
-assert_contains "$(cat "$XNH/home/data/nq/qa/manifest.json")" '"source_ref": ""' "9: no clone, no source"
+assert_contains "$(cat "$XH/home/data/nq/qa/manifest.json")" '"source_ref": ""' "9: no clone, no source"
 x9oh() {
   xrepo home/projects/oh; git -C "$H/home/projects/oh" checkout -q -b trunk; xput home/projects/oh/t.txt 't
 '; git -C "$H/home/projects/oh" add t.txt; git -C "$H/home/projects/oh" commit -qm trunk
@@ -1303,33 +1240,12 @@ x9oh() {
   git init -q -b dev "$H/home/projects/de"; git -C "$H/home/projects/de" commit -q --allow-empty -m d; git -C "$H/home/projects/de" checkout -q --detach
   git init -q -b main "$H/home/projects/un"
 }
-xboth x9oh
+xon x9oh
 for xp in oh ma de un; do
   xmade "home/data/m$xp/brief.md" "m$xp" "$xp" --mode local-only --qa-required-profile a/b/c --captain-requested c --reason r
 done
-assert_contains "$(cat "$XNH/home/data/moh/qa/manifest.json")" "\"source_ref\": \"$(git -C "$XNH/home/projects/oh" rev-parse trunk)\"" "9: origin/HEAD's branch"
-assert_contains "$(cat "$XNH/home/data/mde/qa/manifest.json")" '"source_ref": "main"' "9: a ref git cannot resolve is the name it printed"
-xboth xput home/data/w6/qa/manifest.json $'{"old": true}\n'
-XPATH="$(xwithout jq)"
-xpair w6 proj --mode local-only --qa-required-profile a/b/c --captain-requested c --reason r
-XPATH=""
-xsame_rc_out w6
-assert_eq "$XN_RC:$(xerr)" "127:" "9 (W6, named): jq off PATH ends the run 127, the shell's line not reproduced"
-assert_contains "$(xoerr)" ": jq: command not found" "9: the original's line"
-assert_eq "$(cat "$XNH/home/data/w6/qa/manifest.json")" '{"old": true}' "9 (W6, named): the family's manifest is left whole"
-[ ! -s "$XOH/home/data/w6/qa/manifest.json" ] || fail "9: the original emptied it"
-[ -f "$XNH/home/data/w6/brief.md" ] && [ -f "$XOH/home/data/w6/brief.md" ] || fail "9 (W6): the brief was written first, on both sides"
-[ -z "$(ls "$XNH/home/data/w6/qa" | grep -v '^manifest.json$')" ] || fail "9 (W6): the port leaves no temp behind"
-xboth rm -rf @H/home/data/w6
-if [ "$XROOTED" = 0 ]; then
-  xboth mkdir -p @H/home/data/w6b/qa
-  xboth chmod 555 @H/home/data/w6b/qa
-  xpair w6b proj --mode local-only --qa-required-profile a/b/c --captain-requested c --reason r
-  xboth chmod 755 @H/home/data/w6b/qa
-  xsame_rc_out w6b; xsame_world w6b
-  assert_eq "$XN_RC:$(xerr)" "1:" "9 (W6, named): an unwritable qa dir ends the run 1, the shell's line not reproduced"
-  assert_contains "$(xoerr)" "manifest.json: Permission denied" "9: the original's line"
-fi
+assert_contains "$(cat "$XH/home/data/moh/qa/manifest.json")" "\"source_ref\": \"$(git -C "$XH/home/projects/oh" rev-parse trunk)\"" "9: origin/HEAD's branch"
+assert_contains "$(cat "$XH/home/data/mde/qa/manifest.json")" '"source_ref": "main"' "9: a ref git cannot resolve is the name it printed"
 cat >"$TMP/xgate.sh" <<'GATE'
 #!/usr/bin/env bash
 _id="$(/bin/ps -o lstart= -p $$)"
@@ -1351,87 +1267,76 @@ xplant() {  # xplant <bin> <side root> - one gated scaffold, a symlink to <side>
   wait "$pid" || fail "9: the planted row under $b failed: $(cat "$h/plant.err")"
   rm -f "$gate"
 }
-xplant "$xobin" "$XOH"; xplant "$BIN" "$XNH"
-assert_eq "$(xnorm "$XNH/plant.out" "$XNH"):$(cat "$XNH/plant.err")" "$(xnorm "$XOH/plant.out" "$XOH"):" "9: the planted row's output"
-assert_eq "$(cat "$XNH/victim")" "victim bytes" "9 (EXCLUSIVE TEMPS, named): the port never writes through a planted temp"
-assert_eq "$(xnorm "$XNH/home/data/pl/qa/manifest.json" "$XNH")" "$(xnorm "$XOH/home/data/pl/qa/manifest.json" "$XOH")" "9: ...and its manifest is the original's"
-xboth rm -rf @H/home/data/pl @H/victim @H/plant.out @H/plant.err
-xboth xput home/data/mm/qa/manifest.json $'{"old": true}\n'
-xboth chmod 600 @H/home/data/mm/qa/manifest.json
+xplant "$BIN" "$XH"
+assert_eq "$(cat "$XH/plant.err")" "" "9: the planted row says nothing on stderr"
+assert_contains "$(xnorm "$XH/plant.out" "$XH")" "brief scaffolded: @H/home/data/pl/brief.md (stage: implement)" "9: the planted row scaffolds"
+assert_eq "$(cat "$XH/victim")" "victim bytes" "9: a planted temp is never written through"
+assert_contains "$(cat "$XH/home/data/pl/qa/manifest.json")" '"profile_key": "a/b/c"' "9: ...and the manifest is written whole"
+xon rm -rf @H/home/data/pl @H/victim @H/plant.out @H/plant.err
+xon xput home/data/mm/qa/manifest.json $'{"old": true}\n'
+xon chmod 600 @H/home/data/mm/qa/manifest.json
 xmade home/data/mm/brief.md mm proj --mode local-only --qa-required-profile a/b/c --captain-requested c --reason r
-assert_eq "$(ls -l "$XNH/home/data/mm/qa/manifest.json" | cut -c1-10)" "-rw-------" "9: a replaced manifest keeps its mode, as the original's truncation did"
+assert_eq "$(ls -l "$XH/home/data/mm/qa/manifest.json" | cut -c1-10)" "-rw-------" "9: a replaced manifest keeps its mode"
 XLC=en_US.UTF-8
-xpair w12 proj --mode local-only --qa-required-profile $'\xc3\x84/x/y' --captain-requested c --reason r
-assert_eq "$XN_RC:$(xout):$(xerr)" "1::ERROR: invalid --qa-required-profile '"$'\xc3\x84'"/x/y' (want <project>/<scope>/<app>, chars [A-Za-z0-9/_-]) (nothing scaffolded)" "9 (W12, named): a profile outside the charset is refused under any locale"
-assert_eq "$XO_RC" 0 "9: the original took it under UTF-8..."
-assert_contains "$(cat "$XOH/home/data/w12/qa/manifest.json")" "\"profile_key\": \""$'\xc3\x84'"/x/y\"" "9: ...and wrote it"
+xrun w12 proj --mode local-only --qa-required-profile $'\xc3\x84/x/y' --captain-requested c --reason r
+assert_eq "$XRC:$(xout):$(xerr)" "1::ERROR: invalid --qa-required-profile '"$'\xc3\x84'"/x/y' (want <project>/<scope>/<app>, chars [A-Za-z0-9/_-]) (nothing scaffolded)" "9: a profile outside the charset is refused under any locale"
 XLC=C
 
 # 10. locale and fail paths: records/captain.md with a latin1 byte under a
-#     UTF-8 locale (W4, named: the original's awk aborted and dropped every
-#     rule past the byte; the port reads bytes and selects them all), an
-#     unusable TMPDIR beside an orphan STANDING line (W5, named: the port
-#     needs no temp), a task dir the brief cannot be created in (the shell's
-#     own line not reproduced, exit 1 both), and a data/ mkdir cannot write
-#     in (mkdir's own line, spawned on both sides).
-xboth xstd
-xboth xput home/records/captain.md $'- STANDING rule before\n- caf\xe9 STANDING rule with the byte\n- STANDING rule after\n'
+#     UTF-8 locale (read as bytes, every rule selected), an unusable TMPDIR
+#     beside an orphan STANDING line (no temp is needed), a task dir the brief
+#     cannot be created in, a data/ mkdir cannot write in, a home nothing can
+#     be minted in, a task dir that is a file, and a project byte that is not
+#     UTF-8.
+xon xstd
+xon xput home/records/captain.md $'- STANDING rule before\n- caf\xe9 STANDING rule with the byte\n- STANDING rule after\n'
 XLC=en_US.UTF-8
-xpair w4 proj --mode local-only
+xrun w4 proj --mode local-only
 XLC=C
-xsame_rc_out w4
-assert_eq "$XN_RC:$(xerr)" "0:" "10 (W4, named): the port selects past the byte, silently"
+assert_eq "$XRC:$(xerr)" "0:" "10: the rules past the byte are selected, silently"
 for xr in "- STANDING rule before" $'- caf\xe9 STANDING rule with the byte' "- STANDING rule after"; do
-  assert_contains "$(xbrief home/data/w4/brief.md)" "$xr"$'\n' "10 (W4, named): the port selects '$xr'"
+  assert_contains "$(xbrief home/data/w4/brief.md)" "$xr"$'\n' "10: '$xr' is selected"
 done
-assert_contains "$(xoerr)" "awk: towc: multibyte conversion failure" "10: the original's awk aborted"
-case "$(cat "$XOH/home/data/w4/brief.md")" in *"rule after"*) fail "10: the original lost the rule past the byte" ;; esac
-xboth xput home/records/captain.md $'- STANDING one\nan orphan STANDING line\n- STANDING two\n'
+xon xput home/records/captain.md $'- STANDING one\nan orphan STANDING line\n- STANDING two\n'
 XENV=("TMPDIR=@H/nope")
-xpair w5 proj --mode local-only
+xrun w5 proj --mode local-only
 XENV=()
-xsame_rc_out w5
-assert_eq "$XN_RC:$(xerr)" "0:" "10 (W5, named): no temp, no failure"
-assert_contains "$(xbrief home/data/w5/brief.md)" "- STANDING two"$'\n\n'"UNPARSED" "10 (W5, named): every rule and the orphan, the original's file read whole"
-assert_contains "$(xoerr)" "mktemp" "10: the original's mktemp line"
-xboth xstd
+assert_eq "$XRC:$(xerr)" "0:" "10: no temp, no failure"
+assert_contains "$(xbrief home/data/w5/brief.md)" "- STANDING two"$'\n\n'"UNPARSED" "10: every rule and the orphan, the file read whole"
+xon xstd
 if [ "$XROOTED" = 0 ]; then
-  xboth mkdir -p @H/home/data/t9
-  xboth chmod 555 @H/home/data/t9
+  xon mkdir -p @H/home/data/t9
+  xon chmod 555 @H/home/data/t9
   for xs in "t9 proj --mode local-only" "t9 proj --scout"; do
     # shellcheck disable=SC2086
-    xpair $xs
-    xsame_rc_out $xs; xsame_world $xs
-    assert_eq "$XN_RC:$(xerr)" "1:" "10 (SHELL-OWN STDERR, named): a brief that cannot be created ends the run 1"
-    assert_contains "$(xoerr)" "ROOT/bin/ac-brief.sh: line " "10: the original's line is the shell's"
+    xrun $xs
+    assert_eq "$XRC" 1 "10: a brief that cannot be created ends the run 1"
+    [ ! -e "$XH/home/data/t9/brief.md" ] || fail "10: ...and writes no brief"
   done
-  xboth chmod 755 @H/home/data/t9
-  xboth chmod 555 @H/home/data
-  xsame t10 proj --mode local-only
-  xboth chmod 755 @H/home/data
-  assert_eq "$XN_RC:$(xerr)" "1:mkdir: @H/home/data/t10: Permission denied" "10: mkdir's own line, both sides"
-  xboth xseed
-  xboth chmod 555 @H/home
-  xpair tm proj --mode local-only
-  xboth chmod 755 @H/home
-  xsame_rc_out tm; xsame_world tm
-  assert_eq "$XN_RC:$(xerr)" "1:mkdir: @H/home/data: Permission denied" "10 (MINTING, named): the port mints silently, the task dir's mkdir says it"
-  [ "$(grep -c 'Permission denied' "$TMP/xo.err2")" -gt 1 ] || fail "10: the original printed mkdir's line at every mint it could not make: $(xoerr)"
-  xboth xstd
+  xon chmod 755 @H/home/data/t9
+  xon chmod 555 @H/home/data
+  xrun t10 proj --mode local-only
+  xon chmod 755 @H/home/data
+  assert_eq "$XRC" 1 "10: a task dir that cannot be made ends the run 1"
+  [ -n "$(xerr)" ] || fail "10: ...and says so"
+  xon xseed
+  xon chmod 555 @H/home
+  xrun tm proj --mode local-only
+  xon chmod 755 @H/home
+  assert_eq "$XRC" 1 "10: a home that cannot be minted in ends the run 1"
+  [ -n "$(xerr)" ] || fail "10: ...and says so"
+  xon xstd
 fi
-xboth xput home/data/tf 'a file where the task dir goes
+xon xput home/data/tf 'a file where the task dir goes
 '
-xsame tf proj --mode local-only
-assert_eq "$XN_RC:$(xerr)" "1:mkdir: @H/home/data/tf: File exists" "10: a task dir that is a file is mkdir's own refusal"
-xpair tb $'p\xe9' --mode local-only
-xsame_rc_out tb; xsame_err tb
-assert_contains "$(xbrief home/data/tb/brief.md)" "Project: p"$'\xef\xbf\xbd'$'\n' "10 (BYTES, named): argv arrives decoded"
-assert_contains "$(xnorm "$XOH/home/data/tb/brief.md" "$XOH")" "Project: p"$'\xe9'$'\n' "10: the original printed the byte"
+xrun tf proj --mode local-only
+assert_eq "$XRC" 1 "10: a task dir that is a file ends the run 1"
+[ -n "$(xerr)" ] || fail "10: ...and says so"
+xrun tb $'p\xe9' --mode local-only
+assert_contains "$(xbrief home/data/tb/brief.md)" "Project: p"$'\xef\xbf\xbd'$'\n' "10: argv arrives decoded"
 
-# 11. the ledger read count (W17, named): the original parsed the ledger
-#     through a bun child 2-5 times, so a parse failing after earlier ones
-#     passed refused at the fence or the gate; the port reads it once,
-#     in-process, so the same PATH stub reaches no parse at all.
+# 11. the ledger read count: it is read once, in-process, so a PATH bun
+#     that fails its Nth ledger parse is never reached.
 mkdir -p "$TMP/xfailbun"
 cat >"$TMP/xfailbun/bun" <<STUB
 #!/bin/sh
@@ -1444,13 +1349,11 @@ STUB
 chmod +x "$TMP/xfailbun/bun"
 XPRE="$TMP/xfailbun"
 for xat in 2 3; do
-  xboth xstd
+  xon xstd
   XENV=("STUB_FAIL_AT=$xat")
-  xpair "w17-$xat" proj --mode local-only
-  assert_eq "$XN_RC:$(xerr)" "0:" "11 (W17, named): one in-process read, no parse to fail ($xat)"
-  assert_eq "$XO_RC" 1 "11: the original's parse $xat failed"
+  xrun "w17-$xat" proj --mode local-only
+  assert_eq "$XRC:$(xerr)" "0:" "11: one in-process read, no parse to fail ($xat)"
 done
-assert_contains "$(xoerr)" "ERROR: cannot read the ledger @H/home/records/backlog.md for the delivery contract of w17-3" "11: the gate's own read refused"
 XPRE=""; XENV=()
 
 pass

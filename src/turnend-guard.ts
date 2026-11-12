@@ -1,9 +1,8 @@
 // turnend-guard.ts - "no turn ends blind" turn-end predicate.
 // The entry is bin/ac-turnend-guard.sh, the fail-open hook shim that starts
 // this file through bin/ac-bun.sh's ac_bun_exec_hook; THIS header is the
-// authoritative spec, and the bash original it replaced stays frozen at
-// tests/fixtures/ac-turnend-guard.sh as the oracle the differential leg of
-// tests/sh/ac-turnend-guard.test.sh holds this module to.
+// authoritative spec, and tests/sh/ac-turnend-guard.test.sh is its contract
+// test.
 //
 // Wired as the claude Stop hook (.claude/settings.json) and carried to the
 // other primary harnesses by their own surfaces - .codex/hooks.json Stop,
@@ -119,7 +118,7 @@
 // instead of accepting it - posting `HANDBACK-REFUSED:` to the room, which
 // settles the obligation while the family stays open and the roomchief stays
 // alive to work the remedy. stop_hook_active already bounds repeated blocks.
-// The rooms are data/*/room.md in BYTE order, judged in ONE pass by
+// The rooms are every live family dir's room.md (familyDirs) in BYTE order, judged in ONE pass by
 // src/room.ts's rowsOf (the room grammar's one copy; a room set that cannot be
 // read whole owes nothing), so the cost of the one hook that always runs grows
 // with no per-room process; it runs at most once per turn end, its answer
@@ -165,13 +164,7 @@
 // status is the module's; anything else - a fault - is folded to 0 by the
 // shim, so a fault never holds a stop.
 //
-// A BROKEN PORT. The frozen original needs bash, jq and its bin/ siblings
-// (ac-lib.sh, ac-backend.sh, ac-wake-lib.sh, ac-ready.sh): copying
-// tests/fixtures/ac-turnend-guard.sh over bin/ac-turnend-guard.sh in the
-// checkout the fleets run (every wiring names that path) restores it whole
-// until the fix lands; the captain's revert of the land is the last resort.
-//
-// AT PARITY (each pinned in the leg until its own fix lands):
+// AT PARITY with the bash original (each until its own fix lands):
 // - a home that is a SUBDIRECTORY of a git checkout reads as a linked worktree
 //   - the bare `rev-parse --git-dir` answers absolute where `--git-common-dir`
 //   answers relative - so the guard is inert there;
@@ -186,29 +179,17 @@
 // - AC_STOPHOOK_LOG_KEEP naming a variable ends the guard at its first trace
 //   (set -u), so no block ever holds.
 //
-// DIVERGENCES from the original (the leg names each one a row can show):
-// - BUN: with no bun on PATH the shim allows at once, saying nothing; a
-//   module that cannot load or crashes allows too - never a held stop.
-// - STATUS FOLD: wherever the original died with a status of its own (set -u
-//   on an age a broken date(1) left unset), the shim answers 0.
-// - KEEP ARITHMETIC: an AC_STOPHOOK_LOG_KEEP `$(( ))` cannot read (`2x`) made
-//   the original abandon each whole top-level statement around a trace, so a
-//   queued-wake or HANDBACK block lost its exit 2 and an idle fleet fell
-//   through to the stale-watcher line with 0 crew in flight; the port skips
-//   the trim and judges as with any keep.
-// - SHELL-OWN STDERR: `[`'s `integer expression expected` for an
-//   AC_GUARD_GRACE that is no integer, and a missing tool's `command not
-//   found`, are not reproduced; the verdicts are the original's.
-// - ORDER: the rooms are judged and named in byte order, where the original's
-//   glob followed the locale's collation.
-// - HOME RESOLUTION: an AC_HOME whose name ends in LF is the directory it
-//   names, and a relative one is entered without CDPATH; a caller whose cwd
-//   Bun cannot enter resolves no relative AC_HOME (inert).
-// - EXCLUSIVE TEMPS: the trace trim and the landing baseline write through
-//   <file>.tmp.<pid> created exclusively, where the original wrote through
-//   whatever sat at its `.tmp.$$` name.
-// - BYTES: an id or family byte that is not UTF-8 reaches grep and the
-//   filesystem as U+FFFD.
+// ALSO: with no bun on PATH the shim allows at once, saying so in one stderr
+// line; a module that cannot load or crashes allows too, with one stderr line
+// - never a held stop. An AC_STOPHOOK_LOG_KEEP the arithmetic cannot read
+// (`2x`) only skips the trim: the fleet is judged as with any keep. An
+// AC_GUARD_GRACE that is no integer reads every beacon fresh, nothing on
+// stderr. The rooms are judged and named in byte order. An AC_HOME whose name
+// ends in LF is the directory it names, and a relative one is entered without
+// CDPATH; a caller whose cwd Bun cannot enter resolves no relative AC_HOME
+// (inert). The trace trim and the landing baseline write through
+// <file>.tmp.<pid> created exclusively. An id or family byte that is not
+// UTF-8 reaches grep and the filesystem as U+FFFD.
 //
 // CALLERS: the Stop wiring of .claude/settings.json and .codex/hooks.json;
 // bin/ac-turnend-guard-cursor.sh (AC_TURNEND_GUARD_BIN for its tests);
@@ -217,13 +198,14 @@
 // status and stderr; tests/sh/ac-watch.test.sh drives it for the watcher's
 // beacon. Its trace is read by chiefs and incident reviews.
 
-import { closeSync, constants, accessSync, lstatSync, readdirSync, statSync, writeSync } from "node:fs";
+import { closeSync, constants, accessSync, lstatSync, statSync, writeSync } from "node:fs";
 import {
   commandV,
   crewMetas,
   dataDir,
   enterCaller,
   exclusiveTemp,
+  familyDirs,
   familyOfId,
   hookCapture,
   hookPayload,
@@ -412,8 +394,10 @@ const ageField = (): string => (age === null || beatNote !== "" ? "n/a" : `${age
 const trace = (verdict: string, reason: string, queued: string, inflightField: string): void =>
   traceLine(`verdict=${verdict} reason=${reason} scope=${scope || "fleet"} queued=${queued} inflight=${inflightField} age=${ageField()} handback=${hbField()}`);
 
-// data/*/room.md in byte order; [] when there is no data dir or the first
-// match is no regular file (the original tested `[ -f "$1" ]` alone).
+// Every family dir's room.md in byte order - data/*/ as the original globbed
+// it, plus a story's marked dir inside its epic's (familyDirs); [] when there
+// is no data dir or the first match is no regular file (the original tested
+// `[ -f "$1" ]` alone).
 function rooms(): string[] | null {
   let data: string;
   try {
@@ -421,15 +405,11 @@ function rooms(): string[] | null {
   } catch {
     return null;
   }
-  let names: string[] = [];
-  try {
-    names = readdirSync(data);
-  } catch {}
   const out: string[] = [];
-  for (const n of names.filter((n) => !n.startsWith(".")).sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)))) {
+  for (const dir of familyDirs(data)) {
     try {
-      lstatSync(`${data}/${n}/room.md`);
-      out.push(`${data}/${n}/room.md`);
+      lstatSync(`${dir}/room.md`);
+      out.push(`${dir}/room.md`);
     } catch {}
   }
   return out;

@@ -2,8 +2,7 @@
 // bash helpers it twins: rowContractForId over ledgerRead
 // (ac_row_contract_for_id), epicBaseFor over a ledger already read
 // (ac_epic_base_for), knowledgeFile (ac_knowledge_file) and captainRead
-// (ac_captain). The CLI contract itself is tests/sh/ac-brief.test.sh's, whose
-// differential leg runs the frozen original beside the shim.
+// (ac_captain). The CLI contract itself is tests/sh/ac-brief.test.sh's.
 //
 // DISPUTED: the implementation of each helper (the bash vs src/lib.ts)
 // HELD-CONSTANT: one side root per side and row seeded alike (a home at <side>/home with state/ records/ data/ config/, repos at <side>/<name> built by the same git commands with fixed dates); argv; env (PATH = the host's bun, git and jq, /bin and /usr/bin without herdr, orca, docker or codegraph; LC_ALL=C unless a row names UTF-8; HOME, TMPDIR, AC_HOME unless homeless); cwd (the distro root, so the bash's AC_DONELINE_AWK and the twin start the one src/backlog.ts); stdin (/dev/null); stdout, stderr and the status compared whole (the side root spelled S), then the home's tree.

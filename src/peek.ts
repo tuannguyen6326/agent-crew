@@ -1,9 +1,8 @@
 // peek.ts - a bounded tail of a crewmate's pane, every line prefixed so a
 // reprinted captain marker cannot read as a fresh one. The entry is
 // bin/ac-peek.sh (a shim that starts this file through bin/ac-bun.sh); THIS
-// header is the authoritative spec, and the bash original it replaced stays
-// frozen at tests/fixtures/ac-peek.sh as the oracle the differential leg of
-// tests/sh/ac-peek.test.sh holds this module to.
+// header is the authoritative spec, and tests/sh/ac-peek.test.sh its contract
+// test.
 //
 // Usage: ac-peek.sh <id> [<lines>]   (default 40 lines)
 // <lines> absent or "" is 40; arguments past it are never read (W10); there
@@ -76,21 +75,17 @@
 // failing stage's status (128+n when a signal ended it, 141 at a closed
 // reader).
 //
-// DIVERGENCES from the original, named in the differential leg:
-// - A DRIVER THAT FAILED TO LOAD: the original's liveness call returned
-//   bash's 127, the BACKEND line; the port's verbs are native and have no
-//   driver to lose.
-// - BUN ABSENT from PATH: the original's guard (a bun shim) printed `ERROR:
-//   required tool not found: bun` and the peek went on; the port's own shim
-//   prints that line and exits 1.
+// ALSO:
+// - The backend verbs are native: there is no driver to fail to load.
+// - BUN ABSENT from PATH: the shim prints `ERROR: required tool not found:
+//   bun` and exits 1.
 // - Bytes: argv arrives decoded, so an id or <lines> byte that is not UTF-8
-//   is U+FFFD in a path, a child's argv and a refusal, where the original
-//   kept the byte; so is such a byte of the meta's backend= in AC_BACKEND.
-// - The HOME RESOLUTION ruling: an AC_HOME that cannot be entered names the
-//   variable (`ERROR: AC_HOME is not a readable directory: <h>`) where the
-//   shell printed cd's own line; exit and stdout alike.
-// - Shell-own stderr is not reproduced (`command not found`, a guard path
-//   that is a directory).
+//   is U+FFFD in a path, a child's argv and a refusal; so is such a byte of
+//   the meta's backend= in AC_BACKEND.
+// - An AC_HOME that cannot be entered names the variable (`ERROR: AC_HOME is
+//   not a readable directory: <h>`).
+// - Nothing is printed for a filter that is not on PATH or a guard path that
+//   is a directory.
 //
 // CALLERS: no script runs this entry; chiefs run it by hand (the
 // harness-operations, task-lifecycle, stuck-crewmate-recovery and bearings

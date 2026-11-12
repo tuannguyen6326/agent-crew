@@ -1,9 +1,7 @@
 // verify.ts - synchronous exact-ref independent verification facade. The
 // entry is bin/ac-verify.sh (a shim that starts this file through
-// bin/ac-bun.sh); THIS header is the authoritative spec, and the bash
-// original it replaced stays frozen at tests/fixtures/ac-verify.sh as the
-// oracle the differential leg of tests/sh/ac-verify.test.sh holds this
-// module to.
+// bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-verify.test.sh is its contract test.
 //
 // Usage:
 //   ac-verify.sh codereview --repo DIR --ref REF --family ID --caller ID
@@ -44,9 +42,12 @@
 // CLAUDE.local.md / AGENTS.md in any letter case, at any depth, tracked or
 // untracked - the diff under review can edit the very files the harness loads
 // as identity before the prompt speaks; a path the walk yields outside the
-// lease is refused before any write) and restores their pre-round bytes before
-// the lease is released, on every exit path, so no stub rides a pooled slot
-// into its next lessee, and runs one ac-pane-agent turn synchronously. A valid
+// lease is refused before any write; for a qa round, the stubbed paths and
+// the exact stub bytes are also recorded at <lease>/.crew/qa/neutralized-* so
+// ac-qa's own dirty-tree check, running inside this same lease mid-round, can
+// exempt exactly its own pending stubs) and restores their pre-round bytes
+// before the lease is released, on every exit path, so no stub rides a pooled
+// slot into its next lessee, and runs one ac-pane-agent turn synchronously. A valid
 // result is durably captured before pane/meta/tree cleanup. A REJECTED verdict
 // (the pane completed and its round evidence is durable, only the output
 // failed the schema) releases those same runtime resources - the pane, the
@@ -221,26 +222,8 @@
 // `ERROR:` line; a failed child's own status where the original's errexit
 // ended on it; 128+n on a signal.
 //
-// ESCAPE HATCH. A broken verifier blocks every slice review of the solo
-// session, every crew-ship review step and every qa round, the fix slice's
-// included - so until this module lands every review runs main's bash entry,
-// and after it the frozen original runs from a scratch bin/ at a physical
-// path:
-//   o=$(cd "$(mktemp -d)" && pwd -P); mkdir "$o/bin"; cp bin/*.sh "$o/bin/"
-//   ln -s "$PWD/src" "$o/src"; ln -s "$PWD/dashboard" "$o/dashboard"
-//   cp tests/fixtures/ac-verify.sh "$o/bin/ac-verify.sh"
-//   cp tests/fixtures/ac-qa-lib.sh tests/fixtures/ac-pipeline-lib.sh "$o/bin/"
-// then "$o/bin/ac-verify.sh" codereview --repo <slot> --ref HEAD --family
-// <slice> --caller <slice> --base <base> --intent <intent> --output <out> by
-// hand, and AC_VERIFY_BIN="$o/bin/ac-verify.sh" for ship's review step and
-// ac-qa. The copy drives its own ac-tree and ac-dispatch-select shims (over the
-// live src/), ac-pane-agent.sh and ac-qa.sh (AC_VERIFY_TREE_BIN,
-// AC_VERIFY_PANE_BIN, AC_VERIFY_DISPATCH_BIN and AC_VERIFY_QA_RELAY_BIN still
-// override each), bakes its path only into a round's transient scout scripts,
-// and writes the same meta, round and output formats, so either side reaps
-// the other's leftovers. The captain's revert of the land is the last resort.
-//
-// AT PARITY (each pinned in the leg until its own fix lands; W2 and W3 first):
+// AT PARITY with the bash original, and deliberately left unasserted by the
+// contract test (each until its own fix lands; W2 and W3 first):
 // - W2: a signal or death in the start window leaves the lease leased, its
 //   instruction files stubbed with their backup in the round dir, and the pane
 //   agent running its turn unharvested.
@@ -260,58 +243,46 @@
 //   error report says `exit 129` and `exit 0` alike, and `exit 130` for a ^C
 //   that ended a foreground child with no background job running.
 //
-// DIVERGENCES from the original (the leg names each one a row can show):
+// ALSO:
 // - W8 GRAMMARS AND ORDER: --family, --caller and --owner are read per their
-//   text ([a-z0-9-] bytes) under any locale, where bash's brackets under a
-//   UTF-8 locale let `BAD` and `café` through; the evidence block's named
-//   artifacts are in byte order, where `sort -u` used the caller's collation.
+//   text ([a-z0-9-] bytes) under any locale, so `BAD` and `café` are refused
+//   under a UTF-8 locale too; the evidence block's named artifacts are in
+//   byte order under any locale.
 // - W13 EXCLUSIVE TEMPS: the meta, the pane handle, the lane ledger and the
 //   relay report land through temps created exclusively (<name>.tmp.<pid>,
-//   then .<n> past a name taken), where the original wrote `.tmp.$$` through
-//   whatever was planted there.
-// - W14 SIGINT exits 130 where bash's interrupted `wait` exited 129 (the exit
-//   cleanup still reads 129, as W12 says); and an INT the caller's shell left
-//   ignored (a background job) still ends the run with the cleanup, where bash
-//   ran on.
-// - THE HARVESTER is in process: a death the cleanup cannot see (an uncatchable
-//   one, or an exit before the meta) ends it with the run, where the bash's
-//   background subshell polled on to its budget; so no `ac-verify.sh codereview`
-//   process outlives a refusal for a process listing to find.
+//   then .<n> past a name taken), never through whatever was planted there.
+// - W14 SIGINT exits 130 (the exit cleanup still reads 129, as W12 says); and
+//   an INT the caller's shell left ignored (a background job) still ends the
+//   run with the cleanup.
+// - THE HARVESTER is in process: a death the cleanup cannot see (an
+//   uncatchable one, or an exit before the meta) ends it with the run, so no
+//   `ac-verify.sh codereview` process outlives a refusal for a process
+//   listing to find.
 // - SIGNAL TIMING: outside the awaited waits a signal is acted on at the next
 //   checkpoint, after the synchronous child in flight (a git, cp, find or tree
-//   call) returns. Bash ran its exit at once on a TERM or HUP and left that
-//   child running; on an INT it waited for the child and ran on unless the
-//   child died of it too, so an INT sent to this process alone there ends the
-//   round 130 where bash completed it - only the two foreground sleeps hold it
-//   as bash did. An INT bash took between two statements or inside a `$(...)`
-//   ended its run 130 with the EXIT trap reading the last status (0); the port
-//   cannot tell those instants from a child's, so its trap reads 130 there and
-//   the start window's `date` read is treated like that window's sleep. A ^C
-//   in a synchronous child while the harvester still runs read 0 in bash's
-//   trap (a background job of its own running); the port's reads 130.
+//   call) returns, so an INT sent to this process alone there ends the round
+//   130 - only the two foreground sleeps hold it. An INT between two steps
+//   cannot be told from one inside a child, so the trap reads 130 there and
+//   the start window's `date` read is treated like that window's sleep; a ^C
+//   in a synchronous child while the harvester still runs reads 130 too.
 // - A ^C TO THE GROUP ends the pane agent, the correction pane and the scout
-//   lanes with the round, where bash's background jobs ignored the INT and ran
-//   on - the pane publishing its handle and finishing its turn unharvested.
+//   lanes with the round.
 // - HOME RESOLUTION: --repo, AC_FLEET_STATE and --output's directory resolve
 //   without CDPATH, and a --repo cd cannot enter refuses without the shell's
 //   own cd line.
-// - SHELL-OWN STDERR is not reproduced, the status kept: a redirect that
-//   cannot write, `[`'s integer complaint once a second under W9, and a scout
-//   resolver that cannot start (whose line the WARN quoted).
+// - SHELL-OWN STDERR is not printed, the status kept: a redirect that cannot
+//   write, and a scout resolver that cannot start.
 // - A BACKEND FLIPPED MID-RUN: config/backend turned invalid by the pane-phase
 //   cleanup reads as an unreadable pane (the fallback line written, the
-//   cleanup going on), where the original's capture route exited 1 inside its
-//   exit trap.
-// - LOCK GRACE: a pid-less lock's age is read from the clock, where the
-//   original spawned `date +%s`.
+//   cleanup going on).
+// - LOCK GRACE: a pid-less lock's age is read from the clock.
 // - A SPACED DISTRO ROOT: the default pane agent path is one argument to
-//   reap-pane, where bash word-split the unquoted $pane_bin there.
+//   reap-pane.
 // - BYTES: argv arrives decoded, so a path byte that is no UTF-8 reaches the
 //   files and the children as U+FFFD; qa_path_within refuses such a path as
 //   the bun child it replaces could not name it.
 // - BUN: without bun the shim refuses `ERROR: required tool not found: bun`
-//   before usage, where the original reached the lease (herdr) or reviewed
-//   with the judge alone after a scout-resolver WARN.
+//   before usage.
 //
 // CALLERS: the solo session and crewmates by hand (crew-verify, crew-qa,
 // delivery-review skills; the brief's printed direct-review line); src/ship.ts
@@ -329,18 +300,14 @@ import { closeSync, lstatSync, openSync, readdirSync, readFileSync, rmSync, stat
 import {
   STARTED_BIN,
   arithValue,
-  backendCapturePane,
   backendName,
   backendRoute,
-  chiefBusyHold,
-  chiefBusyLeave,
   chiefBusyPath,
   crewBranch,
   die,
   enterCaller,
   exclusiveTemp,
   findingsNormalize,
-  harnessPaneArm,
   iso,
   lockAcquire,
   lockRelease,
@@ -349,9 +316,7 @@ import {
   orcaWorktreeLease,
   orcaWorktreeRelease,
   physicalDir,
-  qaAttestationParse,
   repoRoot,
-  roomReviewRulings,
   shellStatus,
   spawnShell,
   spawnShellSync,
@@ -360,12 +325,12 @@ import {
   taskDir,
   testInt,
   transcriptFinal,
-  transcriptFinalEpoch,
-  verdictJson,
   warn,
   windowFamily,
   writeAll,
 } from "./lib.ts";
+import { qaAttestationParse } from "./lib-qa-gate.ts";
+import { backendCapturePane, chiefBusyHold, chiefBusyLeave, harnessPaneArm, roomReviewRulings, transcriptFinalEpoch, verdictJson } from "./lib-verify.ts";
 import { within } from "./paths.ts";
 import {
   qaBoundaryReceiptValidate,
@@ -1929,9 +1894,25 @@ fix delta touches.`;
     }
     writeOrExit(`${S.ctxBackup}/manifest`, `${neutralized}\t${f}\0`, "a");
   }
+  const stubContent = `${NEUTRALIZED_MARK} project instruction files must not steer the independent verifier. True content: git show ${sha}:<path>\n`;
   for (const f of walk) {
     if (isLink(f)) must(["rm", "-f", f]);
-    writeOrExit(f, `${NEUTRALIZED_MARK} project instruction files must not steer the independent verifier. True content: git show ${sha}:<path>\n`);
+    writeOrExit(f, stubContent);
+  }
+
+  // QA_NEUTRALIZED_EXEMPTION: ac-qa's own assertTargetCheckout runs INSIDE
+  // this same lease mid-round (start/finish), and would otherwise refuse
+  // these stubs as a dirty tracked file. .crew/qa is the pool's own
+  // lease-lifetime home (tree.ts sweeps it only at the NEXT lease, never
+  // mid-round), so recording exactly which paths were stubbed - and the
+  // exact bytes - there lets that check recognize its own pending
+  // verification without trusting any file that merely looks neutralized.
+  if (kind === "qa" && neutralized > 0) {
+    const qaDir = `${lease}/.crew/qa`;
+    if (run(["mkdir", "-p", qaDir]).status === 0) {
+      writeOrExit(`${qaDir}/neutralized-stub`, stubContent);
+      writeOrExit(`${qaDir}/neutralized-manifest`, walk.map((f) => `${f}\0`).join(""));
+    }
   }
 
   // A qa --profile with an e2e block leases a SECOND worktree at the frozen

@@ -220,18 +220,41 @@ assert_contains "$(jq -r .systemMessage <<<"$out")" "early-chief" "a lowered min
 for _ in 1 2 3 4 5 6 7 8 9 10; do grep -q 'early-chief:' "$sendlog" 2>/dev/null && break; sleep 0.5; done
 rm -f "$AC_HOME/config/compact-auto-min"
 
+# 10d. --auto <id>, the watcher's form for a crewmate (src/watch.ts COMPACT
+#      NOTE): at or above the minimum under compact-auto=on the line reads
+#      compact=auto and /compact is typed with NO idle wait - the watcher's
+#      ended: arm has already stamped the pane captain-wait, which herdr reads
+#      blocked for as long as the stamp stands. Anything short of that keeps
+#      the hint and sends nothing.
+mk_chief cm-ship s-20 pC4 tC4
+printf 'backend=herdr\nkind=ship\nsession_id=s-20\n' >"$AC_HOME/state/cm-ship.meta"
+printf 'blocked\n' >"$FAKE_HERDR/panes/pC4.status"
+: >"$AC_HOME/state/.captain-wait-cm-ship"
+resp 0.96 0.9
+AC_COMPACT_SEND_WAIT=0 "$ADV" --send cm-ship >>"$sendlog" 2>&1 || fail "--send must exit 0"
+assert_contains "$(tail -n 1 "$sendlog")" "cm-ship: not idle" "the waiting sender never reaches a stamped pane"
+out="$("$ADV" "$mid" --role crew --auto cm-ship 2>/dev/null)"
+assert_eq "$out" "compact=advise score=0.912 floor=0.775 usage=0.35" "under the auto minimum a crewmate keeps the hint"
+out="$("$ADV" "$tx" --role crew --auto cm-ship 2>/dev/null)"
+assert_eq "$out" "compact=auto score=0.912 floor=0.575 usage=0.75" "at the minimum the line says the fleet sends /compact itself"
+for _ in 1 2 3 4 5 6 7 8 9 10; do grep -q 'cm-ship: sent' "$sendlog" 2>/dev/null && break; sleep 0.5; done
+assert_contains "$(cat "$FAKE_HERDR/panes/pC4.buf")" "/compact" "the stamped crewmate pane receives /compact"
+rm -f "$AC_HOME/config/compact-auto"
+out="$("$ADV" "$tx" --role crew --auto cm-ship 2>/dev/null)"
+assert_eq "$out" "compact=advise score=0.912 floor=0.575 usage=0.75" "without compact-auto --auto is only the hint"
+sleep 1
+assert_eq "$(grep -c 'cm-ship: sent' "$sendlog")" "1" "one send in all: the under-minimum and the knob-off calls sent nothing"
+
 # 9. Wiring: the claude Stop hooks include the adviser.
 case "$(jq -r '[.hooks.Stop[].hooks[].command] | .[]' "$ROOT/.claude/settings.json")" in
   *ac-compact-advise.sh*) ;;
   *) fail "claude Stop wiring misses ac-compact-advise.sh" ;;
 esac
 
-# --- differential: src/compact-advise.ts against the frozen bash original ----
-# DISPUTED: the implementation (tests/fixtures/ac-compact-advise.sh under bash vs src/compact-advise.ts through bin/ac-compact-advise.sh)
-# HELD-CONSTANT: each row's home, copied whole for each side, and its cwd (the side's own home where a row says HOME); argv; the stdin bytes; the transcripts; the fake curl's canned answer and the fake herdr's panes; the environment (AC_SOLO, AC_COMPACT_WINDOW, AC_COMPACT_SEND_WAIT, a TMPDIR per side, PATH with a date stub frozen at one instant; LC_ALL=C unless a row says otherwise); both sides reach the same bin/ac-jev.sh and bin/ac-send.sh; stdout, stderr and exit status, the posted body and each side's home tree after the run (send.log once the detached sender wrote) compared whole
-obin="$(make_oracle_bin ac-compact-advise)"
-cmp -s "$obin/ac-compact-advise.sh" "$ROOT/tests/fixtures/ac-compact-advise.sh" \
-  || fail "the oracle bin must hold the frozen original"
+# --- the readings and the refusals, row by row --------------------------------
+# Each run works on a fresh copy ($ch.n) of one seeded home ($ch) with jev=on,
+# stdin $TMP/ca.in, LC_ALL=C, a TMPDIR of its own and a PATH `date` frozen at
+# one instant; $TMP/ca.body exists after a run only when a request was made.
 mkdir -p "$TMP/ca-date"
 printf '#!/bin/sh\ncase "$*" in *%%s*) echo 1800000000 ;; *) echo 2027-01-15T08:00:00Z ;; esac\n' >"$TMP/ca-date/date"
 chmod +x "$TMP/ca-date/date"
@@ -240,203 +263,202 @@ rm -rf "$ch"; mkdir -p "$ch/state" "$ch/config"
 cp "$AC_HOME/config/providers.json" "$ch/config/"
 printf 'on\n' >"$ch/config/jev"
 : >"$TMP/ca.in"
-ca_same() {  # ca_same <cwd|HOME> [VAR=VAL | SHELLERR ...] -- <args...> - each side on its own copy of $ch, stdin $TMP/ca.in; the port's status in ca_rc
-  local cwd="$1" envs=() shellerr="" s rc dir
+ca_run() {  # ca_run <cwd|HOME> [VAR=VAL ...] -- <args...> - sets ca_out; stderr in $TMP/ca.err
+  local cwd="$1" envs=() rc=0
   shift
-  while [ "$1" != -- ]; do
-    if [ "$1" = SHELLERR ]; then shellerr=1; else envs+=("$1"); fi
-    shift
-  done
+  while [ "$1" != -- ]; do envs+=("$1"); shift; done
   shift
-  for s in o n; do
-    rm -rf "$ch.$s" "$TMP/ca-tmp.$s"
-    cp -R "$ch" "$ch.$s"
-    mkdir -p "$TMP/ca-tmp.$s"
-    dir="$cwd"; [ "$cwd" != HOME ] || dir="$ch.$s"
-    rc=0
-    (cd "$dir" && env -u AC_SOLO AC_HOME="$ch.$s" ${envs[@]+"${envs[@]}"} TMPDIR="$TMP/ca-tmp.$s" FAKE_BODY="$TMP/ca.$s.body" \
-      PATH="$TMP/ca-date:$PATH" LC_ALL="${DIFF_LC:-C}" \
-      "$(if [ "$s" = o ]; then printf '%s' "$obin"; else printf '%s' "$BIN"; fi)/ac-compact-advise.sh" "$@" <"$TMP/ca.in") \
-      >"$TMP/ca.$s.out" 2>"$TMP/ca.$s.err" || rc=$?
-    printf '%s\n' "$rc" >"$TMP/ca.$s.rc"
-  done
-  ca_rc="$(cat "$TMP/ca.n.rc")"
-  assert_eq "$ca_rc" "$(cat "$TMP/ca.o.rc")" "differential exit ($*)"
-  assert_eq "$ca_rc" "0" "the adviser always exits 0 ($*)"
-  cmp -s "$TMP/ca.o.out" "$TMP/ca.n.out" || fail "differential stdout differs ($*): $(diff "$TMP/ca.o.out" "$TMP/ca.n.out" | head -n 4)"
-  # SHELL-OWN STDERR: where the original's arithmetic failed its line was the shell's
-  if [ -n "$shellerr" ]; then
-    assert_eq "$(cat "$TMP/ca.n.err")" "" "the port adds no line of its own ($*)"
-  else
-    cmp -s "$TMP/ca.o.err" "$TMP/ca.n.err" || fail "differential stderr differs ($*): $(diff "$TMP/ca.o.err" "$TMP/ca.n.err" | head -n 4)"
-  fi
-  cmp -s "$TMP/ca.o.body" "$TMP/ca.n.body" 2>/dev/null || [ ! -e "$TMP/ca.o.body" ] || fail "differential posted body differs ($*)"
-  # a detached sender writes its line after the hook returned
-  if grep -q 'is typed into' "$TMP/ca.o.out"; then
-    for _ in $(seq 1 50); do
-      [ -s "$ch.o/state/.compact-advise/send.log" ] && [ -s "$ch.n/state/.compact-advise/send.log" ] && break
-      sleep 0.1
-    done
-  fi
-  rm -f "$TMP/ca.o.body" "$TMP/ca.n.body"
-  diff -r "$ch.o" "$ch.n" >"$TMP/ca.diff" 2>&1 || fail "differential home trees differ ($*): $(head -n 6 "$TMP/ca.diff")"
+  rm -rf "$ch.n" "$TMP/ca-tmp" "$TMP/ca.body"
+  cp -R "$ch" "$ch.n"
+  mkdir -p "$TMP/ca-tmp"
+  [ "$cwd" != HOME ] || cwd="$ch.n"
+  (cd "$cwd" && env -u AC_SOLO AC_HOME="$ch.n" ${envs[@]+"${envs[@]}"} TMPDIR="$TMP/ca-tmp" FAKE_BODY="$TMP/ca.body" \
+    PATH="$TMP/ca-date:$PATH" LC_ALL=C "$ADV" "$@" <"$TMP/ca.in") >"$TMP/ca.out" 2>"$TMP/ca.err" || rc=$?
+  assert_eq "$rc" "0" "the adviser always exits 0 ($*)"
+  ca_out="$(cat "$TMP/ca.out")"
+}
+ca_silent() {  # ca_silent <what> - the last run printed nothing and asked nothing
+  assert_eq "$ca_out" "" "$1: nothing advised"
+  assert_no_file "$TMP/ca.body" "$1: no request made"
 }
 cap="$TMP/ca.jsonl"; transcript "$cap" 150000
-resp 0.96 0.1
+CHIEF_LINE="compact=advise score=0.96 floor=0.575 usage=0.75"
+CREW_LINE="compact=advise score=0.912 floor=0.575 usage=0.75"
 
-# 1. the CLI judge: the knob, the roles, the argument shapes, the token readings.
-ca_same "$TMP" -- "$cap" --role chief
-assert_contains "$(cat "$TMP/ca.n.out")" "compact=advise score=0.96 floor=0.575 usage=0.75" "the chief line on both sides"
-for a in "--role crew" "--role" "--role=chief" "chief" "--role bogus" "--role ''"; do
-  # shellcheck disable=SC2086
-  ca_same "$TMP" -- "$cap" $a
-done
-ca_same "$TMP" --
-ca_same "$TMP" -- "$TMP/ca-none.jsonl" --role chief
-ca_same "$TMP" -- "$TMP" --role chief
-for k in off shadow; do
-  printf '%s\n' "$k" >"$ch/config/jev"
-  ca_same "$TMP" -- "$cap" --role chief
-done
-printf 'on\n' >"$ch/config/jev"
-for f in 1 0.5 0.2; do
-  for hh in 1 0.9 0.1 0; do
-    resp "$f" "$hh"
-    ca_same "$TMP" -- "$cap" --role crew
-    ca_same "$TMP" -- "$cap" --role chief
-  done
-done
+# 1. the CLI's argument shapes: the role is read only after an exact `--role`,
+#    crew otherwise; a role that is neither is silence; so is no transcript, a
+#    missing one and a directory.
 resp 0.96 0.9
-for t in 39999 40000 45000 179999 180000 200000 260000; do
-  transcript "$TMP/ca-t.jsonl" "$t"
-  ca_same "$TMP" -- "$TMP/ca-t.jsonl" --role crew
+ca_run "$TMP" -- "$cap" --role chief
+assert_eq "$ca_out" "$CHIEF_LINE" "1: the chief line"
+for a in "--role crew" "--role" "--role=chief" "chief"; do
+  # shellcheck disable=SC2086
+  ca_run "$TMP" -- "$cap" $a
+  assert_eq "$ca_out" "$CREW_LINE" "1: '$a' is judged with the crew weight"
 done
+ca_run "$TMP" -- "$cap" --role bogus
+ca_silent "1: a role that is neither chief nor crew"
+ca_run "$TMP" --
+ca_silent "1: no argument"
+ca_run "$TMP" -- "$TMP/ca-none.jsonl" --role chief
+ca_silent "1: a missing transcript"
+ca_run "$TMP" -- "$TMP" --role chief
+ca_silent "1: a directory for a transcript"
+printf 'off\n' >"$ch/config/jev"
+ca_run "$TMP" -- "$cap" --role chief
+ca_silent "1: jev=off"
+# Under jev=off the adapter writes nothing, so an unarmed --auto must leave a
+# home without state/ as it was.
+rmdir "$ch/state"
+ca_run "$TMP" -- "$cap" --role chief --auto aa-chief
+ca_silent "1: an unarmed --auto under jev=off"
+[ ! -e "$ch.n/state" ] || fail "an unarmed --auto must not create state/"
+printf 'on\n' >"$ch/config/jev"; mkdir -p "$ch/state"
+
+# 2. the score and the floor at their edges: a certain hands-on crewmate
+#    scores 1, a certain coordinating one 0.5; 40000 tokens is the first
+#    judged reading; the floor stops sliding at 0.5 from usage 0.9 up.
+resp 1 1
+ca_run "$TMP" -- "$cap" --role crew
+assert_eq "$ca_out" "compact=advise score=1 floor=0.575 usage=0.75" "2: P(finished)=1, P(hands_on)=1"
+resp 1 0
+ca_run "$TMP" -- "$cap" --role crew
+assert_eq "$ca_out" "" "2: 1 * (0.5 + 0.5*0) = 0.5 is under the 0.575 floor"
+resp 0.96 0.9
+transcript "$TMP/ca-t.jsonl" 39999
+ca_run "$TMP" -- "$TMP/ca-t.jsonl" --role crew
+ca_silent "2: 39999 tokens"
+transcript "$TMP/ca-t.jsonl" 40000
+ca_run "$TMP" -- "$TMP/ca-t.jsonl" --role crew
+assert_eq "$ca_out" "compact=advise score=0.912 floor=0.85 usage=0.2" "2: 40000 tokens is judged - floor 0.9 - (0.2 - 0.1) / 0.8 * 0.4"
+transcript "$TMP/ca-t.jsonl" 180000
+ca_run "$TMP" -- "$TMP/ca-t.jsonl" --role crew
+assert_eq "$ca_out" "compact=advise score=0.912 floor=0.5 usage=0.9" "2: the floor reaches 0.5 at usage 0.9"
+transcript "$TMP/ca-t.jsonl" 260000
+ca_run "$TMP" -- "$TMP/ca-t.jsonl" --role crew
+assert_eq "$ca_out" "compact=advise score=0.912 floor=0.5 usage=1.3" "2: ...and stays there past a full window"
+
+# 3. the token reading: a line jq cannot parse ends it, the lines before still
+#    count; a usage that is no number is no reading; neither is an assistant
+#    message further back than the last 400 lines.
 transcript "$TMP/ca-t.jsonl" 150000
 printf 'not json\n' >>"$TMP/ca-t.jsonl"
-ca_same "$TMP" -- "$TMP/ca-t.jsonl" --role crew
-jq -nc '{type: "assistant", message: {role: "assistant", usage: {input_tokens: "lots"}}}' >>"$TMP/ca-t.jsonl"
-ca_same "$TMP" -- "$TMP/ca-t.jsonl" --role crew
+ca_run "$TMP" -- "$TMP/ca-t.jsonl" --role crew
+assert_eq "$ca_out" "$CREW_LINE" "3: the reading before an unparsable line counts"
+jq -nc '{type: "assistant", message: {role: "assistant", usage: {input_tokens: "lots"}}}' >"$TMP/ca-t.jsonl"
+ca_run "$TMP" -- "$TMP/ca-t.jsonl" --role crew
+ca_silent "3: a usage that is no number"
 { jq -nc '{type: "assistant", message: {role: "assistant", content: "x", usage: {input_tokens: 150000}}}'; for _ in $(seq 1 400); do printf '{"type":"user","message":{"role":"user","content":"pad"}}\n'; done; } >"$TMP/ca-t.jsonl"
-ca_same "$TMP" -- "$TMP/ca-t.jsonl" --role crew
+ca_run "$TMP" -- "$TMP/ca-t.jsonl" --role crew
+ca_silent "3: an assistant message beyond the last 400 lines"
 
-# 2. the window: the environment, the config, the digit guard.
-for w in 300000 0200000 08 abc 0 1000000; do
+# 4. the window's guard: no digits, or 0, reads 200000 from either source.
+for w in abc 0; do
   printf '%s\n' "$w" >"$ch/config/compact-window"
-  ca_same "$TMP" -- "$cap" --role chief
-  ca_same "$TMP" AC_COMPACT_WINDOW="$w" -- "$cap" --role chief
+  ca_run "$TMP" -- "$cap" --role chief
+  assert_eq "$ca_out" "$CHIEF_LINE" "4: config/compact-window '$w' reads 200000"
+  rm -f "$ch/config/compact-window"
+  ca_run "$TMP" AC_COMPACT_WINDOW="$w" -- "$cap" --role chief
+  assert_eq "$ca_out" "$CHIEF_LINE" "4: AC_COMPACT_WINDOW '$w' reads 200000"
 done
-rm -f "$ch/config/compact-window"
 
-# 3. the state sent: the redactions, the clips, the byte cap.
+# 5. the state sent: every key shape redacted, a NAME=value secret cut at a
+#    blank, comma or brace; a tool result clipped to 512 characters and a tool
+#    call sent by name; the last 64 entries, capped at the last 20000 bytes.
 sec="$TMP/ca-secret.jsonl"
-transcript "$sec" 150000 'PASSWORD=hunter2hunter, token: abc}def ghp_abcdefghijklmnopqrstuv AKIAABCDEFGHIJKLMNOP xoxb-1234567890-ab AIzaabcdefghijklmnopqrstuvwxyz0123 -----BEGIN RSA PRIVATE KEY----- MIIE access_key = x,y'
-ca_same "$TMP" -- "$sec" --role chief
+transcript "$sec" 150000 'PASSWORD=hunter2hunter, token: abc}def ghp_abcdefghijklmnopqrstuv AKIAABCDEFGHIJKLMNOP xoxb-1234567890-ab AIzaabcdefghijklmnopqrstuvwxyz0123 access_key = x,y -----BEGIN RSA PRIVATE KEY----- MIIE'
+ca_run "$TMP" -- "$sec" --role chief
+assert_eq "$(jq -r .state "$TMP/ca.body" | head -n 1)" "user: PASSWORD=[redacted], token: [redacted]}def [redacted] [redacted] [redacted] [redacted] access_key = [redacted],y [redacted private key]" "5: the redactions"
 { jq -nc --arg t "$(head -c 600 /dev/zero | tr '\0' r)" '{type: "user", message: {role: "user", content: [{type: "tool_result", content: $t}]}}'
   jq -nc '{type: "assistant", message: {role: "assistant", content: [{type: "tool_use", name: "Bash"}], usage: {input_tokens: 150000}}}'
-  for _ in $(seq 1 70); do jq -nc --arg t "caf$(printf '\303\251')$(head -c 400 /dev/zero | tr '\0' z)" '{type: "user", message: {role: "user", content: $t}}'; done
 } >"$TMP/ca-big.jsonl"
-ca_same "$TMP" -- "$TMP/ca-big.jsonl" --role chief
+ca_run "$TMP" -- "$TMP/ca-big.jsonl" --role chief
+assert_eq "$(jq -r .state "$TMP/ca.body")" "tool result: $(head -c 512 /dev/zero | tr '\0' r)
+assistant: [tool call Bash]" "5: a tool result clipped to 512, a tool call by name"
+for _ in $(seq 1 70); do jq -nc --arg t "$(head -c 400 /dev/zero | tr '\0' z)" '{type: "user", message: {role: "user", content: $t}}'; done >>"$TMP/ca-big.jsonl"
+ca_run "$TMP" -- "$TMP/ca-big.jsonl" --role chief
+# The adapter reads the state file as `$(cat)`, so the cap's final LF is not sent.
+assert_eq "$(jq -r '.state | utf8bytelength' "$TMP/ca.body")" "19999" "5: the state is capped at its last 20000 bytes"
+case "$(jq -r .state "$TMP/ca.body")" in *"tool call"*) fail "5: the cap keeps the END of the conversation" ;; esac
 
-# 4. the hook: the shapes it judges, the marks, the payload readings.
+# 6. the hook: a judgment writes its usage step as the mark; a mark above the
+#    step is rewritten unjudged; the payload shapes that are never judged; the
+#    session_id is [A-Za-z0-9_-] only.
 resp 0.96 0.1
 ca_payload() { jq -nc --arg p "${2:-$cap}" --arg s "$1" '{session_id: $s, transcript_path: $p, stop_hook_active: false}' >"$TMP/ca.in"; }
-ca_payload s-1
-ca_same HOME -- --hook
-assert_contains "$(cat "$TMP/ca.n.out")" "systemMessage" "the hook advises on both sides"
+ca_payload ok_id-1
+ca_run HOME -- --hook
+assert_contains "$(jq -r .systemMessage <<<"$ca_out")" "($CHIEF_LINE). Run /compact to save context" "6: the hook's message carries the line"
+assert_eq "$(cat "$ch.n/state/.compact-advise/ok_id-1")" "15" "6: the mark is the 5-point usage step"
 mkdir -p "$ch/state/.compact-advise"
-for m in 15 14 16 x 08 ''; do
-  printf '%s\n' "$m" >"$ch/state/.compact-advise/s-1"
-  ca_same HOME -- --hook
-done
+printf '14\n' >"$ch/state/.compact-advise/ok_id-1"
+ca_run HOME -- --hook
+assert_contains "$ca_out" "systemMessage" "6: one step above the mark is advised"
+printf '16\n' >"$ch/state/.compact-advise/ok_id-1"
+ca_run HOME -- --hook
+ca_silent "6: usage under the mark"
+assert_eq "$(cat "$ch.n/state/.compact-advise/ok_id-1")" "15" "6: ...becomes the new baseline"
 rm -rf "$ch/state/.compact-advise"
-ca_same "$TMP" -- --hook
-ca_same "$TMP" AC_SOLO=1 -- --hook
-for p in '{"stop_hook_active":true}' '{"stop_hook_active":"no","session_id":"s","transcript_path":"/x"}' 'not json' '' '{} 5'; do
+for p in '{"stop_hook_active":"no","session_id":"s","transcript_path":"'"$cap"'"}' ''; do
   printf '%s' "$p" >"$TMP/ca.in"
-  ca_same HOME -- --hook
+  ca_run HOME -- --hook
+  ca_silent "6: payload '$p'"
 done
-for sid in 'a/b' '' 'ok_id-1'; do
+for sid in 'a/b' '' "$(printf 's\303\251')"; do
   ca_payload "$sid"
-  ca_same HOME -- --hook
+  ca_run HOME -- --hook
+  ca_silent "6: session_id '$sid'"
+  assert_no_file "$ch.n/state/.compact-advise" "6: session_id '$sid' leaves no mark"
 done
 ca_payload s-9 "$TMP/ca-none.jsonl"
-ca_same HOME -- --hook
-ca_payload s-1
-transcript "$TMP/ca-low.jsonl" 100000
-ca_payload s-5 "$TMP/ca-low.jsonl"
-mkdir -p "$ch/state/.compact-advise"
-printf '15\n' >"$ch/state/.compact-advise/s-5"
-ca_same HOME -- --hook
-rm -rf "$ch/state/.compact-advise"
+ca_run HOME -- --hook
+ca_silent "6: a transcript_path that is no file"
 
-# 5. AUTO: the owning meta, the minimum, the knob spellings; the detached
-# sender's line once it lands (the fake herdr pane idle).
+# 7. AUTO: the knob is exactly `on`; the owning meta is the first in byte
+#    order whose line is exactly session_id=<id>; the detached sender's line
+#    lands in send.log (the fake herdr pane busy, the wait 0).
 make_fake_herdr
+printf 'session_id=s-9\r\n' >"$ch/state/aa-crlf.meta"
 printf 'backend=herdr\nkind=roomchief\nsession_id=s-9\n' >"$ch/state/zz-chief.meta"
-printf 'backend=herdr\nkind=roomchief\nsession_id=s-9\n' >"$ch/state/aa-chief.meta"
-printf 'session_id=s-9\r\n' >"$ch/state/crlf.meta"
-for c in aa-chief zz-chief; do
+printf 'backend=herdr\nkind=roomchief\nsession_id=s-9\n' >"$ch/state/bb-chief.meta"
+for c in bb-chief zz-chief; do
   printf 'pA tA\n' >"$ch/state/.pane-$c"
 done
 printf 'pA\n' >"$FAKE_HERDR/tabs/tA"
 printf 'working\n' >"$FAKE_HERDR/panes/pA.status"
 : >"$FAKE_HERDR/panes/pA.buf"
 ca_payload s-9
-for auto in off ON on; do
+for auto in off ON; do
   printf '%s\n' "$auto" >"$ch/config/compact-auto"
-  ca_same HOME AC_COMPACT_SEND_WAIT=0 -- --hook
+  ca_run HOME AC_COMPACT_SEND_WAIT=0 -- --hook
+  assert_contains "$(jq -r .systemMessage <<<"$ca_out")" "Run /compact" "7: compact-auto '$auto' keeps the hint"
+  assert_no_file "$ch.n/state/.compact-advise/send.log" "7: compact-auto '$auto' sends nothing"
 done
-for min in 20 050 abc 150; do
-  printf '%s\n' "$min" >"$ch/config/compact-auto-min"
-  ca_same HOME AC_COMPACT_SEND_WAIT=0 -- --hook
-done
-# W2: `08` is no octal number - the original's ERR trap ended the hook there.
-printf '08\n' >"$ch/config/compact-auto-min"
-ca_same HOME SHELLERR AC_COMPACT_SEND_WAIT=0 -- --hook
-assert_eq "$(cat "$TMP/ca.n.out")" "" "AT PARITY (W2): an octal-invalid minimum ends the hook silent"
-rm -f "$ch/config/compact-auto-min" "$ch/config/compact-auto"
+printf 'on\n' >"$ch/config/compact-auto"
+ca_run HOME AC_COMPACT_SEND_WAIT=0 -- --hook
+assert_contains "$(jq -r .systemMessage <<<"$ca_out")" "/compact is typed into bb-chief if its pane goes idle" "7: the first owning meta in byte order is named"
+for _ in $(seq 1 50); do [ -s "$ch.n/state/.compact-advise/send.log" ] && break; sleep 0.1; done
+assert_eq "$(cat "$ch.n/state/.compact-advise/send.log")" "2027-01-15T08:00:00Z compact-auto bb-chief: not idle - left to the hint" "7: the sender's give-up line"
+assert_eq "$(cat "$FAKE_HERDR/panes/pA.buf")" "" "7: a busy pane is never typed into"
+rm -f "$ch/config/compact-auto"
 
-# 6. --send by hand: no id, a busy pane, an unknown id, the wait knob.
-ca_same "$TMP" -- --send
-ca_same "$TMP" AC_COMPACT_SEND_WAIT=0 -- --send aa-chief
-ca_same "$TMP" AC_COMPACT_SEND_WAIT=0 -- --send no-such
-ca_same "$TMP" SHELLERR AC_COMPACT_SEND_WAIT=abc -- --send aa-chief
-ca_same "$TMP" AC_COMPACT_SEND_WAIT=1 -- --send aa-chief
+# 8. --send by hand with no id is silence.
+ca_run "$TMP" -- --send
+assert_eq "$ca_out:$(cat "$TMP/ca.err")" ":" "8: --send with no id"
 
-# --- named divergences: each row asserts both sides ---------------------------
-# BUN: no bun on PATH - the shim exits 0 at once, saying nothing; the original
-# (bash and jq) reached its sibling bin/ac-jev.sh, whose shim refuses without
-# bun, so its fail-soft ask read no answer and it advised nothing.
+# 9. no bun on PATH: the shim exits 0 at once, saying so in one stderr line;
+#    a module that cannot load is the same no-op, said the same way.
 mkdir -p "$TMP/ca-nobun"
 for t in bash env cat dirname jq sed awk head tail tr mktemp rm grep basename date mkdir; do ln -sf "$(command -v "$t")" "$TMP/ca-nobun/$t"; done
-o_rc=0; (cd "$TMP" && AC_HOME="$ch" PATH="$TMP/ca-nobun" "$obin/ac-compact-advise.sh" "$cap" --role chief) >"$TMP/o.out" 2>"$TMP/o.err" </dev/null || o_rc=$?
 n_rc=0; (cd "$TMP" && AC_HOME="$ch" PATH="$TMP/ca-nobun" "$BIN/ac-compact-advise.sh" "$cap" --role chief) >"$TMP/n.out" 2>"$TMP/n.err" </dev/null || n_rc=$?
-assert_eq "$o_rc $n_rc" "0 0" "BUN: both exit 0"
-assert_eq "$(cat "$TMP/o.out")" "" "BUN: the original advises nothing"
-assert_eq "$(cat "$TMP/o.err")" "ERROR: required tool not found: bun" "BUN: the original's ask met the jev shim's refusal"
-assert_eq "$(cat "$TMP/n.out" "$TMP/n.err")" "" "BUN: the shim says nothing"
-# BUN: a module that cannot load is the same silence.
+assert_eq "$n_rc:$(cat "$TMP/n.out")" "0:" "9: without bun the shim exits 0 and advises nothing"
+assert_eq "$(cat "$TMP/n.err")" "ac-compact-advise.sh: bun is not on PATH - this hook did nothing" "9: ...saying so in one stderr line"
 ca_lf="$TMP/ca-loadfail"
 mkdir -p "$ca_lf/bin" "$ca_lf/src"
 cp "$BIN/ac-bun.sh" "$BIN/ac-compact-advise.sh" "$ca_lf/bin/"
 printf 'throw new Error("compact adviser cannot load");\n' >"$ca_lf/src/compact-advise.ts"
 n_rc=0; (cd "$TMP" && AC_HOME="$ch" "$ca_lf/bin/ac-compact-advise.sh" "$cap" --role chief) >"$TMP/n.out" 2>"$TMP/n.err" </dev/null || n_rc=$?
-assert_eq "$n_rc" "0" "BUN: a module that cannot load exits 0"
-assert_eq "$(cat "$TMP/n.out")" "" "BUN: a module that cannot load advises nothing"
-# W4: a session_id holding `é` - bash's bracket under UTF-8 let it through.
-ca_payload "$(printf 's\303\251')"
-o_rc=0; (cd "$ch" && AC_HOME="$ch" TMPDIR="$TMP/ca-tmp.o" PATH="$TMP/ca-date:$PATH" LC_ALL=en_US.UTF-8 "$obin/ac-compact-advise.sh" --hook <"$TMP/ca.in") >"$TMP/o.out" 2>/dev/null || o_rc=$?
-rm -rf "$ch/state/.compact-advise"
-n_rc=0; (cd "$ch" && AC_HOME="$ch" TMPDIR="$TMP/ca-tmp.n" PATH="$TMP/ca-date:$PATH" LC_ALL=en_US.UTF-8 "$BIN/ac-compact-advise.sh" --hook <"$TMP/ca.in") >"$TMP/n.out" 2>/dev/null || n_rc=$?
-assert_eq "$o_rc $n_rc" "0 0" "W4: both exit 0"
-assert_contains "$(cat "$TMP/o.out")" "systemMessage" "W4: the original judged the session"
-assert_eq "$(cat "$TMP/n.out")" "" "W4: the port refuses the id per its text"
-# W1: a meta naming no supported backend ended the sender 1; the shim folds it.
-printf 'backend=tmux\nsession_id=s-w1\n' >"$ch/state/w1.meta"
-o_rc=0; (cd "$TMP" && AC_HOME="$ch" AC_COMPACT_SEND_WAIT=0 "$obin/ac-compact-advise.sh" --send w1) >/dev/null 2>"$TMP/o.err" </dev/null || o_rc=$?
-n_rc=0; (cd "$TMP" && AC_HOME="$ch" AC_COMPACT_SEND_WAIT=0 "$BIN/ac-compact-advise.sh" --send w1) >/dev/null 2>"$TMP/n.err" </dev/null || n_rc=$?
-assert_eq "$o_rc $n_rc" "1 0" "W1: the original ended 1, the shim answers 0"
-assert_contains "$(cat "$TMP/n.err")" "unsupported backend" "W1: the refusal is still said"
-rm -f "$ch/state/w1.meta"
+assert_eq "$n_rc:$(cat "$TMP/n.out")" "0:" "9: a module that cannot load exits 0 and advises nothing"
+assert_contains "$(cat "$TMP/n.err")" "ac-compact-advise.sh: src/compact-advise.ts exited 1 - this hook did nothing" "9: ...and the shim says it did nothing"
 
 pass

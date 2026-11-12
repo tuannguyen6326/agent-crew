@@ -5,10 +5,7 @@
 // run log. Read-only. The entry is bin/ac-qa-watch.sh (a shim that starts this
 // file through bin/ac-bun.sh); THIS header is the authoritative spec of the qa
 // role, src/watch-dash.ts's header that of the body it shares with
-// src/ship-watch.ts. The bash original stays frozen at
-// tests/fixtures/ac-qa-watch.sh (sourcing the frozen
-// tests/fixtures/ac-watch-dash.sh) as the oracle the differential leg of
-// tests/sh/ac-qa-watch.test.sh holds this module to.
+// src/ship-watch.ts. tests/sh/ac-qa-watch.test.sh is the role's contract test.
 //
 //   ac-qa-watch.sh [--repo DIR] [--self-pane ID] [--interval SECS] [--once]
 //
@@ -45,26 +42,12 @@
 // fields (QW3); pads in BYTES (QW8). A ledger that cannot be read counts 0 and
 // lists no row.
 //
-// ESCAPE HATCH. A broken board costs a qa run only its observer: the opener
-// fails soft and nothing parses what it prints. If a landed change breaks this
-// module, run the frozen originals from a scratch bin/ at a physical path:
-//   o=$(cd "$(mktemp -d)" && pwd -P); mkdir "$o/bin"; cp bin/*.sh "$o/bin/"
-//   ln -s "$PWD/src" "$o/src"; ln -s "$PWD/dashboard" "$o/dashboard"
-//   cp tests/fixtures/ac-watch-dash.sh tests/fixtures/ac-qa-watch.sh "$o/bin/"
-// then "$o/bin/ac-qa-watch.sh" --repo <repo> by hand; a run started as
-// "$o/bin/ac-qa.sh" start opens its board from "$o/bin" too, because
-// ac-qa.sh names its own bin dir in the launch line. The captain's revert of
-// the land is the last resort.
+// AT PARITY with the bash original (each until its own fix lands): the body's
+// (see src/watch-dash.ts) and QW2 (a real 4-column steps.tsv folds its rounds,
+// so `round N` never shows for a qa run), QW3, QW4, QW7 (the target cut in BYTES
+// may split a character), QW8.
 //
-// AT PARITY (each pinned in the leg until its own fix lands): the body's (see
-// src/watch-dash.ts) and QW2 (a real 4-column steps.tsv folds its rounds, so
-// `round N` never shows for a qa run), QW3, QW4, QW7 (the target cut in BYTES may
-// split a character), QW8.
-//
-// DIVERGENCES from the frozen original: the body's (src/watch-dash.ts), and
-// TOOL-OWN STDERR - for a non-empty ledger that cannot be read the original's
-// three awks and its tail printed their own lines; the port prints none (the
-// same 0 counts, no row).
+// A non-empty ledger that cannot be read prints nothing on stderr.
 //
 // CALLERS: bin/ac-qa.sh's watch_open runs `'<its bin>/ac-qa-watch.sh' --repo
 // '<repo>' --self-pane <pane>` in a herdr pane (fail-soft; a pane is reused by

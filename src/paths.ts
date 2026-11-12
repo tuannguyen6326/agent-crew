@@ -1,8 +1,8 @@
 // paths.ts - the QA scripts' path checks and free-port pick. src/qa.ts imports
 // within, receiptOk and freePort in process and src/verify.ts imports
-// `within`; the frozen tests/fixtures/ac-qa-lib.sh starts it through
-// bin/ac-bun.sh, always inside a subshell because ac_bun_exec execs; THIS
-// header is the authoritative spec.
+// `within`; its CLI below is what the retired bash ac-qa-lib.sh started
+// through bin/ac-bun.sh, always inside a subshell because ac_bun_exec execs;
+// THIS header is the authoritative spec.
 //
 // Usage (the caller's cwd arrives first, from ac_bun_exec):
 //   paths.ts within <root> <candidate>

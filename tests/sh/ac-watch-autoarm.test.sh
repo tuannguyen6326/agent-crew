@@ -7,8 +7,7 @@
 # ac-watch.sh is STUBBED in every row but "the real watcher": this suite owns
 # the hook's translation logic, not the watcher's own behaviour
 # (tests/sh/ac-watch.test.sh owns that), and that row only proves the real
-# entry's line reaches it. The differential leg at the end holds
-# src/watch-autoarm.ts to the frozen bash original.
+# entry's line reaches it.
 
 # Fail-closed sourcing: unsourced (suite run outside tests/sh/), errexit is never
 # armed and $AC_HOME is the operator's REAL fleet home - abort instead.
@@ -149,8 +148,8 @@ for a in --help -h; do
   assert_eq "$rc" "0" "$a exits 0"
   assert_contains "$(cat "$TMP/hook.out")" "Stop-hook watcher continuity" "$a prints the header"
 done
-# The module refuses it with 1, which the fail-open shim answers 0 (F7, named
-# in the differential leg below); the refusal line and the empty call log are
+# The module refuses it with 1, which the fail-open shim answers 0 (F7); the
+# refusal line and the empty call log are
 # the contract.
 rc=0
 ( cd "$AC_HOME" && printf '{}' | "$hook" --bogus >/dev/null 2>"$TMP/hook.err" ) || rc=$?
@@ -506,13 +505,16 @@ if command -v bun >/dev/null 2>&1; then
   assert_no_file "$AC_HOME/state/.watch.lock.d" "and released its lock on the way out"
 fi
 
-# --- differential: src/watch-autoarm.ts against the frozen bash original -----
-# DISPUTED: the implementation (tests/fixtures/ac-watch-autoarm.sh under bash vs src/watch-autoarm.ts through bin/ac-watch-autoarm.sh)
-# HELD-CONSTANT: two side roots seeded alike ($AO for the oracle, $AN for the shim) - a root whose bin/ holds every live script (the oracle's entry the frozen original) beside a stub ac-watch.sh scripted per row (logging each call and the arm env it saw) and an ac-ready.sh wrapper of the live one, its src/ linked; a git-inited home at <side>/home; a stub dir <side>/stub first on PATH (`date -u +%s` answering <side>/stub/clock with the status in <side>/stub/clock.rc, the ISO stamp fixed, a herdr logging every call and answering only send-text); the cwd the home; stdin the Stop payload; env scrubbed of every knob the hook, the backend driver and the stub read, then AC_HOME=<side>/home, AC_SEND_SETTLE=0 and the row's; LC_ALL=C on both sides; exit status, stdout, stderr, the trace log, the watcher's call log, the herdr send-text lines and the state/ listing compared whole (the side root spelled ROOT, a temp's pid PID).
-aobin="$(make_oracle_bin ac-watch-autoarm)"
-cmp -s "$aobin/ac-watch-autoarm.sh" "$ROOT/tests/fixtures/ac-watch-autoarm.sh" \
-  || fail "the oracle bin must hold the frozen original"
-AO="$TMP/aa-o"; AN="$TMP/aa-n"
+# --- the hook in a lab root, row by row ---------------------------------------
+# One lab root ($AN): its bin/ holds every live script beside a stub
+# ac-watch.sh scripted per row (logging each call and the arm env it saw) and
+# an ac-ready.sh wrapper of the live one, its src/ linked; a git-inited home at
+# $AN/home; a stub dir first on PATH (`date -u +%s` answering $AN/stub/clock
+# with the status in $AN/stub/clock.rc, the ISO stamp fixed, a herdr logging
+# every call and answering only send-text). The cwd is the home, stdin the Stop
+# payload, the env scrubbed of every knob the hook, the backend driver and the
+# stub read, LC_ALL=C. SIDE in a seeding text or an env word is the lab root.
+AN="$TMP/aa-n"
 aa_side() {  # aa_side <side root> <bin to copy> - the root, its home and its stubs
   local s="$1"
   mkdir -p "$s/root/bin" "$s/home/state" "$s/home/config" "$s/home/records" "$s/stub"
@@ -526,11 +528,10 @@ aa_side() {  # aa_side <side root> <bin to copy> - the root, its home and its st
   git -C "$s/home" init -q . 2>/dev/null
   git -C "$s/home" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init 2>/dev/null
 }
-aa_side "$AO" "$aobin"; aa_side "$AN" "$BIN"
+aa_side "$AN" "$BIN"
 AA_ARGS=()
-aa_each() {  # aa_each <shell text> - run <text> once per side, SIDE spelled as that side's root
-  local s
-  for s in "$AO" "$AN"; do bash -c "${1//SIDE/$s}" || fail "aa_each: seeding failed on $s: $1"; done
+aa_each() {  # aa_each <shell text> - run <text>, SIDE spelled as the lab root
+  bash -c "${1//SIDE/$AN}" || fail "aa_each: seeding failed: $1"
 }
 aa_fresh() {  # a fresh world: no metas, spools, lock, records, remote-poll; the clock at T, status 0
   aa_each 'rm -rf SIDE/home/state SIDE/home/records SIDE/home/config SIDE/home/.ac-crewdeputy-home SIDE/calls SIDE/stub/herdr.log
@@ -538,7 +539,7 @@ aa_fresh() {  # a fresh world: no metas, spools, lock, records, remote-poll; the
     printf "1700000000\n" >SIDE/stub/clock; printf 0 >SIDE/stub/clock.rc
     cp '"$BIN"'/ac-backend.sh '"$BIN"'/ac-backend-orca.sh SIDE/root/bin/'
 }
-aa_stub() {  # aa_stub <body> - every side's ac-watch.sh: log the call and its arm env, then <body>
+aa_stub() {  # aa_stub <body> - the lab's ac-watch.sh: log the call and its arm env, then <body>
   aa_each 'printf "%s\n" "#!/usr/bin/env bash" "printf \"call skip=[%s] only=[%s] autoarm=[%s]\\n\" \"\${AC_WATCH_SKIP-unset}\" \"\${AC_WATCH_ONLY-unset}\" \"\${AC_AUTOARM-unset}\" >>SIDE/calls" >SIDE/root/bin/ac-watch.sh
     cat >>SIDE/root/bin/ac-watch.sh <<'"'AA_BODY'"'
 '"$1"'
@@ -552,135 +553,114 @@ aa_lines() {  # aa_lines <line...> - the stub prints the next line per call, the
   aa_stub "n=\$(wc -l <SIDE/calls | tr -d ' '); line=\"\$(sed -n \"\${n}p\" $TMP/aa.script)\"; [ -n \"\$line\" ] || line=\"\$(tail -n 1 $TMP/aa.script)\"; printf '%s\\n' \"\$line\"
 c=\"\$(cat SIDE/stub/clock)\"; case \"\$c\" in '' | *[!0-9]*) ;; *) printf '%s\\n' \"\$((c + 1000))\" >SIDE/stub/clock ;; esac"
 }
-aa_run() {  # aa_run <side root> <o|n> [env words...] - one firing, the call and herdr logs fresh; its status in $TMP/aa.<o|n>.rc
-  local s="$1" p="$2" x v rc=0
-  shift 2
+aa_run() {  # aa_run [env words...] - one firing, the call and herdr logs fresh; sets AA_RC, $TMP/aa.n.out and $TMP/aa.n.err
+  local s="$AN" x v
   rm -f "$s/calls" "$s/stub/herdr.log"
   local e=(LC_ALL=C "PATH=$s/stub:$PATH" "AC_HOME=$s/home" AC_SEND_SETTLE=0)
   for x in "$@"; do v="${x#*=}"; e+=("${x%%=*}=${v//SIDE/$s}"); done
+  AA_RC=0
   (cd "$s/${AA_CWD:-home}" && printf '{"hook_event_name":"Stop","stop_hook_active":false}' \
     | env -u AC_SOLO -u AC_SCOPE -u AC_HOME -u AC_FLEET_STATE -u AC_BACKEND -u AC_AUTOARM -u AC_AUTOARM_BUDGET \
         -u AC_HEARTBEAT -u AC_STOPHOOK_LOG_KEEP -u AC_WATCH_SKIP -u AC_WATCH_ONLY -u AC_HERDR_SESSION \
         -u AC_HERDR_RPC_TIMEOUT -u AC_SEND_UNPROVEN -u AC_LOCK_PID "${e[@]}" \
         perl -e 'alarm 60; exec @ARGV' "$s/root/bin/ac-watch-autoarm.sh" ${AA_ARGS[@]+"${AA_ARGS[@]}"}) \
-    >"$TMP/aa.$p.out" 2>"$TMP/aa.$p.err" || rc=$?
-  printf '%s' "$rc" >"$TMP/aa.$p.rc"
+    >"$TMP/aa.n.out" 2>"$TMP/aa.n.err" || AA_RC=$?
 }
-aa_norm() { LC_ALL=C sed -e "s#$1#ROOT#g" -E -e 's/\.tmp\.[0-9]+(\.[0-9]+)?/.tmp.PID/g'; }
-aa_snap() {  # aa_snap <side root> - the trace, the watcher's calls, herdr's send-text lines, state/
-  local s="$1"
-  printf '== trace\n'; cat "$s/home/state/.stop-hooks.log" 2>/dev/null || printf '(none)\n'
-  printf '== calls\n'; cat "$s/calls" 2>/dev/null || printf '(none)\n'
-  printf '== herdr\n'; sed -n '/send-text/p' "$s/stub/herdr.log" 2>/dev/null || true
-  printf '== state\n'; (cd "$s/home/state" 2>/dev/null && ls -A) || printf '(no state/)\n'
-}
-aa_both() {  # aa_both [env words...] - one firing per side, both answers normalized
-  aa_run "$AO" o "$@"; aa_run "$AN" n "$@"
-  aa_norm "$AO" <"$TMP/aa.o.out" >"$TMP/aa.o.out2"; aa_norm "$AO" <"$TMP/aa.o.err" >"$TMP/aa.o.err2"
-  aa_norm "$AN" <"$TMP/aa.n.out" >"$TMP/aa.n.out2"; aa_norm "$AN" <"$TMP/aa.n.err" >"$TMP/aa.n.err2"
-  if [ "${AA_NOISE:-0}" = 1 ]; then
-    # Named (SHELL-OWN STDERR): bash's own `<script>: line N: ...` lines.
-    /usr/bin/grep -Eq '^ROOT/root/bin/[^ ]*: line [0-9]+: ' "$TMP/aa.o.err2" || fail "differential: no shell noise to drop ($*)"
-    LC_ALL=C sed -E '/^ROOT\/root\/bin\/[^ ]*: line [0-9]+: /d' "$TMP/aa.o.err2" >"$TMP/aa.o.err3"
-    mv "$TMP/aa.o.err3" "$TMP/aa.o.err2"
-  fi
-  aa_snap "$AO" | aa_norm "$AO" >"$TMP/aa.o.snap"; aa_snap "$AN" | aa_norm "$AN" >"$TMP/aa.n.snap"
-}
-aa_same() {  # aa_same <want rc> [env words...] - both sides answer alike, and the status is <want rc>
+aa_go() {  # aa_go <want rc> [env words...] - one firing: 0 it stood aside or had nothing to report, 2 it woke the chief
   local want="$1"
   shift
-  aa_both "$@"
-  assert_eq "$(cat "$TMP/aa.n.rc")" "$(cat "$TMP/aa.o.rc")" "differential exit ($*)"
-  assert_eq "$(cat "$TMP/aa.n.rc")" "$want" "differential verdict ($*)"
-  cmp -s "$TMP/aa.o.out2" "$TMP/aa.n.out2" || fail "differential stdout differs ($*): $(diff "$TMP/aa.o.out2" "$TMP/aa.n.out2" | head -n 6)"
-  cmp -s "$TMP/aa.o.err2" "$TMP/aa.n.err2" || fail "differential stderr differs ($*): $(diff "$TMP/aa.o.err2" "$TMP/aa.n.err2" | head -n 6)"
-  cmp -s "$TMP/aa.o.snap" "$TMP/aa.n.snap" || fail "differential files differ ($*): $(diff "$TMP/aa.o.snap" "$TMP/aa.n.snap" | head -n 8)"
+  aa_run "$@"
+  assert_eq "$AA_RC" "$want" "the hook's verdict ($*)"
+  assert_eq "$(cat "$TMP/aa.n.out")" "" "the hook prints nothing on stdout ($*)"
 }
-aa_meta() {  # aa_meta <id> <body printf format> - the same meta on both sides
+aa_err() { LC_ALL=C sed -e "s#$AN#ROOT#g" "$TMP/aa.n.err"; }
+aa_calls() { cat "$AN/calls" 2>/dev/null || true; }
+aa_sent() { sed -n '/send-text/p' "$AN/stub/herdr.log" 2>/dev/null || true; }
+aa_said() { assert_contains "$(aa_err)" "$1" "the hook's stderr ($1)"; }
+aa_armed() { assert_eq "$(aa_calls | wc -l | tr -d ' ')" "$1" "the watcher is armed $1 time(s)"; }
+aa_traced() { assert_eq "$( (cat "$AN/home/state/.stop-hooks.log" 2>/dev/null || true) | wc -l | tr -d ' ')" "$1" "the trace holds $1 line(s)"; }
+aa_meta() {  # aa_meta <id> <body printf format>
   aa_each "printf '$2' >SIDE/home/state/$1.meta"
 }
 
 # 1. scope: who arms at all.
 aa_fresh; aa_lines 'report:t1'
-aa_same 0
+aa_go 0
 aa_meta t1 'kind=ship\nproject=p\n'
-aa_same 2
-aa_same 0 AC_SOLO=1
-aa_same 2 AC_SOLO=0
-aa_same 0 AC_HOME=
-aa_same 0 AC_HOME=SIDE/nowhere
-# A relative AC_HOME from a caller cwd with no name: the original's cd from
-# there reached nothing; bun sits in the distro root then, and must not resolve
-# the name against it (a home owing an arm is planted where it would land).
-for s in "$AO" "$AN"; do
-  mkdir -p "$s/root/rel/state" "$s/gone"
-  printf 'kind=ship\n' >"$s/root/rel/state/t1.meta"
-  rm -f "$s/calls"
-  rc=0
-  (cd "$s/gone" && rmdir "$s/gone" && printf '{}' | env -u AC_SOLO -u AC_SCOPE LC_ALL=C "PATH=$s/stub:$PATH" AC_HOME=rel \
-    "$s/root/bin/ac-watch-autoarm.sh") >/dev/null 2>&1 || rc=$?
-  assert_eq "$rc" "0" "a relative home from a nameless cwd stands aside ($s)"
-  assert_no_file "$s/root/rel/state/.stop-hooks.log" "a relative home from a nameless cwd is never traced ($s)"
-  assert_no_file "$s/calls" "a relative home from a nameless cwd arms nothing ($s)"
-  rm -rf "$s/root/rel"
-done
+aa_go 2
+aa_go 0 AC_SOLO=1
+aa_go 2 AC_SOLO=0
+aa_go 0 AC_HOME=
+aa_go 0 AC_HOME=SIDE/nowhere
+# A relative AC_HOME from a caller cwd with no name: bun sits in the distro
+# root then, and must not resolve the name against it (a home owing an arm is
+# planted where it would land).
+mkdir -p "$AN/root/rel/state" "$AN/gone"
+printf 'kind=ship\n' >"$AN/root/rel/state/t1.meta"
+rm -f "$AN/calls"
+rc=0
+(cd "$AN/gone" && rmdir "$AN/gone" && printf '{}' | env -u AC_SOLO -u AC_SCOPE LC_ALL=C "PATH=$AN/stub:$PATH" AC_HOME=rel \
+  "$AN/root/bin/ac-watch-autoarm.sh") >/dev/null 2>&1 || rc=$?
+assert_eq "$rc" "0" "a relative home from a nameless cwd stands aside"
+assert_no_file "$AN/root/rel/state/.stop-hooks.log" "a relative home from a nameless cwd is never traced"
+assert_no_file "$AN/calls" "a relative home from a nameless cwd arms nothing"
+rm -rf "$AN/root/rel"
 aa_each 'rm -rf SIDE/home/state'
-aa_same 0
+aa_go 0
 aa_each 'mkdir SIDE/home/state; printf "kind=ship\n" >SIDE/home/state/t1.meta'
 aa_each 'git -C SIDE/home worktree add -q --detach SIDE/linked HEAD 2>/dev/null; mkdir -p SIDE/linked/state; cp SIDE/home/state/t1.meta SIDE/linked/state/'
-AA_CWD=linked aa_same 0 AC_HOME=SIDE/linked
+AA_CWD=linked aa_go 0 AC_HOME=SIDE/linked
 aa_each 'touch SIDE/home/.ac-crewdeputy-home'
-aa_same 2
+aa_go 2
 aa_each 'mkdir -p SIDE/home/sub'
-AA_CWD=home/sub aa_same 2 AC_HOME=SIDE/home/sub/..
+AA_CWD=home/sub aa_go 2 AC_HOME=SIDE/home/sub/..
 
-# 2. the lock: an ancestor holds it, a stranger does, nobody does (W4: 0 and
-#    -1 are process groups kill -0 always reaches).
+# 2. the lock: an ancestor holds it, a stranger does, nobody does.
 aa_fresh; aa_lines 'report:t1'; aa_meta t1 'kind=ship\n'
 for holder in "$$" "$$x" abc '' -2147483647 2147483648; do
   aa_each "printf 'pid=%s\nsince=now\n' '$holder' >SIDE/home/state/.session-lock"
-  aa_same 2
+  aa_go 2
 done
 hold_open aaholder; aaholdpid=$HOLD_PID
-for holder in "$aaholdpid" " $$" 0 -1; do
+for holder in "$aaholdpid" " $$"; do
   aa_each "printf 'since=now\npid=%s\npid=1\n' '$holder' >SIDE/home/state/.session-lock"
-  aa_same 0
+  aa_go 0
 done
 hold_close aaholder "$aaholdpid"
 sh -c 'exit 0' & aadead=$!; wait "$aadead"
 aa_each "printf 'pid=$aadead\n' >SIDE/home/state/.session-lock"
-aa_same 2
+aa_go 2
 aa_each 'printf "pid=1\n" >SIDE/home/state/.session-lock; chmod 000 SIDE/home/state/.session-lock'
-aa_same 2
+aa_go 2
 aa_each 'rm -f SIDE/home/state/.session-lock'
 
 # 3. what supervision is owed to, and the scoped family's liveness.
 aa_fresh; aa_lines 'report:x'
 aa_meta v1 'kind=verify-qa\n'; aa_meta s1 'kind=self\n'; aa_meta d1 'kind=crewdeputy\n'
 aa_meta .hidden 'kind=ship\n'
-aa_same 0
+aa_go 0
 aa_meta famR-chief 'kind=roomchief\n'
-aa_same 2
-aa_same 0 AC_SCOPE=famR
-aa_same 0 AC_SCOPE=famghost
+aa_go 2
+aa_go 0 AC_SCOPE=famR
+aa_go 0 AC_SCOPE=famghost
 aa_each 'mkdir SIDE/home/state/x.meta'
-aa_same 2 AC_SCOPE=famR
+aa_go 2 AC_SCOPE=famR
 aa_each 'rmdir SIDE/home/state/x.meta; ln -s nowhere SIDE/home/state/dangling.meta'
-aa_same 0 AC_SCOPE=famR
+aa_go 0 AC_SCOPE=famR
 aa_meta t2 'kind=ship\n'; aa_meta t1 'kind=verify-x\n'
 aa_each 'chmod 000 SIDE/home/state/t1.meta'
-aa_same 2 AC_SCOPE=famR
+aa_go 2 AC_SCOPE=famR
 aa_meta t3 'kind=self\0x\n'
 aa_each 'rm -f SIDE/home/state/t2.meta; chmod 644 SIDE/home/state/t1.meta'
-aa_same 0 AC_SCOPE=famR
+aa_go 0 AC_SCOPE=famR
 aa_fresh; aa_lines 'report:x'
 aa_each 'printf "#!/bin/sh\n" >SIDE/home/config/remote-poll; chmod +x SIDE/home/config/remote-poll'
-aa_same 2
-aa_same 0 AC_SCOPE=famR
+aa_go 2
+aa_go 0 AC_SCOPE=famR
 aa_each 'chmod -x SIDE/home/config/remote-poll'
-aa_same 0
+aa_go 0
 aa_each 'rm SIDE/home/config/remote-poll; mkdir SIDE/home/config/remote-poll'
-aa_same 2
+aa_go 2
 
 # 4. how the watcher closed: the reason line classifies, never the status.
 aa_fresh; aa_meta t1 'kind=ship\n'
@@ -688,83 +668,102 @@ for l in 'report:t1' 'already running' 'already running - pending: x' 'refused: 
          'refused: fleet watcher not armed - another session owns this home' '' ' heartbeat' 'heartbeatx' 'ALREADY RUNNING' '%s %d \n'; do
   aa_lines "$l"
   case "$l" in 'already running'* | 'refused: a live'*) want=0 ;; *) want=2 ;; esac
-  aa_same "$want"
+  aa_go "$want"
+  case "$l" in
+    'already running'* | 'refused: a live'*) assert_eq "$(aa_err)" "" "a live watcher elsewhere is no news ($l)" ;;
+    '') aa_said "the watcher closed with no reason line" ;;
+    *) aa_said "ac-watch-autoarm: $l" ;;
+  esac
 done
 aa_lines 'heartbeat' 'heartbeat' 'ask:t1'
-aa_same 2
+aa_go 2; aa_armed 3; aa_said "ac-watch-autoarm: ask:t1"
 aa_stub 'printf "one\n\nlast line\n\n\n"; exit 3'
-aa_same 2
+aa_go 2; aa_said "ac-watch-autoarm: last line"
 aa_stub 'printf "a\000b\351c"; exit 2'
-aa_same 2
+aa_go 2; aa_said "ac-watch-autoarm: ab"
 aa_stub 'printf "\n\n"; exit 0'
-aa_same 2
+aa_go 2; aa_said "the watcher closed with no reason line"
 aa_stub 'exit 1'
-aa_same 2
+aa_go 2; aa_said "the watcher closed with no reason line"
 aa_each 'rm SIDE/root/bin/ac-watch.sh'
-aa_same 2
+aa_go 2; aa_said "the watcher closed with no reason line"
 aa_each 'printf "#!/bin/sh\nexit 0\n" >SIDE/root/bin/ac-watch.sh'
-aa_same 2
+aa_go 2; aa_said "the watcher closed with no reason line"
 # the watcher's own stdin is the drained payload, and its stderr is dropped
 aa_stub 'cat >SIDE/watch.stdin; printf "noise\n" >&2; printf "report:%s\n" "$(wc -c <SIDE/watch.stdin | tr -d " ")"'
-aa_same 2
+aa_go 2; aa_said "ac-watch-autoarm: report:0"
+case "$(aa_err)" in *noise*) fail "the watcher's stderr must be dropped" ;; esac
 
 # 5. the heartbeat: silent re-arm, a queued wake, work finishing mid-loop.
 aa_fresh; aa_meta t1 'kind=ship\n'
 aa_stub 'mkdir -p SIDE/home/state/.wake-spool; printf "3\treport\tt9\tdone: x\n" >SIDE/home/state/.wake-spool/9.1.000000; printf "heartbeat\n"'
-aa_same 2
+aa_go 2; aa_armed 1; aa_said "queued wakes pending"
 aa_fresh; aa_meta famA-chief 'kind=roomchief\n'; aa_meta t1 'kind=ship\n'
 aa_stub 'mkdir -p SIDE/home/state/.wake-spool.famA; printf "3\treport\tt9\tdone: x\n" >SIDE/home/state/.wake-spool.famA/9.1.000000; printf "heartbeat\n"'
-aa_same 2 AC_SCOPE=famA
+aa_go 2 AC_SCOPE=famA; aa_armed 1; aa_said "queued wakes pending"
 aa_fresh; aa_meta t1 'kind=ship\n'
 aa_stub 'rm -f SIDE/home/state/t1.meta; printf "heartbeat\n"'
-aa_same 0
+aa_go 0; aa_armed 1
 aa_each 'printf "#!/bin/sh\n" >SIDE/home/config/remote-poll; chmod +x SIDE/home/config/remote-poll'
 aa_meta t1 'kind=ship\n'
 aa_stub 'rm -f SIDE/home/state/t1.meta; printf "%s\n" "$(( $(wc -l <SIDE/calls) )) " | sed "s/^1 $/heartbeat/; s/^2 $/remote:r1/"'
-aa_same 2
+aa_go 2; aa_armed 2; aa_said "ac-watch-autoarm: remote:r1"
 
-# 6. the budget: the clock is date's, the sum bash's (W2), the handback named.
+# 6. the budget: the clock is date's, the handback named.
 aa_fresh; aa_meta t1 'kind=ship\n'; aa_lines 'heartbeat' 'report:t1'
-aa_same 2
-for env in AC_AUTOARM_BUDGET=0 AC_AUTOARM_BUDGET=599 AC_AUTOARM_BUDGET=600 AC_AUTOARM_BUDGET= "AC_AUTOARM_BUDGET= 600 " \
-           AC_AUTOARM_BUDGET=-1 AC_HEARTBEAT=3001 AC_HEARTBEAT=3000 AC_HEARTBEAT=-9999 AC_HEARTBEAT=010 AC_HEARTBEAT=0x10 \
-           "AC_HEARTBEAT=64#z" AC_HEARTBEAT=; do
-  aa_same 2 "$env"
-done
-aa_each 'printf "1700000000 \n" >SIDE/stub/clock'
-aa_same 2
-aa_each 'printf "" >SIDE/stub/clock'
-aa_same 2
+aa_go 2; aa_armed 2; aa_said "ac-watch-autoarm: report:t1"
+# The stub's clock moves 1000 s per arm, and an arm starts only while
+# elapsed + heartbeat (600) is within the budget (3000): <env word>|<arms>|<stderr>.
+while IFS='|' read -r env n said <&3; do
+  aa_go 2 "$env"; aa_armed "$n"; aa_said "$said"
+done 3<<'ROWS'
+AC_AUTOARM_BUDGET=0|0|auto-arm budget spent with crew still in flight
+AC_AUTOARM_BUDGET=599|0|auto-arm budget spent with crew still in flight
+AC_AUTOARM_BUDGET=600|1|auto-arm budget spent with crew still in flight
+AC_AUTOARM_BUDGET=|2|ac-watch-autoarm: report:t1
+AC_AUTOARM_BUDGET= 600 |1|auto-arm budget spent with crew still in flight
+AC_AUTOARM_BUDGET=-1|0|auto-arm budget spent with crew still in flight
+AC_HEARTBEAT=3001|0|auto-arm budget spent with crew still in flight
+AC_HEARTBEAT=3000|1|auto-arm budget spent with crew still in flight
+AC_HEARTBEAT=-9999|2|ac-watch-autoarm: report:t1
+AC_HEARTBEAT=010|2|ac-watch-autoarm: report:t1
+AC_HEARTBEAT=0x10|2|ac-watch-autoarm: report:t1
+AC_HEARTBEAT=64#z|2|ac-watch-autoarm: report:t1
+AC_HEARTBEAT=|2|ac-watch-autoarm: report:t1
+ROWS
 aa_each 'rm SIDE/home/state/t1.meta; printf "#!/bin/sh\n" >SIDE/home/config/remote-poll; chmod +x SIDE/home/config/remote-poll'
-aa_same 2 AC_AUTOARM_BUDGET=0
-AA_NOISE=1 aa_same 2 AC_AUTOARM_BUDGET=abc
-AA_NOISE=1 aa_same 2 "AC_HEARTBEAT=1 2"
-AA_NOISE=1 aa_same 2 AC_HEARTBEAT=09
-AA_NOISE=1 aa_same 0 AC_HEARTBEAT=abc
-aa_each 'printf "1 2\n" >SIDE/stub/clock'
-AA_NOISE=1 aa_same 2
-aa_each 'printf "abc\n" >SIDE/stub/clock'
-AA_NOISE=1 aa_same 0
-aa_each 'printf "1700000000\n" >SIDE/stub/clock; printf 2 >SIDE/stub/clock.rc'
-AA_NOISE=1 aa_same 2 AC_HEARTBEAT=abc
-aa_each 'printf 0 >SIDE/stub/clock.rc'
+aa_go 2 AC_AUTOARM_BUDGET=0; aa_armed 0; aa_said "auto-arm budget spent with standing remote-poll coverage still owed (no crew in flight)"
 
 # 7. the arm env: skip, only, the bounded mark, rebuilt every pass.
 aa_fresh; aa_lines 'heartbeat' 'report:t9'
 aa_meta t9 'kind=ship\n'; aa_meta famB-chief 'kind=roomchief\n'; aa_meta famA-chief 'kind=roomchief\n'
 aa_meta -chief 'kind=roomchief\n'; aa_meta famC-chief 'kind=ship\n'; aa_meta notachief 'kind=roomchief\n'
-aa_same 2
-aa_same 2 AC_WATCH_ONLY=inherited
+aa_go 2
+assert_eq "$(aa_calls)" "call skip=[famA,famB] only=[unset] autoarm=[1]
+call skip=[famA,famB] only=[unset] autoarm=[1]" "the arm env, rebuilt each pass"
+aa_go 2 AC_WATCH_ONLY=inherited
+assert_eq "$(aa_calls)" "call skip=[famA,famB] only=[inherited] autoarm=[1]
+call skip=[famA,famB] only=[inherited] autoarm=[1]" "the arm env, rebuilt each pass"
 aa_each 'printf "## In flight\n- [ ] famA - a promoted family (repo: p, since 2026-07-27)\n- [ ] famA-s1 epic:famA - a story (repo: p, since 2026-07-27)\n" >SIDE/home/records/backlog.md'
-aa_same 2 AC_SCOPE=famA
-aa_same 2 AC_SCOPE=famA AC_WATCH_SKIP=inherited
+aa_go 2 AC_SCOPE=famA
+assert_eq "$(aa_calls)" "call skip=[unset] only=[famA,famA-s1] autoarm=[1]
+call skip=[unset] only=[famA,famA-s1] autoarm=[1]" "the arm env, rebuilt each pass"
+aa_go 2 AC_SCOPE=famA AC_WATCH_SKIP=inherited
+assert_eq "$(aa_calls)" "call skip=[inherited] only=[famA,famA-s1] autoarm=[1]
+call skip=[inherited] only=[famA,famA-s1] autoarm=[1]" "the arm env, rebuilt each pass"
 aa_each 'printf "#!/bin/sh\nexit 3\n" >SIDE/root/bin/ac-ready.sh'
-aa_same 2 AC_SCOPE=famA
+aa_go 2 AC_SCOPE=famA
+assert_eq "$(aa_calls)" "call skip=[unset] only=[famA] autoarm=[1]
+call skip=[unset] only=[famA] autoarm=[1]" "the arm env, rebuilt each pass"
 aa_each 'rm SIDE/root/bin/ac-ready.sh'
-aa_same 2 AC_SCOPE=famA
+aa_go 2 AC_SCOPE=famA
+assert_eq "$(aa_calls)" "call skip=[unset] only=[famA] autoarm=[1]
+call skip=[unset] only=[famA] autoarm=[1]" "the arm env, rebuilt each pass"
 aa_each "printf '#!/bin/sh\nexec \"%s/ac-ready.sh\" \"\$@\"\n' '$BIN' >SIDE/root/bin/ac-ready.sh; chmod +x SIDE/root/bin/ac-ready.sh"
 aa_stub 'printf "%s\n" "$(( $(wc -l <SIDE/calls) )) " | sed "s/^1 $/heartbeat/; s/^2 $/report:t9/"; rm -f SIDE/home/state/famA-chief.meta'
-aa_same 2
+aa_go 2
+assert_eq "$(aa_calls)" "call skip=[famA,famB] only=[unset] autoarm=[1]
+call skip=[famB] only=[unset] autoarm=[1]" "the arm env, rebuilt each pass"
 
 # 8. the nudge: a scoped handback types the wake into its own chief pane.
 aa_fresh; aa_meta t1 'kind=ship\n'
@@ -772,137 +771,77 @@ aa_meta famA-chief 'kind=roomchief\nwindow=crew:famA-chief\nbackend=herdr\n'
 aa_each 'printf "pFAC tFAC\n" >SIDE/home/state/.pane-famA-chief'
 for l in 'report:t1' '' 'heartbeat'; do
   aa_lines "$l"
-  aa_same 2 AC_SCOPE=famA AC_AUTOARM_BUDGET=600
+  aa_go 2 AC_SCOPE=famA AC_AUTOARM_BUDGET=600
+  assert_contains "$(aa_sent)" "herdr pane send-text pFAC wake: " "the handback is typed into the chief's pane ($l)"
 done
-assert_contains "$(cat "$TMP/aa.n.snap")" "herdr pane send-text pFAC wake: auto-arm budget spent with crew still in flight - coverage handed back - run bin/ac-wake-drain.sh" "the budget handback's nudge names its branch"
+assert_contains "$(aa_sent)" "herdr pane send-text pFAC wake: auto-arm budget spent with crew still in flight - coverage handed back - run bin/ac-wake-drain.sh" "the budget handback's nudge names its branch"
 # Valid UTF-8 reaches the chief pane as its bytes: the watcher's reason, and a
 # scope naming its own chief's pane.
 aa_lines "$(printf 'gone:famA-t\303\251st')"
-aa_same 2 AC_SCOPE=famA
-assert_contains "$(cat "$TMP/aa.n.snap")" "$(printf 'herdr pane send-text pFAC wake: gone:famA-t\303\251st - run')" "a UTF-8 reason is typed as its bytes"
+aa_go 2 AC_SCOPE=famA
+assert_contains "$(aa_sent)" "$(printf 'herdr pane send-text pFAC wake: gone:famA-t\303\251st - run')" "a UTF-8 reason is typed as its bytes"
 aa_fe="$(printf 'fam\303\251')"
 aa_each "printf 'kind=roomchief\nbackend=herdr\n' >SIDE/home/state/$aa_fe-chief.meta; printf 'pFEC tFEC\n' >SIDE/home/state/.pane-$aa_fe-chief"
 aa_lines 'report:t1'
-aa_same 2 "AC_SCOPE=$aa_fe"
-assert_contains "$(cat "$TMP/aa.n.snap")" "herdr pane send-text pFEC wake: report:t1 - run" "a UTF-8 scope's nudge reaches its own chief pane"
+aa_go 2 "AC_SCOPE=$aa_fe"
+assert_contains "$(aa_sent)" "herdr pane send-text pFEC wake: report:t1 - run" "a UTF-8 scope's nudge reaches its own chief pane"
 aa_each "rm -f SIDE/home/state/$aa_fe-chief.meta SIDE/home/state/.pane-$aa_fe-chief"
 aa_stub 'mkdir -p SIDE/home/state/.wake-spool.famA; printf "3\treport\tt9\tdone: x\n" >SIDE/home/state/.wake-spool.famA/9.1.000000; printf "heartbeat\n"'
-aa_same 2 AC_SCOPE=famA
+aa_go 2 AC_SCOPE=famA
+assert_contains "$(aa_sent)" "herdr pane send-text pFAC wake: queued wakes pending - run" "queued wakes are nudged too"
 aa_lines 'report:t1'
 aa_meta famA-chief 'kind=roomchief\nbackend=bogus\n'
-aa_same 2 AC_SCOPE=famA
+aa_go 2 AC_SCOPE=famA
 aa_each 'chmod 000 SIDE/home/state/famA-chief.meta'
-aa_same 2 AC_SCOPE=famA
+aa_go 2 AC_SCOPE=famA
 aa_each 'chmod 644 SIDE/home/state/famA-chief.meta'
 aa_meta famA-chief 'kind=roomchief\n'
-# AT PARITY (W3): a fleet backend name the driver refuses ends a scoped
-# handback 1 at the nudge, before its trace and its exit 2 - the wake is
-# lost; the shim answers the 1 as 0 (F7).
-aa_each 'rm -f SIDE/home/state/.stop-hooks.log'
-aa_both AC_SCOPE=famA AC_BACKEND=bogus
-assert_eq "$(cat "$TMP/aa.o.rc") $(cat "$TMP/aa.n.rc")" "1 0" "W3: a refused backend name ends the run 1 (the shim's 0)"
-cmp -s "$TMP/aa.o.err2" "$TMP/aa.n.err2" || fail "W3: both print the handback before the nudge"
-cmp -s "$TMP/aa.o.snap" "$TMP/aa.n.snap" || fail "W3: neither traces the handback: $(diff "$TMP/aa.o.snap" "$TMP/aa.n.snap" | head -n 6)"
-case "$(cat "$TMP/aa.n.snap")" in *handed-back*) fail "W3: the handback was traced" ;; esac
 aa_each 'printf "orca\n" >SIDE/home/config/backend'
-aa_same 2 AC_SCOPE=famA
-aa_each 'printf "tmux\n" >SIDE/home/config/backend'
-aa_both AC_SCOPE=famA
-assert_eq "$(cat "$TMP/aa.o.rc") $(cat "$TMP/aa.n.rc")" "1 0" "W3: config/backend's refused name too"
+aa_go 2 AC_SCOPE=famA
 
-# 9. the trace and its trim (W1: the keep knob's arithmetic).
+# 9. the trace and its trim.
 aa_fresh; aa_meta t1 'kind=ship\n'; aa_lines 'report:t1'
 aa_each 'for i in 1 2 3 4 5; do printf "old %s\n" $i >>SIDE/home/state/.stop-hooks.log; done'
-aa_same 2 AC_STOPHOOK_LOG_KEEP=2
-aa_same 2 AC_STOPHOOK_LOG_KEEP=3
-aa_same 2 AC_STOPHOOK_LOG_KEEP=0
-aa_same 2 AC_STOPHOOK_LOG_KEEP=
+# Each firing appends two lines; past twice the keep the log is cut to the keep.
+aa_go 2 AC_STOPHOOK_LOG_KEEP=2; aa_traced 3
+aa_go 2 AC_STOPHOOK_LOG_KEEP=3; aa_traced 5
+aa_go 2 AC_STOPHOOK_LOG_KEEP=0; aa_traced 0
+aa_go 2 AC_STOPHOOK_LOG_KEEP=; aa_traced 2
 aa_each 'mkdir SIDE/home/state/.stop-hooks.log.d; rm SIDE/home/state/.stop-hooks.log; mv SIDE/home/state/.stop-hooks.log.d SIDE/home/state/.stop-hooks.log'
-AA_NOISE=1 aa_same 2
+aa_go 2
 aa_each 'rmdir SIDE/home/state/.stop-hooks.log'
-AA_NOISE=1 aa_same 0 "AC_STOPHOOK_LOG_KEEP=1 2"
-assert_eq "$(sed -n '/^== trace$/,/^== calls$/p' "$TMP/aa.n.snap" | grep -c 'hook=watch-autoarm')" "4" "W1: a handback falls through to budget-spent and work-finished"
-AA_NOISE=1 aa_same 0 AC_STOPHOOK_LOG_KEEP=abc
-aa_each 'rm -f SIDE/home/state/t1.meta SIDE/home/state/.stop-hooks.log'
-AA_NOISE=1 aa_same 0 "AC_STOPHOOK_LOG_KEEP=1 2"
-AA_NOISE=1 aa_same 0 AC_STOPHOOK_LOG_KEEP=abc
-aa_meta famA-chief 'kind=roomchief\n'; aa_meta t1 'kind=ship\n'
-AA_NOISE=1 aa_same 0 "AC_STOPHOOK_LOG_KEEP=1 2" AC_SCOPE=famZ
-aa_each 'printf "pid=0\n" >SIDE/home/state/.session-lock'
-AA_NOISE=1 aa_same 0 "AC_STOPHOOK_LOG_KEEP=1 2"
-aa_each 'rm SIDE/home/state/.session-lock'
 
-# --- named divergences: each row asserts both sides ---------------------------
+# --- the shim's own answers ---------------------------------------------------
 aa_fresh; aa_meta t1 'kind=ship\n'; aa_lines 'report:t1'
-# F7 STATUS: an unknown argument is refused 1 by the module, which the shim
-# answers 0; the refusal line is the same on both sides.
-AA_ARGS=(--bogus); aa_both; AA_ARGS=()
-assert_eq "$(cat "$TMP/aa.o.rc") $(cat "$TMP/aa.n.rc")" "1 0" "F7: the module's 1 is the shim's 0"
-cmp -s "$TMP/aa.o.err2" "$TMP/aa.n.err2" || fail "F7: the refusal line differs: $(diff "$TMP/aa.o.err2" "$TMP/aa.n.err2")"
-assert_eq "$(cat "$TMP/aa.n.err2")" "ERROR: unknown argument: --bogus (the hook takes none; -h prints its header)" "F7: the line itself"
-cmp -s "$TMP/aa.o.snap" "$TMP/aa.n.snap" || fail "F7: an argument arms and traces nothing on either side"
-AA_ARGS=("" extra); aa_same 2; AA_ARGS=()
-# F7 STATUS: an identifier in the heartbeat ends the run with the clock date's
-# status - 3 there, the shim's 0.
-aa_each 'printf 3 >SIDE/stub/clock.rc'
-AA_NOISE=1 aa_both AC_HEARTBEAT=abc
-assert_eq "$(cat "$TMP/aa.o.rc") $(cat "$TMP/aa.n.rc")" "3 0" "F7: the clock's status is the shim's 0"
-cmp -s "$TMP/aa.o.snap" "$TMP/aa.n.snap" || fail "F7: both end after the armed line"
-aa_each 'printf 0 >SIDE/stub/clock.rc'
-# USAGE HEADER: -h prints the module's header on the port's side.
+AA_ARGS=("" extra); aa_go 2; AA_ARGS=()
 for a in -h --help; do
-  AA_ARGS=("$a"); aa_both; AA_ARGS=()
-  assert_eq "$(cat "$TMP/aa.o.rc") $(cat "$TMP/aa.n.rc")" "0 0" "USAGE HEADER: $a exits 0 on both sides"
-  assert_contains "$(cat "$TMP/aa.o.out")" "Stop-hook watcher continuity" "USAGE HEADER: the original's header"
-  assert_eq "$(cat "$TMP/aa.n.out")" "$(sed -n '/^\/\//!q; s|^// \{0,1\}||p' "$ROOT/src/watch-autoarm.ts")" "USAGE HEADER: the module's header, byte for byte"
+  AA_ARGS=("$a"); aa_run; AA_ARGS=()
+  assert_eq "$AA_RC" "0" "$a exits 0"
+  assert_eq "$(cat "$TMP/aa.n.out")" "$(sed -n '/^\/\//!q; s|^// \{0,1\}||p' "$ROOT/src/watch-autoarm.ts")" "$a prints the module's header, byte for byte"
 done
-# EXPRESSIONS: a heartbeat that is an expression arms on the original's side
-# and reads as malformed on the port's - the budget handback at once.
-aa_both AC_HEARTBEAT='60*10'
-assert_eq "$(cat "$TMP/aa.o.rc") $(cat "$TMP/aa.n.rc")" "2 2" "EXPRESSIONS: both hand back"
-assert_contains "$(cat "$TMP/aa.o.err")" "ac-watch-autoarm: report:t1" "EXPRESSIONS: the original armed (60*10 = 600)"
-assert_contains "$(cat "$TMP/aa.n.err")" "auto-arm budget spent with crew still in flight" "EXPRESSIONS: the port read it malformed"
-aa_both AC_HEARTBEAT=HOME
-assert_eq "$(cat "$TMP/aa.o.rc") $(cat "$TMP/aa.n.rc")" "2 0" "EXPRESSIONS: a set variable's value is bash's, an unbound name the port's"
-# NUDGE DRIVER: with no ac-backend.sh beside the hook the original skips the
-# nudge; the port's driver is its own.
+# The nudge's driver is the module's own: no ac-backend.sh beside the hook
+# still types the wake.
 aa_meta famA-chief 'kind=roomchief\n'
 aa_each 'printf "pFAC tFAC\n" >SIDE/home/state/.pane-famA-chief; rm SIDE/root/bin/ac-backend.sh'
-aa_both AC_SCOPE=famA
-assert_eq "$(cat "$TMP/aa.o.rc") $(cat "$TMP/aa.n.rc")" "2 2" "NUDGE DRIVER: both hand back"
-assert_eq "$(sed -n '/send-text/p' "$AO/stub/herdr.log" 2>/dev/null)" "" "NUDGE DRIVER: the original typed nothing"
-assert_contains "$(cat "$AN/stub/herdr.log")" "pane send-text pFAC wake: report:t1 - run bin/ac-wake-drain.sh" "NUDGE DRIVER: the port typed the wake"
+aa_go 2 AC_SCOPE=famA
+assert_contains "$(aa_sent)" "pane send-text pFAC wake: report:t1 - run bin/ac-wake-drain.sh" "the wake is typed with no ac-backend.sh beside the hook"
 aa_each 'cp '"$BIN"'/ac-backend.sh SIDE/root/bin/'
-# EXCLUSIVE TEMP: a tail that refuses the keep leaves its temp on both sides -
-# the original's second trace line truncated the same `$f.tmp.$$`, the port's
-# takes the next name.
-aa_each 'printf "old\nold\nold\n" >SIDE/home/state/.stop-hooks.log'
-aa_both "AC_STOPHOOK_LOG_KEEP=2#1"
-assert_eq "$(cat "$TMP/aa.o.rc") $(cat "$TMP/aa.n.rc")" "2 2" "EXCLUSIVE TEMP: both hand back"
-cmp -s "$TMP/aa.o.err2" "$TMP/aa.n.err2" || fail "EXCLUSIVE TEMP: the handback is the same on both sides"
-assert_eq "$(ls -A "$AO/home/state" | grep -c '^\.stop-hooks\.log\.tmp\.')" "1" "EXCLUSIVE TEMP: the original reused one temp"
-assert_eq "$(ls -A "$AN/home/state" | grep -c '^\.stop-hooks\.log\.tmp\.')" "2" "EXCLUSIVE TEMP: the port took a second name"
-aa_each 'rm -f SIDE/home/state/.stop-hooks.log*'
-# BYTES: a scope byte that is not UTF-8 is the original's, U+FFFD the port's.
-aa_both AC_SCOPE="$(printf 'f\351m')"
-assert_eq "$(cat "$TMP/aa.o.rc") $(cat "$TMP/aa.n.rc")" "0 0" "BYTES: both stand aside (no such family)"
-assert_contains "$(od -An -tx1 "$AO/home/state/.stop-hooks.log" | tr -d ' \n')" "73636f70653d66e96d0a" "BYTES: the original traces the byte"
-assert_contains "$(od -An -tx1 "$AN/home/state/.stop-hooks.log" | tr -d ' \n')" "73636f70653d66efbfbd6d0a" "BYTES: the port traces U+FFFD"
-# BYTES: a reason byte that is not UTF-8 is typed by the nudge as U+FFFD; its
-# stderr line and its trace keep the byte on both sides.
+# A scope byte that is not UTF-8 arrives decoded: U+FFFD in the trace.
+aa_each 'rm -f SIDE/home/state/.stop-hooks.log'
+aa_go 0 AC_SCOPE="$(printf 'f\351m')"
+assert_contains "$(od -An -tx1 "$AN/home/state/.stop-hooks.log" | tr -d ' \n')" "73636f70653d66efbfbd6d0a" "a scope byte that is not UTF-8 is traced as U+FFFD"
+# A reason byte that is not UTF-8 is typed by the nudge as U+FFFD; the stderr
+# line and the trace keep the byte.
 aa_each 'rm -f SIDE/home/state/.stop-hooks.log'
 aa_lines "$(printf 'gone:t\351x')"
-aa_both AC_SCOPE=famA
-assert_eq "$(cat "$TMP/aa.o.rc") $(cat "$TMP/aa.n.rc")" "2 2" "BYTES: both hand back the reason"
+aa_go 2 AC_SCOPE=famA
 aa_wake="$(printf 'wake: gone:t' | od -An -tx1 | tr -d ' \n')"
-assert_contains "$(od -An -tx1 "$AO/stub/herdr.log" | tr -d ' \n')" "${aa_wake}e978" "BYTES: the original types the byte"
-assert_contains "$(od -An -tx1 "$AN/stub/herdr.log" | tr -d ' \n')" "${aa_wake}efbfbd78" "BYTES: the port types U+FFFD"
-cmp -s "$TMP/aa.o.err2" "$TMP/aa.n.err2" || fail "BYTES: the handback's stderr keeps the byte on both sides"
-aa_detail="$(printf 'detail=gone:t' | od -An -tx1 | tr -d ' \n')"
-assert_contains "$(od -An -tx1 "$AO/home/state/.stop-hooks.log" | tr -d ' \n')" "${aa_detail}e9780a" "BYTES: the original traces the byte"
-assert_contains "$(od -An -tx1 "$AN/home/state/.stop-hooks.log" | tr -d ' \n')" "${aa_detail}e9780a" "BYTES: the port traces the byte"
-# BUN: no bun on PATH - the shim exits 0 at once, arming nothing, where the
-# original armed.
+assert_contains "$(od -An -tx1 "$AN/stub/herdr.log" | tr -d ' \n')" "${aa_wake}efbfbd78" "the nudge types U+FFFD"
+aa_detail="$(printf 'gone:t' | od -An -tx1 | tr -d ' \n')"
+assert_contains "$(od -An -tx1 "$TMP/aa.n.err" | tr -d ' \n')" "${aa_detail}e978" "stderr keeps the byte"
+assert_contains "$(od -An -tx1 "$AN/home/state/.stop-hooks.log" | tr -d ' \n')" "$(printf 'detail=' | od -An -tx1 | tr -d ' \n')${aa_detail}e9780a" "the trace keeps the byte"
+# No bun on PATH: the shim exits 0 at once, arming nothing and saying so in one
+# stderr line.
 aa_nobun="$TMP/aa-nobun"
 aa_path=""
 IFS=: read -r -a aa_dirs <<<"$PATH"
@@ -916,23 +855,24 @@ for d in "${aa_dirs[@]}"; do
   aa_path="$aa_path${aa_path:+:}$d"
 done
 aa_fresh; aa_meta t1 'kind=ship\n'; aa_lines 'report:t1'
-aa_run "$AO" o PATH="$AO/stub:$aa_path"; aa_run "$AN" n PATH="$AN/stub:$aa_path"
-assert_eq "$(cat "$TMP/aa.o.rc") $(cat "$TMP/aa.n.rc")" "2 0" "BUN: the original hands back with no bun on PATH, the shim exits 0"
-assert_contains "$(cat "$TMP/aa.o.err")" "ac-watch-autoarm: report:t1" "BUN: the original armed"
-assert_eq "$(cat "$TMP/aa.n.out" "$TMP/aa.n.err")" "" "BUN: the shim says nothing"
-assert_no_file "$AN/calls" "BUN: the shim arms nothing"
-assert_no_file "$AN/home/state/.stop-hooks.log" "BUN: the shim traces nothing"
-# BUN: a module that cannot load is the shim's no-op: 0, bun's diagnosis, no trace.
+aa_run PATH="$AN/stub:$aa_path"
+assert_eq "$AA_RC:$(cat "$TMP/aa.n.out")" "0:" "no bun: the shim exits 0, nothing on stdout"
+assert_eq "$(cat "$TMP/aa.n.err")" "ac-watch-autoarm.sh: bun is not on PATH - this hook did nothing" "no bun: the shim says so in one stderr line"
+assert_no_file "$AN/calls" "no bun: the shim arms nothing"
+assert_no_file "$AN/home/state/.stop-hooks.log" "no bun: the shim traces nothing"
+# A module that cannot load is the shim's no-op: 0, bun's diagnosis and the
+# shim's line, no trace.
 aa_lf="$TMP/aa-loadfail"
 mkdir -p "$aa_lf/bin" "$aa_lf/src"
 cp "$BIN/ac-bun.sh" "$BIN/ac-watch-autoarm.sh" "$aa_lf/bin/"
 printf 'throw new Error("autoarm cannot load");\n' >"$aa_lf/src/watch-autoarm.ts"
 rc=0
 (cd "$AN/home" && printf '{}' | AC_HOME="$AN/home" LC_ALL=C "$aa_lf/bin/ac-watch-autoarm.sh") >"$TMP/aa.n.out" 2>"$TMP/aa.n.err" || rc=$?
-assert_eq "$rc" "0" "BUN: a module that cannot load exits 0"
-assert_eq "$(cat "$TMP/aa.n.out")" "" "BUN: a module that cannot load prints nothing on stdout"
-assert_contains "$(cat "$TMP/aa.n.err")" "autoarm cannot load" "BUN: the load failure is bun's own diagnosis"
-case "$(cat "$TMP/aa.n.err")" in *"ac-watch-autoarm:"*) fail "BUN: a module that cannot load must never hand back" ;; esac
-assert_no_file "$AN/home/state/.stop-hooks.log" "BUN: a module that cannot load traces nothing"
+assert_eq "$rc" "0" "a module that cannot load exits 0"
+assert_eq "$(cat "$TMP/aa.n.out")" "" "a module that cannot load prints nothing on stdout"
+assert_contains "$(cat "$TMP/aa.n.err")" "autoarm cannot load" "the load failure is bun's own diagnosis"
+assert_contains "$(cat "$TMP/aa.n.err")" "ac-watch-autoarm.sh: src/watch-autoarm.ts exited 1 - this hook did nothing" "the shim says it did nothing"
+case "$(cat "$TMP/aa.n.err")" in *"ac-watch-autoarm:"*) fail "a module that cannot load must never hand back" ;; esac
+assert_no_file "$AN/home/state/.stop-hooks.log" "a module that cannot load traces nothing"
 
 pass

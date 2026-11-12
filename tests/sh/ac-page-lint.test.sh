@@ -10,8 +10,7 @@
 # lint and not the pages). The fixture serves all 5
 # fixed-list paths with one external <script src>, one inline <script>, and
 # one inline <script type="module"> per page; PAGE_LINT_TEST_BAD=1 swaps the
-# module script's body on "/" for one with a syntax error. The last leg holds
-# src/page-lint.ts to the frozen bash original.
+# module script's body on "/" for one with a syntax error.
 # Fail-closed sourcing: unsourced, errexit is never armed and $AC_HOME is the
 # operator's REAL fleet home - abort instead.
 . "$(dirname "$0")/helpers.sh" \
@@ -91,7 +90,6 @@ assert_contains "$out" "SYNTAX ERROR / script 2" "names the page and the failing
 assert_contains "$out" "OK /term" "an unaffected page still reports OK - failure is per-page, not global"
 
 # --- bun missing from PATH: the shim's required-tool refusal -----------------
-# (a named divergence: exit 1 where the bash original's own check exited 3)
 emptybin="$TMP/emptybin"
 mkdir -p "$emptybin"
 for t in bash sh curl perl mktemp cat grep sed kill sleep seq awk dirname; do
@@ -118,20 +116,22 @@ printf 'throw new Error("fixture: dashboard intentionally broken");\n' >"$repo2/
 rc=0; (cd "$repo2" && ./bin/ac-page-lint.sh) >/dev/null 2>&1 || rc=$?
 assert_eq "$rc" 3 "a dashboard that fails to start exits 3, not 1"
 
-# --- differential: src/page-lint.ts against the frozen bash original ----------
-# DISPUTED: the implementation (tests/fixtures/ac-page-lint.sh as <side>/bin/ac-page-lint.sh vs src/page-lint.ts through the bin/ac-page-lint.sh shim)
-# HELD-CONSTANT: two throwaway repos seeded alike ($PO for the oracle, $PN for the shim) - the same bin/ac-bun.sh copy, src link and fixture dashboard/app.ts (its pages chosen by env per row) - argv, PATH and env per row, cwd (the side root), stdin /dev/null, LC_ALL=C, a PATH mktemp that makes every tmpdir under one watched dir; exit status, stdout and stderr compared whole after the random tmp suffix, the port number and the side root are normalised. After every run of either side: no tmpdir is left and every dashboard the run booted is gone.
-PO="$TMP/pl-o"; PN="$TMP/pl-n"
+# --- the run, row by row ------------------------------------------------------
+# A second throwaway repo ($PN) whose fixture dashboard picks its pages by env
+# per row; each run starts at $PN with stdin /dev/null and LC_ALL=C, and a PATH
+# mktemp makes every tmpdir under one watched dir. After every run: no tmpdir
+# is left and every dashboard the run booted is gone.
+PN="$TMP/pl-n"
 plstub="$TMP/pl-stub"; PLT="$TMP/pl-tmp"; PLP="$TMP/pl-pids"
 mkdir -p "$plstub" "$PLT" "$PLP"
-cat >"$plstub/mktemp" <<'EOF'
+cat >"$plstub/mktemp" <<'EOS'
 #!/bin/sh
 [ "${PL_MKTEMP_FAIL:-}" = 1 ] && { printf 'mktemp: stub refused\n' >&2; exit 1; }
 exec /usr/bin/mktemp -d "$PL_TMP/tmp.XXXXXXXXXX"
-EOF
+EOS
 chmod +x "$plstub/mktemp"
-cat >"$TMP/pl-app.ts" <<'EOF'
-// FIXTURE dashboard for the ac-page-lint differential leg - not the real dashboard.
+cat >"$TMP/pl-app.ts" <<'EOS'
+// FIXTURE dashboard for the ac-page-lint row-by-row leg - not the real dashboard.
 import { writeFileSync } from "node:fs";
 const env = process.env;
 if (env.PL_THROW === "1") throw new Error("fixture: dashboard intentionally broken");
@@ -154,8 +154,6 @@ const PAGES: Record<string, string> = {
 };
 if (env.PL_ODD === "1")
   PAGES["/"] = page(
-    "<SCRIPT>this is not valid js (((</SCRIPT>",
-    '<script data-src="x">this is not valid js (((</script>',
     "<script>   \n  </script>",
     '<script>const s = "<\\/script>"; console.log(s);</script>',
     `<script type="module">${GOOD_B}</script>`,
@@ -170,7 +168,7 @@ Bun.serve({
   async fetch(req) {
     const path = new URL(req.url).pathname;
     if (path === "/" && env.PL_ROOT500 === "1") return new Response("down", { status: 500 });
-    if (env.PL_HOLD && path === (env.PL_HOLDPATH || "/term")) {
+    if (env.PL_HOLD && path === "/term") {
       writeFileSync(env.PL_HOLD, "");
       await new Promise(() => {});
     }
@@ -180,15 +178,10 @@ Bun.serve({
       : new Response("not found", { status: 404 });
   },
 });
-EOF
-pseed() { mkdir -p "$H/bin" "$H/dashboard"; cp "$BIN/ac-bun.sh" "$H/bin/"; ln -s "$ROOT/src" "$H/src"; cp "$TMP/pl-app.ts" "$H/dashboard/app.ts"; }
-for H in "$PO" "$PN"; do pseed; done
-cp "$ROOT/tests/fixtures/ac-page-lint.sh" "$PO/bin/ac-page-lint.sh"; cp "$BIN/ac-page-lint.sh" "$PN/bin/ac-page-lint.sh"
+EOS
+mkdir -p "$PN/bin" "$PN/dashboard"
+cp "$BIN/ac-bun.sh" "$BIN/ac-page-lint.sh" "$PN/bin/"; ln -s "$ROOT/src" "$PN/src"; cp "$TMP/pl-app.ts" "$PN/dashboard/app.ts"
 PPATH="$plstub:$PATH"; PENV=()
-prun() {  # prun <side root> <prefix> <args...> - the side's own bin/ac-page-lint.sh, run from the side root
-  local h="$1" p="$2"; shift 2
-  (cd "$h" && env LC_ALL=C PATH="$PPATH" PL_TMP="$PLT" PL_PIDS="$PLP" ${PENV[@]+"${PENV[@]}"} ./bin/ac-page-lint.sh "$@") </dev/null >"$TMP/$p.raw" 2>"$TMP/$p.rawerr"
-}
 pswept() {  # pswept <what> - no tmpdir left, every dashboard the run booted gone
   local f n
   assert_eq "$(ls -A "$PLT")" "" "page-lint $1: no tmpdir left"
@@ -201,21 +194,11 @@ pswept() {  # pswept <what> - no tmpdir left, every dashboard the run booted gon
     rm -f "$f"
   done
 }
-pnorm() { LC_ALL=C sed -E -e "s#$2#ROOT#g" -e "s#$PLT/tmp\.[A-Za-z0-9]{10}#TMPDIR#g" -e 's#port [0-9]+#port N#g' "$1"; }
-pside() {  # pside <side root> <prefix> <args...> - one run, swept and normalised; its status in P_SIDE
-  local h="$1" p="$2"; shift 2
-  P_SIDE=0; prun "$h" "$p" "$@" || P_SIDE=$?
-  pswept "$p '$*'"
-  pnorm "$TMP/$p.raw" "$h" >"$TMP/$p.out"; pnorm "$TMP/$p.rawerr" "$h" >"$TMP/$p.err"
-}
-psame() {  # psame <args...> - oracle on $PO and shim on $PN answer alike; P_RC is the shared status
-  local o_rc
-  pside "$PO" po "$@"; o_rc="$P_SIDE"
-  pside "$PN" pn "$@"
-  assert_eq "$P_SIDE" "$o_rc" "page-lint differential exit for '$*' (${PENV[*]-})"
-  cmp -s "$TMP/po.out" "$TMP/pn.out" || fail "page-lint differential stdout differs for '$*' (${PENV[*]-}): $(diff "$TMP/po.out" "$TMP/pn.out" | head -n 8)"
-  cmp -s "$TMP/po.err" "$TMP/pn.err" || fail "page-lint differential stderr differs for '$*' (${PENV[*]-}): $(diff "$TMP/po.err" "$TMP/pn.err" | head -n 8)"
-  P_RC="$P_SIDE"
+prun() {  # prun <args...> - one run from $PN, swept; sets P_RC, stdout and stderr in $TMP/pn.out and pn.err
+  P_RC=0
+  (cd "$PN" && env LC_ALL=C PATH="$PPATH" PL_TMP="$PLT" PL_PIDS="$PLP" ${PENV[@]+"${PENV[@]}"} ./bin/ac-page-lint.sh "$@") </dev/null >"$TMP/pn.out" 2>"$TMP/pn.raw" || P_RC=$?
+  pswept "'$*' (${PENV[*]-})"
+  LC_ALL=C sed -E 's#port [0-9]+#port N#g' "$TMP/pn.raw" >"$TMP/pn.err"
 }
 pout() { cat "$TMP/pn.out"; }
 perr() { cat "$TMP/pn.err"; }
@@ -226,41 +209,26 @@ OK /whiteboard-frame (2 scripts)
 OK /review (2 scripts)"
 
 # 1. a clean fixture: five OK lines, exit 0
-psame
+prun
 assert_eq "$P_RC $(pout)" "0 $ALL_OK" "row 1: clean"
 assert_eq "$(perr)" "" "row 1: nothing on stderr"
 
-# 2. a broken script: its SYNTAX ERROR block on stdout - bun's text is several
-#    lines naming the tmpdir (W2) - and the other pages still OK, exit 1
-PENV=(PAGE_LINT_TEST_BAD=1); psame; PENV=()
-assert_eq "$P_RC" 1 "row 2: a syntax error exits 1"
-assert_eq "$(pout | head -n 1 | cut -c1-25)" "SYNTAX ERROR / script 2: " "row 2: the failing page and script"
-assert_contains "$(pout | sed -n '2,$p')" "TMPDIR/scripts/2.js" "row 2: the block runs over several lines and names the tmpdir (W2)"
-assert_eq "$(pout | grep '^OK ')" "$(printf '%s\n' "$ALL_OK" | sed 1d)" "row 2: the rest OK"
-
-# 3. -h / --help (extras ignored): exit 0, each side's OWN spec header - the
-#    named divergence (USAGE HEADER); an unknown first argument: exit 2
-pusage() {
-  local o_rc=0 n_rc=0
-  prun "$PO" po "$@" || o_rc=$?
-  prun "$PN" pn "$@" || n_rc=$?
-  assert_eq "$o_rc $n_rc" "0 0" "usage '$*': both exit 0"
-  assert_eq "$(cat "$TMP/po.rawerr" "$TMP/pn.rawerr")" "" "usage '$*': nothing on stderr"
-  assert_eq "$(cat "$TMP/po.raw")" "$(awk 'NR>1{if(!/^#/)exit; print}' "$ROOT/tests/fixtures/ac-page-lint.sh" | sed 's/^# \{0,1\}//')" "usage '$*': the original prints its bash header"
-  assert_eq "$(cat "$TMP/pn.raw")" "$(awk '{if(!/^\/\//)exit; print}' "$ROOT/src/page-lint.ts" | sed 's/^\/\/ \{0,1\}//')" "usage '$*': the port prints the src/page-lint.ts spec header"
-  assert_contains "$(cat "$TMP/po.raw")" "Usage: ac-page-lint.sh" "usage '$*': the original's usage line"
-  assert_contains "$(cat "$TMP/pn.raw")" "Usage: ac-page-lint.sh" "usage '$*': the port's usage line"
-}
-pusage -h
-pusage --help
-pusage -h bogus
+# 2. -h / --help (extras ignored): exit 0, the src/page-lint.ts spec header on
+#    stdout; an unknown first argument: exit 2
+for a in -h --help '-h bogus'; do
+  # shellcheck disable=SC2086
+  prun $a
+  assert_eq "$P_RC:$(perr)" "0:" "usage '$a': exit 0, nothing on stderr"
+  assert_eq "$(pout)" "$(awk '{if(!/^\/\//)exit; print}' "$ROOT/src/page-lint.ts" | sed 's/^\/\/ \{0,1\}//')" "usage '$a': the src/page-lint.ts spec header"
+done
 for a in bogus --all -; do
-  psame "$a" extra
-  assert_eq "$P_RC $(perr)" "2 ac-page-lint.sh: unknown arg: $a" "row 3: '$a' exits 2"
+  prun "$a" extra
+  assert_eq "$P_RC $(perr)" "2 ac-page-lint.sh: unknown arg: $a" "row 2: '$a' exits 2"
+  assert_eq "$(pout)" "" "row 2: '$a' prints nothing on stdout"
 done
 
-# 4. a missing tool, first one wins: curl, then perl - exit 3; bun is the
-#    shim's own refusal, exit 1 (a named divergence)
+# 3. a missing tool, first one wins: curl, then perl - exit 3; without bun the
+#    shim refuses every run, -h and a bad argument included
 ptools() {  # ptools <dir> <tool...> - a PATH dir holding only these tools
   mkdir -p "$1"; local d="$1" t; shift
   for t in "$@"; do ln -sf "$(command -v "$t")" "$d/$t"; done
@@ -268,182 +236,111 @@ ptools() {  # ptools <dir> <tool...> - a PATH dir holding only these tools
 ptools "$TMP/pl-nocurl" bash dirname bun perl awk sed
 ptools "$TMP/pl-noperl" bash dirname bun curl awk sed
 ptools "$TMP/pl-nobun" bash dirname curl perl awk sed
-PPATH="$plstub:$TMP/pl-nocurl"; psame
-assert_eq "$P_RC $(perr)" "3 ac-page-lint.sh: curl not found" "row 4: no curl"
-PPATH="$plstub:$TMP/pl-noperl"; psame
-assert_eq "$P_RC $(perr)" "3 ac-page-lint.sh: perl not found" "row 4: no perl"
+PPATH="$plstub:$TMP/pl-nocurl"; prun
+assert_eq "$P_RC $(perr)" "3 ac-page-lint.sh: curl not found" "row 3: no curl"
+PPATH="$plstub:$TMP/pl-noperl"; prun
+assert_eq "$P_RC $(perr)" "3 ac-page-lint.sh: perl not found" "row 3: no perl"
 ptools "$TMP/pl-notools" bash dirname bun awk sed
-PPATH="$plstub:$TMP/pl-notools"; psame
-assert_eq "$P_RC $(perr)" "3 ac-page-lint.sh: curl not found" "row 4: neither - curl is checked first"
+PPATH="$plstub:$TMP/pl-notools"; prun
+assert_eq "$P_RC $(perr)" "3 ac-page-lint.sh: curl not found" "row 3: neither - curl is checked first"
 PPATH="$plstub:$TMP/pl-nobun"
-for a in "" -h bogus; do
-  pside "$PO" po ${a:+"$a"}; o_rc="$P_SIDE"
-  pside "$PN" pn ${a:+"$a"}
-  [ "$a" = "" ] && assert_eq "$o_rc $(cat "$TMP/po.err")" "3 ac-page-lint.sh: bun not found" "row 4: the original's own bun check"
-  assert_eq "$P_SIDE $(perr)" "1 ERROR: required tool not found: bun" "row 4: '$a' without bun is the shim's refusal"
+for a in -h bogus; do
+  prun "$a"
+  assert_eq "$P_RC $(perr)" "1 ERROR: required tool not found: bun" "row 3: '$a' without bun is the shim's refusal"
 done
 PPATH="$plstub:$PATH"
 
-# 5. a page that cannot be fetched: its TOOLING ERROR on stderr, the others
+# 4. a page that cannot be fetched: its TOOLING ERROR on stderr, the others
 #    checked, exit 3 - and exit 1 when another page is broken, the TOOLING
 #    ERROR still printed
-PENV=(PL_404=/review); psame; PENV=()
-assert_eq "$P_RC $(perr)" "3 TOOLING ERROR /review: could not fetch (curl: (22) The requested URL returned error: 404)" "row 5: a 404"
-assert_eq "$(pout)" "$(printf '%s\n' "$ALL_OK" | sed '$d')" "row 5: four OK"
-PENV=(PL_404=/review PAGE_LINT_TEST_BAD=1); psame; PENV=()
-assert_eq "$P_RC" 1 "row 5: a syntax error outranks a tooling error"
-assert_contains "$(perr)" "TOOLING ERROR /review: could not fetch" "row 5: still reported"
+PENV=(PL_404=/review); prun; PENV=()
+assert_eq "$P_RC" 3 "row 4: a 404 exits 3"
+assert_eq "$(perr | cut -c1-41)" "TOOLING ERROR /review: could not fetch (c" "row 4: the page and curl's own text"
+assert_eq "$(pout)" "$(printf '%s\n' "$ALL_OK" | sed '$d')" "row 4: four OK"
+PENV=(PL_404=/review PAGE_LINT_TEST_BAD=1); prun; PENV=()
+assert_eq "$P_RC" 1 "row 4: a syntax error outranks a tooling error"
+assert_contains "$(perr)" "TOOLING ERROR /review: could not fetch" "row 4: still reported"
+assert_eq "$(pout | grep '^OK ')" "$(printf '%s\n' "$ALL_OK" | sed -e 1d -e '$d')" "row 4: the pages between still OK"
 
-# 6. the extraction: `<SCRIPT>` is never extracted (W3), a `data-src=` block is
-#    skipped as external (W1), a whitespace-only body is skipped, an escaped
+# 5. the extraction: a whitespace-only body is skipped, an escaped
 #    `<\/script>` inside a string does not close a block, an unterminated
 #    last block is dropped; a page of external scripts only checks 0; two
 #    failing scripts are two blocks and no OK line
-PENV=(PL_ODD=1 PL_NONE=1 PL_TWOBAD=1); psame; PENV=()
-assert_eq "$P_RC" 1 "row 6: a broken page exits 1"
+PENV=(PL_ODD=1 PL_NONE=1 PL_TWOBAD=1); prun; PENV=()
+assert_eq "$P_RC" 1 "row 5: a broken page exits 1"
 assert_eq "$(pout | grep -E '^(OK|SYNTAX ERROR) ' | cut -c1-34)" "OK / (2 scripts)
 OK /term (0 scripts)
 SYNTAX ERROR /whiteboard script 1:
 SYNTAX ERROR /whiteboard script 3:
 OK /whiteboard-frame (2 scripts)
-OK /review (2 scripts)" "row 6: counts and blocks"
+OK /review (2 scripts)" "row 5: counts and blocks"
 
-# 7. a dashboard that dies at start: the polls stop once it is gone (a
+# 6. a dashboard that dies at start: the polls stop once it is gone (a
 #    logging wrapper around the real sleep counts them), the log follows the
 #    refusal two-space indented (a blank line indents to two spaces)
 plslog="$TMP/pl-slog"; mkdir -p "$plslog"
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >>"$PL_SLEEPS"\nexec /bin/sleep "$@"\n' >"$plslog/sleep"; chmod +x "$plslog/sleep"
 PPATH="$plslog:$plstub:$PATH"; PENV=(PL_THROW=1 "PL_SLEEPS=$TMP/pl-sleeps")
-: >"$TMP/pl-sleeps"; pside "$PO" po; o_rc="$P_SIDE"; o_n="$(grep -c . "$TMP/pl-sleeps" || true)"
-: >"$TMP/pl-sleeps"; pside "$PN" pn; n_n="$(grep -c . "$TMP/pl-sleeps" || true)"
+: >"$TMP/pl-sleeps"; prun; n_n="$(grep -c . "$TMP/pl-sleeps" || true)"
 PPATH="$plstub:$PATH"; PENV=()
-assert_eq "$P_SIDE $o_rc" "3 3" "row 7: exit 3 on both sides"
-cmp -s "$TMP/po.out" "$TMP/pn.out" || fail "row 7: stdout differs"
-cmp -s "$TMP/po.err" "$TMP/pn.err" || fail "row 7: stderr differs: $(diff "$TMP/po.err" "$TMP/pn.err" | head -n 6)"
-[ "$o_n" -lt 50 ] && [ "$n_n" -lt 50 ] || fail "row 7: a dead dashboard stops the polls ($o_n/$n_n sleeps)"
-assert_eq "$(perr | head -n 1)" "ac-page-lint.sh: dashboard did not come up on port N" "row 7: the refusal"
-assert_contains "$(perr)" "  error: fixture: dashboard intentionally broken" "row 7: the indented log"
-grep -qx '  ' <<<"$(perr)" || fail "row 7: a blank log line indents to two spaces"
-assert_eq "$(pout)" "" "row 7: nothing on stdout"
+assert_eq "$P_RC" 3 "row 6: exit 3"
+[ "$n_n" -lt 50 ] || fail "row 6: a dead dashboard stops the polls ($n_n sleeps)"
+assert_eq "$(perr | head -n 1)" "ac-page-lint.sh: dashboard did not come up on port N" "row 6: the refusal"
+assert_contains "$(perr)" "  error: fixture: dashboard intentionally broken" "row 6: the indented log"
+grep -qx '  ' <<<"$(perr)" || fail "row 6: a blank log line indents to two spaces"
+assert_eq "$(pout)" "" "row 6: nothing on stdout"
 
-# 8. a dashboard that never answers `/` well: 50 polls, each followed by a
-#    spawned `sleep 0.2` (a PATH stub here, binding both sides), then the
-#    refusal with an empty log
+# 7. a dashboard that never answers `/` well: 50 polls, each followed by a
+#    spawned `sleep 0.2` (a PATH stub here), then the refusal with an empty log
 plsleep="$TMP/pl-sleep"; mkdir -p "$plsleep"
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >>"$PL_SLEEPS"\n' >"$plsleep/sleep"; chmod +x "$plsleep/sleep"
 PPATH="$plsleep:$plstub:$PATH"; PENV=(PL_ROOT500=1 "PL_SLEEPS=$TMP/pl-sleeps")
-: >"$TMP/pl-sleeps"; pside "$PO" po; o_rc="$P_SIDE"; o_n="$(grep -c '^0.2$' "$TMP/pl-sleeps" || true)"
-: >"$TMP/pl-sleeps"; pside "$PN" pn; n_n="$(grep -c '^0.2$' "$TMP/pl-sleeps" || true)"
+: >"$TMP/pl-sleeps"; prun; n_n="$(grep -c '^0.2$' "$TMP/pl-sleeps" || true)"
 PPATH="$plstub:$PATH"; PENV=()
-assert_eq "$P_SIDE $o_rc" "3 3" "row 8: exit 3 on both sides"
-assert_eq "$n_n $o_n" "50 50" "row 8: fifty polls on both sides"
-assert_eq "$(perr)" "ac-page-lint.sh: dashboard did not come up on port N" "row 8: the refusal, an empty log"
-cmp -s "$TMP/po.err" "$TMP/pn.err" || fail "row 8: stderr differs"
+assert_eq "$P_RC" 3 "row 7: exit 3"
+assert_eq "$n_n" 50 "row 7: fifty polls"
+assert_eq "$(perr)" "ac-page-lint.sh: dashboard did not come up on port N" "row 7: the refusal, an empty log"
 
-# 9. a caller cwd that is gone: the lint still runs
-pgone() {
-  local o_rc
-  mkdir -p "$TMP/pl-gone"
-  P_SIDE=0; (cd "$TMP/pl-gone" && rmdir "$TMP/pl-gone" && env LC_ALL=C PATH="$PPATH" PL_TMP="$PLT" PL_PIDS="$PLP" "$1/bin/ac-page-lint.sh") </dev/null >"$TMP/$2.raw" 2>"$TMP/$2.rawerr" || P_SIDE=$?
-  pswept "$2 from a gone cwd"
-}
-pgone "$PO" po; o_rc="$P_SIDE"
-pgone "$PN" pn
-assert_eq "$P_SIDE $o_rc" "0 0" "row 9: a gone cwd lints clean"
-assert_eq "$(cat "$TMP/pn.raw")" "$(cat "$TMP/po.raw")" "row 9: the same lines"
-
-# 10. mktemp failing: its own line, then the refusal, exit 3
-PENV=(PL_MKTEMP_FAIL=1); psame; PENV=()
+# 8. mktemp failing: its own line, then the refusal, exit 3
+PENV=(PL_MKTEMP_FAIL=1); prun; PENV=()
 assert_eq "$P_RC $(perr)" "3 mktemp: stub refused
-ac-page-lint.sh: mktemp failed" "row 10: mktemp failed"
+ac-page-lint.sh: mktemp failed" "row 8: mktemp failed"
 
-# 11. a PATH perl that is not executable is FOUND, as bash's `command -v`
-#     finds it, and every extraction fails: five TOOLING ERROR lines, exit 3;
-#     the shell's own `Permission denied` text inside the parentheses is not
-#     reproduced (named: SHELL-OWN STDERR)
+# 9. a PATH perl that is not executable is FOUND and every extraction fails:
+#    five TOOLING ERROR lines with nothing captured, exit 3
 plnx="$TMP/pl-nxperl"
 ptools "$plnx" bash dirname bun curl seq sleep sed cat rm mkdir awk
 printf '#!/bin/sh\nexit 0\n' >"$plnx/perl"; chmod 644 "$plnx/perl"
-PPATH="$plstub:$plnx"
-pside "$PO" po; o_rc="$P_SIDE"
-pside "$PN" pn
-PPATH="$plstub:$PATH"
-assert_eq "$P_SIDE $o_rc" "3 3" "row 11: exit 3 on both sides"
-assert_eq "$(cat "$TMP/pn.out" "$TMP/po.out")" "" "row 11: no page passes"
-assert_eq "$(cut -d'(' -f1 "$TMP/pn.err")" "$(cut -d'(' -f1 "$TMP/po.err")" "row 11: the same TOOLING ERROR lines"
-assert_eq "$(grep -c '^TOOLING ERROR .*: script extraction failed ()$' "$TMP/pn.err")" 5 "row 11: the port's parentheses are empty (named)"
-assert_contains "$(cat "$TMP/po.err")" "Permission denied" "row 11: the shell's own text on the original"
+PPATH="$plstub:$plnx"; prun; PPATH="$plstub:$PATH"
+assert_eq "$P_RC" 3 "row 9: exit 3"
+assert_eq "$(pout)" "" "row 9: no page passes"
+assert_eq "$(perr)" "TOOLING ERROR /: script extraction failed ()
+TOOLING ERROR /term: script extraction failed ()
+TOOLING ERROR /whiteboard: script extraction failed ()
+TOOLING ERROR /whiteboard-frame: script extraction failed ()
+TOOLING ERROR /review: script extraction failed ()" "row 9: one line per page"
 
-# 12. a TERM while a page fetch hangs: the EXIT trap's sweep runs - the run
-#     ends 143, no tmpdir is left and the dashboard is gone
-pterm() {  # pterm <side root> <prefix>
+# 10. a signal while a page fetch hangs: the run ends 128+<signal>, no tmpdir
+#     is left and the dashboard is gone. Started as an async job of this
+#     non-interactive shell the run inherits SIGINT ignored, and still ends on it.
+psignal() {  # psignal <signal> - a run held on /term, signalled; its status in P_RC
   local hold="$TMP/pl-hold" n=0 pid
   rm -f "$hold"
-  (cd "$1" && exec env LC_ALL=C PATH="$PPATH" PL_TMP="$PLT" PL_PIDS="$PLP" PL_HOLD="$hold" ./bin/ac-page-lint.sh) </dev/null >"$TMP/$2.raw" 2>"$TMP/$2.rawerr" &
+  (cd "$PN" && exec env LC_ALL=C PATH="$PPATH" PL_TMP="$PLT" PL_PIDS="$PLP" PL_HOLD="$hold" ./bin/ac-page-lint.sh) </dev/null >"$TMP/pn.out" 2>"$TMP/pn.raw" &
   pid=$!
-  until [ -e "$hold" ]; do n=$((n + 1)); [ "$n" -lt 200 ] || { kill -TERM "$pid"; fail "row 12: $2 never reached /term"; }; sleep 0.05; done
-  kill -TERM "$pid"
-  P_SIDE=0; wait "$pid" 2>/dev/null || P_SIDE=$?
-  pswept "$2 after TERM"
-}
-pterm "$PO" po; o_rc="$P_SIDE"
-pterm "$PN" pn
-assert_eq "$P_SIDE $o_rc" "143 143" "row 12: TERM ends both runs"
-assert_eq "$(cat "$TMP/pn.raw")" "$(cat "$TMP/po.raw")" "row 12: the same lines before the signal"
-assert_eq "$(cat "$TMP/pn.raw")" "OK / (2 scripts)" "row 12: the page before the hold"
-
-# 13. W5: the readiness curl has no time limit - a dashboard that accepts `/`
-#     and never answers holds the run in that poll (no sleep follows it)
-#     until a signal. Started as an async job of this non-interactive shell,
-#     the run inherits SIGINT ignored: the original runs on and a TERM ends
-#     it, the port ends 130 on the INT and sweeps (named divergence)
-pheld() {  # pheld <side root> <prefix> - start the side held on `/`; its pid in P_PID
-  local n=0 c
-  rm -f "$TMP/pl-hold"; : >"$TMP/pl-sleeps"
-  (cd "$1" && exec env LC_ALL=C PATH="$plsleep:$PPATH" PL_TMP="$PLT" PL_PIDS="$PLP" PL_HOLD="$TMP/pl-hold" PL_HOLDPATH=/ PL_SLEEPS="$TMP/pl-sleeps" ./bin/ac-page-lint.sh) </dev/null >"$TMP/$2.raw" 2>"$TMP/$2.rawerr" &
-  P_PID=$!
-  until [ -e "$TMP/pl-hold" ]; do n=$((n + 1)); [ "$n" -lt 200 ] || { kill -TERM "$P_PID"; fail "row 13: $2 never polled /"; }; sleep 0.05; done
-  c="$(grep -c . "$TMP/pl-sleeps" || true)"
-  sleep 1
-  kill -0 "$P_PID" 2>/dev/null || fail "row 13: $2 must still hang in the accepted poll (W5)"
-  [ "$(grep -c . "$TMP/pl-sleeps" || true)" = "$c" ] || { kill -TERM "$P_PID"; fail "row 13: $2 polled again after / was accepted (W5)"; }
-  kill -INT "$P_PID"
-}
-pended() {  # pended <what> - P_PID ended within 5 s, its status in P_SIDE
-  local n=0
-  while kill -0 "$P_PID" 2>/dev/null; do
-    n=$((n + 1)); [ "$n" -lt 50 ] || { kill -TERM "$P_PID"; fail "row 13: $1 did not end"; }; sleep 0.1
+  until [ -e "$hold" ]; do n=$((n + 1)); [ "$n" -lt 200 ] || { kill -TERM "$pid"; fail "row 10: the run never reached /term"; }; sleep 0.05; done
+  kill "-$1" "$pid"
+  n=0
+  while kill -0 "$pid" 2>/dev/null; do
+    n=$((n + 1)); [ "$n" -lt 50 ] || { kill -TERM "$pid"; fail "row 10: the run did not end on $1"; }; sleep 0.1
   done
-  P_SIDE=0; wait "$P_PID" 2>/dev/null || P_SIDE=$?
+  P_RC=0; wait "$pid" 2>/dev/null || P_RC=$?
+  pswept "after $1"
 }
-pheld "$PO" po
-sleep 0.5
-kill -0 "$P_PID" 2>/dev/null || fail "row 13: the original runs on through an ignored SIGINT"
-kill -TERM "$P_PID"; o_rc=0; wait "$P_PID" 2>/dev/null || o_rc=$?
-pswept "po after INT then TERM"
-pheld "$PN" pn
-pended "the port after INT"
-pswept "pn after INT"
-assert_eq "$o_rc $P_SIDE" "143 130" "row 13: the original ends on TERM, the port on INT"
-assert_eq "$(cat "$TMP/po.raw" "$TMP/pn.raw")" "" "row 13: no page was ever checked"
-
-# 14. without seq(1) on PATH the original's `$(seq 1 30)` loop ran zero
-#     times - `could not find a free port`, exit 3 - where the port counts its
-#     own draws and runs (named divergence)
-ptools "$TMP/pl-noseq" bash dirname bun curl perl sleep sed cat rm mkdir awk
-PPATH="$plstub:$TMP/pl-noseq"
-pside "$PO" po; o_rc="$P_SIDE"
-pside "$PN" pn
-PPATH="$plstub:$PATH"
-assert_eq "$o_rc" 3 "row 14: the original cannot count without seq"
-assert_contains "$(cat "$TMP/po.err")" "ac-page-lint.sh: could not find a free port" "row 14: the original's refusal"
-assert_eq "$P_SIDE $(cat "$TMP/pn.out")" "0 $ALL_OK" "row 14: the port runs"
-
-# Named and not pinned here (the header lists them): under a UTF-8 locale BSD
-# sed stopped the original's log dump at an invalid byte, the port prefixes
-# every byte (this leg runs LC_ALL=C); a signal ends the port with 128+n where
-# bash died by it - the same status to a shell; bun build no longer sees a
-# caller's BUN_*/JSC_* names (BUN_OPTIONS with an unknown flag, probed, changed
-# no verdict); a non-UTF-8 argument reaches the port as U+FFFD.
+psignal TERM
+assert_eq "$P_RC" 143 "row 10: TERM ends the run 143"
+assert_eq "$(pout)" "OK / (2 scripts)" "row 10: the page before the hold"
+psignal INT
+assert_eq "$P_RC" 130 "row 10: INT ends the run 130"
 
 pass

@@ -6,8 +6,7 @@
 // watcherNudge against ac_watcher_pid / ac_watcher_nudge over the lock-file
 // shapes and stand-in watchers, the ported `/src/watch.ts` shape among them.
 // A record the twin wrote is also drained by the real bin/ac-wake-drain.sh.
-// The CLI contract itself is tests/sh/ac-done.test.sh's, whose differential
-// leg runs the frozen bash original beside the shim.
+// The CLI contract itself is tests/sh/ac-done.test.sh's.
 import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

@@ -1,9 +1,8 @@
 // sync.ts - keep project clones fresh: fetch, fast-forward the checked-out
 // default branch, and prune local branches whose upstream is gone. The entry
 // is bin/ac-sync.sh (a shim that starts this file through bin/ac-bun.sh);
-// THIS header is the authoritative spec, and the bash original it replaced
-// stays frozen at tests/fixtures/ac-sync.sh as the oracle the differential
-// leg of tests/sh/ac-sync.test.sh holds this module to.
+// THIS header is the authoritative spec, and tests/sh/ac-sync.test.sh is its
+// contract test.
 //
 // Usage:
 //   ac-sync.sh [<project>]
@@ -96,17 +95,10 @@
 // dropped), branch -D (quiet), plus defaultBranch's symbolic-ref/show-ref and
 // projectDir's rev-parse --git-common-dir. The fetch's `-c` options stay on
 // the command line as given. Byte order replaces the shell's glob order for
-// projects/ and the slot metas (the LC_ALL=C sort idiom; the leg runs the
-// oracle under LC_ALL=C). Ref names, meta values and the lines built from
-// them are bytes end to end (latin1 in, latin1 out).
-//
-// DIVERGENCES from the original, named in the differential leg: `-h` prints
-// THIS header where the original printed its bash header (same exit 2); a
-// path or ref name holding a byte that is not UTF-8 reaches Bun's argv as
-// U+FFFD, so such a name prints as that character where the original echoed
-// the byte; bash's own `[: integer expression expected` under a 2^63+
-// timeout was already silenced by the original's `2>/dev/null` block, so
-// nothing of the shell's reaches the reader on either side.
+// projects/ and the slot metas (the LC_ALL=C sort idiom). Ref names, meta
+// values and the lines built from them are bytes end to end (latin1 in,
+// latin1 out); an argument holding a byte that is not UTF-8 reaches Bun's
+// argv as U+FFFD, so such a name prints as that character.
 //
 // CALLERS: none in bin/, src/, dashboard/, .agents/ or .claude/ runs this
 // entry - bin/ac-session-start.sh's digest prints `run bin/ac-sync.sh ...` as

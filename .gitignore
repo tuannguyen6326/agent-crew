@@ -25,3 +25,4 @@ research/
 # bun parks its transpiler cache under $HOME/Library/Caches; a test that sets HOME to a
 # checkout grows one here, and `git add -A` once committed it (c6468dd8).
 /Library/
+/tests/sh/Library/

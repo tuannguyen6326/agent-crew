@@ -1,15 +1,12 @@
-// standing-jobs.test.ts - the local logic src/standing-jobs.ts ported from
-// bin/ac-standing-jobs.sh (frozen at tests/fixtures/ac-standing-jobs.sh), held
-// to the bash it replaced differentially: the `while IFS= read -r` line
-// reader, the case-pattern job-line filter and the three sed field
-// extractions, each run by bash over the same bytes. The CLI contract itself
-// (both verbs, stdout, stderr, exit) is tests/sh/ac-standing-jobs.test.sh's,
-// whose differential leg runs the frozen original beside the shim.
+// standing-jobs.test.ts - the local logic of src/standing-jobs.ts, held to the
+// shell readings its header names: the `while IFS= read -r` line reader, the
+// case-pattern job-line filter and the sed field extractions, each run by
+// bash over the same bytes. The CLI contract itself (both verbs, stdout,
+// stderr, exit) is tests/sh/ac-standing-jobs.test.sh's.
 //
-// Every bash side runs under LC_ALL=C: that is the byte reading the port
+// Every bash side runs under LC_ALL=C: that is the byte reading the module
 // keeps. Under a UTF-8 locale BSD sed refuses a byte that is not valid UTF-8
-// (`RE error: illegal byte sequence`), the outside actor's behaviour the sh
-// leg names as the port's one declared divergence.
+// (`RE error: illegal byte sequence`).
 import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -59,9 +56,9 @@ test("readLines reads what `while IFS= read -r` reads: an unterminated last line
     empty: "",
   };
   // bash 3.2 (this host's /bin/bash) ends a `read -r` line at a NUL; bash 4+
-  // drops the byte and keeps reading. The port keeps 3.2's reading, the one
-  // the frozen original had on this host, so a newer bash is not the oracle
-  // for that row - the declared result is pinned on its own there.
+  // drops the byte and keeps reading. The module keeps 3.2's reading, so a
+  // newer bash cannot answer for that row - the declared result is pinned on
+  // its own there.
   const major = Number(Bun.spawnSync(["bash", "-c", 'printf %s "${BASH_VERSINFO[0]}"']).stdout.toString());
   for (const [name, body] of Object.entries(cases)) {
     const got = readLines(Buffer.from(body, "latin1"));

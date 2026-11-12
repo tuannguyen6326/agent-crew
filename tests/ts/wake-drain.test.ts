@@ -1,13 +1,11 @@
-// wake-drain.test.ts - what src/wake-drain.ts brought into src/lib.ts, held to
+// wake-drain.test.ts - what src/wake-drain.ts brought into src/lib.ts and src/lib-wake-drain.ts, held to
 // the bash it twins: BUSY_RE and CAPTAIN_RE against the values bin/ac-harness.sh
 // and bin/ac-lib.sh set, metaPaths against the `"$sd"/*.meta` glob, metaIsSelf
 // against ac_meta_is_self, chiefGateParked against ac_chief_gate_parked,
 // chiefChildLive against ac_chief_child_live and roomchiefLive's io against
 // ac_roomchief_live's stdin (both through backendCall, under a fake herdr and
-// orca logging every call), and claimLive against the frozen original's
-// dead-claim verdict.
-// The CLI contract is tests/sh/ac-wake-drain.test.sh's, whose differential leg
-// runs that original beside the shim.
+// orca logging every call), and claimLive's dead-claim verdict.
+// The CLI contract is tests/sh/ac-wake-drain.test.sh's.
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,6 +14,7 @@ import { join } from "node:path";
 const ROOT = join(import.meta.dir, "..", "..");
 const BIN = join(ROOT, "bin");
 const LIB = join(ROOT, "src", "lib.ts");
+const LIBW = join(ROOT, "src", "lib-wake-drain.ts");
 const W = realpathSync(mkdtempSync(join(tmpdir(), "ac-wake-drain-ts-")));
 afterAll(() => rmSync(W, { recursive: true, force: true }));
 const ROOTED = process.getuid?.() === 0;
@@ -35,7 +34,7 @@ function bash(script: string, env: Record<string, string>, args: string[] = [], 
 // The twins in a bun child started in ROOT.
 function twin(body: string, env: Record<string, string>, stdin: "ignore" | Buffer = "ignore"): Run {
   const r = Bun.spawnSync(
-    [process.execPath, "-e", `const L = await import(${JSON.stringify(LIB)}); const say = (s) => process.stdout.write(String(s)); ${body}`],
+    [process.execPath, "-e", `const L = { ...await import(${JSON.stringify(LIB)}), ...await import(${JSON.stringify(LIBW)}) }; const say = (s) => process.stdout.write(String(s)); ${body}`],
     { cwd: ROOT, env: { PATH: process.env.PATH!, LC_ALL: "C", ...env }, stdin, stdout: "pipe", stderr: "pipe" },
   );
   return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
@@ -242,13 +241,7 @@ test("roomchiefLive passes the caller's stdin to the probe only when asked, as t
   expect({ out: quiet.out, log: takeLog(fb) }).toEqual({ out: "live", log: "orca terminal show --terminal ho --json stdin=[]\n" });
 }, 60000);
 
-test("claimLive keeps what the original's sweep kept, and a live drainer running src/wake-drain.ts too", () => {
-  const verdict = `. "$0/ac-lib.sh"; pid="$1"
-if [ "$pid" != "$$" ] && ac_pid_alive "$pid"; then
-  cmd="$(ps -o command= -p "$pid" 2>/dev/null)" || { printf kept; exit 0; }
-  case "$cmd" in *ac-wake-drain*) printf kept; exit 0 ;; esac
-fi
-printf swept`;
+test("claimLive keeps a live drainer by name, a live src/wake-drain.ts drainer and an unreadable claimer; it sweeps the rest", () => {
   const blind = dir("blind");
   exe(join(blind, "ps"), '#!/bin/sh\ncase "$*" in *command=*) exit 1 ;; esac\nexec /bin/ps "$@"\n');
   const dead = Bun.spawnSync(["/bin/sh", "-c", "echo $$"]).stdout.toString().trim();
@@ -260,20 +253,17 @@ printf swept`;
   try {
     Bun.sleepSync(200);
     const [named, ts, reused] = procs.map((p) => String(p.pid));
-    const cases: [string, Record<string, string>, string | null][] = [
-      [dead, {}, null],
-      [`0${named}`, {}, null],
-      [named!, {}, null],
-      [reused!, {}, null],
-      [reused!, { PATH: `${blind}:${process.env.PATH}` }, null],
-      // the widened match - the original read a live TS drainer as a reused pid
+    const cases: [string, Record<string, string>, string][] = [
+      [dead, {}, "swept"],
+      [`0${named}`, {}, "swept"],
+      [named!, {}, "kept"],
+      [reused!, {}, "swept"],
+      [reused!, { PATH: `${blind}:${process.env.PATH}` }, "kept"],
       [ts!, {}, "kept"],
     ];
-    for (const [pid, env, diverge] of cases) {
-      const want = diverge ?? bash(verdict, env, [pid]).out;
+    for (const [pid, env, want] of cases) {
       expect({ pid, env, got: twin(`say(L.claimLive(${JSON.stringify(pid)}) ? "kept" : "swept")`, env).out }).toEqual({ pid, env, got: want });
     }
-    expect(bash(verdict, {}, [ts!]).out).toBe("swept");
     expect(twin("say(L.claimLive(String(process.pid)) ? 'kept' : 'swept')", {}).out).toBe("swept");
   } finally {
     for (const p of procs) p.kill();

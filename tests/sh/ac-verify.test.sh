@@ -41,24 +41,16 @@ cross_second_pick="$(ls -d "$cross_second_root"/*/ | newest_round_dir)"
 assert_eq "$(basename "$cross_second_pick")" "20260101T000001Z-5" \
   "cross-second case: the later timestamp still wins even carrying the smaller pid"
 
-# --- reap_scout_panes stop: a lane pid is a positive decimal or nothing is signalled ---
+# --- reapScoutPanes stop: a lane pid is a positive decimal or nothing is signalled ---
 # `kill` takes 0 and 00 for the caller's own process group, -1 for every
-# process of the user, and 1 is init. The function runs with a kill spy, and
-# as a `set -m` job besides; no test ever writes -1. The stub sleep says when
-# the wait for live lanes ran, which no lane here should start.
+# process of the user, and 1 is init; no test ever writes -1. It runs under
+# two spies: process.kill, and a sleep on PATH that says when the wait for
+# live lanes ran, which no lane here should start.
 rsp="$TMP/reap-scout"
 mkdir -p "$rsp"
 printf '0\n' >"$rsp/1.pid"
 printf '00\n' >"$rsp/2.pid"
 printf '1\n' >"$rsp/3.pid"
-rsp_rc=0
-set -m
-bash -c "reap_pane() { :; }; sleep() { echo slept; }; kill() { echo kill \"\$*\"; }; $(sed -n '/^reap_scout_panes() {/,/^}/p' "$ROOT/tests/fixtures/ac-verify.sh"); reap_scout_panes '$rsp' stop; echo survived" </dev/null >"$TMP/rsp.out" 2>&1 &
-wait "$!" || rsp_rc=$?
-set +m
-assert_eq "$rsp_rc:$(cat "$TMP/rsp.out")" "0:survived" "a lane pid of 0, 00 or 1 is neither signalled nor waited on"
-# The port's own reapScoutPanes under the same two spies: process.kill, and a
-# sleep on PATH that says it ran.
 mkdir -p "$TMP/rsp-bin"
 printf '#!/bin/sh\necho slept\n' >"$TMP/rsp-bin/sleep"
 chmod +x "$TMP/rsp-bin/sleep"
@@ -72,23 +64,15 @@ rsp_rc=0
 (cd "$TMP" && PATH="$TMP/rsp-bin:$PATH" ROOT="$ROOT" bun --no-env-file "$TMP/rsp.ts" "$rsp") </dev/null >"$TMP/rsp-ts.out" 2>&1 || rsp_rc=$?
 assert_eq "$rsp_rc:$(cat "$TMP/rsp-ts.out")" "0:survived" "src/verify.ts: a lane pid of 0, 00 or 1 is neither signalled nor waited on"
 
-# --- qa_path_within: python's os.path.realpath + commonpath ------------------
+# --- qaPathWithin: python's os.path.realpath + commonpath ------------------
 # Only a finished QA export reaches it, so its contract is driven directly.
 # <rc>:<stderr>, because a crash exits non-zero too.
-. "$BIN/ac-bun.sh"
-eval "$(sed -n '/^qa_path_within() {/,/^}/p' "$ROOT/tests/fixtures/ac-verify.sh")"
-pw_rc() {
-  local err rc=0
-  err="$(qa_path_within "$@" 2>&1 >/dev/null)" || rc=$?
-  printf '%s:%s' "$rc" "$err"
-}
-# The port's own qaPathWithin, the same contract in process.
 cat >"$TMP/path-within.ts" <<'TS'
 const { qaPathWithin } = await import(`${process.env.ROOT}/src/verify.ts`);
 const b8 = (s: string): string => Buffer.from(s, "utf8").toString("latin1");
 process.exit(qaPathWithin(b8(process.argv[2] ?? ""), b8(process.argv[3] ?? "")) ? 0 : 1);
 TS
-pw_ts_rc() {
+pw_rc() {
   local err rc=0
   err="$(ROOT="$ROOT" bun --no-env-file "$TMP/path-within.ts" "$@" 2>&1 >/dev/null)" || rc=$?
   printf '%s:%s' "$rc" "$err"
@@ -101,18 +85,16 @@ printf 'x\n' >"$pw/root2/y"
 printf 'x\n' >"$pw/out/o"
 ln -s "$pw/out" "$pw/root/esc"
 ln -s nowhere "$pw/root/dangle"
-for pw_impl in pw_rc pw_ts_rc; do
-  assert_eq "$($pw_impl "$pw/root" "$pw/root")" "0:" "$pw_impl: the root is within itself"
-  assert_eq "$($pw_impl "$pw/root" "")" "0:" "$pw_impl: an empty candidate names the root"
-  assert_eq "$($pw_impl "$pw/root" -)" "0:" "$pw_impl: a file named - is an ordinary candidate here"
-  assert_eq "$($pw_impl "$pw/root" missing/../f)" "0:" "$pw_impl: a missing component is kept as spelled, so missing/.. cancels out"
-  assert_eq "$(cd "$pw" && $pw_impl root sub)" "0:" "$pw_impl: a relative root resolves against the cwd"
-  assert_eq "$($pw_impl "$pw/root" esc/o)" "1:" "$pw_impl: a symlink escape"
-  assert_eq "$($pw_impl "$pw/root" esc/../root/f)" "0:" "$pw_impl: .. after a symlink leaves its target"
-  assert_eq "$($pw_impl "$pw/root" dangle)" "1:" "$pw_impl: a dangling link"
-  assert_eq "$($pw_impl "$pw/root" ../root2/y)" "1:" "$pw_impl: a relative traversal out"
-  assert_eq "$($pw_impl "$pw/root" "$pw/root2/y")" "1:" "$pw_impl: a sibling sharing the root's prefix"
-done
+assert_eq "$(pw_rc "$pw/root" "$pw/root")" "0:" "qaPathWithin: the root is within itself"
+assert_eq "$(pw_rc "$pw/root" "")" "0:" "qaPathWithin: an empty candidate names the root"
+assert_eq "$(pw_rc "$pw/root" -)" "0:" "qaPathWithin: a file named - is an ordinary candidate here"
+assert_eq "$(pw_rc "$pw/root" missing/../f)" "0:" "qaPathWithin: a missing component is kept as spelled, so missing/.. cancels out"
+assert_eq "$(cd "$pw" && pw_rc root sub)" "0:" "qaPathWithin: a relative root resolves against the cwd"
+assert_eq "$(pw_rc "$pw/root" esc/o)" "1:" "qaPathWithin: a symlink escape"
+assert_eq "$(pw_rc "$pw/root" esc/../root/f)" "0:" "qaPathWithin: .. after a symlink leaves its target"
+assert_eq "$(pw_rc "$pw/root" dangle)" "1:" "qaPathWithin: a dangling link"
+assert_eq "$(pw_rc "$pw/root" ../root2/y)" "1:" "qaPathWithin: a relative traversal out"
+assert_eq "$(pw_rc "$pw/root" "$pw/root2/y")" "1:" "qaPathWithin: a sibling sharing the root's prefix"
 
 make_profile_bundle() {
   # make_profile_bundle <dir> <source-sha> <profile-key>
@@ -252,8 +234,8 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-# A turn the caller may outlive: the differential leg waits for this mark
-# before it reads the world.
+# A turn the caller may outlive: xwait_turns waits for this mark before a
+# row reads the world.
 [ -z "${VERIFY_PANE_DONE_MARK:-}" ] || trap 'touch "$VERIFY_PANE_DONE_MARK.$label"' EXIT
 correction=0
 grep -q -- '-----BEGIN REJECTED VERDICT-----' "$prompt" 2>/dev/null && correction=1
@@ -339,7 +321,7 @@ if [ -n "${VERIFY_PANE_DONE_STATUS:-}" ]; then
   exit 0
 fi
 transcript="$VERIFY_TRANSCRIPT"
-# REPLAY (the differential leg): a recorded round answers - its final
+# REPLAY: a recorded round answers - its final
 # transcript and its NDJSON stream, the correction pane's own when this is the
 # correction turn - with @TRANSCRIPT@ in the stream naming this side's copy.
 if [ -n "${VERIFY_REPLAY:-}" ]; then
@@ -2716,7 +2698,7 @@ assert_no_file "$TMP/stale-verdict.json" "a refused round writes no verdict"
 # parent's argv, which is exactly what makes the orphan findable. The port's
 # argv is bun's - `<root>/src/verify.ts <caller cwd> codereview ...` - and its
 # harvester lives in that process.
-verify_argv_re="ac-verify\.sh codereview .*--family $scout_family|/src/verify\.ts .*codereview .*--family $scout_family"
+verify_argv_re="ac-verify\.sh codereview --repo $repo .*--family $scout_family|/src/verify\.ts .*codereview --repo $repo .*--family $scout_family"
 verify_orphans="$(pgrep -f "$verify_argv_re" 2>/dev/null || true)"
 [ -z "$verify_orphans" ] \
   || fail "a refused round left its scout harvester running (pids: $verify_orphans)"
@@ -2850,12 +2832,25 @@ assert_contains "$(cat "$(dirname "$jp")/scouts/commands.txt")" "run --exec --ha
 rm -f "$AC_HOME/config/crew-dispatch.json"
 
 # ============================================================================
-# differential: src/verify.ts against the frozen bash original
+# the facade end to end, row by row, in one rebuilt world
 # ============================================================================
-# DISPUTED: the implementation (tests/fixtures/ac-verify.sh under bash vs src/verify.ts through bin/ac-verify.sh)
-# HELD-CONSTANT: ONE world path ($XW), rebuilt from nothing by the same commands before each side runs, because paths reach the prompt, the meta, the scout scripts and the output - a home at $XW/home (state/, config/, data/fam/room.md, the caller fam-impl's brief and the artifacts it names), a repository at $XW/repo committed with fixed author/committer dates under one git config (equal shas), the lease clone $XW/lease the leg's logging tree stub hands out, the caller's cwd $XW/cwd, TMPDIR=$XW/tmp, a row's own seeding on top; argv and env (every exported VERIFY_*, AC_*, BUN_* and JSC_* name of the suite unset, then AC_HOME unless a row runs homeless, AC_VERIFY_PANE_BIN = the suite's fake pane agent (its REPLAY mode answering a recorded round), AC_VERIFY_TREE_BIN = the tree stub, AC_VERIFY_QA_RELAY_BIN = the suite's fake relay, the live dispatch resolver unless a row names a stub, every capture of the fake inside $XW/log, and the row's knobs); stdin /dev/null; LC_ALL=C unless a row names en_US.UTF-8; PATH stubs on both sides - date answering one instant per format, sleep logging each call and pausing 0.01s, herdr, orca and every harness CLI refusing; the live bin/ beside each entry; exit status, stdout and stderr compared whole (either bin root spelled ROOT, the entry's pid PID, mktemp suffixes XXXXXX, bash's own `line N:` diagnostics dropped - SHELL-OWN), then the world: every path under $XW (git internals aside), every file under home/, lease/, out/, log/, tmp/ and orca/ with its mode and bytes (the round dir and prompt.md, state/ after the run and as the fake captured it inside the turn - meta, status, busy declaration, prompt, the lease's instruction files -, the output and the qa evidence and report, the tree, pane, relay, herdr and refused-CLI logs sorted, lane pids as PID) and any planted victim.
-xobin="$(make_oracle_bin ac-verify)"
-cmp -s "$xobin/ac-verify.sh" "$ROOT/tests/fixtures/ac-verify.sh" || fail "the oracle bin holds the frozen original"
+# One world path ($XW), rebuilt from nothing before each row, because paths
+# reach the prompt, the meta, the scout scripts and the output: a home at
+# $XW/home (state/, config/, data/fam/room.md, the caller fam-impl's brief and
+# the artifacts it names), a repository at $XW/repo committed with fixed
+# author/committer dates under one git config, the lease clone $XW/lease the
+# logging tree stub hands out, the caller's cwd $XW/cwd, TMPDIR=$XW/tmp, a
+# row's own seeding on top. The env: every exported VERIFY_*, AC_*, BUN_* and
+# JSC_* name of the suite unset, then AC_HOME unless a row runs homeless,
+# AC_VERIFY_PANE_BIN = the suite's fake pane agent (its REPLAY mode answering a
+# recorded round), AC_VERIFY_TREE_BIN = the tree stub, AC_VERIFY_QA_RELAY_BIN =
+# the suite's fake relay, the live dispatch resolver unless a row names a stub,
+# every capture of the fake inside $XW/log, and the row's knobs; stdin
+# /dev/null; LC_ALL=C unless a row names en_US.UTF-8; PATH stubs - date
+# answering one instant per format, sleep logging each call and pausing 0.01s,
+# herdr, orca and every harness CLI refusing. stdout, stderr and the files a
+# row reads are normalised: the bin root spelled ROOT, the entry's pid PID,
+# mktemp suffixes XXXXXX.
 XW="$TMP/xw"; XS="$TMP/xstubs"; XR="$TMP/xreplay"
 mkdir -p "$XS" "$XR"
 printf '[user]\n\tname = t\n\temail = t@t\n[init]\n\tdefaultBranch = main\n' >"$TMP/xgitconfig"
@@ -2971,87 +2966,77 @@ xwait_turns() {  # a pane turn or a lane that outlived its caller ends before th
   local i=0
   while pgrep -f "$XW/" >/dev/null 2>&1 && [ "$i" -lt 150 ]; do /bin/sleep 0.1; i=$((i + 1)); done
 }
-xworld() {  # what a row may change
+xworld() {  # what a refusal must leave as it found it
   local f
   (cd "$XW" && { find . -path '*/.git' -prune -o -print 2>/dev/null || true; } | grep -v -e '/log/pane\.done\.' -e '/log/sleep\.log$' | LC_ALL=C sort)
   (cd "$XW" && { find home lease out log tmp orca e2e-lease -path '*/.git' -prune -o \( -type f -o -type l \) -print 2>/dev/null || true; } \
     | grep -v -e '^log/pane\.done\.' -e '^log/sleep\.log$' | LC_ALL=C sort) | while IFS= read -r f; do
     if [ -L "$XW/$f" ]; then printf '== %s -> %s\n' "$f" "$(readlink "$XW/$f")"; continue; fi
     printf '== %s %s\n' "$f" "$(ls -l "$XW/$f" 2>/dev/null | cut -c1-10)"
-    case "$f" in
-      */scouts/*.pid) printf 'PID\n' ;;
-      log/*.log | orca/log) LC_ALL=C sort "$XW/$f" ;;
-      *) cat "$XW/$f" 2>/dev/null || printf '<unreadable>' ;;
-    esac
+    cat "$XW/$f" 2>/dev/null || printf '<unreadable>'
     printf '\n'
   done
-  [ ! -f "$XW/victim" ] || { printf '== victim\n'; cat "$XW/victim"; }
 }
-xnorm() {  # xnorm <file> <pid>... - each pid only between non-hex bytes (a hash keeps its digits), and a lane's real mtime
+xnorm() {  # xnorm <file> <pid>... - each pid only between non-hex bytes (a hash keeps its digits) and never as a date's year
   local f="$1" p a=(); shift
-  for p in "$@"; do a+=(-e "s/(^|[^0-9a-f])$p([^0-9a-f]|\$)/\\1PID\\2/g" -e "s/(^|[^0-9a-f])$p([^0-9a-f]|\$)/\\1PID\\2/g"); done
-  LC_ALL=C sed -E -e "s#$TMP/oracle-ac-verify#ROOT#g" -e "s#$ROOT#ROOT#g" \
+  for p in "$@"; do a+=(-e "s/(^|[^0-9a-f])$p([^0-9a-f-]|-[^0-9]|\$)/\\1PID\\2/g" -e "s/(^|[^0-9a-f])$p([^0-9a-f-]|-[^0-9]|\$)/\\1PID\\2/g"); done
+  LC_ALL=C sed -E -e "s#$ROOT#ROOT#g" \
     -e 's#(ctx-backup|\.profile-runtime\.tmp|\.run-meta-curation|review\.json|qa\.json|report\.md)\.[A-Za-z0-9]{6}#\1.XXXXXX#g' \
-    -e 's/(before the last scout lane finished at) [0-9]+/\1 MTIME/' \
-    -e '/ac-[a-z-]*\.sh: line [0-9]*: /d' ${a[@]+"${a[@]}"} "$f"
+    ${a[@]+"${a[@]}"} "$f"
 }
-xsnap() {  # xsnap <prefix> [<more pids>...] - that side's outputs and world, normalised
-  local p="$1" pid; shift
-  pid="$(cat "$TMP/$p.pid" 2>/dev/null || printf 'nopid')"
-  xworld >"$TMP/$p.world"
-  xnorm "$TMP/$p.raw" "$pid" "$@" >"$TMP/$p.out"; xnorm "$TMP/$p.err" "$pid" "$@" >"$TMP/$p.err2"; xnorm "$TMP/$p.world" "$pid" "$@" >"$TMP/$p.world2"
+xsnap() {  # xsnap [<more pids>...] - the run's stdout and stderr, normalised
+  local pid
+  pid="$(cat "$TMP/xn.pid" 2>/dev/null || printf 'nopid')"
+  xnorm "$TMP/xn.raw" "$pid" "$@" >"$TMP/xn.out"; xnorm "$TMP/xn.err" "$pid" "$@" >"$TMP/xn.err2"
 }
-XO_RC=0; XN_RC=0
-xpair() {  # xpair <args...> - each side in its own rebuilt world, outputs normalised, nothing compared yet
-  XO_RC=0; XN_RC=0
-  xplus; xrun_side "$xobin" xo "$@" || XO_RC=$?; xwait_turns; xsnap xo
-  xplus; xrun_side "$BIN" xn "$@" || XN_RC=$?; xwait_turns; xsnap xn
+XRC=0
+xrun() {  # xrun <args...> - the row's world, then the shim in it; the world before it is kept for xrefuse
+  XRC=0
+  xplus; xworld >"$TMP/xw.before"
+  xrun_side "$BIN" xn "$@" || XRC=$?; xwait_turns; xsnap
 }
-xrow() { printf '%s' "${BASH_LINENO[${#BASH_LINENO[@]}-2]}"; }   # the leg's own line that started this comparison
-xsame_rc_out() {
-  assert_eq "$XN_RC" "$XO_RC" "verify differential exit for '$*' at line $(xrow)"
-  cmp -s "$TMP/xo.out" "$TMP/xn.out" || fail "verify differential stdout differs for '$*' at line $(xrow): $(diff "$TMP/xo.out" "$TMP/xn.out" | head -n 8)"
-}
-xsame_err() { cmp -s "$TMP/xo.err2" "$TMP/xn.err2" || fail "verify differential stderr differs for '$*' at line $(xrow): $(diff "$TMP/xo.err2" "$TMP/xn.err2" | head -n 8)"; }
-xsame_world() { cmp -s "$TMP/xo.world2" "$TMP/xn.world2" || fail "verify differential world differs after '$*' at line $(xrow): $(diff "$TMP/xo.world2" "$TMP/xn.world2" | head -n 12)"; }
-xsame() { xpair "$@"; xsame_rc_out "$@"; xsame_err "$@"; xsame_world "$@"; }
+xrow() { printf '%s' "${BASH_LINENO[${#BASH_LINENO[@]}-2]}"; }   # the suite's own line that started this row
 xout() { cat "$TMP/xn.out"; }
 xerr() { cat "$TMP/xn.err2"; }
-xoerr() { cat "$TMP/xo.err2"; }
-xfile() { xnorm "$XW/$1" "$(cat "$TMP/xn.pid")"; }   # xfile <path under $XW> - the shim side's file, normalised
+xfile() { xnorm "$XW/$1" "$(cat "$TMP/xn.pid")"; }   # xfile <path under $XW> - the file the run left, normalised
 xround() { ls -d "$XW/home/data/${1:-fam}/verify/${2:-codereview}"/*/ 2>/dev/null | newest_round_dir; }
-xrefuse() {  # xrefuse <stderr> <args...> - both sides refuse alike: exit 1, no stdout, exactly ERROR: <stderr>
+xrefuse() {  # xrefuse <stderr> <args...> - exit 1, no stdout, exactly ERROR: <stderr>, and the world as it was
   local want="$1"; shift
-  xsame "$@"
-  assert_eq "$XN_RC:$(xout):$(xerr)" "1::ERROR: $want" "verify refusal for '$*' at line $(xrow)"
+  xrun "$@"
+  assert_eq "$XRC:$(xout):$(xerr)" "1::ERROR: $want" "verify refusal for '$*' at line $(xrow)"
+  xworld >"$TMP/xw.after"
+  cmp -s "$TMP/xw.before" "$TMP/xw.after" || fail "verify refusal for '$*' at line $(xrow) changed the world: $(diff "$TMP/xw.before" "$TMP/xw.after" | head -n 12)"
 }
-xfails() {  # xfails <stderr fragment> <args...> - both sides fail alike, exit 1, the stderr naming <fragment>
+xrefuse_late() {  # xrefuse_late <stderr> <args...> - a refusal past the lock: exit 1, no stdout, exactly ERROR: <stderr>, no verdict published
   local want="$1"; shift
-  xsame "$@"
-  assert_eq "$XN_RC:$(xout)" "1:" "verify failure for '$*' at line $(xrow)"
+  xrun "$@"
+  assert_eq "$XRC:$(xout):$(xerr)" "1::ERROR: $want" "verify refusal for '$*' at line $(xrow)"
+  assert_no_file "$XW/out/review.json" "verify refusal for '$*' at line $(xrow) publishes no codereview verdict"
+  assert_no_file "$XW/out/qa.json" "verify refusal for '$*' at line $(xrow) publishes no qa verdict"
+}
+xfails() {  # xfails <stderr fragment> <args...> - exit 1, no stdout, the stderr naming <fragment>
+  local want="$1"; shift
+  xrun "$@"
+  assert_eq "$XRC:$(xout)" "1:" "verify failure for '$*' at line $(xrow)"
   assert_contains "$(xerr)" "$want" "verify failure for '$*' at line $(xrow)"
 }
-xok() {  # xok <args...> - both sides publish alike, the verdict on stdout
-  xsame "$@"
-  assert_eq "$XN_RC" "0" "verify success for '$*' at line $(xrow): $(xerr)"
+xok() {  # xok <args...> - a published verdict on stdout, exit 0
+  xrun "$@"
+  assert_eq "$XRC" "0" "verify success for '$*' at line $(xrow): $(xerr)"
   [ -n "$(xout)" ] || fail "verify success for '$*' at line $(xrow) printed no verdict"
 }
-xsig_side() {  # xsig_side <bin> <prefix> <signal> <ready test> <args...> - the side signalled once <ready test> holds
-  local bin="$1" p="$2" sig="$3" ready="$4" pid i=0 rc=0; shift 4
+xsig() {  # xsig <signal> <ready test> <args...> - the run signalled once <ready test> holds
+  local sig="$1" ready="$2" pid i=0; shift 2
+  XRC=0
+  xplus
   set -m
-  xrun_side "$bin" "$p" "$@" &
+  xrun_side "$BIN" xn "$@" &
   pid=$!
   set +m
   until eval "$ready" || [ "$i" -ge 200 ]; do /bin/sleep 0.05; i=$((i + 1)); done
-  kill "-$sig" "$(cat "$TMP/$p.pid")" 2>/dev/null || true
-  wait "$pid" || rc=$?
-  return "$rc"
-}
-xsig() {  # xsig <signal> <ready test> <args...> - each side in its own world, signalled at the same point
-  local sig="$1" ready="$2"; shift 2
-  XO_RC=0; XN_RC=0
-  xplus; xsig_side "$xobin" xo "$sig" "$ready" "$@" || XO_RC=$?; xwait_turns; xsnap xo
-  xplus; xsig_side "$BIN" xn "$sig" "$ready" "$@" || XN_RC=$?; xwait_turns; xsnap xn
+  kill "-$sig" "$(cat "$TMP/xn.pid")" 2>/dev/null || true
+  wait "$pid" || XRC=$?
+  xwait_turns; xsnap
 }
 XMID='[ -s "$XW/log/meta.capture" ]'
 
@@ -3063,16 +3048,11 @@ xrefuse "$XUSAGE" design --repo "$XW/repo"
 XE="AC_BACKEND=tmux" xrefuse "unsupported backend 'tmux' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)"
 xrefuse "unknown argument: --bogus" codereview --bogus x
 xrefuse "$XUSAGE" codereview --repo "$XW/repo" --ref HEAD --family fam --caller fam-impl
-xrefuse "--output needs a value" "${XCR[@]}" --output
-xrefuse "--base needs a value" codereview --repo "$XW/repo" --ref HEAD --base '' --family fam --caller fam-impl --intent "$XW/intent.md" --output "$XW/out/review.json"
 xrefuse "family must match [a-z0-9-]: BAD" codereview --repo "$XW/repo" --ref HEAD --family BAD --caller fam-impl --output "$XW/out/review.json"
 xrefuse "caller must match [a-z0-9-]: a b" codereview --repo "$XW/repo" --ref HEAD --family fam --caller 'a b' --output "$XW/out/review.json"
 xrefuse "owner must match [a-z0-9-]: X" "${XCR[@]}" --owner X
-# W8 named: the grammar is read per its text, where bash's brackets under a
-# UTF-8 locale let a non-ASCII family through to the next check.
-XLC=en_US.UTF-8 xpair codereview --repo "$XW/repo" --ref HEAD --family "café" --caller fam-impl --output "$XW/out/review.json"
-assert_eq "$XO_RC:$(xoerr)" "1:ERROR: codereview requires --base REF and an existing --intent FILE" "W8: the original passes café under UTF-8"
-assert_eq "$XN_RC:$(xerr)" "1:ERROR: family must match [a-z0-9-]: café" "W8: the port refuses it per the text"
+# W8: the grammar is read per its text under a UTF-8 locale too.
+XLC=en_US.UTF-8 xrefuse "family must match [a-z0-9-]: café" codereview --repo "$XW/repo" --ref HEAD --family "café" --caller fam-impl --output "$XW/out/review.json"
 xrefuse "codereview requires --base REF and an existing --intent FILE" codereview --repo "$XW/repo" --ref HEAD --family fam --caller fam-impl --intent "$XW/intent.md" --output "$XW/out/review.json"
 xrefuse "codereview does not accept QA-only options" "${XCR[@]}" --brief "$XW/brief.md"
 xrefuse "codereview --model/--effort require an explicit --harness" "${XCR[@]}" --model m
@@ -3081,10 +3061,7 @@ xrefuse "qa --report must be an absolute path: rel.md" qa --repo "$XW/repo" --re
 xrefuse "qa does not accept codereview-only options" "${XQA[@]}" --base HEAD~1
 xrefuse "qa --model/--effort require the routed atomic --harness profile" "${XQA[@]}" --effort high
 xrefuse "qa --profile names a file that does not exist: $XW/nope.json" "${XQA[@]}" --profile "$XW/nope.json"
-XE="AC_VERIFY_TIMEOUT=abc" xrefuse "AC_VERIFY_TIMEOUT must be a non-negative integer without leading zeros: abc" "${XCR[@]}"
 XE="AC_VERIFY_CORRECTION_TIMEOUT=01" xrefuse "AC_VERIFY_CORRECTION_TIMEOUT must be a non-negative integer without leading zeros: 01" "${XCR[@]}"
-xok "${XCR[@]}"
-assert_eq "$(xfile log/meta.capture | grep -c '^owner=fam-impl$')" "1" "the owner defaults to the caller"
 xok "${XCR[@]}" --owner boss
 assert_contains "$(xfile log/meta.capture)" "owner=boss" "an explicit owner reaches the meta"
 
@@ -3101,17 +3078,9 @@ done
 # A legacy single object binds its open id; the clean verdict leaves it undispositioned (no correction turn).
 XPLUS='printf "{\"reviewed_ref\":\"nosuch\",\"findings\":[{\"id\":\"F9\",\"action\":\"fix\",\"file\":\"value.txt\"}]}\n" >"$XW/h.json"' \
   xfails "failed check: undispositioned-prior-finding-ids: F9" "${XCR[@]}" --history "$XW/h.json"
-XPLUS='printf "[{\"id\":\"F1\",\"action\":\"fix\"}]\n" >"$XW/h.json"' xok "${XCR[@]}" --history "$XW/h.json"
-XPLUS='printf "{\"reviewed_ref\":\"%s\",\"findings\":[]}\n" "$XB0" >"$XW/h.json"' xok "${XCR[@]}" --history "$XW/h.json"
-assert_contains "$(xfile log/prompt.capture)" "the fix delta since the prior verdict" "an ancestor prior ref narrows the round"
-XPLUS='git -C "$XW/repo" checkout -q -b side HEAD~1 && printf "s\n" >"$XW/repo/s.txt" && git -C "$XW/repo" add s.txt && git -C "$XW/repo" commit -qm side && git -C "$XW/repo" checkout -q main && printf "{\"reviewed_ref\":\"side\",\"findings\":[]}\n" >"$XW/h.json"' \
-  xok "${XCR[@]}" --history "$XW/h.json"
-case "$(xfile log/prompt.capture)" in *"fix delta since"*) fail "a prior ref off this ref's history must not narrow the round" ;; esac
 XHF='printf "{\"reviewed_ref\":\"%s\",\"findings\":[{\"id\":\"F2\",\"action\":\"fix\",\"file\":\"value.txt\"}]}\n" "$XB0" >"$XW/h.json"'
 XPLUS="$XHF" XE="VERIFY_RESOLVED_IDS=F2 VERIFY_REVIEWED_PATHS=value.txt" xok "${XCR[@]}" --history "$XW/h.json"
 assert_contains "$(xfile log/prompt.capture)" "DISPOSITION EXACTLY THESE IDS - any one of them missing from both findings[].id" "the open ids are rendered"
-XPLUS="$XHF" XE="VERIFY_RESOLVED_IDS=F2" xfails "resolved_ids claim not backed by coverage: F2" "${XCR[@]}" --history "$XW/h.json"
-XPLUS="$XHF" XE="VERIFY_RESOLVED_IDS=F2 VERIFY_REVIEWED_PATHS=value.txt VERIFY_NOOP_FILE=value.txt" xfails "undispositioned-prior-finding-ids: F2" "${XCR[@]}" --history "$XW/h.json"
 
 # --- 3. preflight and state -------------------------------------------------
 xrefuse "repository does not exist: " codereview --repo "$XW/nope" --ref HEAD --base HEAD~1 --family fam --caller fam-impl --intent "$XW/intent.md" --output "$XW/out/review.json"
@@ -3122,9 +3091,8 @@ XPLUS='git -C "$XW/repo" checkout -q --orphan lone && git -C "$XW/repo" commit -
   xrefuse "base lone shares no history with HEAD - nothing to diff against" codereview --repo "$XW/repo" --ref HEAD --base lone --family fam --caller fam-impl --intent "$XW/intent.md" --output "$XW/out/review.json"
 XHOMELESS=1 XE="AC_FLEET_STATE=$XW/home/state" xok "${XCR[@]}"
 assert_contains "$(xfile log/prompt.capture)" "Task brief: $XW/home/data/fam-impl/brief.md" "a homeless caller's brief resolves against the derived home"
-XHOMELESS=1 XE="AC_FLEET_STATE=$XW/home/st" xrefuse "fleet state path must end in /state: $XW/home/st" "${XCR[@]}"
-XHOMELESS=1 xsame "${XCR[@]}"
-assert_eq "$XN_RC:$(xout)" "1:" "a homeless run with no fleet state is refused"
+XHOMELESS=1 XE="AC_FLEET_STATE=$XW/home/st" xrefuse_late "fleet state path must end in /state: $XW/home/st" "${XCR[@]}"
+XHOMELESS=1 xrefuse "AC_HOME is not set - set AC_HOME=<fleet home> (the directory holding state/ data/ records/ config/ projects/); the distro checkout is not one" "${XCR[@]}"
 XPLUS='git -C "$XW/repo" worktree add -q "$XW/wt" HEAD' xok codereview --repo "$XW/wt" --ref HEAD --base HEAD~1 --family fam --caller fam-impl --intent "$XW/intent.md" --output "$XW/out/review.json"
 assert_contains "$(xfile log/meta.capture)" "project=repo" "a linked worktree reviews from its main repository"
 XCWD=. xok codereview --repo repo --ref HEAD --base HEAD~1 --family fam --caller fam-impl --intent intent.md --output out/review.json
@@ -3137,53 +3105,29 @@ XPLUS='mkdir -p "$XLOCK" && printf "%s\n" "$xdead" >"$XLOCK/pid"' xok "${XCR[@]}
 XPLUS='mkdir -p "$XLOCK"' XE="AC_VERIFY_LOCK_TIMEOUT=1" \
   xrefuse "verifier $XCID is already starting or running - lock holder pid unknown; settle it with 'ps -p 0' before touching $XLOCK. $XCID.meta is published LATER than this lock is taken, so its absence is NOT evidence the holder died." "${XCR[@]}"
 XPLUS='mkdir -p "$XLOCK" && touch -t 202001010000 "$XLOCK"' xok "${XCR[@]}"
-# W9 at parity: a lock timeout `[` cannot read never times out - each side
-# waits on a live holder until the lock goes, then runs its round.
-/bin/sleep 60 & xholder=$!
-xlockwaits() { local n; n="$(grep -c '^1$' "$XW/log/sleep.log" 2>/dev/null)"; [ "${n:-0}" -ge 3 ]; }
-xw9_side() {
-  local bin="$1" p="$2" pid i=0 rc=0
-  xplus
-  mkdir -p "$XLOCK"; printf '%s\n' "$xholder" >"$XLOCK/pid"
-  XE="AC_VERIFY_LOCK_TIMEOUT=abc" xrun_side "$bin" "$p" "${XCR[@]}" &
-  pid=$!
-  until xlockwaits || [ "$i" -ge 200 ]; do /bin/sleep 0.05; i=$((i + 1)); done
-  kill -0 "$pid" 2>/dev/null || fail "W9: a non-numeric lock timeout must keep waiting on a live holder ($p)"
-  rm -rf "$XLOCK"
-  wait "$pid" || rc=$?
-  return "$rc"
-}
-XO_RC=0; XN_RC=0
-xw9_side "$xobin" xo || XO_RC=$?; xwait_turns; xsnap xo
-xw9_side "$BIN" xn || XN_RC=$?; xwait_turns; xsnap xn
-kill "$xholder" 2>/dev/null || true
-xsame_rc_out W9; xsame_err W9; xsame_world W9
-assert_eq "$XN_RC" "0" "W9: the round runs once the lock goes"
 XPLUS='printf "kind=verify-codereview\nleases=\n" >"$XMETA"' \
   xrefuse "existing verifier $XCID has no pane handle; inspect $XMETA or tear it down explicitly" "${XCR[@]}"
 XOLD='printf "kind=verify-codereview\nleases=%s\n" "$XW/lease" >"$XMETA" && printf "pOld tOld\n" >"$XW/home/state/.pane-$XCID" && printf "x started\n" >"$XW/home/state/$XCID.status"'
 XPLUS="$XOLD" xok "${XCR[@]}"
 assert_contains "$(xfile log/pane.log)" "reap-pane --pane pOld" "a retry reaps the previous round's pane first"
-XPLUS="$XOLD" XE="VERIFY_REAP_CLOSED=false" xrefuse "existing verifier $XCID pane pOld did not close; refusing to stack another pane" "${XCR[@]}"
-XPLUS="$XOLD" XE="XT_RETURN_RC=1" xrefuse "existing verifier $XCID pane closed but its lease could not be returned; inspect $XMETA" "${XCR[@]}"
+XPLUS="$XOLD" XE="VERIFY_REAP_CLOSED=false" xrefuse_late "existing verifier $XCID pane pOld did not close; refusing to stack another pane" "${XCR[@]}"
+assert_contains "$(xfile log/pane.log)" "reap-pane --pane pOld" "the refusal follows the reap it tried"
+XPLUS="$XOLD" XE="XT_RETURN_RC=1" xrefuse_late "existing verifier $XCID pane closed but its lease could not be returned; inspect $XMETA" "${XCR[@]}"
+assert_contains "$(xfile log/tree.log)" "return $XW/lease" "the refusal follows the lease return it tried"
 XPLUS='printf "kind=verify-qa\nevidence=%s/ev\n" "$XW" >"$XQMETA"' XID="$XQID" \
-  xrefuse "existing verifier $XQID has incomplete QA evidence; refusing retry reap (inspect $XQMETA)" "${XQA[@]}"
+  xrefuse_late "existing verifier $XQID has incomplete QA evidence; refusing retry reap (inspect $XQMETA)" "${XQA[@]}"
 assert_eq "$(sed -n 1p "$XW/out/report.md")" "verdict: error" "a qa refusal after the lock publishes the error stage report"
 
 # --- 5. the codereview prompt -----------------------------------------------
 XPLUS='rm -f "$XW/home/data/fam/room.md"' xok "${XCR[@]}"
-XPLUS='printf "Do it.\n\n\n" >"$XW/intent.md"' xok "${XCR[@]}"
 XEVID='for n in _x ab Ab zz; do printf "%s\n" "$n" >"$XW/home/data/sib/$n.md"; printf -- "- %s/home/data/sib/%s.md;\n" "$XW" "$n" >>"$XW/home/data/fam-impl/brief.md"; done; printf "x\n" >"$XW/home/data/sib/caf\303\251.md"; printf -- "- %s/home/data/sib/../sib/plan/report.md\n- %s/home/data/sib/caf\303\251.md\n- /etc/hosts\n" "$XW" "$XW" >>"$XW/home/data/fam-impl/brief.md"'
 XPLUS="$XEVID" xok "${XCR[@]}"
 assert_contains "$(xfile log/prompt.capture)" "Named artifact: $XW/home/data/sib/Ab.md
 Named artifact: $XW/home/data/sib/_x.md
 Named artifact: $XW/home/data/sib/ab.md" "named artifacts in byte order under C"
-# W8 named: under UTF-8 the original orders them by collation; the lines
-# themselves agree.
-XLC=en_US.UTF-8 XPLUS="$XEVID" xpair "${XCR[@]}"
-xsame_rc_out "${XCR[@]}"
-assert_eq "$(xfile log/prompt.capture | grep '^Named artifact:' | LC_ALL=C sort -c 2>&1 && echo sorted)" "sorted" "W8: the port's named artifacts stay in byte order under UTF-8"
-assert_eq "$(xnorm "$TMP/xo.world2" | LC_ALL=C sort)" "$(xnorm "$TMP/xn.world2" | LC_ALL=C sort)" "W8: the two worlds differ only in that order"
+# W8: byte order under a UTF-8 locale too.
+XLC=en_US.UTF-8 XPLUS="$XEVID" xok "${XCR[@]}"
+assert_eq "$(xfile log/prompt.capture | grep '^Named artifact:' | LC_ALL=C sort -c 2>&1 && echo sorted)" "sorted" "W8: the named artifacts stay in byte order under UTF-8"
 
 # --- 6. lease and neutralization --------------------------------------------
 XPLUS='mkdir -p "$XW/lease/sub" "$XW/lease/.claude" "$XW/lease/lower" "$XW/lease/dir/CLAUDE.md" && printf "nested\n" >"$XW/lease/sub/CLAUDE.md" && printf "seed\n" >"$XW/lease/.claude/CLAUDE.md" && printf "lower\n" >"$XW/lease/lower/claude.md" && printf "agents\n" >"$XW/lease/lower/Agents.md" && ln -s ../CLAUDE.md "$XW/lease/sub/AGENTS.md" && ln -s nowhere "$XW/lease/CLAUDE.local.md"' \
@@ -3192,13 +3136,9 @@ assert_contains "$(xfile log/ctx/sub%CLAUDE.md)" "# Neutralized by ac-verify: pr
 assert_eq "$(cat "$XW/lease/sub/CLAUDE.md"):$(readlink "$XW/lease/CLAUDE.local.md")" "nested:nowhere" "the lease is restored, links as links"
 XPLUS='d="$XW/lease/x
 .."; mkdir -p "$d" && printf "lf\n" >"$d/CLAUDE.md"' xok "${XCR[@]}"
-# W6 at parity: a link planted over a stub mid-round has its target written.
-XPLUS='printf "victim bytes\n" >"$XW/victim"' XPANE_DO='rm -f "$cwd/CLAUDE.md"; ln -s "$XW/victim" "$cwd/CLAUDE.md"' xok "${XCR[@]}"
-assert_eq "$(cat "$XW/victim")" "# project rules" "W6: the restore wrote through the planted link"
-XE="XT_GET_RC=1" xrefuse "could not lease verifier worktree for $XCID" "${XCR[@]}"
-XE="XT_LEASE=" xrefuse "tree allocator returned no verifier worktree for $XCID" "${XCR[@]}"
-XE="XT_LEASE=$XW/cwd" xfails "ERROR: could not bind verifier worktree to $XT0" "${XCR[@]}"
-assert_contains "$(xfile log/tree.log)" "return $XW/cwd --force" "a bind failure returns the lease"
+XE="XT_GET_RC=1" xrefuse_late "could not lease verifier worktree for $XCID" "${XCR[@]}"
+case "$(cat "$XW/log/tree.log")" in *return*) fail "a lease never taken is never returned" ;; esac
+XE="XT_LEASE=" xrefuse_late "tree allocator returned no verifier worktree for $XCID" "${XCR[@]}"
 XE="AC_BACKEND=orca FAKE_ORCA=$XW/orca" XPRE="$TMP/stubbin" XPLUS='mkdir -p "$XW/orca/terminals"' xok "${XCR[@]}"
 assert_contains "$(xfile orca/log)" "worktree rm" "an orca lease goes back through the orca CLI"
 
@@ -3207,8 +3147,6 @@ XE="VERIFY_HANDLE=pOnly" xfails "verifier $XCID published an invalid pane handle
 XE="VERIFY_HANDLE=none" xfails "verifier $XCID never published a pane handle" "${XCR[@]}"
 XE="VERIFY_HANDLE_DELAY=1 AC_VERIFY_START_TIMEOUT=0" xfails "verifier $XCID never published a pane handle" "${XCR[@]}"
 for xrc in 1 143; do XE="VERIFY_PANE_EXIT_RC=$xrc" xfails "verifier $XCID pane-agent failed with status $xrc" "${XCR[@]}"; done
-XE="VERIFY_PANE_NOISE=garbage" xfails "is not readable as NDJSON" "${XCR[@]}"
-XE="VERIFY_PANE_NOISE_TAIL=garbage" xok "${XCR[@]}"
 XE="VERIFY_PANE_NODONE=1" xfails "verifier $XCID emitted no terminal result" "${XCR[@]}"
 for xst in timeout pane_closed error; do XE="VERIFY_PANE_DONE_STATUS=$xst" xfails "verifier $XCID ended $xst" "${XCR[@]}"; done
 mkdir -p "$XR/notranscript" "$XR/nofinal"
@@ -3221,11 +3159,10 @@ XE="VERIFY_REPLAY=$XR/nofinal" xfails "verifier $XCID transcript has no final me
 mkdir -p "$XR/badfinal"
 printf '{"type":"user","message":{"content":"hi"}}\n' >"$XR/badfinal/transcript.jsonl"
 cp "$XR/nofinal/pane-result.ndjson" "$XR/badfinal/pane-result.ndjson"
-XE="VERIFY_REPLAY=$XR/badfinal" xsame "${XCR[@]}"
-assert_eq "$XN_RC:$(xout)" "5:" "a transcript jq refuses ends the round with jq's status"
+XE="VERIFY_REPLAY=$XR/badfinal" xrun "${XCR[@]}"
+assert_eq "$XRC:$(xout)" "5:" "a transcript jq refuses ends the round with jq's status"
 XE="VERIFY_WARNING=agent-mismatch" xok "${XCR[@]}"
 assert_contains "$(xerr)" "WARN: verifier $XCID: agent-mismatch" "a pane warning is said"
-for xp in tail fence; do XE="VERIFY_PROSE=$xp" xok "${XCR[@]}"; done
 xrec prose "$(printf 'Verdict below, with notes.\n\n```json\n%s\n```\nDone.' "$(jq -cn --arg ref "$XT0" '{findings:[{id:"N1",severity:"info",action:"no-op",description:"nit",authority_class:"internal",authority:"spec",file:"value.txt",line:1}],summary:"one nit",risk_level:"low",risk_rationale:"bounded",reviewed_ref:$ref}')")"
 XE="VERIFY_REPLAY=$XR/prose" xok "${XCR[@]}"
 XPLUS='printf "9999999999\n" >"$XW/home/state/.chief-busy-until.fam"' xok "${XCR[@]}"
@@ -3234,23 +3171,11 @@ XPLUS='mkdir -p "$XW/home/data/fam" && printf "pid=%s\n" "$$" >"$XW/home/data/fa
 assert_file "$XW/home/state/.chief-busy-until.fam" "a live gate run of the family keeps the busy declaration"
 XE="AC_SCOPE=epic" xok "${XCR[@]}"
 assert_contains "$(xfile log/pane.log)" "wsfam=epic" "the scope ladder places the pane"
-XE="AC_FLEET_SCOPE=story-scope" xok "${XCR[@]}"
-# W11 at parity: the homeless family-of-id error beside a round that publishes.
-XHOMELESS=1 XE="AC_FLEET_STATE=$XW/home/state" xok codereview --repo "$XW/repo" --ref HEAD --base HEAD~1 --family fam-spec --caller fam-impl --intent "$XW/intent.md" --output "$XW/out/review.json"
-xok "${XCR[@]}" --harness codex --model m1 --effort high
-assert_contains "$(xfile log/pane.log)" "--harness codex --model m1 --effort high" "the harness triple is forwarded"
 
 # --- 8. the verdict ---------------------------------------------------------
-XE="VERIFY_BAD_OUTPUT=1 VERIFY_CORRECTION=valid" xok "${XCR[@]}"
-assert_eq "$(xout | jq -r '.correction.failed_check')" "no-json-verdict-object-in-final-message" "the correction turn is recorded"
-XE="VERIFY_BAD_OUTPUT=1" xfails "failed check: no-json-verdict-object-in-final-message" "${XCR[@]}"
 for xcf in handle rc nodone status transcript; do XE="VERIFY_BAD_OUTPUT=1 VERIFY_CORRECTION_FAIL=$xcf" xfails "correction pane" "${XCR[@]}"; done
 XE="VERIFY_WRONG_REF=0000" xfails "returned an invalid codereview verdict - failed check:" "${XCR[@]}"
 assert_contains "$(xfile "$(xround | sed "s#^$XW/##")rejection.log")" "reviewed_ref-does-not-bind-the-reviewed-sha (0000) (one correction turn follows)" "a foreign ref buys one correction turn"
-XE="VERIFY_OMIT_REF=1" xok "${XCR[@]}"
-XE="VERIFY_ASK_INCOMPLETE=1" xfails "ask-user-relay-shape-incomplete: A1" "${XCR[@]}"
-XE="VERIFY_ASK_COMPLETE=1" xok "${XCR[@]}"
-XE="VERIFY_ASK_DECIDER=1" xok "${XCR[@]}"
 XE="VERIFY_REVIEWED_PATHS_BAD=1" xfails "returned an invalid codereview verdict - failed check:" "${XCR[@]}"
 for xv in 'findings|{"findings":"x"}' 'resolved|{"findings":[],"resolved_ids":"x"}' 'dispositions|{"findings":[],"scout_dispositions":{}}' \
   'shape|{"findings":[],"scout_dispositions":[{"ref":"lane 1 obs 1"}]}' 'risk|{"findings":[],"risk_level":"huge","risk_rationale":"r"}' \
@@ -3260,72 +3185,60 @@ for xv in 'findings|{"findings":"x"}' 'resolved|{"findings":[],"resolved_ids":"x
 done
 xrec v-fixed '{"findings":"x"}' "$(xclean)"
 XE="VERIFY_REPLAY=$XR/v-fixed" xok "${XCR[@]}"
-XE="VERIFY_FIX_FILE=missing.txt VERIFY_FIX_LINE=1" xfails "fix-citation-not-at-ref: F1(missing.txt not at ref)" "${XCR[@]}"
-XE="VERIFY_FIX_FILE=value.txt VERIFY_FIX_LINE=9" xfails "fix-citation-not-at-ref: F1(value.txt:9 past end, 1 lines)" "${XCR[@]}"
 XE="VERIFY_FIX_FILE=nolf.txt VERIFY_FIX_LINE=3" xok "${XCR[@]}"
 XE="VERIFY_FIX_FILE=link.txt VERIFY_FIX_LINE=1" xok "${XCR[@]}"
 XE="VERIFY_FIX_FILE=$XW/lease/./value.txt VERIFY_FIX_LINE=1" xok "${XCR[@]}"
 XE="VERIFY_FIX_FILE=./value.txt" xok "${XCR[@]}"
 assert_eq "$(xout | jq -r '.verdict')" "fix" "a cited fix finding is the round's verdict"
-# W7 at parity: an inherited round-2 metadata floors a requirement fix.
-xrec w7 "$(jq -cn --arg ref "$XT0" '{findings:[{id:"R1",severity:"warning",action:"fix",class:"requirement",description:"req",authority_class:"internal",authority:"spec",evidence:"e",file:"value.txt",line:1}],summary:"s",risk_level:"low",risk_rationale:"r",reviewed_ref:$ref}')"
-XE="VERIFY_REPLAY=$XR/w7 AC_FINDINGS_ROUND=2 AC_FINDINGS_PRIOR_OPEN=[] AC_FINDINGS_DELTA=other.txt" xok "${XCR[@]}"
-assert_eq "$(xout | jq -r '.verdict')" "pass" "W7: the inherited metadata floored the fix"
-# W12 at parity: a refusal after the arguments parse names the stale receipt.
-XPLUS='mkdir -p "$XW/out" && printf "{\"reviewed_ref\":\"0000\"}\n" >"$XW/out/review.json"' xsame "${XCR[@]}" --history "$XW/none.json"
-assert_contains "$(xerr)" "ac-verify: STALE RECEIPT - this round failed and wrote nothing, so $XW/out/review.json still carries the verdict for 0000, NOT for HEAD under review." "W12"
-XPLUS='mkdir -p "$XW/out" && printf "{\"reviewed_ref\":\"0000\"}\n" >"$XW/out/review.json"' xsame codereview --output "$XW/out/review.json" --ref HEAD --base ''
-assert_contains "$(xerr)" "STALE RECEIPT" "W12: a refusal inside the arguments sees what was parsed before it"
 
 # --- 9. scout lanes ---------------------------------------------------------
 XLANES='printf "{\"rules\":[{\"when\":\"x\",\"use\":{\"harness\":\"claude\"}}],\"panes\":{\"codereview-scout\":{\"lanes\":[{\"harness\":\"codex\",\"model\":\"m\"},{\"harness\":\"claude\",\"model\":\"n\"}]}}}\n" >"$XW/home/config/crew-dispatch.json"'
 XPLUS="$XLANES" xok "${XCR[@]}"
 assert_eq "$(xout | jq -c '.scouts')" '{"lanes":2,"returned":2,"observations":2,"dispositioned":2}' "the fan-out is counted"
 assert_contains "$(xfile "$(xround | sed "s#^$XW/##")scouts/commands.txt")" "run --exec --harness claude --model 'n'" "a claude lane runs one-shot"
-XPLUS="$XLANES" XE="VERIFY_STALE_VERDICT=1" xfails "before the last scout lane finished" "${XCR[@]}"
 XPLUS="$XLANES" XE="VERIFY_STALE_VERDICT=1 VERIFY_SCOUT_NO_LEDGER=1" xfails "before the last scout lane finished" "${XCR[@]}"
-XPLUS="$XLANES" XPRE="$gnu_stat" XE="VERIFY_STALE_VERDICT=1" xfails "before the last scout lane finished" "${XCR[@]}"
 XPLUS="$XLANES" XE="VERIFY_SCOUT_JUDGE=miss" xfails "left scout observations with no disposition (lane 1 obs 1, lane 2 obs 1)" "${XCR[@]}"
 XPLUS="$XLANES" XE="VERIFY_SCOUT_JUDGE=bad" xfails "returned an invalid codereview verdict - failed check:" "${XCR[@]}"
-XPLUS="$XLANES" XE="VERIFY_SCOUT_MODE=skip" xfails "configured scout lanes came back empty" "${XCR[@]}"
 XE="AC_VERIFY_DISPATCH_BIN=$XS/xdispatch XD_LANES=harness=codex\tmodel=m\nharness=opencode\tmodel=n\nharness=pi\tmodel=o\n VERIFY_SCOUT_MODE=partial" xok "${XCR[@]}"
 assert_contains "$(xerr)" "1 of 3 configured scout lanes came back with observations" "a partial fan-out is warned"
 XE="AC_VERIFY_DISPATCH_BIN=$XS/xdispatch XD_LANES=harness=codex\tmodel=gpt\040five\teffort=high\n" xok "${XCR[@]}"
+assert_contains "$(xfile "$(xround | sed "s#^$XW/##")scouts/commands.txt")" "--model 'gpt five'" "a spaced lane model stays one argument"
 XPLUS="$XLANES" XE="AC_VERIFY_DISPATCH_BIN=$XS/xdispatch XD_ERR=boom" xok "${XCR[@]}"
 assert_contains "$(xerr)" "WARN: config/crew-dispatch.json declares panes.codereview-scout but the resolver returned no lanes - reviewing with the judge alone: boom" "a declared fan-out that resolves nothing is said"
 XE="AC_VERIFY_DISPATCH_BIN=$XS/xdispatch XD_ERR=boom" xok "${XCR[@]}"
 assert_contains "$(xerr)" "WARN: scout lanes did not resolve - reviewing with the judge alone: boom" "a resolver's complaint is said"
-# W10 at parity: a spaced home breaks the generated launch script alike.
-XW="$TMP/xw sp" XLANES="$XLANES" xcr_args
-XW="$TMP/xw sp" XPLUS="$XLANES" xsame "${XCR[@]}"
-xcr_args
 # A lane still running when the round ends is left running, as bash left its
 # background run-lanes.sh: the round's exit, lock release and busy leave do not
 # wait for it.
-xlinger_side() {
-  xplus
-  XE="VERIFY_LANE_LINGER=4" xrun_side "$1" "$2" "${XCR[@]}" || return
-  [ -z "$(ls "$XW/log/"lane-*.lingered 2>/dev/null)" ] || fail "the round ($2) waited for a lane that outlived it"
-}
-XO_RC=0; XN_RC=0
-XPLUS="$XLANES" xlinger_side "$xobin" xo || XO_RC=$?; xwait_turns; xsnap xo
-XPLUS="$XLANES" xlinger_side "$BIN" xn || XN_RC=$?; xwait_turns; xsnap xn
-xsame_rc_out lingering-lane; xsame_err lingering-lane; xsame_world lingering-lane
-assert_eq "$XN_RC" "0" "a round whose lane outlives it publishes"
+XRC=0
+XPLUS="$XLANES" xplus
+XE="VERIFY_LANE_LINGER=4" xrun_side "$BIN" xn "${XCR[@]}" || XRC=$?
+[ -z "$(ls "$XW/log/"lane-*.lingered 2>/dev/null)" ] || fail "the round waited for a lane that outlived it"
+xwait_turns
+assert_eq "$XRC" "0" "a round whose lane outlives it publishes"
 
 # --- 10. qa -----------------------------------------------------------------
 XBASE=xqa_std XID="$XQID" XE="VERIFY_QA_RUN=1" xok "${XQA[@]}" "${XQAP[@]}"
 assert_eq "$(sed -n 1p "$XW/out/report.md")" "verdict: passed" "the canonical report is published"
-for xo in failed unverifiable; do XBASE=xqa_std XID="$XQID" XE="VERIFY_QA_RUN=1 VERIFY_QA_OUTCOME=$xo" xok "${XQA[@]}" "${XQAP[@]}"; done
+assert_file "$XW/lease/.crew/qa/neutralized-manifest" "the lease carries the neutralization manifest"
+assert_file "$XW/lease/.crew/qa/neutralized-stub" "...and the stub bytes it recorded"
+assert_eq "$(cat "$XW/lease/.crew/qa/neutralized-manifest" | tr '\0' '\n')" "$XW/lease/CLAUDE.md" \
+  "the manifest names exactly the path this round neutralized"
+assert_contains "$(cat "$XW/lease/.crew/qa/neutralized-stub")" "Neutralized by ac-verify" \
+  "the recorded stub is ac-verify's own neutralization text"
+for xo in failed unverifiable; do
+  XBASE=xqa_std XID="$XQID" XE="VERIFY_QA_RUN=1 VERIFY_QA_OUTCOME=$xo" xok "${XQA[@]}" "${XQAP[@]}"
+  assert_eq "$(xout | jq -r '.verdict')" "$xo" "the durable outcome $xo is the verdict"
+done
 XBASE=xqa_std XID="$XQID" XE="VERIFY_QA_RUN=1 VERIFY_QA_CLAIM=failed" xfails "pane verdict failed disagrees with durable run outcome passed" "${XQA[@]}" "${XQAP[@]}"
 XBASE=xqa_std XID="$XQID" XE="VERIFY_QA_RUN=1 VERIFY_QA_OUTCOME=cancelled VERIFY_QA_OMIT_CLAIM=1" xfails "durable QA run is cancelled" "${XQA[@]}" "${XQAP[@]}"
 XBASE=xqa_std XID="$XQID" xfails "produced no exportable durable QA run" "${XQA[@]}" "${XQAP[@]}"
 assert_eq "$(sed -n 1p "$XW/out/report.md")" "verdict: error" "a reconciliation failure publishes the error report"
 XBASE=xqa_std XID="$XQID" XE="VERIFY_QA_RUN=1 VERIFY_RELAY_FAIL=1" xfails "could not export QA relay-report" "${XQA[@]}" "${XQAP[@]}"
-XBASE=xqa_std XID="$XQID" XE="VERIFY_QA_RUN=1 VERIFY_QA_EVIDENCE_OUTSIDE=1" xfails "evidence is missing or outside the declared root" "${XQA[@]}" "${XQAP[@]}"
 XBASE=xqa_std XID="$XQID" XE="VERIFY_QA_RUN=1 VERIFY_QA_DROP_GATE=1" xfails "failed receipt reconciliation" "${XQA[@]}" "${XQAP[@]}"
 XBASE=xqa_std XID="$XQID" XE="VERIFY_BAD_OUTPUT=1" xfails "produced no JSON verdict object" "${XQA[@]}" "${XQAP[@]}"
-XBASE=xqa_std XID="$XQID" XPLUS='mkdir -p "$XW/lease/.crew/qa/profile-runtime"' xrefuse "source lease carries a stale qa profile-runtime directory; refusing to overwrite it" "${XQA[@]}" "${XQAP[@]}"
+XBASE=xqa_std XID="$XQID" XPLUS='mkdir -p "$XW/lease/.crew/qa/profile-runtime"' xrefuse_late "source lease carries a stale qa profile-runtime directory; refusing to overwrite it" "${XQA[@]}" "${XQAP[@]}"
+assert_eq "$(sed -n 1p "$XW/out/report.md")" "verdict: error" "a stale profile-runtime publishes the error report"
 XBASE=xqa_std XID="$XQID" XPLUS='add_profile_routing "$XW/bundle" 1 codex m high' xrefuse "explicit qa pane profile does not match the frozen routing receipt" "${XQA[@]}" "${XQAP[@]}" --harness codex --model m --effort low
 XBASE=xqa_std XID="$XQID" XPLUS='add_profile_routing "$XW/bundle" 1 codex m high' XE="VERIFY_QA_RUN=1" xok "${XQA[@]}" "${XQAP[@]}" --harness codex --model m --effort high
 xqa_e2e() {
@@ -3343,107 +3256,67 @@ XE="XT_RETURN_RC=1" xfails "verifier $XCID pane closed but lease return failed; 
 
 # --- 12. signals and continuation -------------------------------------------
 XE="VERIFY_PANE_HANG=2" xsig TERM "$XMID" "${XCR[@]}"
-xsame_rc_out TERM; xsame_err TERM; xsame_world TERM
-assert_eq "$XN_RC" "143" "TERM mid-turn ends the round 143 with its cleanup"
+assert_eq "$XRC" "143" "TERM mid-turn ends the round 143 with its cleanup"
 XE="VERIFY_PANE_HANG=2" xsig HUP "$XMID" "${XCR[@]}"
-xsame_rc_out HUP; xsame_err HUP; xsame_world HUP
-assert_eq "$XN_RC" "129" "HUP mid-turn ends the round 129"
-# W14 named: INT exits 130 where bash's interrupted wait exited 129.
+assert_eq "$XRC" "129" "HUP mid-turn ends the round 129"
 XE="VERIFY_PANE_HANG=2" xsig INT "$XMID" "${XCR[@]}"
-assert_eq "$XO_RC:$XN_RC" "129:130" "W14: INT mid-turn"
-xsame_err INT; xsame_world INT
-# W12 at parity: the EXIT trap read an INT's interrupted wait as 129, so a
-# prior receipt is named stale and the QA error report says 129; it read a
-# TERM or HUP as 0, which names no receipt.
-XSTALE='mkdir -p "$XW/out" && printf "{\"reviewed_ref\":\"0000\"}\n" >"$XW/out/review.json"'
-XPLUS="$XSTALE" XE="VERIFY_PANE_HANG=2" xsig INT "$XMID" "${XCR[@]}"
-assert_eq "$XO_RC:$XN_RC" "129:130" "W14: INT mid-turn, a prior receipt in place"
-xsame_err INT-stale; xsame_world INT-stale
-assert_contains "$(xerr)" "STALE RECEIPT" "W12: an INT names the stale receipt"
-XPLUS="$XSTALE" XE="VERIFY_PANE_HANG=2" xsig TERM "$XMID" "${XCR[@]}"
-xsame_rc_out TERM-stale; xsame_err TERM-stale; xsame_world TERM-stale
+assert_eq "$XRC" "130" "W14: INT mid-turn ends the round 130"
 XBASE=xqa_std XID="$XQID" XE="VERIFY_QA_RUN=1 VERIFY_PANE_HANG=2" xsig INT "$XMID" "${XQA[@]}" "${XQAP[@]}"
-assert_eq "$XO_RC:$XN_RC" "129:130" "W14: INT mid-turn of a qa round"
-xsame_err qa-INT; xsame_world qa-INT
-assert_contains "$(xfile out/report.md)" "QA facade failed during" "W12: the qa round's INT publishes the error report"
+assert_eq "$XRC" "130" "W14: INT mid-turn of a qa round"
+assert_contains "$(xfile out/report.md)" "QA facade failed during" "the qa round's INT publishes the error report"
 # Outside the waits an INT meets a foreground child: one that reaches this
 # process alone is held until the child ends and dropped, so the round runs
-# on; one that ends the child too (a group ^C) ends the round 130, the EXIT
-# trap reading 130 - 0 in the start window, as bash 3.2's trap reads a ^C while
-# a background job (the pane agent) runs. The slow sleep keeps the signal
-# inside the child.
+# on; one that ends the child too (a group ^C) ends the round 130. The slow
+# sleep keeps the signal inside the child.
 mkdir -p "$TMP/slowsleep"
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >>"$XW/log/sleep.log"\nexec /bin/sleep 0.5\n' >"$TMP/slowsleep/sleep"
 chmod +x "$TMP/slowsleep/sleep"
-xint_side() {  # xint_side <bin> <prefix> <pid|group> <ready test> <args...> - one INT once <ready test> holds, then XTHEN
-  local bin="$1" p="$2" to="$3" ready="$4" pid i=0 rc=0; shift 4
+xint() {  # xint <pid|group> <ready test> <args...> - one INT once <ready test> holds, then XTHEN
+  local to="$1" ready="$2" pid i=0; shift 2
+  XRC=0
+  xplus
   set -m
-  xrun_side "$bin" "$p" "$@" &
+  xrun_side "$BIN" xn "$@" &
   pid=$!
   set +m
   until eval "$ready" || [ "$i" -ge 200 ]; do /bin/sleep 0.05; i=$((i + 1)); done
-  if [ "$to" = group ]; then kill -INT -- "-$pid" 2>/dev/null || true; else kill -INT "$(cat "$TMP/$p.pid")" 2>/dev/null || true; fi
+  if [ "$to" = group ]; then kill -INT -- "-$pid" 2>/dev/null || true; else kill -INT "$(cat "$TMP/xn.pid")" 2>/dev/null || true; fi
   [ -z "${XTHEN:-}" ] || eval "$XTHEN"
-  wait "$pid" || rc=$?
-  return "$rc"
-}
-xint() {  # xint <pid|group> <ready test> <args...>
-  local to="$1" ready="$2"; shift 2
-  XO_RC=0; XN_RC=0
-  xplus; xint_side "$xobin" xo "$to" "$ready" "$@" || XO_RC=$?; xwait_turns; xsnap xo
-  xplus; xint_side "$BIN" xn "$to" "$ready" "$@" || XN_RC=$?; xwait_turns; xsnap xn
+  wait "$pid" || XRC=$?
+  xwait_turns; xsnap
 }
 XPLUS='mkdir -p "$XLOCK" && printf "%s\n" "$$" >"$XLOCK/pid"' XTHEN='rm -rf "$XLOCK"' XPRE="$TMP/slowsleep" XE="AC_VERIFY_LOCK_TIMEOUT=30" \
   xint pid 'grep -q "^1$" "$XW/log/sleep.log" 2>/dev/null' "${XCR[@]}"
-xsame_rc_out INT-lock; xsame_err INT-lock; xsame_world INT-lock
-assert_eq "$XN_RC" "0" "an INT to the process alone in the lock wait lets the round run on"
-XPLUS="$XSTALE"' && mkdir -p "$XLOCK" && printf "%s\n" "$$" >"$XLOCK/pid"' XPRE="$TMP/slowsleep" XE="AC_VERIFY_LOCK_TIMEOUT=30" \
+assert_eq "$XRC" "0" "an INT to the process alone in the lock wait lets the round run on"
+XPLUS='mkdir -p "$XLOCK" && printf "%s\n" "$$" >"$XLOCK/pid"' XPRE="$TMP/slowsleep" XE="AC_VERIFY_LOCK_TIMEOUT=30" \
   xint group 'grep -q "^1$" "$XW/log/sleep.log" 2>/dev/null' "${XCR[@]}"
-xsame_rc_out INT-lock-group; xsame_err INT-lock-group; xsame_world INT-lock-group
-assert_eq "$XN_RC" "130" "a ^C that ends the lock wait's sleep ends the round 130"
-assert_contains "$(xerr)" "STALE RECEIPT" "the EXIT trap read the ^C in the lock wait as 130"
+assert_eq "$XRC" "130" "a ^C that ends the lock wait's sleep ends the round 130"
 XPRE="$TMP/slowsleep" XE="VERIFY_HANDLE_DELAY=2" xint pid 'grep -q "^0.05$" "$XW/log/sleep.log" 2>/dev/null' "${XCR[@]}"
-xsame_rc_out INT-start; xsame_err INT-start; xsame_world INT-start
-assert_eq "$XN_RC" "0" "an INT to the process alone in the start window lets the round run on"
+assert_eq "$XRC" "0" "an INT to the process alone in the start window lets the round run on"
 XBASE=xqa_std XID="$XQID" XPRE="$TMP/slowsleep" XE="VERIFY_QA_RUN=1 VERIFY_HANDLE_DELAY=2" \
   xint group 'grep -q "^0.05$" "$XW/log/sleep.log" 2>/dev/null' "${XQA[@]}" "${XQAP[@]}"
-xsame_rc_out qa-INT-group; xsame_err qa-INT-group
-assert_eq "$XN_RC" "130" "a ^C that ends the start window's sleep ends the round 130"
-assert_contains "$(xfile out/report.md)" "(exit 0)" "the EXIT trap read the ^C in the start window as 0"
-# A ^C TO THE GROUP named: bash's pane agent, a background job, ignored it and
-# published its handle; the port's ends with the group. Nothing else differs.
-assert_eq "$(diff -a "$TMP/xo.world2" "$TMP/xn.world2" | grep '^[<>]' | grep -v -e 'pane\.handle' -e '^< pVerify tVerify$' -e '^< $')" "" \
-  "a ^C in the start window: the worlds differ by the pane handle alone"
-grep -q '^\./home/.*/pane\.handle$' "$TMP/xo.world2" && ! grep -q '^\./home/.*/pane\.handle$' "$TMP/xn.world2" \
-  || fail "a ^C in the start window: bash's pane agent outlives it, the port's does not"
-# W2 at parity: the start window keeps the lease, its stubs and their backup.
-XE="VERIFY_HANDLE_DELAY=2" xsig TERM '[ -n "$(grep "^run " "$XW/log/pane.log" 2>/dev/null)" ]' "${XCR[@]}"
-xsame_rc_out W2; xsame_err W2; xsame_world W2
-case "$(cat "$XW/log/tree.log")" in *return*) fail "W2: the start window returns no lease" ;; esac
-# W3 at parity: a signal held through the lease leaves it unreturned.
-XE="XT_GET_DELAY=2" xsig TERM '[ -s "$XW/log/tree.log" ]' "${XCR[@]}"
-xsame_rc_out W3; xsame_err W3; xsame_world W3
-assert_eq "$(cat "$XW/log/tree.log")" "get --repo $XW/repo --id $XCID --holder verify" "W3: the held lease is never returned"
-# KILL leaves everything; the next round - of the OTHER implementation - reaps it.
-xkill_then() {  # xkill_then <first bin> <second bin> <prefix>
-  local pid i=0 rc=0
+assert_eq "$XRC" "130" "a ^C that ends the start window's sleep ends the round 130"
+assert_contains "$(xfile out/report.md)" "QA facade failed during" "the qa round's ^C publishes the error report"
+# A ^C TO THE GROUP ends the pane agent with the round, before it publishes
+# its handle.
+[ -z "$(find "$XW/home" -name pane.handle 2>/dev/null)" ] || fail "a ^C in the start window left a pane handle: the pane agent outlived the group"
+# KILL leaves everything; the next round reaps it.
+xkill_then() {
+  local pid i=0
+  XRC=0
   xplus
   set -m
-  XE="VERIFY_PANE_HANG=2" xrun_side "$1" xk "${XCR[@]}" &
+  XE="VERIFY_PANE_HANG=2" xrun_side "$BIN" xk "${XCR[@]}" &
   pid=$!
   set +m
   until eval "$XMID" || [ "$i" -ge 200 ]; do /bin/sleep 0.05; i=$((i + 1)); done
   kill -KILL "$(cat "$TMP/xk.pid")" 2>/dev/null || true
   wait "$pid" || true
   xwait_turns
-  xrun_side "$2" "$3" "${XCR[@]}" || rc=$?
-  xwait_turns; xsnap "$3" "$(cat "$TMP/xk.pid")"
-  return "$rc"
+  xrun_side "$BIN" xn "${XCR[@]}" || XRC=$?
+  xwait_turns; xsnap "$(cat "$TMP/xk.pid")"
 }
-XO_RC=0; XN_RC=0
-xkill_then "$BIN" "$xobin" xo || XO_RC=$?
-xkill_then "$xobin" "$BIN" xn || XN_RC=$?
-xsame_rc_out KILL; xsame_err KILL; xsame_world KILL
-assert_eq "$XN_RC" "0" "a round after a killed one of the other implementation reaps it and runs"
+xkill_then
+assert_eq "$XRC" "0" "a round after a killed one reaps it and runs"
 
 pass

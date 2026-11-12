@@ -1,15 +1,12 @@
-// teardown.test.ts - what src/teardown.ts brought into src/lib.ts, held to the
+// teardown.test.ts - what src/teardown.ts brought into src/lib.ts and src/lib-teardown.ts, held to the
 // LIVE bash helpers it twins: taskStamps (ac_task_stamps), portSlotRelease
 // (ac_port_slot_release), soloLandingCheck (ac_solo_landing_check),
 // backendKillWindow (backend_kill_window, both drivers, with herdr_ws_close's
 // group arm) and orcaWorktreeRelease (orca_worktree_release); and the
-// module's killServePid against kill_serve_pid lifted from the frozen
-// tests/fixtures/ac-teardown.sh, both sides driven through a kill SPY - no row
-// sends a real signal. The CLI contract itself is
-// tests/sh/ac-teardown.test.sh's, whose differential leg runs the frozen
-// original beside the shim.
+// module's killServePid, driven through a kill SPY - no row sends a real
+// signal. The CLI contract itself is tests/sh/ac-teardown.test.sh's.
 //
-// DISPUTED: the implementation of each helper (the bash vs src/lib.ts / src/teardown.ts)
+// DISPUTED: the implementation of each helper (the bash vs src/lib-teardown.ts, src/lib.ts)
 // HELD-CONSTANT: one side root per side and row seeded alike (a home at <side>/home with state/ records/ data/ config/, the stubs' sentinels and log at <side>/stub); argv; env (PATH = the herdr/orca/sleep/date stubs, the host's jq and git, /bin and /usr/bin without herdr, orca or docker; LC_ALL=C unless a row names UTF-8; HOME, TMPDIR, STUB_DIR, AC_HOME unless homeless, a row's own names); cwd (the distro root, so `ac_root` and STARTED_BIN name one bin/); stdin (/dev/null); stdout, stderr and the status compared whole (the side root spelled S, the process's pid PID), then the home's tree and the stub log.
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -28,10 +25,40 @@ test("transcriptTokens sums each model once per message, across the main transcr
   expect(transcriptTokens([""]).size).toBe(0);
 });
 
+// ciGateRefusal: --pr-ready's gate over the ci= pr-check.ts recorded (src/pr-check.ts, src/lib.ts classifyCi).
+test("ciGateRefusal passes ci=green, ci=pending and a meta with no ci= key at all (today's behavior, unchanged)", async () => {
+  const { ciGateRefusal } = await import("../../src/teardown.ts");
+  for (const ci of ["", "pending", "green"]) expect(ciGateRefusal("t1", ci, "", false)).toBeNull();
+});
+
+test("ciGateRefusal refuses ci=none and ci=failing without an acknowledgement, naming the real condition", async () => {
+  const { ciGateRefusal } = await import("../../src/teardown.ts");
+  const none = ciGateRefusal("t1", "none", "", false);
+  expect(none).toContain("--pr-ready refused:");
+  expect(none).toContain("no CI check verified the PR");
+  expect(none).toContain("bin/ac-pr-check.sh t1 <url>");
+  const failing = ciGateRefusal("t1", "failing", "", false);
+  expect(failing).toContain("--pr-ready refused:");
+  expect(failing).toContain("the recorded CI run failed");
+  expect(failing).toContain("bin/ac-pr-check.sh t1 <url>");
+});
+
+test("ciGateRefusal passes ci=none or ci=failing once the captain's --ci-override carries words", async () => {
+  const { ciGateRefusal } = await import("../../src/teardown.ts");
+  expect(ciGateRefusal("t1", "none", "captain: ship it anyway", false)).toBeNull();
+  expect(ciGateRefusal("t1", "failing", "captain: ship it anyway", false)).toBeNull();
+});
+
+test("ciGateRefusal passes ci=none alone when the project declares ci: none, but never excuses ci=failing that way", async () => {
+  const { ciGateRefusal } = await import("../../src/teardown.ts");
+  expect(ciGateRefusal("t1", "none", "", true)).toBeNull();
+  expect(ciGateRefusal("t1", "failing", "", true)).toContain("the recorded CI run failed");
+});
+
 const BIN = join(ROOT, "bin");
 const LIB = join(ROOT, "src", "lib.ts");
+const LIBT = join(ROOT, "src", "lib-teardown.ts");
 const TEARDOWN = join(ROOT, "src", "teardown.ts");
-const FIXTURE = join(ROOT, "tests", "fixtures", "ac-teardown.sh");
 const W = realpathSync(mkdtempSync(join(tmpdir(), "ac-teardown-ts-")));
 const ROOTED = process.getuid?.() === 0;
 afterAll(() => rmSync(W, { recursive: true, force: true }));
@@ -113,7 +140,7 @@ type Row = {
   // the bash call, run after sourcing ac-lib.sh and ac-backend.sh, its
   // arguments "$@"
   bash: string;
-  // the twin's body: L is src/lib.ts, A the arguments
+  // the twin's body: L is src/lib.ts merged with src/lib-teardown.ts, A the arguments
   twin: string;
   args?: string[];
   seed?: (s: string) => void;
@@ -173,7 +200,7 @@ function side(row: Row, s: string, oracle: boolean): Side {
     : [
         process.execPath,
         "-e",
-        `import { writeSync } from "node:fs"; const L = await import(${JSON.stringify(LIB)}); const A = ${JSON.stringify(args)}; const rc = await (async () => { ${row.twin} })(); writeSync(1, "|rc=" + rc);`,
+        `import { writeSync } from "node:fs"; const L = { ...await import(${JSON.stringify(LIB)}), ...await import(${JSON.stringify(LIBT)}) }; const A = ${JSON.stringify(args)}; const rc = await (async () => { ${row.twin} })(); writeSync(1, "|rc=" + rc);`,
       ];
   const run = row.fsize === undefined ? cmd : ["/bin/sh", "-c", `ulimit -f ${row.fsize}; trap "" XFSZ; exec "$@"`, "sh", ...cmd];
   const r = Bun.spawnSync(run, { cwd: ROOT, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
@@ -211,10 +238,10 @@ const put = (s: string, rel: string, body: string, mode = 0o644): void => {
 const stub = (s: string, name: string, body = ""): void => put(s, `stub/${name}`, body);
 const pane = (s: string, id: string, body: string): void => put(s, `home/state/.pane-${id}`, body);
 
-test("taskStamps: the twelve per-id stamp paths, in ac_task_stamps' order", () => {
+test("taskStamps: the seventeen per-id stamp paths, in ac_task_stamps' order", () => {
   for (const id of ["t1", "a b", "x-verify-codereview"]) {
     const p = same(`stamps ${id}`, { bash: `ac_task_stamps "$1" "$2"`, twin: `for (const f of L.taskStamps(A[0], A[1])) writeSync(1, f + "\\n"); return 0;`, args: ["@S/home/state", id] });
-    expect(p.t.out.split("\n").length).toBe(13);
+    expect(p.t.out.split("\n").length).toBe(18);
   }
 });
 
@@ -420,43 +447,49 @@ test("orcaWorktreeRelease: the CLI's rm, its failure and an ok:false answer both
   expect(same("the CLI fails", { ...rel, seed: (s) => stub(s, "rm-fails") }).t.out).toBe("|rc=1");
 });
 
-// kill_serve_pid lifted from the frozen original, beside the port's
-// killServePid, each handed a spy for `kill`: the spy logs every call as the
+// killServePid handed a spy for `kill`: the spy logs every call as the
 // builtin's arguments, and answers by the row's knobs - alive (kill -0),
 // group-fails (the group TERM), pid-fails (the pid TERM) - so a row proves
 // what WOULD be signalled without a signal ever being sent.
-function serve(label: string, body: string | null, knobs: string[] = [], mode = 0o644): { o: Side; t: Side; root: string } {
-  const lifted = readFileSync(FIXTURE, "latin1").match(/^kill_serve_pid\(\) \{[\s\S]*?^\}$/m)![0];
-  return same(label, {
-    bash: `kill() { printf '%s\\n' "$*" >>"$STUB_DIR/kills"; case "$1 $2" in "-0 "*) [ -e "$STUB_DIR/alive" ] ;; "-TERM --") [ ! -e "$STUB_DIR/group-fails" ] ;; *) [ ! -e "$STUB_DIR/pid-fails" ] ;; esac; }; ${lifted}; kill_serve_pid "$1"`,
+function serve(body: string | null, knobs: string[] = [], mode = 0o644): { t: Side; root: string } {
+  const root = join(W, `r${rows++}`);
+  const s = join(root, "t");
+  mkdirSync(join(s, "stub"), { recursive: true });
+  mkdirSync(join(s, "run"), { recursive: true });
+  if (body !== null) put(s, "run/serve.pid", body, mode);
+  for (const k of knobs) stub(s, k);
+  const t = side({
+    bash: "",
     twin: `const T = await import(${JSON.stringify(TEARDOWN)}); const fs = await import("node:fs"); const d = process.env.STUB_DIR; T.killServePid(A[0], (pid, sig) => { const w = sig === 0 ? "-0 " + pid : pid < 0 ? "-TERM -- " + pid : "-TERM " + pid; fs.appendFileSync(d + "/kills", w + "\\n"); const ok = sig === 0 ? fs.existsSync(d + "/alive") : pid < 0 ? !fs.existsSync(d + "/group-fails") : !fs.existsSync(d + "/pid-fails"); if (!ok) throw new Error("ESRCH"); }); return 0;`,
     args: ["@S/run/serve.pid"],
-    seed: (s) => {
-      mkdirSync(join(s, "run"), { recursive: true });
-      if (body !== null) put(s, "run/serve.pid", body, mode);
-      for (const k of knobs) stub(s, k);
-    },
-  });
+  }, s, false);
+  return { t, root };
 }
 
 test("killServePid: only a decimal above 1 is signalled - the group first, then the pid - and a refused, unreadable or gone pid is named", () => {
   for (const v of ["1", "0", "00", "007", "-1", "-5", "12x", " 12", "12 ", "+3", "1\n\n"]) {
-    const p = serve(`'${JSON.stringify(v)}' refused`, `${v}\n`, ["alive"]);
+    const p = serve(`${v}\n`, ["alive"]);
     expect({ v, kills: read(join(p.root, "t", "stub", "kills")) }).toEqual({ v, kills: "" });
     expect(p.t.err).toContain("not a process id");
     expect(existsSync(join(p.root, "t", "run", "serve.pid"))).toBe(true);
   }
-  const live = serve("a live pid", "4242\n", ["alive"]);
+  const live = serve("4242\n", ["alive"]);
   expect(read(join(live.root, "t", "stub", "kills"))).toBe("-0 4242\n-TERM -- -4242\n");
+  expect(live.t.err).toBe("");
   expect(existsSync(join(live.root, "t", "run", "serve.pid"))).toBe(false);
-  expect(read(join(serve("the group refused", "4242", ["alive", "group-fails"]).root, "t", "stub", "kills"))).toBe("-0 4242\n-TERM -- -4242\n-TERM 4242\n");
-  expect(serve("both refused", "4242", ["alive", "group-fails", "pid-fails"]).t.err).toBe("WARN: could not kill qa serve pid 4242 (S/run/serve.pid)\n");
-  expect(serve("gone", "4242").t.err).toBe("WARN: qa serve pid 4242 already gone (S/run/serve.pid)\n");
-  expect(serve("empty", "").t.err).toBe("");
-  serve("absent", null);
+  const group = serve("4242", ["alive", "group-fails"]);
+  expect(read(join(group.root, "t", "stub", "kills"))).toBe("-0 4242\n-TERM -- -4242\n-TERM 4242\n");
+  expect(group.t.err).toBe("");
+  expect(serve("4242", ["alive", "group-fails", "pid-fails"]).t.err).toBe("WARN: could not kill qa serve pid 4242 (S/run/serve.pid)\n");
+  expect(serve("4242").t.err).toBe("WARN: qa serve pid 4242 already gone (S/run/serve.pid)\n");
+  const empty = serve("");
+  expect({ err: empty.t.err, kills: read(join(empty.root, "t", "stub", "kills")), kept: existsSync(join(empty.root, "t", "run", "serve.pid")) }).toEqual({ err: "", kills: "", kept: false });
+  const absent = serve(null);
+  expect({ err: absent.t.err, kills: read(join(absent.root, "t", "stub", "kills")) }).toEqual({ err: "", kills: "" });
   if (!ROOTED) {
-    const un = serve("unreadable", "4242", ["alive"], 0o000);
+    const un = serve("4242", ["alive"], 0o000);
     expect(un.t.err).toBe("WARN: could not read S/run/serve.pid: a qa serve process may still be running and could not be identified\n");
+    expect(existsSync(join(un.root, "t", "run", "serve.pid"))).toBe(true);
   }
 });
 

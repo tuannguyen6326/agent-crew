@@ -107,7 +107,7 @@ ac_harness_pane_arm() {
   # the FIRST real round is the verification: a pane that never writes its
   # verdict file surfaces as the caller's harvest timeout, visibly, and
   # harness-facts.md owns the UNPROVEN boundary until that round lands.
-  # src/lib.ts's harnessPaneArm is held to this map
+  # src/lib-verify.ts's harnessPaneArm is held to this map
   # (tests/ts/verify-twins.test.ts).
   case "$1" in
     claude) printf 'session\n' ;;

@@ -10,12 +10,20 @@
 # BIT, a missing `timeout`/`gtimeout` misread as a failure, and a truncating
 # tail hiding a real red.
 #
-# Before each test file runs, a `RUNNING <name>` line is printed - pure
-# observability, no timeout/watchdog behind it - so a hang leaves the
-# culprit's name as the last line printed instead of an unnamed silence
-# (the 1h23m undiagnosable-hang gap). In parallel mode (--jobs N > 1) up to N
-# RUNNING lines print together before that batch runs; that is correct, not a
-# bug - all N are genuinely running concurrently.
+# Before each test file runs, a `RUNNING <name>` line is printed, so a hang
+# leaves the culprit's name as the last line printed instead of an unnamed
+# silence (the 1h23m undiagnosable-hang gap). In parallel mode (--jobs N > 1)
+# up to N RUNNING lines print together before that batch runs; that is
+# correct, not a bug - all N are genuinely running concurrently.
+#
+# PER-TEST BOUND: a test still running AC_TEST_TIMEOUT seconds (default
+# 1200) after its batch started is killed with its whole process group -
+# TERM, then KILL a second later - and reported `FAIL <name> (timed out after
+# Ns)`, counted as a failure like any other red. 0 removes the bound. The
+# runner needs no `timeout`/`gtimeout` for this (macOS ships neither): each
+# test already runs as its own process group under set -m, so the runner's
+# own wait loop is the watchdog. The bound is per BATCH start, so in parallel
+# mode every test of a batch shares one deadline.
 #
 # Usage: run-suite.sh [--jobs N] [--changed] [<tests-dir>]
 #
@@ -59,6 +67,50 @@
 #                split_map's own comment for why that one arm stays manual) -
 #                so a change to either narrows to its real tests instead of
 #                widening (repo-deep-review F29).
+#                A dashboard/*.ts module selects tests/sh/dashboard.test.sh
+#                (its Bun tests), ac-contract.test.sh (lib.ts's
+#                backlog-contract twin) and the ac-dashboard split-map
+#                suites (they boot the real app.ts); a dashboard/*.test.ts
+#                selects the wrapper alone.
+#                BUN NARROWING: the src.test.sh wrapper runs every tests/ts
+#                test unless --changed hands it AC_SRC_TESTS, the sorted
+#                basenames to run: every test whose SUBJECT reaches a changed
+#                src module or one of its transitive importers (the whole
+#                import closure, not the one hop the sh rule takes) - a
+#                non-comment line names src/<m>.ts under any import or path
+#                shape, or names a bin script that starts it (a test
+#                that drives an entry spawns the shim rather than import the
+#                module) - plus every test naming no src module and no bin
+#                script at all (a subject the runner cannot read - always
+#                run), plus each changed tests/ts test itself. A widened run,
+#                a changed tests/sh/src.test.sh, or a reading that comes out
+#                empty hands the wrapper nothing, so every Bun test runs; a
+#                name the wrapper cannot find is refused (exit 2), never read
+#                as "all" or as none.
+#                SYMBOL NARROWING: a changed src module other src files import
+#                counts only the importers that import an export the change
+#                reaches - for both the sh hop above and the first hop of the
+#                Bun closure. The runner lexes the module at HEAD and in the
+#                tree (strings, templates, comments and regex literals
+#                tracked, so a col-0 line inside an awk program is not a
+#                declaration), attributes every changed line to the top-level
+#                declaration holding it, closes that set over the names each
+#                declaration's code mentions (a private helper carries every
+#                export calling it), and keeps the exported names (direct or
+#                through an `export { a as b }` list, at HEAD or in the tree,
+#                so a removed export still reaches its importers). A
+#                comment-only change reaches no importer. FAIL-CLOSED: the
+#                module is read WHOLE - every importer counts, as before this
+#                rule - when a changed line is outside every declaration (an
+#                import, an export list, a bare statement), when the lexer
+#                cannot prove its reading (unbalanced at EOF), when the module
+#                is new, when it imports - directly or through unchanged
+#                modules - another changed module (that change reaches it
+#                through code its own hunks never mention), or when an
+#                importer takes a namespace or default import or re-exports
+#                it; the printed line says which. The
+#                hop-1 reading never narrows what the module's own tests
+#                cover: tests naming it stay selected whatever changed.
 #                WIDEN RULE - a change the mapping cannot confidently narrow
 #                WIDENS to the full set and prints why, never silently
 #                narrowing to nothing:
@@ -96,9 +148,10 @@
 #                     bin/ac-lib.sh (69 sourcers, incl. bin/ac-deputy.sh and
 #                     6 others with no colocated test - so a core-lib change
 #                     still widens today, a pre-existing test-coverage gap
-#                     this task does not close), bin/ac-wake-lib.sh (14
-#                     sourcers, incl. bin/ac-deputy.sh/bin/ac-turnend-guard.sh
-#                     unmapped - also still widens), bin/ac-backend.sh (21,
+#                     this task does not close), bin/ac-wake-lib.sh (no bin
+#                     sourcer since the port; its four test sourcers dot-source
+#                     it inside bash -c strings, so it rides a split_map arm
+#                     instead - see split_map), bin/ac-backend.sh (21,
 #                     3 unmapped - still widens), bin/ac-maintenance-lib.sh
 #                     (9, 2 unmapped - still widens), tests/sh/helpers.sh (88
 #                     sourcers, 1 unmapped - tests/sh/stress.sh is neither a
@@ -109,16 +162,20 @@
 #                     mechanism - bin/ac-pipeline-lib.sh (7 sourcers, all
 #                     mapped -> selected exactly 8 tests, not 88) and
 #                     bin/ac-qa-lib.sh (5 sourcers, all mapped -> selected
-#                     exactly 4 tests, not 88) - have since retired to
-#                     tests/fixtures/;
+#                     exactly 4 tests, not 88) - have since been
+#                     retired;
 #                  2. a changed owned file (bin/*.sh or tests/sh/*.test.sh) with
 #                     no exact colocated test, or a src/*.ts with a starter
 #                     that has none - unmapped code is unknown blast radius,
 #                     never read as "nothing to run".
 #                Outside a git repo, or with no HEAD yet, --changed falls back
 #                to the full set. A file outside this runner's owned set
-#                (bin/*.sh, src/*.ts, tests/sh/*.sh, tests/ts/*.test.ts) is
+#                (bin/*.sh, src/*.ts, dashboard/*.ts, tests/sh/*.sh,
+#                tests/ts/*.test.ts) is
 #                ignored, like ac-lint ignoring a changed README.
+#                ALWAYS-RUN SET: a non-empty changed set, owned or not, also
+#                selects every guard_suites name (that list's own comment is
+#                the spec); an empty one still exits 2 below.
 #                EMPTY-SELECTION EXIT - NOT a widen: when the mapped selection
 #                comes out EMPTY (e.g. a clean, fully-committed tree - nothing
 #                uncommitted to read a changed set from), the runner exits 2
@@ -133,6 +190,18 @@
 #                An empty selection means --changed found nothing it could
 #                safely narrow on, so the runner itself cannot proceed - same
 #                family as "no *.test.sh files found" below.
+#                BASE ATTRIBUTION: every red suite of a --changed run is run
+#                once more at HEAD - a detached `git worktree` of the changed
+#                set's base, removed afterwards - and one line per red says
+#                which side owns it: `<name> is red at HEAD too (pre-existing)`,
+#                `<name> is green at HEAD - the change introduced this red`,
+#                or `<name> has no HEAD version - the change introduced this
+#                red`. HEAD is the base because it is what the changed set is
+#                read against; a bare run has no base and attributes nothing.
+#                The verdict and exit code are unchanged by the reading - a
+#                pre-existing red is still red, the line only says whose it
+#                is, so the reader routes it instead of hunting the change for
+#                a cause that is not there.
 #   <tests-dir>  directory to scan for *.test.sh (default: this script's own
 #                <repo>/tests/sh, resolved via BASH_SOURCE so it is independent
 #                of the caller's cwd). The colocated run-suite.test.sh uses
@@ -226,12 +295,16 @@ done
 case "$jobs" in *[!0-9]*|'') printf 'run-suite: --jobs must be a positive integer, got %s\n' "$jobs" >&2; exit 2 ;; esac
 [ "$jobs" -ge 1 ] || { printf 'run-suite: --jobs must be >= 1\n' >&2; exit 2; }
 
-# Capability probe, never a guess: this host has neither `timeout` nor
-# `gtimeout` (re-verify with `command -v timeout gtimeout`; prints nothing as
-# of 2026-07-22 - macOS ships neither without coreutils). Do without rather
-# than fake it: a missing tool must never read as a test failure.
-if ! command -v timeout >/dev/null 2>&1 && ! command -v gtimeout >/dev/null 2>&1; then
-  printf 'run-suite: no timeout/gtimeout on this host - running with NO per-test timeout\n'
+# The per-test bound (header: PER-TEST BOUND). Digits only: a knob that does
+# not parse must never read as "unbounded".
+test_timeout="${AC_TEST_TIMEOUT:-1200}"
+case "$test_timeout" in
+  ''|*[!0-9]*) printf 'run-suite: AC_TEST_TIMEOUT must be a whole number of seconds (got %s)\n' "$test_timeout" >&2; exit 2 ;;
+esac
+if [ "$test_timeout" -gt 0 ]; then
+  printf 'run-suite: each test is bounded to %ss (AC_TEST_TIMEOUT; 0 = no bound)\n' "$test_timeout"
+else
+  printf 'run-suite: AC_TEST_TIMEOUT=0 - running with NO per-test bound\n'
 fi
 
 tests=()
@@ -286,6 +359,242 @@ sourcers_of() {
   return 0
 }
 
+# The reader behind symbol_scope (header: SYMBOL NARROWING). Perl, not awk:
+# the lexer carries string, template, comment and regex state across lines,
+# which awk's line-at-a-time shape fights. Arguments: <HEAD copy or -> <tree
+# file> <src dir> <basename> <-U0 diff file> <changed src basenames>. Prints
+# TOUCHED, EXPORTS and IMPORTERS lines, or one ALL line naming why the module
+# must be read whole.
+symbol_perl="$(cat <<'PERL'
+use strict; use warnings;
+my ($old, $new, $dir, $base, $diff, $changed) = @ARGV;
+my %regex_before = map { $_ => 1 } split / /, '( , = : [ ! & | ? { } ; + - * % < > ~ ^ => return typeof instanceof in of new delete void throw case do else';
+sub slurp { my ($f) = @_; open(my $h, "<", $f) or die "$f: $!"; local $/; my $t = <$h>; close $h; $t }
+my %changed = map { $_ => 1 } split / /, $changed;
+my %seen = ($base => 1); my @queue = ($base);
+while (defined(my $m = shift @queue)) {
+  my $t = -e "$dir/$m" ? slurp("$dir/$m") : "";
+  while ($t =~ /from\s+"\.\/([a-z0-9-]+\.ts)"/g) {
+    next if $seen{$1}++;
+    if ($changed{$1}) { print "ALL it imports src/$1, which also changed\n"; exit 0 }
+    push @queue, $1;
+  }
+}
+sub lex {
+  my @lines = split /\n/, $_[0], -1;
+  my (%code, @depth0, @ident, @tstack, $bad);
+  my $state = "code"; my ($db, $dp, $dk) = (0, 0, 0); my $prev = "";
+  for (my $i = 0; $i < @lines; $i++) {
+    my $s = $lines[$i];
+    $state = "code" if $state eq "linecomment";
+    $depth0[$i] = $state eq "code" ? $db + $dp + $dk : -1;
+    $code{$i} = 1 if $state eq "template";
+    my $j = 0; my $len = length $s;
+    while ($j < $len) {
+      my $c = substr($s, $j, 1); my $c2 = substr($s, $j, 2);
+      if ($state eq "code") {
+        if ($c2 eq "//") { $state = "linecomment"; last }
+        if ($c2 eq "/*") { $state = "blockcomment"; $j += 2; next }
+        if ($c =~ /\s/) { $j++; next }
+        $code{$i} = 1;
+        if ($c eq '"') { $state = "dq"; $j++; next }
+        if ($c eq "'") { $state = "sq"; $j++; next }
+        if ($c eq "`") { $state = "template"; $j++; next }
+        if ($c eq "/") { if ($prev eq "" || $regex_before{$prev}) { $state = "regex" } else { $prev = "/" } $j++; next }
+        if ($c eq "{") { $db++; $prev = "{"; $j++; next }
+        if ($c eq "}") {
+          if (@tstack && $db == $tstack[-1] + 1) { pop @tstack; $db--; $state = "template"; $j++; next }
+          $db--; $prev = "}"; $j++; next;
+        }
+        if ($c eq "(") { $dp++; $prev = "("; $j++; next }
+        if ($c eq ")") { $dp--; $prev = ")"; $j++; next }
+        if ($c eq "[") { $dk++; $prev = "["; $j++; next }
+        if ($c eq "]") { $dk--; $prev = "]"; $j++; next }
+        if (substr($s, $j) =~ /^([A-Za-z_\$][\w\$]*)/) {
+          my $w = $1;
+          push @{ $ident[$i] }, $w unless $j > 0 && substr($s, $j - 1, 1) eq ".";
+          $prev = $w; $j += length $w; next;
+        }
+        if (substr($s, $j) =~ /^(\d[\w.]*)/) { $prev = "0"; $j += length $1; next }
+        if ($c2 eq "=>") { $prev = "=>"; $j += 2; next }
+        $prev = $c; $j++; next;
+      }
+      if ($state eq "blockcomment") { if ($c2 eq "*/") { $state = "code"; $j += 2 } else { $j++ } next }
+      if ($state eq "dq") { if ($c eq "\\") { $j += 2 } elsif ($c eq '"') { $state = "code"; $prev = '"'; $j++ } else { $j++ } next }
+      if ($state eq "sq") { if ($c eq "\\") { $j += 2 } elsif ($c eq "'") { $state = "code"; $prev = '"'; $j++ } else { $j++ } next }
+      if ($state eq "regex") {
+        if ($c eq "\\") { $j += 2; next }
+        if ($c eq "[") { my $k = index($s, "]", $j + 1); $j = $k < 0 ? $len : $k + 1; next }
+        if ($c eq "/") { $state = "code"; $prev = '"'; $j++; $j++ while $j < $len && substr($s, $j, 1) =~ /[a-z]/; next }
+        $j++; next;
+      }
+      if ($c eq "\\") { $j += 2; next }
+      if ($c2 eq '${') { push @tstack, $db; $db++; $state = "code"; $prev = "{"; $j += 2; next }
+      if ($c eq "`") { $state = "code"; $prev = '"'; $j++; next }
+      $j++;
+    }
+    if ($state eq "dq" || $state eq "sq" || $state eq "regex") { $bad = "unterminated literal at line " . ($i + 1); last }
+  }
+  $bad //= "unbalanced at EOF" if ($state ne "code" && $state ne "linecomment") || $db || $dp || $dk || @tstack;
+  my (@items, %exports, %comment, $cur);
+  for (my $i = 0; $i < @lines; $i++) {
+    my $s = $lines[$i];
+    if (!$code{$i}) { $comment{$i + 1} = 1; next }
+    if ($depth0[$i] != 0 || $s =~ /^\s/) { $cur->{end} = $i + 1 if $cur; next }
+    if ($s =~ /^(export\s+)?(?:declare\s+)?(?:async\s+)?(?:function\*?|abstract class|class|const|let|var|type|interface|enum)\s+([A-Za-z_\$][\w\$]*)/) {
+      $cur = { name => $2, start => $i + 1, end => $i + 1 };
+      push @items, $cur;
+      $exports{$2} = $2 if $1;
+      next;
+    }
+    $cur = undef;
+    if ($s =~ /^export\s+(?:type\s+)?\{([^}]*)\}\s*;?\s*$/) {
+      for my $e (split /,/, $1) { $e =~ s/^\s+|\s+$//g; next unless length $e; my ($l, $x) = $e =~ /^(\S+)\s+as\s+(\S+)$/ ? ($1, $2) : ($e, $e); $exports{$x} = $l }
+    }
+    $bad //= "a re-export at line " . ($i + 1) if $s =~ /^export\s+\*/ || $s =~ /^export\s+\{[^}]*\}\s*from/;
+  }
+  for my $it (@items) { for my $l ($it->{start} .. $it->{end}) { $it->{refs}{$_} = 1 for @{ $ident[$l - 1] || [] } } }
+  return { items => \@items, exports => \%exports, comment => \%comment, bad => $bad };
+}
+sub item_at { my ($lx, $line) = @_; for my $it (@{ $lx->{items} }) { return $it if $line >= $it->{start} && $line <= $it->{end} } undef }
+my $L = lex(slurp($new));
+my $O = $old eq "-" ? { bad => "the module is new" } : lex(slurp($old));
+if ($L->{bad}) { print "ALL the lexer cannot prove its reading of the tree file ($L->{bad})\n"; exit 0 }
+if ($O->{bad}) { print "ALL $O->{bad}\n"; exit 0 }
+my %touched;
+open(my $dh, "<", $diff) or die "$diff: $!";
+while (my $h = <$dh>) {
+  next unless $h =~ /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
+  my ($a, $b, $c, $d) = ($1, $2 // 1, $3, $4 // 1);
+  for my $side ([$O, $a, $b, "HEAD"], [$L, $c, $d, "tree"]) {
+    my ($lx, $from, $cnt, $name) = @$side;
+    for my $l ($from .. $from + $cnt - 1) {
+      next if $lx->{comment}{$l};
+      my $it = item_at($lx, $l);
+      if (!$it) { print "ALL line $l of the $name file is outside every top-level declaration\n"; exit 0 }
+      $touched{ $it->{name} } = 1;
+    }
+  }
+}
+close $dh;
+my $grown = 1;
+while ($grown) {
+  $grown = 0;
+  for my $it (@{ $L->{items} }) {
+    next if $touched{ $it->{name} };
+    for my $t (keys %touched) { if ($it->{refs}{$t}) { $touched{ $it->{name} } = 1; $grown = 1; last } }
+  }
+}
+my %exp;
+for my $lx ($L, $O) { while (my ($x, $l) = each %{ $lx->{exports} }) { $exp{$x} = 1 if $touched{$l} } }
+my @aff;
+opendir(my $sd, $dir) or die "$dir: $!";
+for my $f (sort grep { /\.ts$/ && $_ ne $base } readdir $sd) {
+  my $t = slurp("$dir/$f");
+  next unless $t =~ /from\s+"\.\/\Q$base\E"/;
+  if ($t =~ /import\s+\*\s+as\s+[\w\$]+\s+from\s+"\.\/\Q$base\E"/ || $t =~ /import\s+[\w\$]+\s*(?:,|from)[^;]*"\.\/\Q$base\E"/ || $t =~ /export\s+(?:\*|\{[^}]*\})\s+from\s+"\.\/\Q$base\E"/) {
+    print "ALL src/$f imports the module as a namespace or default, or re-exports it\n"; exit 0;
+  }
+  my $hit = 0;
+  while ($t =~ /import\s+(?:type\s+)?\{([^}]*)\}\s*from\s+"\.\/\Q$base\E"/g) {
+    for my $e (split /,/, $1) { $e =~ s/^\s+|\s+$//g; next unless length $e; $e =~ s/^type\s+//; $e =~ s/\s+as\s+\S+$//; $hit = 1 if $exp{$e} }
+  }
+  push @aff, "src/$f" if $hit;
+}
+print "TOUCHED ", join(" ", sort keys %touched), "\n";
+print "EXPORTS ", join(" ", sort keys %exp), "\n";
+print "IMPORTERS ", join(" ", @aff), "\n";
+PERL
+)"
+
+symbol_scope() {
+  # symbol_scope <changed_root> <src/x.ts> <changed src basenames> - echoes
+  # the perl reader's lines for the module's HEAD-vs-tree diff (header:
+  # SYMBOL NARROWING).
+  local root="$1" relpath="$2" changed="$3" tmp
+  tmp="$(mktemp -d)"
+  git -C "$root" show "HEAD:$relpath" >"$tmp/head" 2>/dev/null || printf '%s' - >"$tmp/none"
+  git -C "$root" diff -U0 HEAD -- "$relpath" >"$tmp/diff" 2>/dev/null || true
+  perl -e "$symbol_perl" "$([ -e "$tmp/none" ] && printf '%s' - || printf '%s' "$tmp/head")" "$root/$relpath" "$root/src" "${relpath##*/}" "$tmp/diff" "$changed"
+  rm -rf "$tmp"
+}
+
+bun_narrowing() {
+  # bun_narrowing <changed_root> <changed src modules> <changed Bun tests>
+  # <hop-1 facts> - echoes the sorted tests/ts/*.test.ts basenames --changed
+  # hands the src.test.sh wrapper (header: BUN NARROWING), or nothing when
+  # every Bun test must run. Comments are skipped as map_owned_file skips
+  # them: a comment naming a module is not a subject. Everything is read live
+  # from the tree - the import edges, what each bin script starts, what each
+  # test names - and the matching is one awk pass over those readings. The
+  # hop-1 facts (`R <module>` + `A <module> <importer>` lines from
+  # symbol_scope) replace a changed module's importer edges for the first
+  # hop only; a module they do not name follows every importer.
+  local root="$1" changed_src="$2" changed_ts="$3" hop1="$4" f sel facts
+  [ -n "$changed_src$changed_ts" ] || return 0
+  sel="$changed_ts"
+  if [ -n "$changed_src" ]; then
+    facts="$hop1"
+    for f in "$root"/src/*.ts; do
+      [ -e "$f" ] || continue
+      facts="$facts
+$(awk -v me="src/${f##*/}" '{ s = $0; while (match(s, /from "\.\/[a-z0-9-]+\.ts"/)) { print "I", me, "src/" substr(s, RSTART + 8, RLENGTH - 9); s = substr(s, RSTART + RLENGTH) } }' "$f")"
+    done
+    for f in "$root"/bin/*.sh; do
+      [ -e "$f" ] || continue
+      facts="$facts
+$(awk -v me="${f##*/}" '!/^[[:space:]]*#/ { s = $0; while (match(s, /src\/[a-z0-9-]+\.ts/)) { print "S", me, substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH) } }' "$f")"
+    done
+    for f in "$root"/tests/ts/*.test.ts; do
+      [ -e "$f" ] || continue
+      facts="$facts
+$(awk -v me="${f##*/}" 'BEGIN { print "T", me } !/^[[:space:]]*(\/\/|\*)/ { s = $0; while (match(s, /src\/[a-z0-9-]+\.ts|ac-[a-z0-9-]+\.sh/)) { print "N", me, substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH) } }' "$f")"
+    done
+    sel="$sel $(awk -v seeds="$changed_src" '
+      BEGIN { n = split(seeds, a, " "); for (i = 1; i <= n; i++) if (a[i] != "") want[a[i]] = 1 }
+      $1 == "I" { importers[$3] = importers[$3] " " $2 }
+      $1 == "S" { starts[$2] = starts[$2] " " $3 }
+      $1 == "T" { tests[$2] = 1 }
+      $1 == "N" { named[$2]++; tok[$2, named[$2]] = $3 }
+      $1 == "R" { restricted[$2] = 1 }
+      $1 == "A" { allowed[$2] = allowed[$2] " " $3 }
+      END {
+        grown = 1
+        while (grown) { grown = 0; for (m in want) { k = split((m in restricted) ? allowed[m] : importers[m], a, " "); for (i = 1; i <= k; i++) if (a[i] != "" && !(a[i] in want)) { want[a[i]] = 1; grown = 1 } } }
+        for (t in tests) {
+          if (!(t in named)) { print t; continue }
+          for (j = 1; j <= named[t]; j++) {
+            x = tok[t, j]
+            if (x in want) { print t; break }
+            k = split(starts[x], a, " "); hit = 0
+            for (i = 1; i <= k; i++) if (a[i] in want) hit = 1
+            if (hit) { print t; break }
+          }
+        }
+      }' <<FACTS
+$facts
+FACTS
+)"
+  fi
+  sel="$(printf '%s\n' $sel | sort -u | tr '\n' ' ')"
+  printf '%s' "${sel% }"
+}
+
+# guard_suites - the tree-scanning guard suites --changed adds to EVERY
+# non-empty changed set, whatever the changed paths (docs/ and .agents/skills/
+# included). Each one's subject is a whole class of files (every test's exec
+# bit, every script's grep -q pipes, every comment's line citation, the
+# docs/scripts.md map, every MANUAL-ONLY caller, every SKILL.md, every
+# published line, every AC_* knob, every ac-notify.sh mention, every value-flag
+# arm), so no colocated mapping ever reaches it and a change could otherwise
+# land a red that only the next bare full run sees. A hand list, not a live
+# derivation: a new tree-scanning suite joins here by hand. A name with no file
+# under <tests-dir> is dropped by the same filter as any other selection.
+guard_suites="ac-tests-exec-bit.test.sh grep-q-pipes.test.sh line-citations.test.sh ac-scripts-doc.test.sh ac-archive.test.sh ac-skills-catalog.test.sh provenance-scrub.test.sh ac-config-surface.test.sh ac-notify-surface.test.sh flag-values.test.sh"
+# What --changed hands src.test.sh as AC_SRC_TESTS (header: BUN NARROWING);
+# empty = every Bun test.
+bun_selection=""
+
 split_map() {
   # split_map <changed_root> <base> - echoes the mapped tests/sh/*.test.sh
   # basenames (space-separated) for a KNOWN split script, or nothing. The
@@ -306,7 +615,7 @@ split_map() {
   #
   # ac-teardown stays a documented hand list, not a live derivation, and
   # this is why a live glob cannot cover both arms: beside its own
-  # ac-teardown.test.sh (the differential leg of src/teardown.ts), its
+  # ac-teardown.test.sh (the contract test of src/teardown.ts), its
   # black-box test ac-spawn-teardown.test.sh carries the ac-spawn- prefix
   # instead of an ac-teardown- one (the repo groups spawn+teardown lifecycle
   # tests under one concern-named file), so nothing on disk distinguishes
@@ -364,7 +673,7 @@ split_map() {
     # src/learn.ts.
     ac-learn) printf '%s' "ac-learn.test.sh ac-learn-loop.test.sh ac-learn-autoroom.test.sh ac-learn-quote.test.sh ac-learning-automation-e2e.test.sh ac-maintenance-core.test.sh ac-curate.test.sh ac-self-task.test.sh ac-teardown.test.sh ac-config-surface.test.sh" ;;
     # Four suites execute the pane agent besides its own: the teardown legs'
-    # reap-pane rows (src/teardown.ts and the frozen teardown), ac-lib's
+    # reap-pane rows (src/teardown.ts), ac-lib's
     # ac_transcript_final_epoch (its iso-epoch verb), and ac-brain's one-shot
     # parity rows, which import its ONESHOT table.
     ac-pane-agent) printf '%s' "ac-pane-agent.test.sh ac-teardown.test.sh ac-spawn-teardown.test.sh ac-brain.test.sh ac-lib.test.sh" ;;
@@ -381,6 +690,12 @@ split_map() {
     ac-watch-policy-hook) printf '%s' "ac-guard.test.sh ac-harness-hooks.test.sh" ;;
     # A sourced lib whose pins live in its one real consumer's test.
     ac-maintenance-lib) printf '%s' "ac-maintenance-core.test.sh" ;;
+    # A sourced lib with no entry and, since the port, no bin sourcer: the
+    # four suites holding its pins dot-source it inside their own bash -c
+    # strings, a shape sourcers_of's line check never sees. It also starts
+    # src/room.ts, so unmapped it widened every src/room.ts - and so every
+    # src/lib.ts - change to the full suite.
+    ac-wake-lib) printf '%s' "ac-lib.test.sh ac-gate.test.sh ac-room.test.sh ac-wake-drain.test.sh" ;;
   esac
 }
 
@@ -396,6 +711,10 @@ map_owned_file() {
   case "$f" in
     tests/sh/*.test.sh) printf '%s' "${f#tests/sh/}" ;;
     tests/ts/*.test.ts) printf '%s' "src.test.sh" ;;
+    dashboard/*.test.ts) printf '%s' "dashboard.test.sh" ;;
+    # The split-map suites boot the real app.ts, and ac-contract.test.sh runs
+    # lib.ts's backlog-contract twin.
+    dashboard/*.ts) printf '%s %s' "dashboard.test.sh ac-contract.test.sh" "$(split_map "$root" ac-dashboard)" ;;
     src/*.ts)
       # A starter is any bin script with a NON-comment line naming this
       # module: a script that merely names it in a comment (bin/ac-lib.sh,
@@ -431,8 +750,9 @@ map_owned_file() {
 }
 
 select_changed() {
-  local changed_root changed_files widen selected f mapped filtered t tname
-  local sourcers s own lib_selected lib_unmapped m
+  # changed_root stays global: BASE ATTRIBUTION reads it after the run.
+  local changed_files widen selected f mapped filtered t tname
+  local sourcers s own lib_selected lib_unmapped m changed_src changed_ts bun_full scope hop1 imp changed_src_all
   if ! changed_root="$(cd "$dir" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)" \
      || [ -z "$changed_root" ]; then
     printf 'run-suite: --changed: not a git repo, falling back to the full set\n'
@@ -451,12 +771,22 @@ select_changed() {
 
   widen=0
   selected=""
+  changed_src=""
+  changed_src_all="$(printf '%s\n' "$changed_files" | sed -n 's#^src/\([a-z0-9-]*\.ts\)$#\1#p' | tr '\n' ' ')"
+  changed_ts=""
+  bun_full=0
+  hop1=""
   while IFS= read -r f; do
     [ -n "$f" ] || continue
+    case "$f" in
+      tests/ts/*.test.ts) changed_ts="$changed_ts ${f#tests/ts/}" ;;
+      tests/sh/src.test.sh) bun_full=1 ;;
+    esac
     # Ahead of the shared-library branch, which reads an empty own mapping
     # as a bash lib with no test of its own and would narrow to importers.
     case "$f" in
       src/*.ts)
+        changed_src="$changed_src $f"
         if [ -z "$(map_owned_file "$changed_root" "$f")" ]; then
           printf 'run-suite: --changed widens to the full suite - %s is started by a bin script that has no colocated test\n' "$f"
           widen=1
@@ -472,6 +802,28 @@ select_changed() {
       # colocated test when it has one. Clause 2's "unmapped is unknown
       # blast radius" still governs each sourcer: one unmapped sourcer
       # widens the WHOLE run, same as an unmapped changed file always has.
+      # A src module's sourcers are first cut to the importers the changed
+      # exports reach (header: SYMBOL NARROWING); the reader's ALL line
+      # keeps them all and says why.
+      case "$f" in
+        src/*.ts)
+          scope="$(symbol_scope "$changed_root" "$f" "$changed_src_all")"
+          case "$scope" in
+            ALL\ *)
+              printf 'run-suite: --changed reads %s whole - %s\n' "$f" "${scope#ALL }"
+              ;;
+            *)
+              sourcers="$(printf '%s\n' "$scope" | sed -n 's/^IMPORTERS //p' | tr ' ' '\n')"
+              printf 'run-suite: --changed narrows %s by symbol - changed exports:%s; importers:%s\n' "$f" \
+                "$(printf '%s\n' "$scope" | sed -n 's/^EXPORTS//p')" "$(printf '%s\n' "$scope" | sed -n 's/^IMPORTERS//p')"
+              hop1="$hop1
+R $f"
+              for imp in $(printf '%s\n' "$scope" | sed -n 's/^IMPORTERS //p'); do hop1="$hop1
+A $f $imp"; done
+              ;;
+          esac
+          ;;
+      esac
       lib_selected=""
       lib_unmapped=0
       while IFS= read -r s; do
@@ -500,7 +852,7 @@ SOURCERS
       tests/sh/*.test.sh)
         selected="$selected ${f#tests/sh/}"
         ;;
-      bin/*.sh | src/*.ts | tests/ts/*.test.ts)
+      bin/*.sh | src/*.ts | tests/ts/*.test.ts | dashboard/*.ts)
         mapped="$(map_owned_file "$changed_root" "$f")"
         if [ -n "$mapped" ]; then
           selected="$selected $mapped"
@@ -516,6 +868,16 @@ $changed_files
 CHANGED
 
   [ "$widen" -eq 0 ] || return 0 # widen: leave `tests` (the full set) as-is
+
+  if [ -n "$changed_files" ]; then
+    printf 'run-suite: --changed always adds the tree-scanning guard suites: %s\n' "$guard_suites"
+    selected="$selected $guard_suites"
+  fi
+
+  if [ "$bun_full" -eq 0 ]; then
+    bun_selection="$(bun_narrowing "$changed_root" "$changed_src" "$changed_ts" "$hop1")"
+    [ -z "$bun_selection" ] || printf 'run-suite: --changed narrows src.test.sh to these Bun tests: %s\n' "$bun_selection"
+  fi
 
   filtered=()
   for t in "${tests[@]}"; do
@@ -562,6 +924,67 @@ pass_count=0
 fail_count=0
 failed_names=""
 
+spawn_test() {
+  # spawn_test <file> <name> <outdir> - starts the test as a background
+  # process group writing <outdir>/<name>.log and .rc, and sets spawned_pid.
+  local f="$1" name="$2" outdir="$3"
+  # set +e is load-bearing: the parent script runs under errexit, and this
+  # subshell inherits it - without disabling it here, a failing `bash "$f"`
+  # would abort the subshell before the printf below ever wrote the .rc
+  # file, silently losing the run instead of counting it as a failure
+  # (precedent: tests/sh/stress.sh's identical run_stress wrapper).
+  #
+  # set -m (job control) around the spawn is NOT optional: without it, an
+  # async `&` command has SIGINT/SIGQUIT forced to ignore in bash itself
+  # (Bash manual, "Signals"), and that ignore disposition survives exec and
+  # fork into every descendant - including a watcher a test backgrounds and
+  # sends INT to, which then can never see it. Verified live: ac-watch.test.sh
+  # passes 3/3 standalone but false-reds under this loop without `set -m`,
+  # because its watcher silently ignores the INT it is asserted to die from.
+  # tests/sh/stress.sh and tests/sh/ac-watch.test.sh itself already rely on the
+  # same toggle for the same reason - this mirrors that precedent, not a
+  # new technique. Toggled off again right after so it does not change how
+  # the OUTER loop's own `wait`/pipeline behave.
+  #
+  # The same toggle makes each suite a BACKGROUND job of whatever terminal
+  # this runner sits in (the Learning gate runs it in a pane), so a suite
+  # that reads stdin from that terminal is stopped by SIGTTIN and the wait
+  # below never returns; no suite needs a terminal, so stdin is /dev/null.
+  set -m
+  (
+    set +e
+    if [ "$name" = src.test.sh ] && [ -n "$bun_selection" ]; then export AC_SRC_TESTS="$bun_selection"; fi
+    bash "$f" </dev/null >"$outdir/$name.log" 2>&1; printf '%s\n' "$?" >"$outdir/$name.rc"
+  ) &
+  spawned_pid=$!
+  set +m
+}
+
+await_tests() {
+  # await_tests <outdir> <pid:name>... - waits for each spawned test. The
+  # subshell is a process group of its own (set -m), so a bound that fires
+  # kills the test and every child it left running. No external `timeout` is
+  # involved: macOS ships none, and the group is already here.
+  local outdir="$1" entry p name deadline
+  shift
+  deadline=$(( $(date +%s) + test_timeout ))
+  for entry in "$@"; do
+    p="${entry%%:*}"; name="${entry#*:}"
+    while kill -0 "$p" 2>/dev/null; do
+      if [ "$test_timeout" -gt 0 ] && [ "$(date +%s)" -ge "$deadline" ]; then
+        kill -TERM -- "-$p" 2>/dev/null || true
+        sleep 1
+        kill -KILL -- "-$p" 2>/dev/null || true
+        printf '124\n' >"$outdir/$name.rc"
+        : >"$outdir/$name.timeout"
+        break
+      fi
+      sleep 0.2
+    done
+    wait "$p" 2>/dev/null || true
+  done
+}
+
 i=0
 while [ "$i" -lt "$total" ]; do
   batch=0
@@ -571,37 +994,14 @@ while [ "$i" -lt "$total" ]; do
     f="${tests[$i]}"
     name="${f##*/}"
     printf 'RUNNING %s\n' "$name"
-    # set +e is load-bearing: the parent script runs under errexit, and this
-    # subshell inherits it - without disabling it here, a failing `bash "$f"`
-    # would abort the subshell before the printf below ever wrote the .rc
-    # file, silently losing the run instead of counting it as a failure
-    # (precedent: tests/sh/stress.sh's identical run_stress wrapper).
-    #
-    # set -m (job control) around the spawn is NOT optional: without it, an
-    # async `&` command has SIGINT/SIGQUIT forced to ignore in bash itself
-    # (Bash manual, "Signals"), and that ignore disposition survives exec and
-    # fork into every descendant - including a watcher a test backgrounds and
-    # sends INT to, which then can never see it. Verified live: ac-watch.test.sh
-    # passes 3/3 standalone but false-reds under this loop without `set -m`,
-    # because its watcher silently ignores the INT it is asserted to die from.
-    # tests/sh/stress.sh and tests/sh/ac-watch.test.sh itself already rely on the
-    # same toggle for the same reason - this mirrors that precedent, not a
-    # new technique. Toggled off again right after so it does not change how
-    # the OUTER loop's own `wait`/pipeline behave.
-    #
-    # The same toggle makes each suite a BACKGROUND job of whatever terminal
-    # this runner sits in (the Learning gate runs it in a pane), so a suite
-    # that reads stdin from that terminal is stopped by SIGTTIN and the wait
-    # below never returns; no suite needs a terminal, so stdin is /dev/null.
-    set -m
-    ( set +e; bash "$f" </dev/null >"$scratch/$name.log" 2>&1; printf '%s\n' "$?" >"$scratch/$name.rc" ) &
-    pids="$pids $!"
-    set +m
+    spawn_test "$f" "$name" "$scratch"
+    pids="$pids $spawned_pid:$name"
     batch_names="$batch_names $name"
     i=$((i + 1))
     batch=$((batch + 1))
   done
-  for p in $pids; do wait "$p" 2>/dev/null || true; done
+  # shellcheck disable=SC2086 # pid:name entries, split on purpose
+  await_tests "$scratch" $pids
   for name in $batch_names; do
     rc="$(cat "$scratch/$name.rc" 2>/dev/null || printf 1)"
     if [ "$rc" = 0 ]; then
@@ -610,7 +1010,11 @@ while [ "$i" -lt "$total" ]; do
     else
       fail_count=$((fail_count + 1))
       failed_names="$failed_names $name"
-      printf 'FAIL %s (exit %s)\n' "$name" "$rc"
+      if [ -e "$scratch/$name.timeout" ]; then
+        printf 'FAIL %s (timed out after %ss)\n' "$name" "$test_timeout"
+      else
+        printf 'FAIL %s (exit %s)\n' "$name" "$rc"
+      fi
       printf -- '----- output: %s -----\n' "$name"
       cat "$scratch/$name.log" 2>/dev/null || true
       printf -- '----- end: %s -----\n' "$name"
@@ -621,6 +1025,35 @@ done
 printf '\n=== %s/%s passed, %s failed ===\n' "$pass_count" "$total" "$fail_count"
 if [ "$fail_count" -gt 0 ]; then
   printf 'FAILED:%s\n' "$failed_names"
+fi
+
+# BASE ATTRIBUTION (header): each red of a --changed run is run again at HEAD.
+if [ "$changed" -eq 1 ] && [ "$fail_count" -gt 0 ] && [ -n "${changed_root:-}" ]; then
+  base="$scratch/base"
+  mkdir -p "$scratch/base-run"
+  if git -C "$changed_root" worktree add --detach -q "$base" HEAD >/dev/null 2>&1; then
+    trap 'git -C "$changed_root" worktree remove --force "$base" >/dev/null 2>&1; rm -rf "$scratch"' EXIT
+    absdir="$(cd "$dir" && pwd -P)"
+    rel="${absdir#"$changed_root"/}"
+    for name in $failed_names; do
+      if [ ! -e "$base/$rel/$name" ]; then
+        printf 'run-suite: %s has no HEAD version - the change introduced this red\n' "$name"
+        continue
+      fi
+      printf 'RUNNING %s at HEAD\n' "$name"
+      spawn_test "$base/$rel/$name" "$name" "$scratch/base-run"
+      await_tests "$scratch/base-run" "$spawned_pid:$name"
+      if [ "$(cat "$scratch/base-run/$name.rc" 2>/dev/null || printf 1)" = 0 ]; then
+        printf 'run-suite: %s is green at HEAD - the change introduced this red\n' "$name"
+      else
+        printf 'run-suite: %s is red at HEAD too (pre-existing)\n' "$name"
+      fi
+    done
+    git -C "$changed_root" worktree remove --force "$base" >/dev/null 2>&1 || true
+    trap 'rm -rf "$scratch"' EXIT
+  else
+    printf 'run-suite: reds not attributed - git could not add a HEAD worktree under %s\n' "$scratch"
+  fi
 fi
 
 [ "$fail_count" -eq 0 ]

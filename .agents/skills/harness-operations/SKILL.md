@@ -1,6 +1,6 @@
 ---
 name: harness-operations
-description: Verified operational facts for the harnesses Agent Crew supports through bin/ac-spawn.sh - claude, codex, opencode, pi and cursor (both registered, partially verified), and an unverified captain custom launch command - over the herdr backend. Load before a harness-specific spawn, trust-dialog response, skill invocation, interrupt, exit, resume, recovery, or adapter verification. Read the target harness from the task meta; never guess from your own harness. An unknown or custom harness fails closed to natural-language steering, not borrowed keystrokes.
+description: Verified operational facts for the harnesses ac-spawn.sh supports (claude, codex, opencode, pi, cursor, custom). Load before a harness-specific spawn, trust dialog, interrupt, exit, resume or recovery.
 ---
 
 # harness-operations

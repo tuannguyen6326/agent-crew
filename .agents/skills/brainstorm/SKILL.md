@@ -1,6 +1,6 @@
 ---
 name: brainstorm
-description: Captain-invocable ideation flow - the captain thinks a topic through with a DEDICATED brainstorm roomchief (clean context, its own room journal, chat right in the dashboard Board detail), not in the crewchief's own loaded session; the crewchief only opens it and, at the end, mints what the captain confirms - backlog rows, the requirements.md the session authored, and optionally a SPEC on top of it (the captain's live acceptance is the gate). The roomchief is machine-barred from the ledger. No code, no crewmate, no ledger write while thinking. Use when the captain invokes /brainstorm <topic> (or --direct <topic> for a quick riff in the chief session), or opens a "should we / how might we" conversation that is not yet an order.
+description: Captain ideation with a dedicated brainstorm roomchief; the chief only opens it and mints what the captain confirms. Use on /brainstorm <topic>, --direct <topic> for a chief-session riff, or a should-we talk not yet an order.
 ---
 
 # brainstorm

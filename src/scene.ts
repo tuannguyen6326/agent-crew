@@ -2,9 +2,7 @@
 // between L1 (repo-knowledge facts, learnings bullets) and L3 (the always-loaded
 // CREWMATE-learned layer). The entry is bin/ac-scene.sh (a shim that starts
 // this file through bin/ac-bun.sh); THIS header is the authoritative spec, and
-// the bash original it replaced stays frozen at tests/fixtures/ac-scene.sh as
-// the oracle the differential leg of tests/sh/ac-scene.test.sh holds this
-// module to.
+// tests/sh/ac-scene.test.sh is its contract test.
 //
 // Usage:
 //   ac-scene.sh new    <slug> --summary <line> [--file <path>]   (body on stdin)
@@ -159,16 +157,12 @@
 // lock releases it.
 //
 // Exit: 0 ok; 1 on every refusal (`ERROR: <msg>` on stderr) and on usage
-// (-h | --help | no verb: this header on stdout); `unknown verb: <x>` exit 1.
+// (-h | --help | no verb: this header on stdout); `unknown verb: <x>` exit 1;
+// 141, silently, when stdout's reader is gone.
 //
-// NAMED DIVERGENCES from the frozen original (tests/sh/ac-scene.test.sh): the
-// usage text is this header, not its Usage block alone; a tier refusal, a
-// scene-max that is not a count and a heat that is not a count release the
-// lock (the original left its lock dir and a mktemp body file behind, and
-// died in bash's own arithmetic noise on the heat); a homeless `show` refuses
-// once (the original printed `no scene` after the home refusal); scenes list
-// in byte order under every locale (the original's glob followed libc
-// collation, the same order for [a-z0-9-] names on this host).
+// ALSO: the usage text is this whole header; a tier refusal, a scene-max that
+// is not a count and a heat that is not a count release the lock; a homeless
+// `show` refuses once; scenes list in byte order under every locale.
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -179,9 +173,15 @@ const LF = Buffer.from("\n");
 const b = (s: string): Buffer => Buffer.from(s, "latin1");
 // A path or an argument is UTF-8 text, shown as its bytes beside file bytes.
 const shown = (s: string): string => Buffer.from(s, "utf8").toString("latin1");
-const say = (s: string): void => {
-  writeSync(1, b(`${s}\n`));
-};
+function put(buf: Buffer): void {
+  try {
+    for (let off = 0; off < buf.length; ) off += writeSync(1, buf, off, buf.length - off);
+  } catch (e) {
+    if ((e as { code?: string }).code === "EPIPE") process.exit(141);
+    throw e;
+  }
+}
+const say = (s: string): void => put(b(`${s}\n`));
 const reject = (msg: string): never => die(`scene rejected: ${msg}`);
 const isFile = (p: string): boolean => {
   try {
@@ -207,7 +207,7 @@ function usage(): never {
     if (!l.startsWith("//")) break;
     head.push(l.replace(/^\/\/ ?/, ""));
   }
-  writeSync(1, `${head.join("\n")}\n`);
+  put(Buffer.from(`${head.join("\n")}\n`));
   process.exit(1);
 }
 
@@ -497,7 +497,7 @@ function cmdShow(slug: string, rest: string[]): void {
     sceneWrite(slug, sceneMeta(file, "created") || iso(), heat, sceneSummary(file), sceneBody(file));
     unlock();
   }
-  writeSync(1, readFileSync(file));
+  put(readFileSync(file));
 }
 
 function cmdList(): void {

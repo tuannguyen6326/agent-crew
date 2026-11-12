@@ -392,7 +392,13 @@ e2k_reap() {
 # that could block the rm would leak $TMP for every file that chains this. The
 # in-case reap is where an unobserved settlement is fatal. Same shape as
 # tests/sh/ac-lock.test.sh's kill_foreign.
-e2k_exit() { e2k_reap || true; cleanup; }
+# The dead-run case registers a snapshot worktree in the REAL checkout; a death
+# between its `worktree add` and the reclaim would leave that registration.
+e2k_exit() {
+  e2k_reap || true
+  git -C "$ROOT" worktree remove --force "$ROOT/.crew/learn-suite-snapshots/verify-suite-2" 2>/dev/null || true
+  cleanup
+}
 trap e2k_exit EXIT
 
 # Responsibility is fixed at LAUNCH, never at discovery: the handler above

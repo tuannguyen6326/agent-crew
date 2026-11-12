@@ -1,10 +1,9 @@
-// home-seed.test.ts - the lib.ts twins src/home-seed.ts introduced, held to
-// their bash originals differentially: seedRuntimeLinks against the frozen
-// ac_seed_runtime_links over every entry state a home can hold, iso against
-// ac_iso under one PATH date stub; and the module's two pure readers against
-// the shell they replace (the `IFS=',' read -ra` + `tr -d ' '` split, the awk
-// registry-line pick). The CLI contract itself is tests/sh/ac-home-seed.test.sh's,
-// whose differential leg runs the frozen bash original beside the shim.
+// home-seed.test.ts - the lib.ts twins src/home-seed.ts introduced:
+// seedRuntimeLinks over every entry state a home can hold, iso against the
+// live ac_iso under one PATH date stub; and the module's two pure readers
+// against the shell they replace (the `IFS=',' read -ra` + `tr -d ' '` split,
+// the awk registry-line pick). The CLI contract itself is
+// tests/sh/ac-home-seed.test.sh's.
 import { expect, test } from "bun:test";
 import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,15 +11,13 @@ import { join } from "node:path";
 import { iso, seedRuntimeLinks } from "../../src/lib.ts";
 import { registryLine, splitProjects } from "../../src/home-seed.ts";
 
-const binDir = join(import.meta.dir, "..", "..", "bin");
-// ac_seed_runtime_links left bin/ac-lib.sh with the fleet-new port (its last
-// bash caller); the pin holds the twin to the frozen copy.
-const retired = join(import.meta.dir, "..", "fixtures", "ac-seed-runtime-links.sh");
-const LINKS = ["bin", "CLAUDE.md", ".claude", "AGENTS.md"];
+const root = join(import.meta.dir, "..", "..");
+const binDir = join(root, "bin");
+const LINKS = ["bin", "CLAUDE.md", ".claude", "AGENTS.md", ".agents"];
 
 function bashLib(fn: string, args: string[], env?: Record<string, string>) {
   return Bun.spawnSync(
-    ["bash", "-c", `. "$1/ac-lib.sh"; . "$2"; shift 2; ${fn} "$@"`, "--", binDir, retired, ...args],
+    ["bash", "-c", `. "$1/ac-lib.sh"; shift; ${fn} "$@"`, "--", binDir, ...args],
     { stdout: "pipe", stderr: "pipe", env: { ...process.env, ...env } },
   );
 }
@@ -41,10 +38,15 @@ function shape(home: string): Record<string, string> {
   return out;
 }
 
-test("seedRuntimeLinks lays the same links ac_seed_runtime_links lays", () => {
+// A REAL entry is a per-home override and stays; everything else - absent, a
+// resolving link, a dangling one - becomes a link to the distro root's entry.
+// A link that named anywhere else would run a chief on the wrong checkout.
+test("seedRuntimeLinks links the executable core to the distro root, a real entry left alone", () => {
   const dir = mkdtempSync(join(tmpdir(), "ac-home-seed-links-"));
   try {
-    const stage = (home: string, state: string) => {
+    const linked = Object.fromEntries(LINKS.map((f) => [f, `link ${join(root, f)}`]));
+    for (const state of ["fresh", "real", "link", "dangling"]) {
+      const home = join(dir, state);
       mkdirSync(home);
       if (state === "real") {
         mkdirSync(join(home, "bin"));
@@ -58,23 +60,9 @@ test("seedRuntimeLinks lays the same links ac_seed_runtime_links lays", () => {
       } else if (state === "dangling") {
         for (const f of LINKS) symlinkSync(join(dir, "gone", f), join(home, f));
       }
-    };
-    for (const state of ["fresh", "real", "link", "dangling"]) {
-      const o = join(dir, `${state}-bash`);
-      const n = join(dir, `${state}-ts`);
-      stage(o, state);
-      stage(n, state);
-      const r = bashLib("ac_seed_runtime_links", [o]);
-      expect(r.exitCode).toBe(0);
-      expect(r.stderr.toString()).toBe("");
-      seedRuntimeLinks(n);
-      const want = shape(o);
-      expect(shape(n)).toEqual(want);
-      // The bash's links name the distro root ac_root resolves (bin/..,
-      // physically); a port that pointed anywhere else would run a chief on
-      // the wrong checkout.
-      if (state !== "real") expect(want.bin).toBe(`link ${join(binDir)}`);
-      else expect(want.bin).toBe("dir");
+      seedRuntimeLinks(home);
+      const want = state === "real" ? { ...linked, bin: "dir", "CLAUDE.md": "file per-home law\n" } : linked;
+      expect([state, shape(home)]).toEqual([state, want]);
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });

@@ -12,7 +12,9 @@
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
 make_home
-RBIN="$(make_retired_bin)"
+# tfinal <transcript> - the callers' own transcript reader, src/lib.ts's
+# transcriptFinal (src/gate.ts and src/verify.ts call it).
+tfinal() { (cd "$ROOT" && bun --no-env-file -e "const L = await import('./src/lib.ts'); process.stdout.write(Buffer.from(L.transcriptFinal(process.argv[1]).text, 'latin1'));" "$1"); }
 repo="$(make_repo)"
 stub="$TMP/stubbin"
 mkdir -p "$stub"
@@ -575,7 +577,7 @@ assert_fails env PATH="$nstub:$PATH" HOME="$FAKEHOME" \
   "$BIN/ac-pane-agent.sh" run --cwd "$repo2" --prompt-file "$pf" --label nofile2
 
 # A SUCCESSFUL scrollback harvest is usable AND marked: the payload is written
-# as a one-message transcript - the exact jsonl shape ac_transcript_final
+# as a one-message transcript - the exact jsonl shape transcriptFinal
 # already parses - so ac-ship.sh/ac-qa.sh read the verdict from the same
 # `transcript` path, and "source":"scrollback" tells them which harvest ran.
 printf 'verdict: passed - harvested from the pane\n' >"$TMP/scrollback.txt"
@@ -584,7 +586,7 @@ out="$(PATH="$nstub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$
 assert_contains "$out" '"status":"ok"' "a scrollback harvest completes the turn"
 assert_contains "$out" '"source":"scrollback"' "the payload is marked scrollback-sourced"
 tr_path="$(printf '%s\n' "$out" | sed -n 's/.*"transcript":"\([^"]*\)".*/\1/p' | tail -1)"
-assert_contains "$(bash -c ". '$BIN/ac-lib.sh'; . '$RBIN/ac-pipeline-lib.sh'; ac_transcript_final '$tr_path'")" \
+assert_contains "$(tfinal "$tr_path")" \
   "verdict: passed - harvested from the pane" "the caller's own transcript reader finds the scrollback verdict"
 
 # --- fail-closed harvest: a turn that ended on a bare tool_use ----------------
@@ -593,7 +595,7 @@ assert_contains "$(bash -c ". '$BIN/ac-lib.sh'; . '$RBIN/ac-pipeline-lib.sh'; ac
 # every other round, passing and failing alike, ended here. Its own comment
 # already declares the contract ("FAIL CLOSED: the turn ended, so a payload is
 # owed"), but the code guarded an empty transcript PATH while the caller asks a
-# different question six lines later: ac_transcript_final (tests/fixtures/ac-pipeline-lib.sh)
+# different question six lines later: transcriptFinal (src/lib.ts)
 # takes the LAST assistant message, and a session that stopped after a completed
 # tool call has one carrying only tool_use. The pane reported ok, the caller then
 # died on "transcript has no final message", and the previous round's receipt sat
@@ -638,7 +640,7 @@ case "$out" in *'"status":"ok"'*) fail "a turn that stopped mid-pass must never 
 # The caller's own reader must agree that there was nothing to harvest - that
 # agreement is the whole point of asking its question here.
 tr_path="$(printf '%s\n' "$out" | sed -n 's/.*"transcript":"\([^"]*\)".*/\1/p' | tail -1)"
-assert_eq "$(bash -c ". '$BIN/ac-lib.sh'; . '$RBIN/ac-pipeline-lib.sh'; ac_transcript_final '$tr_path'")" ""   "ac_transcript_final finds no final message in exactly the transcript the pane refused"
+assert_eq "$(tfinal "$tr_path")" ""   "transcriptFinal finds no final message in exactly the transcript the pane refused"
 
 # close verb retires the pane; bad args fail with a protocol error event.
 : >"$HDLOG"
@@ -677,7 +679,7 @@ assert_contains "$(cat "$HDLOG")" "workspace create --label home · fam7 --no-fo
 fake="$TMP/fakecheckout"
 mkdir -p "$fake/bin" "$fake/src"
 cp "$BIN/ac-lib.sh" "$BIN/ac-harness.sh" "$BIN/ac-backend.sh" "$BIN/ac-backend-orca.sh" "$BIN/ac-pane-agent.sh" "$BIN/ac-dispatch-select.sh" "$BIN/ac-bun.sh" "$fake/bin/"
-cp "$ROOT/src/dispatch-select.ts" "$ROOT/src/lib.ts" "$ROOT/src/backlog.ts" "$ROOT/src/pane-agent.ts" "$fake/src/"
+cp "$ROOT/src/dispatch-select.ts" "$ROOT"/src/lib*.ts "$ROOT/src/backlog.ts" "$ROOT/src/pane-agent.ts" "$fake/src/"
 echo '{"result":{"workspaces":[]}}' >"$WSLIST"
 : >"$HDLOG"
 env -u AC_HOME PATH="$stub:$PATH" HOME="$FAKEHOME" \
@@ -1412,7 +1414,7 @@ case "$(cat "$HDLOG")" in *"tab create"*) fail "a one-shot must create no tab" ;
 tr="$(printf '%s\n' "$out" | sed -n 's/.*"event":"done".*"transcript":"\([^"]*\)".*/\1/p')"
 assert_contains "$(cat "$tr")" "verdict" "the engine's stdout is the harvested payload"
 assert_eq "$(jq -r '.message.content[0].text' "$tr" | head -1)" '{"verdict":"approve"}' \
-  "the payload is wrapped in the one-message shape ac_transcript_final parses"
+  "the payload is wrapped in the one-message shape transcriptFinal parses"
 assert_contains "$(cat "$XLOG.prompt")" "review this" "the prompt file reaches the engine as its positional argument"
 assert_contains "$(cat "$XLOG")" "codex exec -s read-only --skip-git-repo-check" \
   "the codex one-shot form skips codex's own git-repo trust check - the gate always runs it from the fleet home, never a git repo"
@@ -1728,7 +1730,7 @@ assert_eq "$(head -1 "$cstate/buf")" "BARE-ENTER" "a built-in codex pane gets th
 # The verdict file IS the final message, read back through the caller's own
 # reader - so ac-ship.sh/ac-qa.sh parse it exactly as they parse a claude turn.
 tr_path="$(printf '%s\n' "$out" | sed -n 's/.*"event":"done".*"transcript":"\([^"]*\)".*/\1/p')"
-assert_contains "$(bash -c ". '$BIN/ac-lib.sh'; . '$RBIN/ac-pipeline-lib.sh'; ac_transcript_final '$tr_path'")" \
+assert_contains "$(tfinal "$tr_path")" \
   "verdict: passed - written by the crewmate" "the caller's transcript reader finds the file verdict"
 assert_contains "$out" '"session_id":""' "the crewmate arm opens no resumable session and says so"
 # Like --exec, it leaves NOTHING in the directory it merely ran in: no Stop hook
@@ -2029,7 +2031,7 @@ assert_contains "$out" '"event":"done","status":"ok"' \
 # A TURN THAT DIED MID-PASS IS NOT AN OK TURN, even with no deliverable
 # declared. The pane agent and its caller read the same transcript with two
 # DIFFERENT questions: this file asked whether any assistant text exists
-# anywhere, while ac_transcript_final (tests/fixtures/ac-pipeline-lib.sh) takes the LAST
+# anywhere, while transcriptFinal (src/lib.ts) takes the LAST
 # assistant message. A session killed after a tool call satisfies the first and
 # returns empty from the second - so the pane reported ok and the caller then
 # died on "transcript has no final message", leaving the previous round's
@@ -2144,14 +2146,28 @@ src=0; out="$(AC_PANE_STALL_MAX=0 PATH="$nosleep:$sstub:$PATH" HOME="$FAKEHOME" 
   "$BIN/ac-pane-agent.sh" run --cwd "$srepo" --prompt-file "$pf" --label stall-off --timeout 3 2>&1)" || src=$?
 assert_contains "$out" '"status":"timeout"' "AC_PANE_STALL_MAX=0 disables the bound"
 
-# --- differential: src/pane-agent.ts against the frozen bash original ---------
-# DISPUTED: the implementation (tests/fixtures/ac-pane-agent.sh under bash vs src/pane-agent.ts through bin/ac-pane-agent.sh)
-# HELD-CONSTANT: ONE world path ($XW) rebuilt by the row's own setup before each side's pass - a git repo at $XW/cwd (one commit, one identity and date, branch main, its info/exclude), the prompt at $XW/pf, HOME=$XW/hd (its .claude.json), AC_CLAUDE_TRANSCRIPT_ROOT=$XW/tr, AC_FLEET_STATE=$XW/st, TMPDIR=$XW/tmp, XSTUB=$XW/stub (the stubs' answer files, state and logs), AC_HOME=$XW/home only where a row homes it; argv; env (the rest of the AC_* family unset unless a row names it; AC_SEND_SETTLE=0 and AC_STARTUP_DIALOG_BUDGET=2 from helpers.sh); cwd ($XW/cwd); stdin (/dev/null); LC_ALL=C unless a row names en_US.UTF-8; PATH = the leg's stubs (a logging herdr and orca answering from the world and modelling the pane - a session `pane run` writing the transcript and touching the Stop hook's marker, a composer whose Enter makes the crewmate write its verdict and announce - logging fakes of every harness CLI, `od` with fixed bytes, a no-op `sleep` unless a row runs real time or counts its sleeps (one logging its argv), a `date +%s` that ticks one second per call from one instant) ahead of the suite's PATH, whose refusing stand-ins catch anything the stubs do not model; the live bin/ beside each entry. Each call's exit, stdout and stderr compared whole once normalised (the k-th entry pid of a pass PID<k>, a marker's age, either bin root ROOT), then the stub logs in call order and the world: every path under $XW but stub/ and tmp/ with its mode and bytes (the repo as its info/exclude).
+# --- the entry end to end against modelled backends, one scenario per row -----
+# ONE world path ($XW) rebuilt by the row's own setup before the row runs - a git
+# repo at $XW/cwd (one commit, one identity and date, branch main, its
+# info/exclude), the prompt at $XW/pf, HOME=$XW/hd (its .claude.json),
+# AC_CLAUDE_TRANSCRIPT_ROOT=$XW/tr, AC_FLEET_STATE=$XW/st, TMPDIR=$XW/tmp,
+# XSTUB=$XW/stub (the stubs' answer files, state and logs), AC_HOME=$XW/home
+# only where a row homes it. The env: the rest of the AC_* family unset unless a
+# row names it (AC_SEND_SETTLE=0 and AC_STARTUP_DIALOG_BUDGET=2 from
+# helpers.sh); cwd $XW/cwd; stdin /dev/null; LC_ALL=C unless a row names
+# en_US.UTF-8. PATH: the leg's stubs (a logging herdr and orca answering from
+# the world and modelling the pane - a session `pane run` writing the
+# transcript and touching the Stop hook's marker, a composer whose Enter makes
+# the crewmate write its verdict and announce - logging fakes of every harness
+# CLI, `od` with fixed bytes, a no-op `sleep` unless a row runs real time, a
+# `date +%s` that ticks one second per call from one instant) ahead of the suite's PATH, whose refusing
+# stand-ins catch anything the stubs do not model. A row reads each call's
+# exit, stdout and stderr (the k-th entry pid PID<k>, a marker's age, the bin
+# root ROOT), the stub logs and the world: every path under $XW but stub/ and
+# tmp/ with its mode and bytes (the repo as its info/exclude).
 cd "$TMP" || fail "cd TMP"
-xobin="$(make_oracle_bin ac-pane-agent)"
-cmp -s "$xobin/ac-pane-agent.sh" "$ROOT/tests/fixtures/ac-pane-agent.sh" || fail "the oracle bin holds the frozen original"
-XW="$TMP/xw"; XSTUBS="$TMP/xstubs"; XNOSLEEP="$TMP/xnosleep"; XLOGSLEEP="$TMP/xlogsleep"
-mkdir -p "$XSTUBS" "$XNOSLEEP" "$XLOGSLEEP"
+XW="$TMP/xw"; XSTUBS="$TMP/xstubs"; XNOSLEEP="$TMP/xnosleep"
+mkdir -p "$XSTUBS" "$XNOSLEEP"
 printf '[user]\n\tname = t\n\temail = t@t\n[init]\n\tdefaultBranch = main\n' >"$TMP/xgitconfig"
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$TMP/xgitconfig" \
   GIT_AUTHOR_DATE='2026-01-01T00:00:00Z' GIT_COMMITTER_DATE='2026-01-01T00:00:00Z'
@@ -2282,15 +2298,15 @@ printf '#!/bin/sh\nprintf "           0a      1b      2c      3d\\n"\n' >"$XSTUB
 cat >"$XSTUBS/date" <<'STUB'
 #!/bin/sh
 # A reader a signal row ended mid-call is no output of the entry: the stub's
-# own write error would land on whichever side the kill caught in a read.
+# own write error would land in the entry's stderr when the kill caught it in a
+# read.
 case "$*" in
   +%s) n="$(cat "$XSTUB/date.n" 2>/dev/null || echo 0)"; echo "$((n + 1))" >"$XSTUB/date.n"; echo "$((1767225600 + n))" 2>/dev/null ;;
   *) exec /bin/date "$@" ;;
 esac
 STUB
 printf '#!/bin/sh\nexit 0\n' >"$XNOSLEEP/sleep"
-printf '#!/bin/sh\necho "sleep $*" >>"$XSTUB/sleep.log"\n' >"$XLOGSLEEP/sleep"
-chmod +x "$XSTUBS"/* "$XNOSLEEP/sleep" "$XLOGSLEEP/sleep"
+chmod +x "$XSTUBS"/* "$XNOSLEEP/sleep"
 
 xworld() {  # xworld - a fresh world: the repo (one commit on main), the prompt, the dirs the env names
   [ ! -e "$XW" ] || chmod -R u+rwX "$XW" 2>/dev/null
@@ -2303,10 +2319,8 @@ xput() { mkdir -p "$(dirname "$XW/$1")"; printf '%b' "$2" >"$XW/$1"; }   # xput 
 xs() { mkdir -p "$XW/stub"; printf '%b' "${2-}" >"$XW/stub/$1"; }   # xs <stub file> [<printf %b bytes>] - a fault or answer file
 XLC=C; XENV=(); XPATH=""; XHOME=""; XCWD=cwd; XIN=/dev/null
 xpath() { printf '%s' "${XPATH:-$XSTUBS:$XNOSLEEP:$PATH}"; }
-xc() {  # xc <args...> - one pane-agent call by this pass's side for the call, its transcript appended
-  local side bin="$BIN" rc=0 x v
-  side="${XALT[$((XCALL % ${#XALT[@]}))]}"; XCALL=$((XCALL + 1))
-  [ "$side" = n ] || bin="$xobin"
+xc() {  # xc <args...> - one pane-agent call, its transcript appended
+  local rc=0 x v
   local e=("LC_ALL=$XLC" "PATH=$(xpath)" "HOME=$XW/hd" "TMPDIR=$XW/tmp" "XSTUB=$XW/stub"
     "AC_CLAUDE_TRANSCRIPT_ROOT=$XW/tr" "AC_FLEET_STATE=$XW/st")
   [ -z "$XHOME" ] || e+=("AC_HOME=$XW/home")
@@ -2315,78 +2329,59 @@ xc() {  # xc <args...> - one pane-agent call by this pass's side for the call, i
   (cd "$XW/$XCWD" && exec env -u AC_HOME -u AC_FLEET_STATE -u AC_SCOPE -u AC_SOLO -u AC_BACKEND -u AC_HERDR_SESSION \
     -u AC_HERDR_RPC_TIMEOUT -u AC_WINDOW_FAMILY -u AC_FLEET_NAME -u CLAUDE_CONFIG_DIR -u AC_PANE_STALL_MAX \
     -u AC_PANE_SETTLE_TRIES -u AC_PANE_SETTLE_SLEEP -u AC_PANE_SCROLLBACK_LINES -u AC_LOCK_STALE_GRACE -u CDPATH \
-    -u EPOCHSECONDS "${e[@]}" /bin/sh -c 'printf "%s\n" "$$" >>"$0"; exec "$@"' "$TMP/xpids.$XPASS" \
-    "$bin/ac-pane-agent.sh" ${a[@]+"${a[@]}"}) <"$XIN" >"$TMP/x.out" 2>"$TMP/x.err" || rc=$?
-  { printf '== %s\nrc=%s\n-- out\n' "$*" "$rc"; cat "$TMP/x.out"; printf -- '-- err\n'; cat "$TMP/x.err"; } >>"$TMP/xt.$XPASS"
+    -u EPOCHSECONDS "${e[@]}" /bin/sh -c 'printf "%s\n" "$$" >>"$0"; exec "$@"' "$TMP/xpids" \
+    "$BIN/ac-pane-agent.sh" ${a[@]+"${a[@]}"}) <"$XIN" >"$TMP/x.out" 2>"$TMP/x.err" || rc=$?
+  { printf '== %s\nrc=%s\n-- out\n' "$*" "$rc"; cat "$TMP/x.out"; printf -- '-- err\n'; cat "$TMP/x.err"; } >>"$TMP/xt"
 }
 # An async job of this shell starts with SIGINT and SIGQUIT ignored, so the
 # background call restores both before it execs the entry, in a group of its
 # own.
 xbg() {  # xbg <signal> <wait-for text in a stub log> <args...> - one call in the background, signalled once the stubs logged <text>
-  local sig="$1" want="$2" side bin="$BIN" rc=0 pid i=0; shift 2
-  side="${XALT[$((XCALL % ${#XALT[@]}))]}"; XCALL=$((XCALL + 1))
-  [ "$side" = n ] || bin="$xobin"
+  local sig="$1" want="$2" rc=0 pid i=0; shift 2
   (cd "$XW/$XCWD" && exec env -u AC_HOME -u AC_FLEET_STATE -u AC_SCOPE -u AC_SOLO -u AC_BACKEND -u AC_HERDR_SESSION \
     -u AC_WINDOW_FAMILY -u AC_FLEET_NAME -u CLAUDE_CONFIG_DIR -u AC_PANE_STALL_MAX -u CDPATH \
     "LC_ALL=$XLC" "PATH=$(xpath)" "HOME=$XW/hd" "TMPDIR=$XW/tmp" "XSTUB=$XW/stub" "AC_CLAUDE_TRANSCRIPT_ROOT=$XW/tr" \
-    "AC_FLEET_STATE=$XW/st" ${XENV[@]+"${XENV[@]}"} perl -e '$SIG{INT} = $SIG{QUIT} = "DEFAULT"; setpgrp(0, 0); exec @ARGV' "$bin/ac-pane-agent.sh" "$@") \
+    "AC_FLEET_STATE=$XW/st" ${XENV[@]+"${XENV[@]}"} perl -e '$SIG{INT} = $SIG{QUIT} = "DEFAULT"; setpgrp(0, 0); exec @ARGV' "$BIN/ac-pane-agent.sh" "$@") \
     </dev/null >"$TMP/x.out" 2>"$TMP/x.err" &
   pid=$!
-  printf '%s\n' "$pid" >>"$TMP/xpids.$XPASS"
+  printf '%s\n' "$pid" >>"$TMP/xpids"
   while ! grep -qF -- "$want" "$XW/stub/herdr.log" "$XW/stub/harness.log" 2>/dev/null && [ "$i" -lt 200 ]; do /bin/sleep 0.05; i=$((i + 1)); done
   case "$sig" in -*) kill "-${sig#-}" -- "-$pid" 2>/dev/null ;; *) kill "-$sig" "$pid" 2>/dev/null ;; esac
   wait "$pid" 2>/dev/null || rc=$?
-  { printf '== %s %s\nrc=%s\n-- out\n' "$sig" "$*" "$rc"; cat "$TMP/x.out"; printf -- '-- err\n'; cat "$TMP/x.err"; } >>"$TMP/xt.$XPASS"
+  { printf '== %s %s\nrc=%s\n-- out\n' "$sig" "$*" "$rc"; cat "$TMP/x.out"; printf -- '-- err\n'; cat "$TMP/x.err"; } >>"$TMP/xt"
 }
-xnorm() {  # xnorm <file> <pass> - the k-th entry pid PID<k>, a marker's age, either bin root ROOT
+xnorm() {  # xnorm <file> - the k-th entry pid PID<k>, a marker's age, the bin root ROOT
   local e=() k=0 p
-  while IFS= read -r p; do [ -z "$p" ] || { k=$((k + 1)); e+=(-e "s/(^|[^0-9])$p([^0-9]|\$)/\\1PID$k\\2/g"); }; done <"$TMP/xpids.$2"
-  LC_ALL=C sed -E ${e[@]+"${e[@]}"} -e 's/arrived -?[0-9]+s ago/arrived Ns ago/' \
-    -e "s#$TMP/oracle-ac-pane-agent#ROOT#g" -e "s#$ROOT#ROOT#g" "$1"
+  while IFS= read -r p; do [ -z "$p" ] || { k=$((k + 1)); e+=(-e "s/(^|[^0-9])$p([^0-9]|\$)/\\1PID$k\\2/g"); }; done <"$TMP/xpids"
+  LC_ALL=C sed -E ${e[@]+"${e[@]}"} -e 's/arrived -?[0-9]+s ago/arrived Ns ago/' -e "s#$ROOT#ROOT#g" "$1"
 }
-xsnap() {  # xsnap <pass> - the world as one listing (the repo as its info/exclude, bun's own cache under HOME skipped), then the stub logs
-  local n f
+xsnap() {  # xsnap - the world as one listing (the repo as its info/exclude, bun's own cache under HOME skipped), then the stub logs
+  local f
   (cd "$XW" && find . \( -path ./stub -o -path ./tmp -o -path ./cwd/.git -o -path ./hd/Library \) -prune -o -print | LC_ALL=C sort) >"$TMP/xnames"
   while IFS= read -r f; do
     [ "$f" != . ] || continue
     if [ -L "$XW/$f" ]; then printf '== %s -> %s\n' "$f" "$(readlink "$XW/$f")"; continue; fi
     printf '== %s %s\n' "$f" "$(stat -f %Sp "$XW/$f")"
     [ -d "$XW/$f" ] || { cat "$XW/$f" 2>/dev/null || printf '<unreadable>'; printf '\n'; }
-  done <"$TMP/xnames" >"$TMP/xw.$1"
+  done <"$TMP/xnames" >"$TMP/xsnap"
   { printf -- '-- exclude\n'; cat "$XW/cwd/.git/info/exclude" 2>/dev/null || true
-    for f in herdr.log orca.log harness.log buf sleep.log; do printf -- '-- %s\n' "$f"; cat "$XW/stub/$f" 2>/dev/null || true; done
-  } >>"$TMP/xw.$1"
+    for f in herdr.log orca.log harness.log buf; do printf -- '-- %s\n' "$f"; cat "$XW/stub/$f" 2>/dev/null || true; done
+  } >>"$TMP/xsnap"
 }
-xpass() {  # xpass <pass> <setup> <body> <side>... - rebuild the world, then the body's calls (shell text) by the sides in turn
-  XPASS="$1"; : >"$TMP/xt.$1"; : >"$TMP/xpids.$1"; XCALL=0; XALT=("${@:4}")
-  xworld; eval "$2"; eval "$3"; xsnap "$1"
-  xnorm "$TMP/xt.$1" "$1" >"$TMP/xt2.$1"; xnorm "$TMP/xw.$1" "$1" >"$TMP/xw2.$1"
+xone() {  # xone <setup> <body> - rebuild the world, then the body's calls (shell text), the transcript and the world normalised
+  : >"$TMP/xt"; : >"$TMP/xpids"
+  xworld; eval "$1"; eval "$2"; xsnap
+  xnorm "$TMP/xt" >"$TMP/xt2"; xnorm "$TMP/xsnap" >"$TMP/xsnap2"
 }
-xrow() { printf '%s' "${BASH_LINENO[${#BASH_LINENO[@]}-2]}"; }   # the leg's own line that started this comparison
-xcmp() {  # xcmp <pass> <pass> - transcripts and worlds identical
-  cmp -s "$TMP/xt2.$1" "$TMP/xt2.$2" || fail "pane-agent differential calls differ ($1 vs $2) at line $(xrow): $(diff -a "$TMP/xt2.$1" "$TMP/xt2.$2" | head -n 14)"
-  cmp -s "$TMP/xw2.$1" "$TMP/xw2.$2" || fail "pane-agent differential world differs ($1 vs $2) at line $(xrow): $(diff -a "$TMP/xw2.$1" "$TMP/xw2.$2" | head -n 14)"
-}
-xsame() { xpass o "$1" "$2" o; xpass n "$1" "$2" n; xcmp o n; }   # xsame <setup> <body> - the oracle alone, then the port alone
-xsameown() {  # xsameown <text> <setup> <body> - xsame once the original's own stderr lines holding <text> are shown and dropped (SHELL-OWN, named)
-  xpass o "$2" "$3" o; xpass n "$2" "$3" n
-  xhas "$1" o
-  LC_ALL=C grep -vF -- "$1" "$TMP/xt2.o" >"$TMP/xt2.own" || true
-  mv "$TMP/xt2.own" "$TMP/xt2.o"
-  xcmp o n
-}
-xcont() {  # xcont <setup> <body> - the oracle alone, then the two sides alternating call by call, either side first
-  xpass o "$1" "$2" o; xpass a "$1" "$2" o n; xpass b "$1" "$2" n o; xcmp o a; xcmp o b
-}
-xboth() { xpass o "$1" "$2" o; xpass n "$1" "$2" n; }   # xboth <setup> <body> - both sides, compared by the row itself
-xt() { cat "$TMP/xt2.${1:-n}"; }
-xhas() { assert_contains "$(xt "${2:-n}")" "$1" "pane-agent differential at line $(xrow)"; }   # xhas <text> [<pass>]
-xlacks() { case "$(xt "${2:-n}")" in *"$1"*) fail "pane-agent differential at line $(xrow): '$1' found in pass ${2:-n}" ;; esac; }
-xwhas() { assert_contains "$(cat "$TMP/xw2.${2:-n}")" "$1" "pane-agent differential world at line $(xrow)"; }
-xwlacks() { case "$(cat "$TMP/xw2.${2:-n}")" in *"$1"*) fail "pane-agent differential world at line $(xrow): '$1' found in pass ${2:-n}" ;; esac; }
+xrow() { printf '%s' "${BASH_LINENO[${#BASH_LINENO[@]}-2]}"; }   # the leg's own line that started this assertion
+xt() { cat "$TMP/xt2"; }
+xhas() { assert_contains "$(xt)" "$1" "pane-agent at line $(xrow)"; }   # xhas <text> - in the row's calls
+xlacks() { case "$(xt)" in *"$1"*) fail "pane-agent at line $(xrow): '$1' found" ;; esac; }
+xwhas() { assert_contains "$(cat "$TMP/xsnap2")" "$1" "pane-agent world at line $(xrow)"; }
+xwlacks() { case "$(cat "$TMP/xsnap2")" in *"$1"*) fail "pane-agent world at line $(xrow): '$1' found" ;; esac; }
 xnone() { :; }
-xerr() { sed -n '/^-- err$/,$p' "$TMP/xt2.${1:-n}" | sed 1d; }   # xerr [<pass>] - a one-call pass's stderr
-xbytes() { LC_ALL=C grep -qF -- "$(printf '%b' "$1")" "$TMP/xw2.${2:-n}" || fail "pane-agent differential world at line $(xrow): bytes '$1' not found in pass ${2:-n}"; }
+xerr() { sed -n '/^-- err$/,$p' "$TMP/xt2" | sed 1d; }   # xerr - a one-call row's stderr
+xbytes() { LC_ALL=C grep -qF -- "$(printf '%b' "$1")" "$TMP/xsnap2" || fail "pane-agent world at line $(xrow): bytes '$1' not found"; }
 xwithout() {  # xwithout <tool> - the leg's stubs and PATH with every dir holding <tool> mirrored without it
   local dirs d f key mirror out=""
   IFS=: read -r -a dirs <<<"$XSTUBS:$XNOSLEEP:$PATH"
@@ -2406,405 +2401,256 @@ xwithout() {  # xwithout <tool> - the leg's stubs and PATH with every dir holdin
 }
 xrun() { xc run --cwd @W/cwd --prompt-file @W/pf --label r1 "$@"; }   # xrun <flags...> - a run with the world's cwd and prompt
 
-# 1. Preamble and usage: the usage is a done error, an invalid backend refuses
-#    first on every verb, the homeless run says nothing on stderr; a valueless
-#    flag, HOME unset and a bun-less PATH are the named divergences.
-xsame xnone 'xc'
-xhas '{"event":"done","status":"error","error":"usage: ac-pane-agent.sh run --cwd DIR --prompt-file F"}'
-xsame xnone 'xc bogus --pane p1'
-xsame xnone 'xc run'
-xhas '"error":"cwd missing: "'
+xrc() { xhas "rc=$1"$'\n-- out'; }   # xrc <status> - a call of the row exited <status>
+
+# 1. Preamble and usage: no verb or an unknown one is the usage done error, an
+#    invalid backend refuses first on every verb, a valueless flag names
+#    itself, HOME unset and a bun-less PATH refuse.
+xone xnone 'xc'
+xrc 1; xhas '{"event":"done","status":"error","error":"usage: ac-pane-agent.sh run --cwd DIR --prompt-file F"}'
+xone xnone 'xc bogus --pane p1'
+xrc 1; xhas '{"event":"done","status":"error","error":"usage: ac-pane-agent.sh run --cwd DIR --prompt-file F"}'
+xone xnone 'xc run'
+xrc 1; xhas '{"event":"done","status":"error","error":"cwd missing: "}'
 for v in "close --pane p1" "steer --agent a hi" "reap-pane --pane p1" "reap" "run --cwd @W/cwd"; do
-  XENV=(AC_BACKEND=tmux); xsame xnone "xc $v"; XENV=()
+  XENV=(AC_BACKEND=tmux); xone xnone "xc $v"; XENV=()
+  assert_eq "$(xerr)" "ERROR: unsupported backend 'tmux' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)" "an invalid backend refuses first: $v"
+  xrc 1; xwlacks '[pane] [run]'
 done
-xhas "ERROR: unsupported backend 'tmux' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)" o
-xsame xnone 'xrun'
-assert_contains "$(xt)" "rc=0" "a homeless session turn ends ok"
-assert_eq "$(xerr o):$(xerr n)" ":" "the homeless pane agent writes nothing on stderr, on either side"
-# W12 SHELL-OWN (named): a value flag with no value or an empty one ends every
-# verb 1, the shell's own line on one side and the flag's name on the other.
-for v in "run --cwd" "run --cwd @W/cwd --timeout ''" "close --pane" "reap-pane --pane ''" "steer --agent"; do
-  xboth xnone "xc $v"
-  assert_contains "$(xt o)" "rc=1" "the original ends 1 on a valueless flag: $v"
-  assert_contains "$(xt o)" "parameter null or not set" "the original's own line: $v"
-  assert_contains "$(xt n)" "rc=1" "the port ends 1 on a valueless flag: $v"
-  assert_contains "$(xt n)" "needs a value" "the port names the flag: $v"
-  xwlacks '[pane] [run]' o; xwlacks '[pane] [run]' n
+for v in "run --cwd" "run --cwd @W/cwd --timeout ''" "steer --agent"; do
+  xone xnone "xc $v"
+  xrc 1; xhas "needs a value"; xwlacks '[pane] [run]'
 done
-# HOME unset (named): the shell's unbound line, the port's ERROR; 1 on both.
-for side in o n; do
-  bin="$BIN"; [ "$side" = n ] || bin="$xobin"
-  rc=0; out="$(cd "$TMP" && env -u HOME -u AC_HOME "PATH=$XSTUBS:$XNOSLEEP:$PATH" "$bin/ac-pane-agent.sh" close --pane p1 2>&1)" || rc=$?
-  assert_eq "$rc" "1" "HOME unset ends $side 1"
-  case "$side" in
-    o) assert_contains "$out" "HOME: unbound variable" "the original dies on its PATH hardening" ;;
-    n) assert_contains "$out" "ERROR: HOME is not set" "the port names the missing HOME" ;;
-  esac
+for v in "close --pane" "reap-pane --pane ''"; do
+  xone xnone "xc $v"
+  assert_eq "$(xerr)" "ERROR: --pane needs a value" "a valueless --pane is named: $v"
+  xwlacks '[pane] [close]'
 done
-# BUN (W11, named): close never needed bun in the original; the shim does.
-XPATH="$(xwithout bun)"; xboth xnone 'xc close --pane p1'; XPATH=""
-assert_contains "$(xt o)" "rc=0" "the original closes without bun"
-assert_contains "$(xt n)" "ERROR: required tool not found: bun" "the shim refuses without bun"
-assert_contains "$(xt n)" "rc=1" "the shim's refusal ends 1"
+rc=0; out="$(cd "$TMP" && env -u HOME -u AC_HOME "PATH=$XSTUBS:$XNOSLEEP:$PATH" "$BIN/ac-pane-agent.sh" close --pane p1 2>&1)" || rc=$?
+assert_eq "$rc:$out" "1:ERROR: HOME is not set" "HOME unset refuses"
+XPATH="$(xwithout bun)"; xone xnone 'xc close --pane p1'; XPATH=""
+xrc 1; assert_eq "$(xerr)" "ERROR: required tool not found: bun" "the shim refuses without bun"
 
-# 2. run refusals in order, the profile rungs, the contradiction warning, the
-#    ladders, effort, the arm refusals and agy's warning.
-xsame xnone 'xrun --exec --resume s1 --pane-file @W/pf.pane'
-xhas '"error":"--exec runs a one-shot command: there is no session to --resume"'
-xsame xnone 'xrun --exec --pane-file @W/pf.pane'
-xsame xnone 'xrun --observe @W/obs'
-for k in Bad 'a b' 'x/y' 'q_r'; do xsame xnone "xrun --kind '$k'"; done
-xhas '"error":"kind must be [a-z0-9-]: q_r"'
+# 2. run refusals in order, before any pane or rung; the profile rungs and the
+#    ladders, as the harness CLI receives them; effort.
+xone xnone 'xrun --exec --resume s1 --pane-file @W/pf.pane'
+xrc 1; xhas '"error":"--exec runs a one-shot command: there is no session to --resume"'
+xone xnone 'xrun --exec --pane-file @W/pf.pane'
+xrc 1; xhas '"error":"--exec places no pane: there is no identity to write to --pane-file"'
+for k in Bad 'a b' 'x/y' 'q_r'; do
+  xone xnone "xrun --kind '$k'"
+  xrc 1; xhas "\"error\":\"kind must be [a-z0-9-]: $k\""; xwlacks '[pane] [run]'
+done
 xbadjson() { xput home/config/crew-dispatch.json '{oops\n'; }
-XHOME=1; xsame xbadjson 'xrun --exec --kind codereview'; XHOME=""
-xhas "could not resolve a pane profile for kind 'codereview' ("
+XHOME=1; xone xbadjson 'xrun --exec --kind codereview'; XHOME=""
+xrc 1; xhas "\"error\":\"could not resolve a pane profile for kind 'codereview' ("; xhas ') - see bin/ac-dispatch-select.sh --pane codereview"'
 xprof() { xput home/config/crew-dispatch.json '{"panes":{"codereview":{"harness":"codex","model":"m1","effort":"high"},"qa":{"harness":"pi"}}}\n'; }
-xprofagent() { xprof; xput home/config/codereview-agent 'cl"aude\n'; }
 XHOME=1
-xsame xprof 'xrun --exec --kind codereview'
-xsame xprofagent 'xrun --exec --kind codereview'
-xhas '"reason":"codereview-agent-mismatch"'
-xsame xprof 'xrun --exec --kind qa --model mine'
-XENV=(AC_FLEET_AGENT_CODEREVIEW=codex); xsame xprof 'xrun --exec --kind codereview'; XENV=()
+xone xprof 'xrun --exec --kind codereview'
+xrc 0; xwhas 'codex [exec] [-s] [read-only] [--skip-git-repo-check] [-m] [m1] [-c] [model_reasoning_effort=high] [-c] [model_reasoning_summary=auto] [review this]'
+xone xprof 'xrun --exec --kind qa --model mine'
+xrc 0; xwhas 'pi [-p] [--model] [mine] [review this]'
 xknobs() { xput home/config/qa-model 'cm\n'; xput home/config/qa-agent 'opencode\n'; xput home/config/effort 'low\n'; xput home/config/model 'fm\n'; }
-xsame xknobs 'xrun --exec --kind qa'
-xsame xknobs 'xrun --exec --kind gate'
-xsame xknobs 'xrun --exec --kind qa --harness claude'
+xone xknobs 'xrun --exec --kind qa'
+xrc 0; xwhas 'opencode [run] [-m] [cm] [--variant] [low] [review this]'
+xone xknobs 'xrun --exec --kind gate'
+xrc 0; xwhas 'claude [-p] [--model] [fm] [--effort] [low] [review this]'
+xone xknobs 'xrun --exec --kind qa --harness claude'
+xrc 0; xwhas $'-- harness.log\nclaude [-p] [review this]\n'
 XHOME=""
-XENV=(AC_FLEET_MODEL_QA=em AC_FLEET_AGENT_QA=codex AC_FLEET_EFFORT_QA=max); xsame xnone 'xrun --exec --kind qa'; XENV=()
-XENV=(AC_FLEET_MODEL=fm AC_FLEET_EFFORT=high); xsame xnone 'xrun --exec --kind gate --harness claude'; xsame xnone 'xrun --exec --kind gate --harness claude --model m2'; XENV=()
-XENV=('AC_FLEET_PROFILE_CODEREVIEW=harness=codex model=gpt 5 effort=high'); xsame xnone 'xrun --exec --kind codereview'; XENV=()
-XENV=($'AC_FLEET_PROFILE_CODEREVIEW=harness=opencode\tmodel=\teffort='); xsame xnone 'xrun --exec --kind codereview'; XENV=()
-for e in ultracode low bogus; do xsame xnone "xrun --exec --harness claude --effort $e"; done
-xhas '"error":"invalid effort: bogus (expected low|medium|high|xhigh|max|ultracode)"'
-xsame xnone 'xrun --exec --harness fictional'
-xsame xnone 'xrun --harness fictional'
-xsame xnone 'xrun --exec --harness agy --effort high --model "Gemini 3.8 Flash (Low)" --timeout 900'
-xhas "the configured effort 'high' was dropped"
-xsame xnone 'xrun --harness codex --resume s1'
-xsame xnone 'xc run --cwd @W/nope --prompt-file @W/pf'
-xsame xnone 'xc run --cwd @W/cwd --prompt-file @W/nope'
+XENV=(AC_FLEET_MODEL_QA=em AC_FLEET_AGENT_QA=codex AC_FLEET_EFFORT_QA=max); xone xnone 'xrun --exec --kind qa'; XENV=()
+xrc 0; xwhas 'codex [exec] [-s] [read-only] [--skip-git-repo-check] [-m] [em] [-c] [model_reasoning_effort=max] [-c] [model_reasoning_summary=auto] [review this]'
+XENV=(AC_FLEET_MODEL=fm AC_FLEET_EFFORT=high)
+xone xnone 'xrun --exec --kind gate --harness claude'
+xrc 0; xwhas $'-- harness.log\nclaude [-p] [review this]\n'
+xone xnone 'xrun --exec --kind gate --harness claude --model m2'
+xrc 0; xwhas $'-- harness.log\nclaude [-p] [--model] [m2] [review this]\n'
+XENV=()
+XENV=('AC_FLEET_PROFILE_CODEREVIEW=harness=codex model=gpt 5 effort=high'); xone xnone 'xrun --exec --kind codereview'; XENV=()
+xrc 0; xwhas 'codex [exec] [-s] [read-only] [--skip-git-repo-check] [-m] [gpt'; xwhas '[-c] [model_reasoning_effort=high]'
+XENV=($'AC_FLEET_PROFILE_CODEREVIEW=harness=opencode\tmodel=\teffort='); xone xnone 'xrun --exec --kind codereview'; XENV=()
+xrc 0; xwhas $'-- harness.log\nopencode [run] [review this]\n'
+xone xnone 'xrun --exec --harness claude --effort ultracode'
+xrc 0; xwhas 'claude [-p] [--effort] [xhigh] [review this]'
+xone xnone 'xc run --cwd @W/cwd --prompt-file @W/nope'
+xrc 1; xhas "\"error\":\"prompt file missing: $XW/nope\""
 
-# 3. SESSION on herdr: the turn, the Stop-hook merge, the trust seed, the
-#    exclude, placement and labels, ENVPIN, --resume, --replace-pane,
-#    --pane-file, the harvests, AWAIT, the idle fallback, the stall bound, the
-#    timeout and the liveness reads.
-xsame xnone 'xrun'
-xhas '"event":"done","status":"ok"'
-xwhas '[pane] [run] [pP1] [cd '
-xset() { xput cwd/.claude/settings.local.json "$1"; }
-xmalformed() { xset '{oops'; }
-xforeign() { xset '{"permissions":{"allow":["Bash"]},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo other"}]}]}}'; }
-xdeadours() { xset "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"touch '/x/ac-pane-turnend.cwd-00.99999999'\"}]}]}}"; }
-xliveours() { xset "{\"hooks\":{\"Stop\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"touch '/x/ac-pane-turnend.cwd-00.$$'\"}]}]}}"; }
-for s in xmalformed xforeign xdeadours xliveours; do xsame "$s" 'xrun'; done
-xlockheld() { mkdir -p "$XW/cwd/.claude/.ac-pane-agent.lock"; printf '%s\n' "$$" >"$XW/cwd/.claude/.ac-pane-agent.lock/pid"; }
-xsame xlockheld 'xrun'
+# 3. SESSION on herdr: a Stop hook that cannot be installed, a lock another
+#    live pid holds, a ~/.claude.json that is no object, the exclude lines,
+#    placement and labels, ENVPIN, the session, --pane-file's directory, the
+#    idle fallback on a `done` pane, and the --timeout grammar.
 xsettingsdir() { mkdir -p "$XW/cwd/.claude/settings.local.json"; }
-xsame xsettingsdir 'xrun'
-xhas '"error":"could not install the Stop hook into '
-xtrust() { xput hd/.claude.json '{"projects": {"/other": {"a": 1}}, "z": [1.0, 1e-05]}'; }
-xtrusted() { xput hd/.claude.json "{\"projects\":{\"$XW/cwd\":{\"hasTrustDialogAccepted\":true,\"hasCompletedProjectOnboarding\":1}}}"; }
+xone xsettingsdir 'xrun'
+xrc 1; xhas "{\"event\":\"done\",\"status\":\"error\",\"error\":\"could not install the Stop hook into $XW/cwd/.claude/settings.local.json\"}"; xwlacks '[pane] [run]'
+xlockheld() { mkdir -p "$XW/cwd/.claude/.ac-pane-agent.lock"; printf '%s\n' "$$" >"$XW/cwd/.claude/.ac-pane-agent.lock/pid"; }
+xone xlockheld 'xrun'
+xrc 0; xhas '"event":"done","status":"ok"'
+assert_eq "$(cat "$XW/cwd/.claude/.ac-pane-agent.lock/pid")" "$$" "a lock held by a live pid is left to its holder"
 xtrustbad() { xput hd/.claude.json '[1]'; }
-for s in xtrust xtrusted xtrustbad; do xsame "$s" 'xrun'; done
+xone xtrustbad 'xrun'
+xrc 0; assert_eq "$(cat "$XW/hd/.claude.json")" "[1]" "a ~/.claude.json that is no object is left as it was"
 xexcl() { printf '.claude/settings.local.json\n' >>"$XW/cwd/.git/info/exclude"; }
-xexclunterm() { printf 'secret.env' >"$XW/cwd/.git/info/exclude"; }   # W6 at parity: the append glues onto it
-xexclnone() { rm -rf "$XW/cwd/.git/info"; }
-for s in xexcl xexclunterm xexclnone; do xsame "$s" 'xrun'; done
-xbranch() { git -C "$XW/cwd" checkout -qb crew/fam1-x; }
-XENV=(AC_WINDOW_FAMILY=fam1); xsame xbranch 'xrun --kind codereview'; XENV=()
-xadopt() { xs tab-list.out '{"result":{"tabs":[{"tab_id":"tO","label":"ac-ship-agent-main","workspace_id":"wP"},{"tab_id":"tD","label":"1","workspace_id":"wP"}]}}\n'; xs pane-list.out '{"result":{"panes":[{"pane_id":"pO1","tab_id":"tO"}]}}\n'; xs workspace-list.out '{"result":{"workspaces":[{"workspace_id":"wP","label":"agent-crew","tab_count":2}]}}\n'; }
-xwrongws() { xs tab-list.out '{"result":{"tabs":[{"tab_id":"tO","label":"ac-ship-agent-main","workspace_id":"wOther"}]}}\n'; }
-for s in xadopt xwrongws; do xsame "$s" 'xrun'; done
-xsame xnone 'xrun --replace-pane pOld'
-xsticky() { xs sticky pOld; }
-xsame xsticky 'xrun --replace-pane pOld'
-xhas '{"event":"replace-pane","pane":"pOld","closed":false}'
-XHOME=1; xsame xnone 'xrun'; XHOME=""
-xwhas ' AC_HOME='
-XENV=(AC_FLEET_NAME=fl CLAUDE_CONFIG_DIR=@W/cfg); xsame xnone 'xrun'; XENV=()
-XENV=(AC_HERDR_SESSION=s9); xsame xnone 'xrun'; XENV=()
-xsid() { xs sid sid-1; xs no-transcript; mkdir -p "$XW/tr/$(printf '%s' "$XW/cwd" | sed 's/[/.]/-/g')"; printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"resumed"}]}}' >"$XW/tr/$(printf '%s' "$XW/cwd" | sed 's/[/.]/-/g')/sid-1.jsonl"; }
-xsame xsid 'xrun --resume sid-1'
-xsame xnone 'xrun --pane-file @W/st/pane'
-xwhas 'pP1 tP'
-xsame xnone 'xrun --pane-file @W/nodir/pane'   # W13 at parity: refused after placement
-xscroll() { xs no-transcript; xs scrollback 'the verdict\nline two\n'; }
-xsame xscroll 'xrun'
-xhas '"source":"scrollback"'
-xscrollempty() { xs no-transcript; xs scrollback ''; }
-xsame xscrollempty 'xrun'
-xtooluse() { xs transcript '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{}}]}}\n'; }
-XENV=(AC_PANE_SETTLE_TRIES=2); xsame xtooluse 'xrun'; XENV=()
-xhas 'carries no text'
-XPATH="$XSTUBS:$XLOGSLEEP:$PATH"; XENV=(AC_PANE_SETTLE_TRIES=abc); xsameown 'integer expression expected' xtooluse 'xrun'; XENV=(); XPATH=""   # W5 at parity: no settle re-reads, counted by the logged sleeps
-xawaitabsent() { :; }
-xsame xawaitabsent 'xrun --await-file @W/await --timeout 6'
-xhas 'is absent - holding for the next turn end'
-xawaitold() { xput await 'x\n'; xs transcript '{"type":"assistant","timestamp":"2001-01-01T00:00:00Z","message":{"content":[{"type":"text","text":"early"}]}}\n'; }
-xsame xawaitold 'xrun --await-file @W/await --timeout 6'
-xhas 'predates'
-xawaitnew() { xput await 'x\n'; xs transcript '{"type":"assistant","timestamp":"2099-01-01T00:00:00Z","message":{"content":[{"type":"text","text":"late"}]}}\n'; }
-xsame xawaitnew 'xrun --await-file @W/await --timeout 6'
-# The idle fallback: no marker, a transcript last written in 2000, an idle
-# pane, more than 45 polls of the ticking clock.
-xidle() { xs no-marker; xs backdate; xs transcript '{"type":"assistant","message":{"content":[{"type":"text","text":"final"}]}}\n'; }
-xsame xidle 'xrun --timeout 400'
-xhas 'idle-fallback used (agent_status=idle)'
-xsame xidle 'xrun --timeout 400 --deliverable @W/report.md'
-xidledeliv() { xidle; xput report.md 'done\n'; }
-xsame xidledeliv 'xrun --timeout 400 --deliverable @W/report.md'
-xidletool() { xs no-marker; xs backdate; xs transcript '{"type":"assistant","message":{"content":[{"type":"text","text":"x"}]}}\n{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{}}]}}\n'; }
-XENV=(AC_PANE_SETTLE_TRIES=1); xsame xidletool 'xrun --timeout 400'; XENV=()
-xidledone() { xidle; xs status done; }
-xsame xidledone 'xrun --timeout 400'
-xidlebusy() { xidle; xs status busy; }
-XENV=(AC_PANE_STALL_MAX=3); xsame xidlebusy 'xrun --timeout 400'; XENV=()
-xhas 'no transcript progress for over 3s (agent_status=busy)'
-XENV=(AC_PANE_STALL_MAX=abc); xsameown 'integer expression expected' xidlebusy 'xrun --timeout 30'; XENV=()   # W5 at parity: the bound off
-XENV=(AC_PANE_STALL_MAX=0); xsame xidlebusy 'xrun --timeout 30'; XENV=()
-# W9 at parity: a final message of a no-break space reads as text under C and
-# as blank under UTF-8 (grep is spawned on both sides).
-xnbsp() { xs transcript '{"type":"assistant","message":{"content":[{"type":"text","text":"\\u00a0"}]}}\n'; }
-XENV=(AC_PANE_SETTLE_TRIES=1); xsame xnbsp 'xrun'; XLC=en_US.UTF-8; xsame xnbsp 'xrun'; XLC=C; XENV=()
-xnomarker() { xs no-marker; }
-for t in 0 -5 3 010; do xsame xnomarker "xrun --timeout $t"; done
-xhas '"error":"turn did not end within 010s"'
-xgone() { xs no-marker; xs pane-get.rc 1; }   # W1 at parity: one failed read is a dead pane
-xsame xgone 'xrun --timeout 40'
-xhas '"status":"pane_closed"'
-xrunfail() { xs run.mode fail; }   # W10 at parity: a refused launch waits out the timeout
-xsame xrunfail 'xrun --timeout 12'
-xhas '"status":"timeout"'
-# W2 at parity: a raw herdr call that hangs holds the run, whatever --timeout.
-xhang() { xs no-marker; xs pane-get.sleep 1; }
-for side in o n; do
-  s0=$SECONDS; xpass "$side" xhang 'xrun --replace-pane pOld --timeout 0' "$side"
-  [ $((SECONDS - s0)) -ge 1 ] || fail "a hung pane get holds the $side side's run past --timeout 0"
-done
-xcmp o n
-# W4 (08) at parity: the pane is placed, the run ends 1 with nothing on stdout;
-# the shell's own arithmetic and unbound lines are not reproduced.
-xboth xnomarker 'xrun --timeout 08'
-for p in o n; do assert_contains "$(xt "$p")" "rc=1"$'\n'"-- out"$'\n'"-- err" "08 ends the $p side 1, nothing printed"; xwhas '[pane] [run]' "$p"; done
-assert_contains "$(xt o)" "value too great for base" "the original's own arithmetic line"
-# Q3 (named): every other --timeout form is refused before any pane or rung,
-# where the original placed the pane first.
+xone xexcl 'xrun'
+assert_eq "$(grep -c '^\.claude/' "$XW/cwd/.git/info/exclude")" 2 "a line the exclude already holds is not appended again"
+xone 'rm -rf "$XW/cwd/.git/info"' 'xrun'
+assert_eq "$(cat "$XW/cwd/.git/info/exclude")" $'.claude/settings.local.json\n.claude/.ac-pane-agent.lock' "a missing info/ gets both exclude lines"
+XENV=(AC_WINDOW_FAMILY=fam1); xone 'git -C "$XW/cwd" checkout -qb crew/fam1-x' 'xrun --kind codereview'; XENV=()
+xwhas 'herdr [workspace] [create] [--label] [agent-crew · fam1] [--no-focus]'
+xwhas '[tab] [create] [--workspace] [wP] [--label] [ac-codereview-agent-fam1-crew-fam1-x]'
+xwhas '[pane] [rename] [pP1] [ac-codereview-agent:r1]'
+XHOME=1; xone xnone 'xrun'; XHOME=""
+xwhas 'herdr [workspace] [create] [--label] [home] [--no-focus]'
+xwhas "CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 AC_HOME=$XW/home claude --permission-mode auto"
+XENV=(AC_FLEET_NAME=fl CLAUDE_CONFIG_DIR=@W/cfg); xone xnone 'xrun'; XENV=()
+xwhas "[cd '$XW/cwd' && CLAUDE_CONFIG_DIR=$XW/cfg CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 AC_FLEET_NAME=fl claude --permission-mode auto"
+XENV=(AC_HERDR_SESSION=s9); xone xnone 'xrun'; XENV=()
+xrc 0; xwhas 'herdr [--session] [s9] [pane] [run] [pP1]'
+xone xnone 'xrun --pane-file @W/nodir/pane'
+xrc 1; xhas "{\"event\":\"done\",\"status\":\"error\",\"error\":\"pane-file directory does not exist: $XW/nodir\"}"
+xidledone() { xs no-marker; xs backdate; xs transcript '{"type":"assistant","message":{"content":[{"type":"text","text":"final"}]}}\n'; xs status done; }
+xone xidledone 'xrun --timeout 400'
+xrc 0; xhas '{"event":"note","path":"idle-fallback used (agent_status=done)"}'; xhas '"event":"done","status":"ok"'
+# Q3: every --timeout but a sign and decimal digits is refused before any pane
+# or rung.
 for t in abc 1+1 0x3 1.5 10m ' 5'; do
-  xboth xnomarker "xrun --timeout '$t'"
-  assert_contains "$(xt n)" "\"error\":\"timeout must be a whole number of seconds: $t\"" "the port refuses --timeout '$t'"
-  xwlacks '[pane] [run]' n
-  xwhas '[pane] [run]' o
+  xone 'xs no-marker' "xrun --timeout '$t'"
+  xrc 1; xhas "\"error\":\"timeout must be a whole number of seconds: $t\""
+  xwlacks '[pane] [run]'
 done
 
-# 4. SESSION on orca: the worker placement, the liveness reads, --replace-pane,
-#    a placement that fails, and the home arm.
+# 4. SESSION on orca: the worker placement, a terminal that disconnects,
+#    --replace-pane, a placement that fails, and the home arm.
 XENV=(AC_BACKEND=orca)
-xsame xnone 'xrun'
-xhas '"event":"done","status":"ok"'
-xwhas '[terminal] [create] [--worktree] [path:'
-xorcagone() { xs no-marker; printf '%s\n' h1 >"$XW/stub/closed"; }
-xsame xorcagone 'xrun --timeout 40'
-xorcaunread() { xs no-marker; xs terminal-show.rc 1; }
-xsame xorcaunread 'xrun --timeout 40'
-xsame xnone 'xrun --replace-pane hOld'
-xorcafail() { xs terminal-create.rc 1; }
-xsame xorcafail 'xrun'
-xhas '"error":"could not place orca pane"'
+xone xnone 'xrun'
+xrc 0; xhas '"event":"done","status":"ok"'; xhas '"pane":"h1"'
+xwhas "orca [terminal] [create] [--worktree] [path:$XW/cwd] [--title] [crew:agent-crew/ac-ship] [--command] [cd '$XW/cwd' && CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 claude --permission-mode auto"
+xone 'xs no-marker; printf "%s\n" h1 >"$XW/stub/closed"' 'xrun --timeout 40'
+xrc 1; xhas '"status":"pane_closed"'; xhas '"error":"pane closed while turn in flight"'
+xone xnone 'xrun --replace-pane hOld'
+xrc 0; xhas '{"event":"replace-pane","pane":"hOld","closed":true}'; xwhas 'orca [terminal] [close] [--terminal] [hOld] [--json]'
+xone 'xs terminal-create.rc 1' 'xrun'
+xrc 1; xhas '{"event":"done","status":"error","error":"could not place orca pane"}'
 XHOME=1; XCWD=home; XENV=(AC_BACKEND=orca AC_WINDOW_FAMILY=fam1)
-xhomegit() { git -C "$XW/home" init -q; }
-xsame xhomegit 'xc run --cwd @W/home --prompt-file @W/pf --label h1 --kind learning'
+xone 'git -C "$XW/home" init -q' 'xc run --cwd @W/home --prompt-file @W/pf --label h1 --kind learning'
 XHOME=""; XCWD=cwd; XENV=()
+xrc 0; xhas '"event":"done","status":"ok"'
+xwhas "[--title] [crew:home/ac-learning] [--command] [cd '$XW/home' && CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 AC_HOME=$XW/home claude --permission-mode auto"
 
-# 5. CREWMATE on herdr and orca: the happy turn per harness, came-up, the
-#    harness dying, a named dialog, input-ready never and past the deadline,
-#    the stranded kickoff, the verdict empty or missing, no announcement.
+# 5. CREWMATE on herdr and orca: each harness's TUI launch, a bare shell that
+#    never came up, an unreadable pane, a named startup dialog, the input-ready
+#    wait cut at the deadline, the stranded kickoff, an empty verdict, orca's
+#    turn and its never-ready surface.
 xcrew() { xs run.mode crew; }
-xsame xcrew 'xrun --harness codex --kind codereview --model gpt-5.6-sol --effort xhigh'
-xhas '"source":"file"'
-xwhas 'Read and follow the instructions in'
-for h in opencode pi cursor; do xsame xcrew "xrun --harness $h --model m1 --effort high"; done
-xcrewshell() { xcrew; xs fg -zsh; }
-xsame xcrewshell 'xrun --harness codex'
-xhas 'did not come up in its pane within 60s'
-xcrewunread() { xcrew; xs pane-process-info.rc 1; }
-xsame xcrewunread 'xrun --harness codex'
-xhas 'could not read the pane to verify codex came up'
-xcrewdie() { xs run.mode die; xs die; }
-xsame xcrewdie 'xrun --harness codex'
-xhas 'exited (status 9) before its pane could take a prompt'
-xcrewdialog() { xcrew; xs agent-explain.1.out '{"state":"blocked","matched_rule":{"id":"startup_update"}}\n'; }
-xsame xcrewdialog 'xrun --harness codex'
-xcrewnever() { xcrew; xs render.n 0; }
-xsame xcrewnever 'xrun --harness codex'
-xhas 'input surface did not become ready within 60s'
-xsame xcrewnever 'xrun --harness codex --timeout 8'
-xcrewstrand() { xcrew; xs strand; }
-xsame xcrewstrand 'xrun --harness codex'
-xhas 'was NOT accepted by the pane'
-xcrewempty() { xcrew; xs empty-verdict; }
-xcrewnov() { xcrew; xs no-verdict; }
-for s in xcrewempty xcrewnov; do xsame "$s" 'xrun --harness opencode'; done
-xhas 'left no verdict at'
-xcrewquiet() { xcrew; xs no-announce; }
-xsame xcrewquiet 'xrun --harness codex --timeout 30'
-xhas '"status":"timeout"'
+xone xcrew 'xrun --harness codex --kind codereview --model gpt-5.6-sol --effort xhigh'
+xrc 0; xhas '"source":"file"'
+xwhas "[cd '$XW/cwd' && CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 codex -c check_for_update_on_startup=false -m gpt-5.6-sol -c model_reasoning_effort=xhigh; printf %s \$? >"
+xwhas "[pane] [send-text] [pP1] [Read and follow the instructions in $XW/pf."
+xone xcrew 'xrun --harness opencode --model m1 --effort high'
+xrc 0; xwhas "CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 opencode -m m1; printf"
+xone xcrew 'xrun --harness pi --model m1 --effort high'
+xrc 0; xwhas "CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 pi --tui-mode regular --model m1 --thinking high; printf"
+xone xcrew 'xrun --harness cursor --model m1 --effort high'
+xrc 0; xwhas "CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 cursor-agent --yolo --model m1; printf"
+xone 'xcrew; xs fg -zsh' 'xrun --harness codex'
+xrc 1; xhas "\"error\":\"harness 'codex' did not come up in its pane within 60s - every foreground process is a shell, so no prompt is delivered and the turn is REFUSED\""
+xwlacks '[pane] [send-text]'
+xone 'xcrew; xs pane-process-info.rc 1' 'xrun --harness codex'
+xrc 0; xhas '{"event":"note","path":"could not read the pane to verify codex came up - delivering the prompt anyway"}'; xhas '"source":"file"'
+xone 'xcrew; xs agent-explain.1.out "{\"state\":\"blocked\",\"matched_rule\":{\"id\":\"startup_update\"}}\n"' 'xrun --harness codex'
+xrc 0; xhas '"source":"file"'; xwhas 'herdr [pane] [send-keys] [pP1] [2] {}'
+xone 'xcrew; xs render.n 0' 'xrun --harness codex --timeout 8'
+xrc 1; xhas "\"error\":\"harness 'codex' came up but its input surface did not become ready within 7s - no prompt was delivered\""
+xone 'xcrew; xs strand' 'xrun --harness codex'
+xrc 1; xhas "\"error\":\"the verification prompt was NOT accepted by the pane: it sits unsubmitted in the composer of 'codex', so no turn will ever start - REFUSED rather than waited out\""
+xone 'xcrew; xs empty-verdict' 'xrun --harness opencode'
+xrc 1; xhas "\"error\":\"verification agent 'opencode' produced no verdict: the agent announced its turn but left no verdict at $XW/st/.pane-agent-tmp/ac-pane-verdict.cwd.PID1\""
 XENV=(AC_BACKEND=orca)
-xsame xcrew 'xrun --harness codex'
-xhas '"source":"file"'
-xorcadialog() { xcrew; xs terminal-show.out '{"ok":true,"result":{"terminal":{"connected":true,"title":"codex","agentIdentity":"codex","agentWait":{"reason":"other"}}}}\n'; }
-xsame xorcadialog 'xrun --harness codex --timeout 20'
+xone xcrew 'xrun --harness codex'
+xrc 0; xhas '"source":"file","pane":"h1"'; xwhas 'orca [terminal] [send] [--terminal] [h1] [--enter] [--json]'
+xone 'xcrew; xs terminal-show.out "{\"ok\":true,\"result\":{\"terminal\":{\"connected\":true,\"title\":\"codex\",\"agentIdentity\":\"codex\",\"agentWait\":{\"reason\":\"other\"}}}}\n"' 'xrun --harness codex --timeout 20'
+xrc 1; xhas "\"error\":\"harness 'codex' came up but its input surface did not become ready within 19s - no prompt was delivered\""
 XENV=()
 
-# 6. ONE-SHOT: each form with a model and an effort, agy's timeout and warning,
-#    the rung's status and stdout, the rung dying without its marker,
-#    --observe's descriptor, and the rung's INT/QUIT dispositions.
-for h in codex claude opencode pi cursor; do
-  xsame xnone "xrun --exec --harness $h --kind gate --model m1 --effort high"
-  xsame xnone "xrun --exec --harness $h --kind gate"
-done
-xsame xnone 'xrun --exec --harness agy --kind gate --model "Gemini 3.8 Flash (Low)" --timeout 900'
-xwhas '[--print-timeout] [900s] [-p]'
-xrc7() { xs answer.rc 7; }
-xsame xrc7 'xrun --exec --harness codex --kind gate'
-xhas 'the one-shot rung exited 7'
-xempty() { xs no-answer; }
-xsame xempty 'xrun --exec --harness codex --kind gate'
-xhas 'exited 0 but printed nothing'
-xbadutf() { xs answer '\xe9\xe9\n'; }
-xsame xbadutf 'xrun --exec --harness codex --kind gate'
-xhas "could not wrap the rung's stdout"
+# 6. ONE-SHOT: pi's and cursor's forms with and without a model and an effort,
+#    the rung dying without its marker, and the rung's INT/QUIT dispositions.
+xone xnone 'xrun --exec --harness pi --kind gate --model m1 --effort high'
+xrc 0; xwhas 'pi [-p] [--model] [m1] [--thinking] [high] [review this]'
+xone xnone 'xrun --exec --harness pi --kind gate'
+xrc 0; xwhas $'-- harness.log\npi [-p] [review this]\n'
+xone xnone 'xrun --exec --harness cursor --kind gate --model m1 --effort high'
+xrc 0; xwhas 'cursor-agent [-p] [--trust] [--model] [m1] [review this]'
+xone xnone 'xrun --exec --harness cursor --kind gate'
+xrc 0; xwhas $'-- harness.log\ncursor-agent [-p] [--trust] [review this]\n'
 xdeadsh() { mkdir -p "$XW/stub/shbin"; printf '#!/bin/sh\nexit 3\n' >"$XW/stub/shbin/sh"; chmod +x "$XW/stub/shbin/sh"; }
-XPATH="$XW/stub/shbin:$XSTUBS:$XNOSLEEP:$PATH"; xsame xdeadsh 'xrun --exec --harness codex --kind gate'; XPATH=""
-xhas 'the one-shot process died without ending its turn'
-xsame xnone 'xrun --exec --harness codex --kind gate --observe @W/obs'
-xwhas '{"pane":"","tab":"","harness":"codex","prompt":"'
-xsigs() { xs signals; }
-xsame xsigs 'xrun --exec --harness codex --kind gate'
-xwhas 'INT=IGNORE QUIT=IGNORE'
+XPATH="$XW/stub/shbin:$XSTUBS:$XNOSLEEP:$PATH"; xone xdeadsh 'xrun --exec --harness codex --kind gate'; XPATH=""
+xrc 1; xhas '"error":"the one-shot process died without ending its turn - no marker, no output to harvest"'
+xone 'xs signals' 'xrun --exec --harness codex --kind gate'
+xrc 0; xwhas 'INT=IGNORE QUIT=IGNORE'
 
-# 7. close, reap-pane and reap on both backends.
-xsame xnone 'xc close --pane p1'
-xsame xnone 'xc close'
-XENV=(AC_BACKEND=orca); xsame xnone 'xc close --pane h1 --bogus'; XENV=()
-xsame xnone 'xc reap-pane'
-xtabs() { xs tab-list.out "$1"; xs pane-list.out "$2"; }
-xsib() { xtabs '{"result":{"tabs":[{"tab_id":"t1","workspace_id":"w1"}]}}\n' '{"result":{"panes":[{"pane_id":"p1","tab_id":"t1"},{"pane_id":"p2","tab_id":"t1"}]}}\n'; }
-xlasttab() { xtabs '{"result":{"tabs":[{"tab_id":"t1","workspace_id":"w1"},{"tab_id":"t2","workspace_id":"w1"}]}}\n' '{"result":{"panes":[{"pane_id":"p1","tab_id":"t1"}]}}\n'; }
-xlastws() { xtabs '{"result":{"tabs":[{"tab_id":"t1","workspace_id":"w1"}]}}\n' '{"result":{"panes":[{"pane_id":"p1","tab_id":"t1"}]}}\n'; }
-xstickyp1() { xlastws; xs sticky p1; }
-for s in xsib xlasttab xlastws xstickyp1; do xsame "$s" 'xc reap-pane --pane p1'; done
-xhas '"closed":false'
-XENV=(AC_BACKEND=orca); xsame xnone 'xc reap-pane --pane h1'; xstickyh1() { xs sticky h1; }; xsame xstickyh1 'xc reap-pane --pane h1'; XENV=()
-XENV=(AC_BACKEND=orca); xsame xnone 'xc reap --bogus'; XENV=()
-xsame xnone 'xc reap --bogus'
-xreapw() {
-  mkdir -p "$XW/live"
-  xtabs '{"result":{"tabs":[{"tab_id":"t1","label":"ac-ship-agent-main"},{"tab_id":"t2","label":"ac-qa-agent"},{"tab_id":"t3","label":"crew:x"}]}}\n' \
-    "{\"result\":{\"panes\":[{\"pane_id\":\"p1\",\"tab_id\":\"t1\",\"cwd\":\"$XW/gone a\\\"b\"},{\"pane_id\":\"p2\",\"tab_id\":\"t2\",\"cwd\":\"$XW/live\"},{\"pane_id\":\"p3\",\"tab_id\":\"t2\",\"cwd\":\"$XW/gone2\"},{\"pane_id\":\"p4\",\"tab_id\":\"t3\",\"cwd\":\"$XW/gone3\"}]}}\n"
-}
-xsame xreapw 'xc reap'
-xsame xreapw 'xc reap --dry-run'
-xhas '"event":"reap-done","panes":2,"tabs":1,"dry_run":1'
+# 7. close, reap-pane and reap: close with no pane and orca's close past an
+#    unknown word, orca's reap-pane taken and not, reap's orca note and its
+#    unknown arg on herdr.
+xone xnone 'xc close'
+xrc 0; assert_eq "$(xerr)" "" "close with no pane is silent"; xwlacks '[close]'
+XENV=(AC_BACKEND=orca)
+xone xnone 'xc close --pane h1 --bogus'
+xrc 0; xwhas 'orca [terminal] [close] [--terminal] [h1] [--json]'
+xone xnone 'xc reap-pane --pane h1'
+xrc 0; xhas '{"event":"reap-pane-done","pane":"h1","closed":true}'
+xone 'xs sticky h1' 'xc reap-pane --pane h1'
+xrc 0; xhas '{"event":"reap-pane-done","pane":"h1","closed":false}'
+xone xnone 'xc reap --bogus'
+xrc 0; xhas '{"event":"reap","note":"dead-cwd sweep is herdr-only; orca panes reap by handle"}'
+XENV=()
+xone xnone 'xc reap --bogus'
+xrc 1; xhas '{"event":"done","status":"error","error":"unknown arg --bogus"}'
 
-# 8. steer: resolution, the gate guard, the backend and argument refusals, the
-#    delivery's three verdicts.
+# 8. steer: a label carrying `, `, --pane winning over --agent, the argument
+#    refusals, a pane list herdr cannot answer, and a delivery it cannot read.
 xagents() { xs pane-list.out '{"result":{"panes":[{"pane_id":"pA","label":"ac-codereview-agent:fam1-r1"},{"pane_id":"pB","label":"ac-gate-agent:fam1-spec"},{"pane_id":"pC","label":"crew:t1"},{"pane_id":"pD","label":"ac-qa-agent:a b, c"},{"pane_id":"pE","label":"ac-qa-agent:dup"},{"pane_id":"pF","label":"ac-qa-agent:dup"}]}}\n'; }
-for v in "--agent ac-codereview-agent:fam1-r1 hello" "--agent nobody hello" "--agent ac-qa-agent:dup hi" "--pane pC hi" "--pane pA --agent nobody hi" \
-         "--agent ac-gate-agent:fam1-spec hi" "--pane pB hi" "--agent 'ac-qa-agent:a b, c' hi" \
-         "--agent a -x" "--agent a one two" "--agent a ''" "hi"; do
-  xsame xagents "xc steer $v"
+xone xagents "xc steer --agent 'ac-qa-agent:a b, c' hi"
+xrc 0; xhas $'-- out\nsteered ac-qa-agent:a b, c (pane pD)\n'; xwhas 'herdr [pane] [send-text] [pD] [hi]'
+xone xagents 'xc steer --pane pA --agent nobody hi'
+xrc 0; xhas $'-- out\nsteered ac-codereview-agent:fam1-r1 (pane pA)\n'
+for v in "--agent a -x:unknown arg -x" "--agent a one two:steer takes ONE line of text" "--agent a '':refusing to steer with an empty message" \
+         "hi:usage: ac-pane-agent.sh steer --agent <handle> '<text>' [--pane <pane-id>]"; do
+  xone xagents "xc steer ${v%%:*}"
+  xrc 1; assert_eq "$(xerr)" "ERROR: ${v#*:}" "steer refuses: ${v%%:*}"; xwlacks '[send-text]'
 done
-xsame xagents 'xc steer --agent ac-gate-agent:fam1-spec --captain hi'
-xhas "steered ac-gate-agent:fam1-spec (pane pB)"
-xunreadable() { xs pane-list.rc 1; }
-xsame xunreadable 'xc steer --agent a hi'
-xstranded() { xagents; xs strand; }
-xsame xstranded 'xc steer --agent ac-codereview-agent:fam1-r1 hello'
-xhas 'delivery NOT confirmed'
-xunobs() { xagents; xs pane-read.rc 1; }
-xsame xunobs 'xc steer --agent ac-codereview-agent:fam1-r1 hello'
-xhas 'delivery UNVERIFIED'
-XENV=(AC_BACKEND=orca); xsame xagents 'xc steer --agent a hi'; XENV=()
+xone 'xs pane-list.rc 1' 'xc steer --agent a hi'
+xrc 1; assert_eq "$(xerr)" "ERROR: no live pane agent named 'a' - live pane agents: none" "an unreadable pane list names no live agent"
+xone 'xagents; xs pane-read.rc 1' 'xc steer --agent ac-codereview-agent:fam1-r1 hello'
+xrc 1; xhas "ERROR: delivery UNVERIFIED for ac-codereview-agent:fam1-r1 (pane pA) - could not read the pane, so the submit was neither confirmed nor refuted: read it with 'herdr pane read pA' before resending"
 
-# 9. NDJSON bytes: raw interpolation (W3) of a quote, a backslash and a TAB in
-#    the marker dir, the label and the cwd; fail()'s jq for the same bytes; a
-#    byte that is no UTF-8 reaches the port decoded (named).
-XENV=($'AC_FLEET_STATE=@W/s"t\\a\te'); xsame xnone 'xrun --exec --harness codex --kind gate'; XENV=()
-xhas '"source":"command"'
-XLBL=$'l"\\b\tc'; xsame xnone 'xrun --label "$XLBL"'
-xsame xnone "xc run --cwd '@W/no\"pe' --prompt-file @W/pf"
-xhas '"error":"cwd missing: '
-xboth xnone "xrun --label \$'\\xe9'"
-xbytes 'ac-ship-agent:\xe9]' o
-xbytes 'ac-ship-agent:\xef\xbf\xbd]' n
+# 9. A byte that is no UTF-8 in an argument reaches the children as U+FFFD.
+xone xnone "xrun --label \$'\\xe9'"
+xrc 0; xbytes 'ac-ship-agent:\xef\xbf\xbd]'
 
-# 10. Signals: TERM and HUP end both sides at once (143, 129), the pane or the
-#     rung left running; INT to the pid alone is swallowed by the original and
-#     ends the port 130 (named); a group INT leaves the rung, which ignores it.
+# 10. Signals: TERM and HUP end the run at once (143, 129), the pane or the
+#     rung left running; INT to the pid alone ends it 130 with no done event; a
+#     group INT leaves the rung, which ignores it.
 # The stub's `pane run` holds 3 s, so the signal lands while the entry waits
-# on it and no later call races the kill into one side's log.
+# on it.
 xstall() { xs no-marker; xs pane-run.sleep 3; }
-xsame xstall "xbg TERM '[pane] [run]' run --cwd $XW/cwd --prompt-file $XW/pf --label r1 --timeout 100000"
-xhas 'rc=143'
-xsame xstall "xbg HUP '[pane] [run]' run --cwd $XW/cwd --prompt-file $XW/pf --label r1 --timeout 100000"
-xhas 'rc=129'
+xone xstall "xbg TERM '[pane] [run]' run --cwd $XW/cwd --prompt-file $XW/pf --label r1 --timeout 100000"
+xhas 'rc=143'; xlacks '"event":"done"'
+xone xstall "xbg HUP '[pane] [run]' run --cwd $XW/cwd --prompt-file $XW/pf --label r1 --timeout 100000"
+xhas 'rc=129'; xlacks '"event":"done"'
 xslowrung() { xs answer.sleep 1; }
-xsame xslowrung "xbg TERM 'codex [exec]' run --cwd $XW/cwd --prompt-file $XW/pf --exec --harness codex --kind gate --timeout 100000; /bin/sleep 2"
-xwhas '{"verdict":"approve"}'
+xone xslowrung "xbg TERM 'codex [exec]' run --cwd $XW/cwd --prompt-file $XW/pf --exec --harness codex --kind gate --timeout 100000; /bin/sleep 2"
+xhas 'rc=143'; xwhas '{"verdict":"approve"}'
 XPATH="$XSTUBS:$PATH"
-xboth xstall "xbg INT '[pane] [run]' run --cwd $XW/cwd --prompt-file $XW/pf --label r1 --timeout 4"
-xhas '"status":"timeout"' o
-xhas 'rc=130' n
-xlacks '"event":"done"' n
-xsame xslowrung "xbg -INT 'codex [exec]' run --cwd $XW/cwd --prompt-file $XW/pf --exec --harness codex --kind gate --timeout 100000; /bin/sleep 2"
-xhas 'rc=130'
-xwhas '{"verdict":"approve"}'
+xone xstall "xbg INT '[pane] [run]' run --cwd $XW/cwd --prompt-file $XW/pf --label r1 --timeout 4"
+xhas 'rc=130'; xlacks '"event":"done"'
+xone xslowrung "xbg -INT 'codex [exec]' run --cwd $XW/cwd --prompt-file $XW/pf --exec --harness codex --kind gate --timeout 100000; /bin/sleep 2"
+xhas 'rc=130'; xwhas '{"verdict":"approve"}'
 XPATH=""
 
-# 11. Continuation: a pane one side opened is reaped by the other's reap-pane;
-#     a Stop hook one side installed is pruned by the other's merge once its
-#     pid is gone.
-xcont xnone 'xrun; xc reap-pane --pane pP1'
-xcont xnone 'xrun; xrun'
-
-# 12. The helper subcommands through the shim (Q5, named): the port runs them,
-#     the original refused them as its usage error.
-xboth xnone 'xc iso-epoch 2026-01-01T00:00:00Z; xc seed-trust @W/cwd; xc has-final-text @W/nope'
-assert_contains "$(xt n)" $'rc=0\n-- out\n1767225600\n' "iso-epoch answers through the shim"
-assert_contains "$(xt o)" '"error":"usage: ac-pane-agent.sh run --cwd DIR --prompt-file F"' "the original's usage error for a helper verb"
-xlacks '"error":"usage' n
-
-# 13. Where the original captured a helper with `$(...)`, its trailing LFs are
-#     cut: a model ending in LF closes each launch form unless an effort flag
-#     follows it, and the cwd's basename, the transcript root and the session
-#     id read off a resumed transcript's name drop theirs. A path holding an
-#     LF sits under tmp/, which the world listing (one name per line) skips.
-XLF=$'gpt-6.1-sol\n'
-xsame xcrew 'xrun --harness codex --model "$XLF"'
-xwhas '-m gpt-6.1-sol; printf %s $?'
-xsame xcrew 'xrun --harness codex --model "$XLF" --effort high'
-xwhas $'-m gpt-6.1-sol\n -c model_reasoning_effort=high; printf'
-xsame xnone 'xrun --exec --harness claude --kind gate --model "$XLF"'
-xwhas 'claude [-p] [--model] [gpt-6.1-sol] [review this]'
-xsame xnone 'xrun --exec --harness claude --kind gate --model "$XLF" --effort high'
-xsame xnone 'xrun --model "$XLF"'
-xwhas '--model gpt-6.1-sol "$(cat '
-xsame xnone 'xrun --model "$XLF" --effort high'
-xlfcwd() { mkdir -p "$XW/tmp/w"$'\n'; }
-XLFCWD=$'@W/tmp/w\n'
-xsame xlfcwd 'xc run --cwd "$XLFCWD" --prompt-file @W/pf --label r1 --exec --harness codex --kind gate'
-xhas '/ac-pane-exec.w.PID1.jsonl","source":"command"'
-xsame 'xlfcwd; xcrew' 'xc run --cwd "$XLFCWD" --prompt-file @W/pf --label r1 --harness codex --timeout 60'
-xhas '"source":"file"'
-xlftr() {  # xlftr <session id> - its transcript under the root tmp/tr, the pane writing none
-  xs no-transcript; mkdir -p "$XW/tmp/tr/$(printf '%s' "$XW/cwd" | sed 's/[/.]/-/g')"
-  printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"resumed"}]}}' >"$XW/tmp/tr/$(printf '%s' "$XW/cwd" | sed 's/[/.]/-/g')/$1.jsonl"
-}
-XENV=($'AC_CLAUDE_TRANSCRIPT_ROOT=@W/tmp/tr\n'); xsame 'xlftr sid-1' 'xrun --resume sid-1'; XENV=()
-xhas '"source":"transcript"'
-XLFSID=$'sid-1\n'
-XENV=(AC_CLAUDE_TRANSCRIPT_ROOT=@W/tmp/tr); xsame 'xlftr "$XLFSID"' 'xrun --resume "$XLFSID" --model m1'; XENV=()
-xhas '"status":"ok","session_id":"sid-1","transcript"'
+# 11. The helper subcommands are verbs reached through the shim.
+xone xnone 'xc iso-epoch 2026-01-01T00:00:00Z; xc seed-trust @W/cwd; xc has-final-text @W/nope'
+xhas $'== iso-epoch 2026-01-01T00:00:00Z\nrc=0\n-- out\n1767225600\n'
+xhas $'== seed-trust @W/cwd\nrc=0\n'
+xhas $'== has-final-text @W/nope\nrc=1\n'
+xlacks '"error":"usage'
 
 pass

@@ -1,13 +1,12 @@
 // tree.test.ts - what src/tree.ts brought into src/lib.ts, held to the bash it
 // twins: worktreeStatus (and the sparse rung inside it) against
 // ac_worktree_status in the live bin/ac-lib.sh (no entry calls it since
-// src/teardown.ts), under C and UTF-8; defaultRef against ac_default_ref; crewStateDir
-// against crew_state_dir lifted from the frozen tests/fixtures/ac-tree.sh; and
-// the two git hook bodies the port installs, byte for byte and mode for mode,
-// against what the frozen original installs. The CLI contract itself is
-// tests/sh/ac-tree.test.sh's, whose differential leg runs the frozen original
-// beside the shim.
+// src/teardown.ts), under C and UTF-8; defaultRef against ac_default_ref;
+// crewStateDir against explicit expectations; and the two git hook bodies get
+// installs, against their pinned digests and modes. The CLI contract itself is
+// tests/sh/ac-tree.test.sh's.
 import { afterAll, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,7 +14,6 @@ import { join } from "node:path";
 const ROOT = join(import.meta.dir, "..", "..");
 const BIN = join(ROOT, "bin");
 const LIB = join(ROOT, "src", "lib.ts");
-const FIXTURE = join(ROOT, "tests", "fixtures", "ac-tree.sh");
 const W = realpathSync(mkdtempSync(join(tmpdir(), "ac-tree-ts-")));
 afterAll(() => rmSync(W, { recursive: true, force: true }));
 
@@ -269,88 +267,58 @@ test("defaultRef is ac_default_ref: origin's ref when origin has the default bra
   }
 });
 
-// The function as the frozen original defines it, sourced after the live lib.
-function crewStateDirSh(): string {
-  const src = readFileSync(FIXTURE, "latin1");
-  const start = src.indexOf("crew_state_dir() {");
-  return src.slice(start, src.indexOf("\n}\n", start) + 3);
-}
-
-test("crewStateDir is crew_state_dir: AC_FLEET_STATE verbatim, else the home's state/ minted, else nothing", () => {
-  const fn = crewStateDirSh();
+test("crewStateDir: AC_FLEET_STATE verbatim, else the home's state/ minted, else nothing", () => {
   const h = dir("home");
-  const bh = dir("bhome");
-  const cases: [string, (home: string) => Record<string, string>][] = [
-    ["fleet state, never checked", () => ({ AC_FLEET_STATE: "/nowhere/state/" })],
-    ["fleet state beside a home", (home) => ({ AC_FLEET_STATE: "x y", AC_HOME: home })],
-    ["home", (home) => ({ AC_HOME: home })],
-    ["empty fleet state, home", (home) => ({ AC_FLEET_STATE: "", AC_HOME: home })],
-    ["neither", () => ({})],
-    ["both empty", () => ({ AC_FLEET_STATE: "", AC_HOME: "" })],
+  const cases: [string, Record<string, string>, string][] = [
+    ["fleet state, never checked", { AC_FLEET_STATE: "/nowhere/state/" }, "/nowhere/state/\n"],
+    ["fleet state beside a home", { AC_FLEET_STATE: "x y", AC_HOME: h }, "x y\n"],
+    ["home", { AC_HOME: h }, `${h}/state\n`],
+    ["empty fleet state, home", { AC_FLEET_STATE: "", AC_HOME: h }, `${h}/state\n`],
+    ["neither", {}, ""],
+    ["both empty", { AC_FLEET_STATE: "", AC_HOME: "" }, ""],
   ];
-  for (const [name, env] of cases) {
-    const want = bash(`. "$0/ac-lib.sh"; ${fn} crew_state_dir; printf "rc=%s" "$?"`, env(bh));
-    const got = twin('const d = L.crewStateDir(); say((d === "" ? "" : d + "\\n") + "rc=0")', env(h));
-    expect({ name, out: got.out.split(h).join("H"), err: got.err }).toEqual({ name, out: want.out.split(bh).join("H"), err: want.err });
+  for (const [name, env, out] of cases) {
+    const got = twin('const d = L.crewStateDir(); say(d === "" ? "" : d + "\\n")', env);
+    expect({ name, out: got.out, err: got.err }).toEqual({ name, out, err: "" });
   }
   expect(statSync(join(h, "state")).isDirectory()).toBe(true);
-  // Named divergence (HOME RESOLUTION): an AC_HOME cd cannot enter is cd's own
-  // line in the original and names the variable in the port; both print no dir.
-  const want = bash(`. "$0/ac-lib.sh"; ${fn} crew_state_dir`, { AC_HOME: join(W, "missing") });
+  // HOME RESOLUTION: an AC_HOME cd cannot enter names the variable, no dir.
   const got = twin("say(L.crewStateDir())", { AC_HOME: join(W, "missing") });
-  expect([want.out, got.out]).toEqual(["", ""]);
-  expect(want.err).toContain(`cd: ${join(W, "missing")}: No such file or directory`);
+  expect(got.out).toBe("");
   expect(got.err).toBe(`ERROR: AC_HOME is not a readable directory: ${join(W, "missing")}\n`);
 });
 
-// The hook bodies the frozen original installs from its two heredocs.
-function heredoc(tag: string): string {
-  const src = readFileSync(FIXTURE, "latin1");
-  const start = src.indexOf(`<<'${tag}'\n`) + `<<'${tag}'\n`.length;
-  return src.slice(start, src.indexOf(`\n${tag}\n`, start) + 1);
-}
+// The bodies are pinned by digest: a changed byte would upgrade every
+// onboarded repo and leave a stale sidecar there.
+const HOOK_SHA256: Record<string, string> = {
+  "pre-commit": "96cf136db06e1d0cd31eac539c2034de3daa5180d244bef3b2a5ce92d59957fc",
+  "commit-msg": "a1622495e3993547bb67d078475e4471335d0ffa08c19a03082cc5ac6698501b",
+};
 
-// A bin/ for the frozen original: the live scripts beside it, src/ and
-// dashboard/ linked, as tests/sh/helpers.sh's make_oracle_bin builds one.
-function oracleBin(): string {
-  const d = dir("oracle");
-  mkdirSync(join(d, "bin"));
-  const r = Bun.spawnSync(["/bin/sh", "-c", 'cp "$0"/*.sh "$1/bin/" && cp "$2" "$1/bin/ac-tree.sh"', BIN, d, FIXTURE]);
-  expect(r.exitCode).toBe(0);
-  symlinkSync(join(ROOT, "src"), join(d, "src"));
-  symlinkSync(join(ROOT, "dashboard"), join(d, "dashboard"));
-  return join(d, "bin");
-}
-
-test("the two guard hooks the port installs are the frozen original's bytes and modes, under umask 022 and 077", () => {
-  const obin = oracleBin();
-  const want = { "pre-commit": heredoc("GUARD"), "commit-msg": heredoc("MSGGUARD") };
-  expect(want["pre-commit"]).toStartWith("#!/usr/bin/env bash\n# ac-crew-primary-commit-guard ");
-  expect(want["commit-msg"]).toStartWith("#!/usr/bin/env bash\n# ac-crew-agent-trailer-guard ");
+test("the two guard hooks get installs keep their pinned bytes, and their modes follow the umask (022 and 077)", () => {
   for (const mask of ["022", "077"]) {
-    const installed: Record<string, { bytes: string; mode: number }>[] = [];
-    for (const bin of [obin, BIN]) {
-      const r = dir("hooks");
-      git(r, "init", "-q", "-b", "main");
-      git(r, "commit", "-q", "--allow-empty", "-m", "init");
-      const run = Bun.spawnSync(["/bin/sh", "-c", `umask ${mask}; exec "$0" get --repo "$1"`, join(bin, "ac-tree.sh"), r], {
-        env: { PATH: process.env.PATH!, LC_ALL: "C", ...GIT_ENV },
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
+    const r = dir("hooks");
+    git(r, "init", "-q", "-b", "main");
+    git(r, "commit", "-q", "--allow-empty", "-m", "init");
+    const run = Bun.spawnSync(["/bin/sh", "-c", `umask ${mask}; exec "$0" get --repo "$1"`, join(BIN, "ac-tree.sh"), r], {
+      env: { PATH: process.env.PATH!, LC_ALL: "C", ...GIT_ENV },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect({ mask, code: run.exitCode, err: run.stderr.toString() }).toMatchObject({ mask, code: 0 });
+    for (const h of ["pre-commit", "commit-msg"]) {
+      const f = join(r, ".git", "hooks", h);
+      const bytes = readFileSync(f);
+      expect({ mask, h, sha: createHash("sha256").update(bytes).digest("hex"), mode: statSync(f).mode & 0o7777 }).toEqual({
+        mask,
+        h,
+        sha: HOOK_SHA256[h],
+        mode: mask === "022" ? 0o755 : 0o700,
       });
-      expect({ bin, mask, code: run.exitCode, err: run.stderr.toString() }).toMatchObject({ bin, mask, code: 0 });
-      const got: Record<string, { bytes: string; mode: number }> = {};
-      for (const h of ["pre-commit", "commit-msg"]) {
-        const f = join(r, ".git", "hooks", h);
-        got[h] = { bytes: readFileSync(f, "latin1"), mode: statSync(f).mode & 0o7777 };
-      }
-      installed.push(got);
     }
-    expect({ mask, port: installed[1] }).toEqual({ mask, port: installed[0] });
-    expect(installed[1]!["pre-commit"]!.bytes).toBe(want["pre-commit"]);
-    expect(installed[1]!["commit-msg"]!.bytes).toBe(want["commit-msg"]);
-    expect(installed[1]!["pre-commit"]!.mode).toBe(mask === "022" ? 0o755 : 0o700);
+    expect(readFileSync(join(r, ".git", "hooks", "pre-commit"), "latin1")).toStartWith("#!/usr/bin/env bash\n# ac-crew-primary-commit-guard ");
+    expect(readFileSync(join(r, ".git", "hooks", "commit-msg"), "latin1")).toStartWith("#!/usr/bin/env bash\n# ac-crew-agent-trailer-guard ");
   }
 }, 60000);
 

@@ -1,8 +1,7 @@
 // epic-ship.test.ts - src/epic-ship.ts's two ledger filters (storyRows,
-// epicContract) held to the awk programs of the frozen original
-// (tests/fixtures/ac-epic-ship.sh), run through the AC_DONELINE_AWK binding
-// over the same ledger. The CLI contract itself is tests/sh/ac-epic-ship.test.sh's,
-// whose differential leg runs that original beside the shim.
+// epicContract) held to the awk programs the bash entry ran, through the live
+// AC_DONELINE_AWK binding of bin/ac-lib.sh over the same ledger. The CLI
+// contract itself is tests/sh/ac-epic-ship.test.sh's.
 import { afterAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

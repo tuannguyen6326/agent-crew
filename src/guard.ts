@@ -1,9 +1,7 @@
 // guard.ts - the warn-only situational advisory that rides along at the start
 // of fleet commands. The entry is bin/ac-guard.sh (a shim that starts this
-// file through bin/ac-bun.sh); THIS header is the authoritative spec, and the
-// bash original it replaced stays frozen at tests/fixtures/ac-guard.sh as the
-// oracle the differential leg of tests/sh/ac-guard.test.sh holds this module
-// to.
+// file through bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-guard.test.sh is its contract test.
 //
 // Usage: ac-guard.sh
 //   Arguments are never read (`-h` and `bogus x` behave as none); stdin is
@@ -127,36 +125,26 @@
 // three AC_HERDR_RPC_TIMEOUTs) or `orca terminal show --terminal <h> --json`
 // / `orca status --json`, with jq.
 //
-// DIVERGENCES from the original, named in the differential leg:
-// - ORDER: the metas and the family spools are walked in byte order; bash
-//   3.2's glob followed libc collation under a UTF-8 locale (the leg runs
-//   the oracle under LC_ALL=C).
-// - THE ORPHAN SCAN RACE: the original probed liveness in a process
-//   substitution that ran AHEAD of the reader and outlived the run - past
-//   the answering orphan it went on probing (until its next orphan line hit
-//   the closed pipe), after the guard had exited. The port stops at the
-//   answer.
-// - THE PROBE'S STDIN: the original's probe ran in a subshell whose stdin
-//   was the family-list pipe. The herdr CLI, backgrounded there, got
-//   /dev/null on both sides; the orca CLI, in a command substitution, got
-//   the pipe - an orca that reads stdin swallowed the families after it, and
-//   they went unheard. The port's driver children read /dev/null.
-// - W13: an unreadable stamp - the original printed and rewrote it as a
-//   fresh 0644 file; the port prints and leaves it (metaSet refuses to
-//   rewrite what it cannot read), so it prints on every run.
-// - Shell-own stderr is not reproduced: `[: integer expression expected`,
-//   the arithmetic error and `unbound variable` lines (W2-W4, W12) and a
-//   missing tool's `command not found`.
+// ALSO:
+// - ORDER: the metas and the family spools are walked in byte order under
+//   every locale.
+// - THE ORPHAN SCAN stops at the answering orphan: no probe runs past it or
+//   outlives the run.
+// - THE PROBE'S STDIN: the driver's children read /dev/null, so a herdr or an
+//   orca that reads stdin swallows neither the caller's stdin nor the
+//   families after it.
+// - W13: an unreadable stamp is printed past and left as it is (metaSet
+//   refuses to rewrite what it cannot read), so it prints on every run.
+// - No line of a shell's own is printed for a grace, a quiet window, a clock
+//   or a stamp that is no number (W2-W4, W12), or for a missing tool.
 // - A clock text that is an EXPRESSION (`1+1`, `12 abc`) reads as the
-//   evaluation error where bash evaluated it (arithValue's model is one
-//   operand).
+//   evaluation error (arithValue's model is one operand).
 // - Bytes: AC_GUARD_ROOT, AC_GUARD_GRACE/QUIET and paths arrive decoded, so a
 //   byte that is not UTF-8 (a lone 0xA0, isspace under a UTF-8 locale) is
 //   U+FFFD here; a default branch name that is not UTF-8 prints as U+FFFD.
 // - A relative AC_HOME or AC_GUARD_ROOT from a caller cwd bun cannot name is
 //   homeless / no repo, never resolved inside the distro root bun started
-//   in: a deleted cwd failed the original's cd too, a cwd whose name ends in
-//   a backslash it entered. The backend rung (backendName) still reads a
+//   in. The backend rung (backendName) still reads a
 //   relative AC_HOME from that root.
 //
 // CALLERS, all fail-soft: five bash entries run `[ ! -x

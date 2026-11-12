@@ -7,8 +7,7 @@
 // herdr and orca logging every call, repoRoot against ac_repo_root,
 // backendName's soft rung against ac-backend.sh sourced as the guard sources
 // it. The CLI contract itself is
-// tests/sh/ac-guard.test.sh's, whose differential leg runs the frozen bash
-// original beside the shim.
+// tests/sh/ac-guard.test.sh's.
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

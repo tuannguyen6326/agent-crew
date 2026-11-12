@@ -4,7 +4,7 @@
 // own context (`set -uo pipefail`, the lib sourced) over a copy of one home:
 // the log's bytes after the call, the call's stdout and stderr, and its fate
 // under a keep knob that names a variable. The guard's own contract is
-// tests/sh/ac-turnend-guard.test.sh, whose leg runs the frozen original.
+// tests/sh/ac-turnend-guard.test.sh.
 //
 // DISPUTED: the implementation of the trace (ac_hook_trace vs src/lib.ts's hookTrace under the guard's catch)
 // HELD-CONSTANT: the home's bytes (copied per side), the hook name and detail, AC_STOPHOOK_LOG_KEEP, PATH (a date stub frozen at one instant ahead of the host's), LC_ALL=C, the cwd

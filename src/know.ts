@@ -1,10 +1,8 @@
 // know.ts - the per-project REPO-KNOWLEDGE record: what earlier families
 // verified about a codebase, durable in the FLEET HOME and re-checkable. The
 // entry is bin/ac-know.sh (a shim that starts this file through
-// bin/ac-bun.sh); THIS header is the authoritative spec, and the bash
-// original it replaced stays frozen at tests/fixtures/ac-know.sh as the
-// oracle the differential leg of tests/sh/ac-know.test.sh holds this module
-// to.
+// bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-know.test.sh is its contract test.
 //
 // Usage:
 //   ac-know.sh add    --home <abs> --repo <dir> --family <fam>
@@ -148,20 +146,10 @@
 // verify and scope-proposal take no lock (the install's base hash closes the
 // draft race). The lock's own non-atomic stale reclaim is inherited.
 //
-// ESCAPE HATCH. This writer is fleet memory: every add,
-// retire and cite rewrites the whole record, so a WRONG write loses verified
-// knowledge (the slice still lands without it: teardown only READS the
-// record, and `--no-fact '<why>'` waives the loop). If a landed change breaks
-// this module, run the frozen original from a scratch bin/ at a physical path:
-//   o=$(cd "$(mktemp -d)" && pwd -P); mkdir "$o/bin"; cp bin/*.sh "$o/bin/"
-//   ln -s "$PWD/src" "$o/src"; ln -s "$PWD/dashboard" "$o/dashboard"
-//   cp tests/fixtures/ac-know.sh "$o/bin/ac-know.sh"
-//   cp tests/fixtures/ac-qa-lib.sh tests/fixtures/ac-pipeline-lib.sh "$o/bin/"
-// then "$o/bin/ac-know.sh" <verb> --home <home> --repo <repo> ... - the record
-// path descends from --home alone, so nothing needs rewriting; only
-// scope-proposal's printed install line names "$o/bin" (install through the
-// copy, or edit that path). The captain's revert of the land is the last
-// resort.
+// This writer is fleet memory: every add, retire and cite rewrites the whole
+// record, so a WRONG write loses verified knowledge (the slice still lands
+// without it: teardown only READS the record, and `--no-fact '<why>'` waives
+// the loop).
 //
 // --- the run, in order (AUTHORITATIVE) ---
 // stdin is never read (git children inherit it). Every refusal is one
@@ -298,8 +286,8 @@
 // Ranking inside a tier: hits, then heat (sort -n's reading of the field,
 // descending), then the whole row in BYTE order. TIER 1 - SCENES (L2, a whole
 // topic in one read): each regular records/scenes/*.md, its heat the
-// `heat=` words of line 2 joined by LF (a second one breaks the row in two, as
-// the original's did), its summary line 3 past `summary: `, hits over the
+// `heat=` words of line 2 joined by LF (a second one breaks the row in two),
+// its summary line 3 past `summary: `, hits over the
 // whole file; `== scenes (L2 - a topic restored in one read) ==`, per scene
 // `  <slug>  (hits <h>, heat <heat or 0>)`, `    <summary>`, `    open:
 // AC_HOME=<home> <root>/bin/ac-scene.sh show <slug> --cite` while fewer than
@@ -316,8 +304,8 @@
 // made only of [A-Za-z0-9_./:@%+,-], so a hand-over runs verbatim from a
 // bash or zsh pane with no AC_HOME. The --bytes budget counts each offered
 // entry line's own characters under a UTF-8 locale and its bytes under any
-// other, and so does the quote's 60 (LC_ALL, else LC_CTYPE, else LANG - W3,
-// reproduced). Headers print even when --max 0 lets
+// other, and so does the quote's 60 (LC_ALL, else LC_CTYPE, else LANG - W3).
+// Headers print even when --max 0 lets
 // nothing through. Tail: nothing printed and nothing cut is `no hit in any
 // layer for: <query> (needed <floor> of its distinctive terms)` and `(state
 // the absence explicitly in the brief - intake-triage skill)`; else `-- <s>
@@ -389,8 +377,9 @@
 // agent, reviewed + installed by the chief; captain veto: restore <prev |
 // (no previous record)>`.
 //
-// AT PARITY (each pinned in the leg until its own fix lands): W5 (a
-// subdirectory --repo binds and grades relative to itself), W6 (a trailing
+// AT PARITY with the bash original, and deliberately left unasserted by the
+// contract test: W3 (above), W5 (a subdirectory --repo binds and grades
+// relative to itself), W6 (a trailing
 // comma in --apps is written, and the bash map reader then refuses the whole
 // map), W9 (an unreadable record verifies nothing and stamps zeros; an unborn
 // repo's head is `HEAD` and `-` on two lines), W10 (line 0 and `01` pass),
@@ -400,46 +389,32 @@
 // AC_HOME, pass). Reproduced too: W18 - a newline in --apps past its first
 // line is written as a second physical line.
 //
-// DIVERGENCES from the original (the leg names each one a row can show):
-// - W4: recall's hand-overs name the bin, the home and the repo, where the
-//   original printed `ac-know.sh cite --repo <clone>` and a bare `ac-scene.sh
-//   show`, neither of which runs from a crewmate's pane.
+// ALSO:
+// - W4: recall's hand-overs name the bin, the home and the repo, so each runs
+//   from a crewmate's pane.
 // - QUOTE CUT: a cite hand-over's quote whose 60th character (a byte, under a
 //   locale that is no UTF-8) falls inside a UTF-8 sequence ends before that
-//   sequence, where the original printed the partial sequence - which argv
-//   decodes to U+FFFD (BYTES), so this cite would match nothing.
-// - W1 (FAIL-PATH): the record and the scenes are read as bytes, so a byte
-//   that is no UTF-8 under a UTF-8 locale is processed like any other, where
-//   the original's awk aborted (add/retire/cite exit 2 with the lock held,
-//   recall exit 2 printing nothing, verify grading only what came before it).
+//   sequence, so the hand-over still cites.
+// - W1: the record and the scenes are read as bytes, so a byte that is no
+//   UTF-8 under a UTF-8 locale is processed like any other.
 // - W2: every tie - recall's tiers, the near-duplicate list, the families of
-//   a --by mismatch - is broken in BYTE order, where the original's sort
-//   collated under the caller's locale (a different shown set at the --max
-//   cut under en_US.UTF-8).
-// - TOLOWER: terms and tokens fold ASCII only; under a UTF-8 locale the
-//   original's awk also folded the few capitals whose lowercase is ASCII
-//   (U+212A KELVIN SIGN, U+0130).
+//   a --by mismatch - is broken in BYTE order under any locale.
+// - TOLOWER: terms and tokens fold ASCII only.
 // - W11: --family, --scope, --apps and --id are read per their text under
-//   any locale, where bash's brackets under a UTF-8 locale also took `Bad` or
-//   `café`; a dash-led family still passes.
+//   any locale; a dash-led family passes.
 // - BYTES: argv arrives decoded, so a --fact byte that is no UTF-8 is written
 //   as U+FFFD; a name or path git or the filesystem hands back is decoded
 //   alike.
 // - EXCLUSIVE TEMPS (W7, W8): the record and the stamp land through a temp
 //   created exclusively and given the file's mode, so a link planted at the
-//   temp is never written through (the original wrote the record into its
-//   target and left the record a link), and scope-install keeps the record's
-//   mode where the original left it 0600. Nothing goes to TMPDIR at all, so a
-//   run that ends early leaves no temp there.
-// - SHELL-OWN and TOOL-OWN STDERR are not reproduced, their statuses kept:
-//   bash's arithmetic (`08: value too great for base`), `[:` (`integer
-//   expression expected`), `unbound variable` (an --apps with no first-line
-//   field), awk's `can't open file` and `towc`, sed's unreadable scene; cd's
-//   own line for an AC_HOME it cannot enter (the HOME RESOLUTION ruling
-//   names the variable instead), and a relative AC_HOME under an exported
-//   CDPATH stays the home, where cd's echo doubled it.
-// - LOCK GRACE: a pid-less lock's age is read from the clock, where the
-//   original spawned `date +%s` (so a stubbed date ages it differently).
+//   temp is never written through and scope-install keeps the record's mode.
+//   Nothing goes to TMPDIR at all, so a run that ends early leaves no temp
+//   there.
+// - No stderr but the texts above: heat 08 (W13), an --apps with no
+//   first-line field and an unreadable scene end on their status alone, and
+//   an unreadable record (W9) verifies nothing; a relative AC_HOME under an
+//   exported CDPATH stays the home.
+// - LOCK GRACE: a pid-less lock's age is read from the clock.
 // - BUN: without bun the shim refuses `ERROR: required tool not found: bun`.
 // - A caller whose cwd has no name resolves no relative --repo or AC_HOME.
 //

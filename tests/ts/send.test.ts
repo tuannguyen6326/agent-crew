@@ -1,14 +1,13 @@
-// send.test.ts - what src/send.ts brought into src/lib.ts, held to the bash
+// send.test.ts - what src/send.ts brought into src/lib-send.ts, held to the bash
 // it twins in the live bin/ac-lib.sh: bareMarkerVerbs against
 // ac_bare_marker_verbs (tokens, the dedupe, the [[:space:]] class under C and
 // UTF-8, the verb list read from AC_CAPTAIN_RE), and arrivalWait against
 // ac_arrival_wait as ac-send.sh ran it under `set -euo pipefail` (the three
 // verdicts, the arrived text handed back, the transcript glob and its root's
 // rungs, the read cadence, the jq program lifted byte for byte). The CLI
-// contract itself is tests/sh/ac-send.test.sh's, whose differential leg runs
-// the frozen bash original beside the shim.
+// contract itself is tests/sh/ac-send.test.sh's.
 //
-// DISPUTED: the implementation of the two helpers (bin/ac-lib.sh vs src/lib.ts)
+// DISPUTED: the implementation of the two helpers (bin/ac-lib.sh vs src/lib-send.ts)
 // HELD-CONSTANT: per row one bash and one bun child with the same argv, env (PATH with a logging sleep first, LC_ALL, AC_CAPTAIN_RE or the transcript knobs as the row names them) and stdin (/dev/null); stdout, stderr, the verdict and the sleep log compared.
 import { afterAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -17,7 +16,7 @@ import { join } from "node:path";
 
 const ROOT = join(import.meta.dir, "..", "..");
 const BIN = join(ROOT, "bin");
-const LIB = join(ROOT, "src", "lib.ts");
+const LIB = join(ROOT, "src", "lib-send.ts");
 const W = realpathSync(mkdtempSync(join(tmpdir(), "ac-send-ts-")));
 afterAll(() => rmSync(W, { recursive: true, force: true }));
 

@@ -1,9 +1,8 @@
 // qa.ts - the qa pipeline's state machine and deterministic runner
 // (behavioral verification with evidence, the ac-ship model applied to QA).
 // The entry is bin/ac-qa.sh (a shim that starts this file through
-// bin/ac-bun.sh); THIS header is the authoritative spec, and the bash original
-// it replaced stays frozen at tests/fixtures/ac-qa.sh as the oracle the
-// differential leg of tests/sh/ac-qa.test.sh holds this module to.
+// bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-qa.test.sh is its contract test.
 //
 // Run from inside the target repo/worktree being verified. State lives at
 // <repo>/.crew/qa/<run-id>/ with a `current` symlink; durable and resumable
@@ -66,7 +65,7 @@
 //                                          store's history and promote cases
 //                                          that passed <n> consecutive runs;
 //                                          see QA STORE LEARNING LOOP in
-//                                          tests/fixtures/ac-qa-lib.sh)
+//                                          src/qa-lib.ts)
 //   ac-qa.sh store-label <case-id> --run <sha> <confirmed|not-a-defect> [--by <who>]
 //                                         (chief side: the human's word on a
 //                                          defect the pane classed)
@@ -256,7 +255,7 @@
 //    represented by a fake background command.
 // The validators are shared, in src/qa-lib.ts (qaShipReceiptStatus,
 // qaRuntimeReceiptValidate, qaRuntimeGateValidate, qaBoundaryCoherent,
-// qaBoundaryReceiptValidate, twins of tests/fixtures/ac-qa-lib.sh), because three
+// qaBoundaryReceiptValidate, ported from the retired ac-qa-lib.sh), because three
 // actors must agree byte-for-byte: this module records and gates, ac-verify.sh
 // reconciles the exported run, and the merge gate reads what they published.
 // WHAT THIS DOES NOT PROVE: that arbitrary command text is semantically a good
@@ -284,6 +283,13 @@
 // ac-sync model). A status that cannot be READ is refused too, never taken for
 // clean: an unreadable tree is not evidence of a committed one, and this guard is
 // what stands between a qa pass and a run that exercised something else.
+// EXEMPTION: a verifier round running inside this same lease stubs CLAUDE.md /
+// AGENTS.md (ac-verify's context neutralization) and records exactly which
+// paths plus the exact stub bytes at .crew/qa/neutralized-manifest and
+// neutralized-stub; a tracked-file modification is exempt ONLY when its path
+// is in that manifest AND its current content is still byte-identical to the
+// recorded stub - a path absent from the manifest, a manifest absent entirely,
+// or a neutralized path whose content has since changed all still refuse.
 // In production the `agent` verb runs from a fresh pool worktree
 // detached at the target, so HEAD == target_sha by construction; this guard is
 // what makes that a proof, not a convention.
@@ -343,7 +349,9 @@
 // pass writes no merge marker. Non-passing outcomes remain recordable. The
 // verifier facade reconciles the run, atomically publishes canonical report.md,
 // and keeps relay-report.md as a separate transport checklist.
-// finish ALWAYS tears down the serve process group + infra and emits:
+// finish ALWAYS tears down the serve process group + infra - SIGTERM, up to
+// a 10s grace poll of the group's liveness, then SIGKILL if it is still
+// alive - and emits:
 //   QA_VERDICT= QA_TOTAL= QA_PASSED= QA_FAILED= QA_UNVERIFIABLE= QA_FLAKY=
 //   QA_VISUALS= QA_REPORT= QA_RUN_ID= SERVICE_LAUNCHED=
 //
@@ -561,7 +569,7 @@
 // is taken on trust beyond its two guards, exactly like --store.
 //
 // LEARNING LOOP on the store (contract: QA STORE LEARNING LOOP in
-// tests/fixtures/ac-qa-lib.sh): store/history.tsv records every case row of every curated
+// src/qa-lib.ts): store/history.tsv records every case row of every curated
 // run; store-curate promotes a case that passed three consecutive runs with
 // the same body into cases/ by machine, and re-stamps `verified:` on store
 // cases that passed again; store-label records the chief's verdict on a
@@ -646,24 +654,8 @@
 // store-install's, so TERM (143) and HUP (129) end every other verb at once
 // while a child runs, the child orphaned and finishing on its own.
 //
-// ESCAPE HATCH. A broken port stops every QA round at its first `agent` or
-// `start`, every relay ac-verify asks for, and chiefs' config-install and
-// store-install. If a landed change breaks this module, run the frozen
-// original from a scratch bin/ at a physical path:
-//   o=$(cd "$(mktemp -d)" && pwd -P); mkdir "$o/bin"; cp bin/*.sh "$o/bin/"
-//   ln -s "$PWD/src" "$o/src"; ln -s "$PWD/dashboard" "$o/dashboard"
-//   ln -s "$PWD/.agents" "$o/.agents"; cp tests/fixtures/ac-qa.sh "$o/bin/ac-qa.sh"
-//   cp tests/fixtures/ac-qa-lib.sh tests/fixtures/ac-pipeline-lib.sh "$o/bin/"
-// then the crewmate runs "$o/bin/ac-qa.sh" agent ... (the combined brief then
-// bakes "$o/bin/ac-qa.sh start" for the pane), ac-verify's relay takes
-// AC_VERIFY_QA_RELAY_BIN=$o/bin/ac-qa.sh, and chiefs run "$o/bin/ac-qa.sh"
-// config-install|store-install. The `.agents` link carries the compose
-// template the copy resolves through its own root. The run-dir formats are
-// identical, so a round can switch implementations between verbs (the leg's
-// continuation rows pin it). The captain's revert of the land is the last
-// resort.
-//
-// AT PARITY (each pinned in the leg until its own fix lands):
+// AT PARITY with the bash original, and deliberately left unasserted by the
+// contract test (each until its own fix lands):
 // - W3: a TERM during finish's teardown exits 143 with the verdict step done,
 //   the serve group killed and serve.pid gone, but run.meta still
 //   `outcome=running` and no envelope; a later `finish passed` can never pass
@@ -701,59 +693,52 @@
 // - W21: any `ac-qa-watch` pane in the herdr session suppresses this run's
 //   board, and the launch line single-quotes the bin and repo paths raw.
 //
-// DIVERGENCES from the original (the leg names each one a row can show):
-// - BUN: every verb needs bun now (the shim's `ERROR: required tool not
-//   found: bun`, exit 1, before anything), where the original ran most verbs
-//   without it.
+// ALSO:
+// - BUN: every verb needs bun (the shim's `ERROR: required tool not found:
+//   bun`, exit 1, before anything).
 // - BYTES: argv and the environment arrive decoded, so a byte that is no UTF-8
 //   in a flag, an id or an env value reaches the run's files and children as
-//   U+FFFD, where the original kept the byte; a value read from a file keeps
-//   its bytes.
+//   U+FFFD; a value read from a file keeps its bytes.
 // - W12: every id and charset guard (case ids, fixture packs and selectors,
 //   cmd e2e's --cases, testplan-amend's --case, proposal ids, --ship-run,
-//   AC_CREW_ID, --promote-after) is read per its text (ASCII ranges), where
-//   bash 3.2's bracket ranges under a UTF-8 locale admitted an accented letter.
+//   AC_CREW_ID, --promote-after) is read per its text (ASCII ranges), so an
+//   accented letter is refused under a UTF-8 locale too.
 // - W14 EXCLUSIVE TEMPS: testplan-amend's run.meta.amend.<pid>, the store
 //   manifest merge's <manifest>.tmp.<pid>, config-proposal's
 //   proposed.yaml.tmp.<pid> and the profile hash's profile.json.tmp.<pid> are
-//   created exclusively (the next name on EEXIST), where the original wrote
-//   through whatever sat at the predictable name.
-// - W15 and SHELL-OWN STDERR are not reproduced, the status kept: a value flag
-//   with no value (`$2: unbound variable`, exit 1), `config` with no key and a
-//   config present (exit 1), W7's arithmetic errors, `[`'s `integer
-//   expression expected`, a failed redirection's own line, and the
-//   `AC_QA_MANIFEST_ERROR: unbound variable` a staged test-plan manifest that
-//   cannot be written ends `step testplan completed` and `testplan-amend` on
-//   (exit 1, the temp removed, nothing published).
+//   created exclusively (the next name on EEXIST), never through whatever sits
+//   at the predictable name.
+// - W15 and SHELL-OWN STDERR: no shell's own line is printed, the status kept -
+//   a value flag with no value (exit 1), `config` with no key and a config
+//   present (exit 1), W7's arithmetic errors, an integer test on a
+//   non-integer, a failed redirection, and a staged test-plan manifest that
+//   cannot be written, which ends `step testplan completed` and
+//   `testplan-amend` (exit 1, the temp removed, nothing published).
+// - LAST PROBE: a health wait that times out after running a probe ends
+//   `health probe never passed within <t>s (last probe: exit <n>[: <line>])`,
+//   the line the last one wrote on stderr (at most 200 bytes); a wait that ran
+//   none ends `health probe never passed within <t>s`.
 // - EXPRESSIONS: a qa.health_timeout that is a whole arithmetic expression
-//   (`1+1`) rather than one operand, or an identifier naming a variable the
-//   original had set (`OPTIND`), ends `health` as W7's malformed values do
-//   (exit 1, no probe run), where bash evaluated it into the deadline.
-// - W18: SIGINT to the pid alone ends the process at once (130), where the
-//   original waited its foreground child out.
+//   (`1+1`) rather than one operand, or an identifier (`OPTIND`), ends `health`
+//   as W7's malformed values do (exit 1, no probe run).
+// - W18: SIGINT to the pid alone ends the process at once (130).
 // - SIGNALS: store-install alone registers a handler - on its exit, and on
 //   TERM, HUP and INT (128+n), it removes its manifest temp and releases
-//   `<store>.lock`, as the original's EXIT trap did on bash 3.2. The original
-//   ended at once while a child ran, the child orphaned and finishing on its
-//   own; here the signal acts at the turn after that child, which completes
-//   first, and before the store's next move - the original's world once its
-//   orphan finished (the leg's store-install signal row). INT there ends it
-//   130 after the child, where the original waited the child out and went on.
+//   `<store>.lock`. The signal acts at the turn after the child running when it
+//   arrived, which completes first, and before the store's next move; INT
+//   there ends it 130 after the child.
 // - HOME RESOLUTION: an AC_HOME store-install cannot enter is
 //   `ERROR: AC_HOME is not a readable directory: <h>`, a candidate or E2E dir
 //   cd cannot enter is exit 1 with no cd line.
-// - The default verifier is <this distro's bin>/ac-verify.sh by absolute path,
-//   where the original joined a relative `$0`'s dirname.
-// - In process, where the original started a child: the image magic bytes
-//   (od), every sha256 (shasum), and src/paths.ts's within, receipt-ok,
-//   realpath and free-port (started through bun); the knowledge scope map is
-//   read as bytes, where the original's awk under a UTF-8 caller locale
-//   aborted on a byte that is no UTF-8 (towc, exit 2) - the "read bytes"
+// - The default verifier is <this distro's bin>/ac-verify.sh by absolute path.
+// - In process: the image magic bytes (od), every sha256 (shasum), and
+//   src/paths.ts's within, receipt-ok, realpath and free-port (started through
+//   bun); the knowledge scope map is read as bytes, so a byte that is no UTF-8
+//   under a UTF-8 caller locale is read, never an abort - the "read bytes"
 //   precedent.
-// - A relative `visual` path is tried against the caller's physical cwd,
-//   where the original's `$PWD` could spell a symlinked one.
+// - A relative `visual` path is tried against the caller's physical cwd.
 // - ORDER: findings/*.json and the run metas reap scans are listed in byte
-//   order, where the original's glob followed the locale's collation.
+//   order.
 //
 // CALLERS: the qa pane agent ac-verify spawns (start, step, infra, baseline,
 // serve, health, seed, case, boundary-run, boundary-register, visual, cmd,
@@ -794,7 +779,6 @@ import {
   herdrTabOpen,
   homeResolve,
   knowledgeFile,
-  knowledgeScopes,
   lockAcquire,
   lockRelease,
   metaGet,
@@ -804,7 +788,6 @@ import {
   projectConfigName,
   projectDir,
   projectsDir,
-  qaAttestationParse,
   repoRoot,
   require,
   shellStatus,
@@ -820,6 +803,7 @@ import {
   yamlHas,
   yamlKeys,
 } from "./lib.ts";
+import { knowledgeScopes, qaAttestationParse } from "./lib-qa-gate.ts";
 import {
   qaBoundaryCoherent,
   qaBoundaryReceiptValidate,
@@ -1200,6 +1184,18 @@ const signal0 = (pid: number): boolean => {
   }
 };
 
+// The group; the lone-pid fallback only matters when the group signal
+// itself fails (the pid now belongs to an unrelated process or group).
+function qaKillGroup(pid: string, sig: "SIGTERM" | "SIGKILL"): void {
+  try {
+    process.kill(-Number(pid), sig);
+  } catch {
+    try {
+      process.kill(Number(pid), sig);
+    } catch {}
+  }
+}
+
 type Identity = { source: string; profile: string; serve: string; health: string; desc: string };
 function qaRuntimeIdentity(rd: string): Identity {
   return {
@@ -1352,7 +1348,7 @@ const BLOCKERS_JQ = String.raw`
       | "\(.id):\(.action)"`;
 const DUPLICATE_AWK = 'seen[$1]++ { printf "%s%s", (n++ ? ", " : ""), $1 }';
 
-// `for f in <dir>/*.json` in byte order (the oracle runs under C; ORDER).
+// `for f in <dir>/*.json` in byte order (ORDER).
 function globJson(dir: string): string[] {
   let names: string[] = [];
   try {
@@ -1500,10 +1496,21 @@ function qaPublishRuntimeGate(rd: string, runtimeSha: string, sourceSha: string,
 
 // The health probe as the original ran it: `( cd <repo> && env -i <env>
 // perl -e 'alarm 10; exec "sh","-c",$ARGV[0]' <c> )`, or `sh -c` without perl.
+function probeArgv(c: string, perl: boolean, env: string[]): string[] {
+  const body = perl ? ["perl", "-e", 'alarm 10; exec "sh", "-c", $ARGV[0]', c] : ["sh", "-c", c];
+  return ["/usr/bin/env", "-i", ...env, ...body];
+}
 function probe(rd: string, c: string, perl: boolean, env: string[], out: Io = "ignore"): Ran {
   void rd;
-  const body = perl ? ["perl", "-e", 'alarm 10; exec "sh", "-c", $ARGV[0]', c] : ["sh", "-c", c];
-  return run(["/usr/bin/env", "-i", ...env, ...body], { cwd: repo, stdout: out, stderr: out === "ignore" ? "ignore" : "inherit" });
+  return run(probeArgv(c, perl, env), { cwd: repo, stdout: out, stderr: out === "ignore" ? "ignore" : "inherit" });
+}
+function probeFailure(c: string, perl: boolean, env: string[]): { status: number; why: string } {
+  let r: ReturnType<typeof Bun.spawnSync> | null = null;
+  try {
+    r = spawnShellSync(probeArgv(c, perl, env).map(u8), { cwd: u8(repo), stdin: "inherit", stdout: "ignore", stderr: "pipe" });
+  } catch {}
+  const lines = r ? Buffer.from(r.stderr).toString("latin1").split("\n").map((l) => l.trim()).filter((l) => l !== "") : [];
+  return { status: shellStatus(r), why: (lines.at(-1) ?? "").slice(0, 200) };
 }
 
 // Stage, parse with the merge gate's own v2 parser, then rename into the
@@ -1598,6 +1605,46 @@ function teeRun(argv: string[], cwd: string, log: string, toStderr = false): num
   return run(["/bin/bash", "--posix", "-c", pipeline, "ac-qa.sh", cwd, log, ...argv], { stdout: "inherit" }).status;
 }
 
+// The exact paths ac-verify's context neutralization stubbed THIS round, or
+// null when no manifest exists (a plain qa run, or a round that stubbed
+// nothing) - the guard reads that absence as "exempt nothing", never "exempt
+// everything".
+function neutralizedManifestPaths(): Set<string> | null {
+  const manifest = `${repo}/.crew/qa/neutralized-manifest`;
+  const raw = readText(manifest);
+  if (raw === null) return null;
+  const paths = raw.split("\0");
+  paths.pop();
+  return new Set(paths);
+}
+
+// A path is exempt only while its bytes are still exactly what ac-verify
+// wrote - any further edit (including a non-stub edit of a neutralized path)
+// is a real change and must still refuse.
+function isNeutralizedStub(absPath: string): boolean {
+  const stub = readText(`${repo}/.crew/qa/neutralized-stub`);
+  if (stub === null) return false;
+  return readText(absPath) === stub;
+}
+
+// Drops exactly the porcelain lines this round's neutralization manifest
+// accounts for (unstaged modification of a listed path whose content is
+// still the recorded stub); every other line - including a non-stub edit of
+// a neutralized path - passes through untouched.
+function dirtyResidual(porcelain: string): string {
+  if (porcelain === "") return "";
+  const manifest = neutralizedManifestPaths();
+  if (manifest === null) return porcelain;
+  const residual: string[] = [];
+  for (const line of porcelain.split("\n")) {
+    if (line === "") continue;
+    const absPath = `${repo}/${line.slice(3)}`;
+    if (line.slice(0, 2) === " M" && manifest.has(absPath) && isNeutralizedStub(absPath)) continue;
+    residual.push(line);
+  }
+  return residual.join("\n");
+}
+
 // TARGET-CHECKOUT BINDING: the checkout the cases exercise IS the target.
 function assertTargetCheckout(tsha: string): void {
   const head = run(["git", "-C", repo, "rev-parse", "HEAD"], { stderr: "ignore" });
@@ -1608,9 +1655,10 @@ function assertTargetCheckout(tsha: string): void {
     );
   const dirty = run(["git", "-C", repo, "status", "--porcelain", "-uno"], { stderr: "ignore" });
   if (dirty.status !== 0) fail(`target-checkout: cannot read the worktree state in ${repo} (failing closed - an unreadable status is not a clean tree)`);
-  if (cap(dirty.out) !== "")
+  const residual = dirtyResidual(cap(dirty.out));
+  if (residual !== "")
     fail(
-      `target-checkout DIRTY: uncommitted changes to tracked files, so the exercised code is not commit ${tsha}:\n${cap(dirty.out)}\nCommit or discard them before a qa run (untracked and .crew/ artifacts are ignored).`,
+      `target-checkout DIRTY: uncommitted changes to tracked files, so the exercised code is not commit ${tsha}:\n${residual}\nCommit or discard them before a qa run (untracked and .crew/ artifacts are ignored).`,
     );
 }
 
@@ -2950,18 +2998,21 @@ function cmdHealth(): void {
   const start = epochA();
   const deadline = BigInt.asIntN(64, arith(start) + arith(timeout));
   const perl = commandV("perl");
+  let last = "";
   for (;;) {
     const now = testInt(cap(run(["date", "+%s"]).out));
     if (now === null || !(now < deadline)) break;
     if (pid !== "" && !killZero(pid)) fail(`serve process died during health wait (see ${rd}/logs/serve.log)`);
-    if (probe(rd, c, perl, env).status === 0) {
+    const p = probeFailure(c, perl, env);
+    if (p.status === 0) {
       say(`healthy after ${BigInt.asIntN(64, arith(cap(run(["date", "+%s"]).out)) - arith(start))}s\n`);
       qaPublishRuntimeReceipt(rd);
       return;
     }
+    last = ` (last probe: exit ${p.status}${p.why === "" ? "" : `: ${p.why}`})`;
     ee(run(["sleep", "2"], { stdout: "inherit" }).status);
   }
-  fail(`health probe never passed within ${timeout}s`);
+  fail(`health probe never passed within ${timeout}s${last}`);
 }
 
 function cmdSeed(): number {
@@ -3826,7 +3877,7 @@ function cmdAgent(a: string[]): void {
     if (effort !== "") args.push("--effort", effort);
   }
   if (round > 1 && nonEmpty(previous)) args.push("--history", previous);
-  if (run([verify, ...args], { stdout: "ignore" }).status !== 0) fail(`independent QA round ${round} failed; inspect verifier state and ${result}`);
+  if (withHome(qaHome, () => run([verify, ...args], { stdout: "ignore" })).status !== 0) fail(`independent QA round ${round} failed; inspect verifier state and ${result}`);
   if (jq(["-e", "--arg", "ref", targetSha, RESULT_JQ, result], { stdout: "ignore" }).status !== 0) fail(`QA verifier result is invalid or does not bind the exact target: ${result}`);
   const verdictOf = (): string => cap(jq(["-r", ".verdict", result]).out);
   if (cap(jq(["-r", ".report", result]).out) !== report || !nonEmpty(report) || cap(firstLine(run(["sed", "-n", "1p", report]).out)) !== `verdict: ${verdictOf()}`)
@@ -3882,13 +3933,13 @@ function cmdFinish(a: string[]): void {
     if (spid === null) fatal(1);
     const pid = cap(spid!);
     if (qaPgidAlive(pid)) {
-      try {
-        process.kill(-Number(pid), "SIGTERM");
-      } catch {
-        try {
-          process.kill(Number(pid), "SIGTERM");
-        } catch {}
-      }
+      qaKillGroup(pid, "SIGTERM");
+      // A runtime that treats the first SIGTERM as "begin a graceful drain"
+      // rather than "exit now" gets this fixed window to act on it before
+      // escalation - fixed, never a config knob.
+      const graceUntil = Date.now() + 10_000;
+      while (qaPgidAlive(pid) && Date.now() < graceUntil) Bun.sleepSync(100);
+      if (qaPgidAlive(pid)) qaKillGroup(pid, "SIGKILL");
     }
     rm(`${rd}/serve.pid`);
   }

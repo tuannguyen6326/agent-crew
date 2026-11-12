@@ -57,9 +57,12 @@ sleep 1
 assert_eq "$(mtime "$attempt")" "$a1" "a second cycle inside the interval does not refire"
 
 # 5) no brain.sqlite -> never fires (DB existence is the opt-in)
-rm -rf "$AC_HOME/state/brain.sqlite" "$marker"
+# The marker stays stale and the attempt stamp is cleared, so the missing DB
+# is the only thing left that can hold the slot; the stamp is written before
+# the sync is forked, so its absence after the cycle is the whole answer.
+rm -rf "$AC_HOME/state/brain.sqlite" "$attempt"
+touch -t 202601010000 "$marker"
 AC_BRAIN_SYNC_IV=60 AC_POLL=1 "$BIN/ac-watch.sh" --once >/dev/null 2>&1 || true
-sleep 1
-assert_no_file "$marker" "no DB means the slot never fires"
+assert_no_file "$attempt" "no DB means the slot never fires"
 
 pass

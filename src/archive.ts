@@ -1,8 +1,7 @@
 // archive.ts - move CLOSED task families out of the flat data/ namespace. The
 // entry is bin/ac-archive.sh (a shim that starts this file through
-// bin/ac-bun.sh); THIS header is the authoritative spec, and the bash original
-// it replaced stays frozen at tests/fixtures/ac-archive.sh as the oracle the
-// differential leg of tests/sh/ac-archive.test.sh holds this module to.
+// bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-archive.test.sh its contract test.
 //
 // AUTHORITATIVE for the archive layout and for which families are eligible.
 // Where NEW artifacts are created is unchanged and stays owned by
@@ -53,14 +52,11 @@
 //
 // BYTES AND ORDER: a room is read as bytes and matched per LF-split line (CR
 // kept; a NUL ends the line for the year read, as awk's record did), under any
-// locale - the bash original's grep, under a UTF-8 locale, missed a CLOSED
-// line carrying a non-UTF-8 byte and left that family live, and its glob
-// walked data/*/ in libc collation order; both are named in the differential
-// leg. The move is `mv`, spawned as the original spawned it (a symlinked
-// family moves as the link; a data/ split across devices is copied as mv
-// copies), and `mkdir -p` the same way: their failure ends the run as errexit
-// did, with the tool's own stderr and status. A room this process cannot
-// read is skipped as not closed, the way the original's grep read it.
+// locale, and data/*/ is walked in byte order. The move is a spawned `mv` (a
+// symlinked family moves as the link; a data/ split across devices is copied
+// as mv copies), and `mkdir -p` the same way: their failure ends the run with
+// the tool's own stderr and status. A room this process cannot read is skipped
+// as not closed.
 //
 // MANUAL ONLY. Nothing in bin/, .agents/, docs/ or src/ may invoke this entry -
 // not ac-curate.sh's CURATE-DUE auto-run, not ac-session-start.sh, not
@@ -78,7 +74,7 @@
 // Reads stay correct across the move: ac_room_file (bin/ac-lib.sh) resolves a
 // family's room live-first then archived, which is what keeps
 // `ac-room.sh show <family>` and the Learning retro snapshot working on an
-// archived family. The live-only data/*/room.md globs (the captain inbox, the
+// archived family. The live-only room walks (familyDirs in src/lib.ts: the captain inbox, the
 // turn-end guard, the remote push) deliberately do NOT follow:
 // every archived family is CLOSED, so it contributes no pending item and no
 // hand-back to any of them.
@@ -93,7 +89,7 @@ const out = (s: string): void => {
   writeSync(1, s);
 };
 // The tool itself, so its semantics and its failure (status, stderr) are the
-// original's: mv across devices copies, mkdir -p on a read-only parent refuses.
+// tool's own: mv across devices copies, mkdir -p on a read-only parent refuses.
 const tool = (cmd: string[]): void => {
   const r = spawnShellSync(cmd, { stdout: "ignore", stderr: "inherit" });
   if (r.exitCode !== 0) process.exit(r.exitCode ?? 1);

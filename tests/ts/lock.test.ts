@@ -5,8 +5,7 @@
 // drift apart silently - and it is NOT the HARNESSES registry joined: the
 // regex names cursor's PROCESS (`cursor-agent`), the registry its id. The CLI
 // contract (every verb, the walk, stdout, stderr, exit, the lock file) is
-// tests/sh/ac-lock.test.sh's, whose differential leg runs the frozen bash
-// original beside the shim.
+// tests/sh/ac-lock.test.sh's.
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

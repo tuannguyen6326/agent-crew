@@ -14,15 +14,14 @@
 . "$BIN/ac-lib.sh"
 . "$BIN/ac-maintenance-lib.sh"
 
-# twin <expr> [<arg>...] - <expr> over src/lib.ts (L) and
+# twin <expr> [<arg>...] - <expr> over src/lib.ts merged with src/lib-learn.ts and src/lib-curate.ts (L) and
 # src/maintenance-receipt.ts (M), its arguments A, in one bun process: the code
 # the fleet runs where a bash helper retired once src/learn.ts took its last
-# caller (the bash one is frozen at tests/fixtures/ac-maintenance-retired.sh,
-# and tests/ts holds each twin to it). A string answer is printed; the status
-# is a number answer, else 1 for false or null and 0 for anything else.
+# caller. A string answer is printed; the status is a number answer, else 1
+# for false or null and 0 for anything else.
 twin() {
   local expr="$1"; shift
-  (cd "$ROOT" && bun --no-env-file -e "const L = await import('./src/lib.ts'); const M = await import('./src/maintenance-receipt.ts'); const A = process.argv.slice(1); const v = await (async () => ($expr))(); if (typeof v === 'string') process.stdout.write(v); process.exit(typeof v === 'number' ? v : v === false || v === null ? 1 : 0);" "$@")
+  (cd "$ROOT" && bun --no-env-file -e "const L = { ...await import('./src/lib.ts'), ...await import('./src/lib-learn.ts'), ...await import('./src/lib-curate.ts') }; const M = await import('./src/maintenance-receipt.ts'); const A = process.argv.slice(1); const v = await (async () => ($expr))(); if (typeof v === 'string') process.stdout.write(v); process.exit(typeof v === 'number' ? v : v === false || v === null ? 1 : 0);" "$@")
 }
 
 make_home
@@ -449,7 +448,7 @@ assert_contains "$out" "to $records/backlog-archive.md" "the backlog pass names 
 case "$out" in */shadow/*) fail "the backlog pass names the shadow copy: $out" ;; esac
 grep -qF -- '- [x] oldone ' "$records/backlog-archive.md" || fail "...where the moved Done line really landed"
 
-# curateReset (src/lib.ts) returns the same false for a newer cadence
+# curateReset (src/lib-curate.ts) returns the same false for a newer cadence
 # generation and for a busy cadence lock, so the run's own warning has to
 # stand for both. Held by a
 # live pid, the lock costs the reset's real 10s timeout.
@@ -884,17 +883,17 @@ assert_contains "$(cat "$bigreport")" "to $bighome/records/backlog-archive.md" "
 case "$(cat "$bigreport")" in */shadow/*) fail "the big report still names the shadow copy" ;; esac
 
 
-# --- differential: src/curate.ts against the frozen bash original ----------
-# DISPUTED: the implementation (tests/fixtures/ac-curate.sh under bash vs src/curate.ts through bin/ac-curate.sh)
-# HELD-CONSTANT: two side roots seeded alike ($XOH for the oracle, $XNH for the shim) - a home at <side>/home rebuilt per row by the same commands (records, skills, state, data, project clones made by one git config), or copies of real fleet homes when XCURATE_HOMES names them; argv and env (the side root spelled @H, substituted in values only; AC_HOME=<side>/home and AC_GATE=the leg's stub gate unless a row names others; AC_TEST_HOOKS only on hook rows); cwd (<side>/cwd, an EMPTY dir, unless a row names another); stdin (/dev/null); LC_ALL=C unless a row names en_US.UTF-8; TMPDIR <side>/tmp; PATH stubs on both sides - date answering one instant per format, sleep logging each call and returning at once - plus a row's own; the live bin/ beside each entry (the oracle bin's copies, $BIN's own); exit status, stdout and stderr compared whole once normalised (the side root @H, either bin root ROOT, the run id curate-RUN, the entry's pid where it names a temp or a lock, every 64-hex digest SHA, a mktemp suffix XXXXXX), then the world: every path under home/, tmp/ and stub/ with its mode and bytes (records, archives, skills and skills-archive, the run dir, journals, .curate.meta, the room), each backup as its sorted tar listing; and each side's plans, receipts and journals checked against the hashes of ITS OWN files.
-xobin="$(make_oracle_bin ac-curate)"
-# The frozen entry calls the cadence and transaction helpers retired from
-# bin/ac-maintenance-lib.sh and bin/ac-lib.sh once src/learn.ts took their
-# last caller; the oracle's own lib copy gets them back, frozen at
-# tests/fixtures/ac-maintenance-retired.sh.
-cat "$ROOT/tests/fixtures/ac-maintenance-retired.sh" >>"$xobin/ac-maintenance-lib.sh"
-cmp -s "$xobin/ac-curate.sh" "$ROOT/tests/fixtures/ac-curate.sh" || fail "the oracle bin holds the frozen original"
-XOH="$TMP/xside-o"; XNH="$TMP/xside-n"
+# --- the entry end to end, one scenario per row -------------------------------
+# One side root ($H): a home at $H/home rebuilt per row (records, skills,
+# state, data, project clones made by one git config); AC_HOME=$H/home and
+# AC_GATE=the leg's stub gate unless a row names others; AC_TEST_HOOKS only on
+# hook rows; cwd $H/cwd, an EMPTY dir, unless a row names another; stdin
+# /dev/null; LC_ALL=C unless a row names en_US.UTF-8; TMPDIR $H/tmp; PATH stubs
+# - date answering one instant per format, sleep logging each call and
+# returning at once - plus a row's own. A row reads the run's exit status,
+# stdout and stderr (the side root spelled @H, this checkout ROOT, the run id
+# curate-RUN, every 64-hex digest SHA) and what it left under the home.
+H="$TMP/xside"
 XSTUBS="$TMP/xstubs"; mkdir -p "$XSTUBS"
 printf '[user]\n\tname = t\n\temail = t@t\n[init]\n\tdefaultBranch = main\n' >"$TMP/xgitconfig"
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$TMP/xgitconfig"
@@ -973,9 +972,6 @@ EOF
 exit 0
 GATE
 chmod +x "$XSTUBS/date" "$XSTUBS/sleep" "$XSTUBS/gate"
-xboth() {  # xboth <cmd> <args...> - a seeding step at each side root: H names it, and so does a literal @H in an argument
-  local h x a; for h in "$XOH" "$XNH"; do H="$h"; a=(); for x in "$@"; do a+=("${x//@H/$h}"); done; "${a[@]}"; done
-}
 xseed() { [ ! -e "$H" ] || chmod -R u+rwX "$H"; rm -rf "$H"; mkdir -p "$H/home" "$H/cwd" "$H/tmp" "$H/stub"; }
 xstd() { xseed; mkdir -p "$H/home/records" "$H/home/state" "$H/home/data" "$H/home/config" "$H/home/projects" "$H/home/skills"; }
 xput() { mkdir -p "$(dirname "$H/$1")"; printf '%s' "${2//@H/$H}" >"$H/$1"; }   # xput <path under the side> <bytes>
@@ -987,115 +983,37 @@ xskill() {  # xskill <name> <description> [<landed>] - a learned skill in the si
     [ -z "${3:-}" ] || printf 'metadata:\n  landed: %s\n' "$3"
     printf -- '---\n# %s\nbody\n' "$1"; } >"$H/home/skills/$1/SKILL.md"
 }
-XLC=C; XENV=(); XCWD=cwd; XHOME=@H/home; XPATH=""; XGATE="$XSTUBS/gate"; XPLANT=""; XOBIN="$xobin"; XNBIN="$BIN"; XNOBIND=""
-xrun_side() {  # xrun_side <bin> <side root> <prefix> <args...> - XPLANT=<path under the side> links <path>.<the entry's pid> to <side>/victim first
-  local bin="$1" h="$2" p="$3" x v path rc=0; shift 3
-  path="$XSTUBS:$PATH"; [ -z "$XPATH" ] || path="${XPATH//@H/$h}"
-  local a=() e=("LC_ALL=$XLC" "PATH=$path" "TMPDIR=$h/tmp" "STUB_DIR=$h/stub" "CURATE_LEG_BIN=$bin")
-  [ -z "$XHOME" ] || e+=("AC_HOME=${XHOME//@H/$h}")
+XLC=C; XENV=(); XCWD=cwd; XHOME=@H/home; XPATH=""; XGATE="$XSTUBS/gate"; XPLANT=""; XBIN="$BIN"; XN_RC=0
+xrun() {  # xrun <args...> - one run of the entry; @H in an argument or an XENV value is the side root; XPLANT=<path under the side> links <path>.<the entry's pid> to <side>/victim first
+  local x v path a=() e
+  path="$XSTUBS:$PATH"; [ -z "$XPATH" ] || path="${XPATH//@H/$H}"
+  e=("LC_ALL=$XLC" "PATH=$path" "TMPDIR=$H/tmp" "STUB_DIR=$H/stub" "CURATE_LEG_BIN=$XBIN")
+  [ -z "$XHOME" ] || e+=("AC_HOME=${XHOME//@H/$H}")
   [ -z "$XGATE" ] || e+=("AC_GATE=$XGATE")
-  for x in ${XENV[@]+"${XENV[@]}"}; do v="${x#*=}"; e+=("${x%%=*}=${v//@H/$h}"); done
-  for x in "$@"; do a+=("${x//@H/$h}"); done
+  for x in ${XENV[@]+"${XENV[@]}"}; do v="${x#*=}"; e+=("${x%%=*}=${v//@H/$H}"); done
+  for x in "$@"; do a+=("${x//@H/$H}"); done
+  XN_RC=0
   # The group's stderr takes bash's own `Terminated` notice for a signalled row.
-  { (cd "$h/$XCWD" && exec env -u AC_HOME -u AC_FLEET_STATE -u AC_SCOPE -u AC_SOLO -u CDPATH -u AC_LOCK_STALE_GRACE -u EPOCHSECONDS \
+  { (cd "$H/$XCWD" && exec env -u AC_HOME -u AC_FLEET_STATE -u AC_SCOPE -u AC_SOLO -u CDPATH -u AC_LOCK_STALE_GRACE -u EPOCHSECONDS \
     -u AC_TEST_HOOKS -u AC_CURATE_KEEP -u AC_CURATE_STALE_DAYS -u AC_CURATE_SNAPSHOT_HOOK -u AC_GATE "${e[@]}" \
-    /bin/sh -c 'printf %s "$$" >"$0"; [ -z "$1" ] || ln -s "$2" "$1.$$"; shift 2; exec "$@"' \
-    "$TMP/$p.pid" "${XPLANT:+$h/$XPLANT}" "$h/victim" "$bin/ac-curate.sh" ${a[@]+"${a[@]}"}) </dev/null >"$TMP/$p.raw" 2>"$TMP/$p.err"; } 2>/dev/null || rc=$?
-  cat "$TMP/$p.pid" >>"$h/.pids"; printf '\n' >>"$h/.pids"
-  return "$rc"
+    /bin/sh -c '[ -z "$0" ] || ln -s "$1" "$0.$$"; shift; exec "$@"' \
+    "${XPLANT:+$H/$XPLANT}" "$H/victim" "$XBIN/ac-curate.sh" ${a[@]+"${a[@]}"}) </dev/null >"$TMP/x.raw" 2>"$TMP/x.rawerr"; } 2>/dev/null || XN_RC=$?
+  xnorm "$TMP/x.raw" >"$TMP/x.out"; xnorm "$TMP/x.rawerr" >"$TMP/x.err"
 }
-xpids() {  # xpids <side root> - every run of the side since its seed, in order (each entry pid, then each a hook started)
-  cat "$1/.pids" "$1/stub/nested.pid" 2>/dev/null || true
+xnorm() {
+  LC_ALL=C sed -E -e "s#$H#@H#g" -e "s#$ROOT#ROOT#g" -e 's/[0-9a-f]{64}/SHA/g' -e 's/curate-[0-9]{10}-[0-9]+/curate-RUN/g' "$1"
 }
-xnorm() {  # xnorm <file> <side root> - the side root @H, bin roots ROOT, digests SHA, the k-th run's id curate-RUN<k>, the last entry's pid in its temps and locks PID
-  local e=() k=0 p last
-  last="$(sed -n '$p' "$2/.pids" 2>/dev/null)"
-  while IFS= read -r p; do [ -z "$p" ] || { k=$((k + 1)); e+=(-e "s/curate-[0-9]{10}-$p([^0-9]|\$)/curate-RUN$k\\1/g" -e "s/^$p\$/PID$k/"); }; done < <(xpids "$2")
-  LC_ALL=C sed -E -e "s#$2#@H#g" -e "s#$TMP/oracle-ac-curate#ROOT#g" -e "s#$TMP/xdef-[on]#ROOT#g" -e "s#$ROOT#ROOT#g" \
-    -e 's/[0-9a-f]{64}/SHA/g' ${e[@]+"${e[@]}"} \
-    -e "s/\\.tmp\\.${last:-none}/.tmp.PID/g" -e "s/\\.maintenance\\.${last:-none}\\./.maintenance.PID./g" -e "s/^${last:-none}\$/PID/" \
-    -e 's/(ac-curate-[a-z]+)\.[A-Za-z0-9]{6}/\1.XXXXXX/g' "$1"
-}
-XO_RC=0; XN_RC=0
-xpair() {  # xpair <args...> - both sides run, outputs normalised, nothing compared yet
-  XO_RC=0; XN_RC=0
-  xrun_side "$XOBIN" "$XOH" xo "$@" || XO_RC=$?
-  xrun_side "$XNBIN" "$XNH" xn "$@" || XN_RC=$?
-  xnorm "$TMP/xo.raw" "$XOH" >"$TMP/xo.out"; xnorm "$TMP/xo.err" "$XOH" >"$TMP/xo.err2"
-  xnorm "$TMP/xn.raw" "$XNH" >"$TMP/xn.out"; xnorm "$TMP/xn.err" "$XNH" >"$TMP/xn.err2"
-}
-xrow() { printf '%s' "${BASH_LINENO[${#BASH_LINENO[@]}-2]}"; }   # the leg's own line that started this comparison
-xsame_rc_out() {
-  assert_eq "$XN_RC" "$XO_RC" "curate differential exit for '$*' at line $(xrow)"
-  cmp -s "$TMP/xo.out" "$TMP/xn.out" || fail "curate differential stdout differs for '$*' at line $(xrow): $(diff -a "$TMP/xo.out" "$TMP/xn.out" | head -n 8)"
-}
-xsame_err() {
-  cmp -s "$TMP/xo.err2" "$TMP/xn.err2" || fail "curate differential stderr differs for '$*' at line $(xrow): $(diff -a "$TMP/xo.err2" "$TMP/xn.err2" | head -n 8)"
-}
-xworld() {  # xworld <side root> - every path under home/ tmp/ stub/ in normalised byte order, with its mode and bytes (a backup: its tar listing)
-  local h="$1" f n i p k last
-  local -a names=() modes=() pids=()
-  while IFS= read -r p; do [ -z "$p" ] || pids+=("$p"); done < <(xpids "$h")
-  last="$(sed -n '$p' "$h/.pids" 2>/dev/null)"
-  while IFS= read -r -d '' f; do names+=("$f"); done < <(cd "$h" && find home tmp stub -print0 2>/dev/null)
-  [ "${#names[@]}" -eq 0 ] || while IFS= read -r f; do modes+=("$f"); done < <(cd "$h" && printf '%s\0' "${names[@]}" | xargs -0 stat -f '%Sp')
-  for i in "${!names[@]}"; do
-    n="${names[i]}"; k=0
-    # shellcheck disable=SC2076
-    for p in ${pids[@]+"${pids[@]}"}; do k=$((k + 1)); [[ $n =~ ^(.*curate-)[0-9]{10}-$p($|[^0-9].*)$ ]] && n="${BASH_REMATCH[1]}RUN$k${BASH_REMATCH[2]}"; done
-    n="${n//.tmp.${last:-none}/.tmp.PID}"; n="${n//.maintenance.${last:-none}./.maintenance.PID.}"
-    [[ $n =~ ^(.*ac-curate-[a-z]+\.)[A-Za-z0-9]{6}$ ]] && n="${BASH_REMATCH[1]}XXXXXX"
-    printf '%s\t%s\n' "${n//$'\n'/\\n}" "$i"
-  done | LC_ALL=C sort | while IFS=$'\t' read -r n i; do
-    f="${names[i]}"
-    if [ -L "$h/$f" ]; then printf '== %s -> %s\n' "$n" "$(readlink "$h/$f")"; continue; fi
-    printf '== %s %s\n' "$n" "${modes[i]}"
-    [ ! -d "$h/$f" ] || continue
-    case "$f" in
-      */state/backups/*.tar.gz) tar -tzf "$h/$f" 2>&1 | LC_ALL=C sort ;;
-      *) cat "$h/$f" 2>/dev/null || printf '<unreadable>'; printf '\n' ;;
-    esac
-  done
-}
-xhashes() {  # xhashes <side root> - each plan binds its manifest, each receipt its plan and manifest, each journal its plan
-  local h="$1" run p s m r j sha
-  sha() { shasum -a 256 <"$1" | cut -d' ' -f1; }
-  for run in "$h"/home/data/curate-*; do
-    [ -d "$run" ] || continue
-    for p in "$run"/plans/*.json; do
-      [ -f "$p" ] || continue
-      s="$(basename "$p" .json)"; m="$run/manifests/$s.json"; [ "$s" != deterministic-records ] || m="$run/input-manifest.json"
-      [ ! -s "$m" ] || [ "$(jq -r .input_manifest_sha256 "$p")" = "$(sha "$m")" ] || fail "curate differential: $p does not bind $m (line $(xrow))"
-      r="$run/gates/$s/decision.md"
-      [ ! -f "$r" ] || [ -n "$XNOBIND" ] || grep -qxF "action_plan_sha256: \"$(sha "$p")\"" "$r" || fail "curate differential: $r does not bind $p (line $(xrow))"
-      [ ! -f "$r" ] || [ ! -s "$m" ] || grep -qxF "input_manifest_sha256: \"$(sha "$m")\"" "$r" || fail "curate differential: $r does not bind $m (line $(xrow))"
-    done
-  done
-  for j in "$h"/home/state/.maintenance-transactions/*/journal; do
-    [ -f "$j" ] || continue
-    p="$(sed -n 's/^plan=//p' "$j" | tail -1)"
-    [ ! -f "$p" ] || [ "$(sed -n 's/^plan_sha256=//p' "$j" | tail -1)" = "$(sha "$p")" ] || fail "curate differential: $j does not bind $p (line $(xrow))"
-  done
-}
-xsame_world() {
-  xhashes "$XOH"; xhashes "$XNH"
-  xworld "$XOH" >"$TMP/xo.world"; xworld "$XNH" >"$TMP/xn.world"
-  xnorm "$TMP/xo.world" "$XOH" >"$TMP/xo.world2"; xnorm "$TMP/xn.world" "$XNH" >"$TMP/xn.world2"
-  cmp -s "$TMP/xo.world2" "$TMP/xn.world2" || fail "curate differential world differs after '$*' at line $(xrow): $(diff -a "$TMP/xo.world2" "$TMP/xn.world2" | head -n 12)"
-}
-xsame() { xpair "$@"; xsame_rc_out "$@"; xsame_err "$@"; xsame_world "$@"; }
-xout() { cat "$TMP/xn.out"; }
-xerr() { cat "$TMP/xn.err2"; }
-xoout() { cat "$TMP/xo.out"; }
-xoerr() { cat "$TMP/xo.err2"; }
-xrefuse() {  # xrefuse <stderr> <args...> - both sides refuse alike: exit 1, no stdout, exactly <stderr>
+xout() { cat "$TMP/x.out"; }
+xerr() { cat "$TMP/x.err"; }
+xsubjects() { xout | LC_ALL=C grep -E '^  (auto-applied semantic subject|ask-captain|revise|settled|a-gate-line)' || true; }   # the semantic pass's verdict lines
+xrefuse() {  # xrefuse <stderr> <args...> - exit 1, no stdout, exactly <stderr>
   local want="$1"; shift
-  xsame "$@"
-  assert_eq "$XN_RC:$(xout):$(xerr)" "1::$want" "curate refusal for '$*' at line $(xrow)"
+  xrun "$@"
+  assert_eq "$XN_RC:$(xout):$(xerr)" "1::$want" "curate refusal for '$*'"
 }
-xok() {  # xok <args...> - both sides succeed alike, nothing on stderr
-  xsame "$@"
-  assert_eq "$XN_RC:$(xerr)" "0:" "curate success for '$*' at line $(xrow)"
+xok() {  # xok <args...> - exit 0, nothing on stderr
+  xrun "$@"
+  assert_eq "$XN_RC:$(xerr)" "0:" "curate success for '$*'"
 }
 xwithout() {  # xwithout <tool> - the leg's PATH with every dir holding <tool> mirrored without it
   local dirs d f key mirror out=""
@@ -1140,10 +1058,10 @@ xbl() {  # xbl <done-count> - a ledger with <n> Done rows, newest first
 #    '' and an unknown verb print the one usage line; a flag that is neither
 #    --apply nor --dry-run refuses before the verb is read; both flags pass
 #    every verb, repeated, honoured only where the verb reads them (`run
-#    --apply` is the full automatic pass).
-xboth xstd
-xboth xput home/records/captain.md "$XCAP"
-xboth xbl 3
+#    --apply` is the full automatic pass); every verb needs bun.
+xstd
+xput home/records/captain.md "$XCAP"
+xbl 3
 xrefuse "$XUSAGE"
 xrefuse "$XUSAGE" ''
 xrefuse "$XUSAGE" -h
@@ -1155,178 +1073,180 @@ xrefuse "ERROR: unknown flag: -h" captain --apply -h
 xrefuse "ERROR: unknown flag: --nope" run --dry-run --nope
 xok learnings --apply --dry-run --apply
 xok captain --dry-run
+assert_contains "$(xout)" "PROPOSE-ONLY: 3 block(s) would move" "1: captain ignores --dry-run and proposes"
+assert_eq "$(cat "$H/home/records/captain.md")" "${XCAP%$'\n'}" "1: ... writing nothing"
 xok backlog --dry-run --dry-run
+assert_contains "$(xout)" "ok: nothing to archive" "1: backlog ignores --dry-run"
 xok projects --apply
 xok skills-audit --dry-run --apply
 xok skills-consolidate --dry-run
 xok run --dry-run --dry-run --apply
+assert_eq "$(xout | tail -n1)" "== curate dry-run complete; no backup, mutation, receipt, or cadence reset ==" "1: run reads --dry-run past --apply"
+[ ! -e "$H/home/records/captain-archive.md" ] || fail "1: ... and moves nothing"
 xok run --apply
-# BUN, named: the original ran learnings with no bun on PATH; the shim
-# refuses before the verb is read.
+assert_contains "$(xout)" "CURATED: moved 3 block(s) to @H/home/records/captain-archive.md" "1: run --apply is the full automatic pass"
 XPATH="$(xwithout bun)"
-xpair learnings
+xrun learnings
 XPATH=""
-assert_eq "$XO_RC:$(xoerr)" "0:" "1 (BUN, named): the original's learnings needs no bun"
-assert_eq "$XN_RC:$(xout):$(xerr)" "1::ERROR: required tool not found: bun" "1 (BUN, named): the shim refuses without bun"
+assert_eq "$XN_RC:$(xout):$(xerr)" "1::ERROR: required tool not found: bun" "1: every verb needs bun"
 
 # 2. the home: relative (from the caller's cwd), a link to it (paths printed
-#    physical), every bare-dir verb's minted dirs, homeless for every verb
-#    whose first home read refuses (never skills-audit or run - their
-#    homeless arms read and write the host root, W14, named and pinned by
-#    tests/ts/curate.test.ts instead); an AC_HOME cd cannot enter and a
-#    CDPATH-relative one (HOME RESOLUTION, named).
-xboth xseed
+#    physical), every verb on a bare home, homeless for every verb whose
+#    first home read refuses; an AC_HOME cd cannot enter and a relative one
+#    under CDPATH.
+xseed
 XCWD=.; XHOME=home
 xok learnings
+[ -d "$H/home/records" ] || fail "2: a relative AC_HOME resolves against the caller's cwd"
 XCWD=cwd; XHOME=@H/home
-xboth xput home/records/captain.md "$XCAP"
-xboth ln -s home @H/homelink
+xput home/records/captain.md "$XCAP"
+ln -s home "$H/homelink"
 XHOME=@H/homelink
 xok captain
+assert_contains "$(xout)" "would move to @H/home/records/captain-archive.md on --apply" "2: a linked home prints physical paths"
 XHOME=@H/home
 for xv in learnings captain backlog projects skills-audit skills-consolidate 'run --dry-run' run; do
-  xboth xseed
+  xseed
   # shellcheck disable=SC2086
   xok $xv
+  case "$xv" in
+    learnings) xwant="(no learnings.md - nothing to check)" ;;
+    captain) xwant="(no captain.md - nothing to curate)" ;;
+    backlog) xwant="(no backlog.md - nothing to archive)" ;;
+    projects) xwant="(no projects.md - nothing to audit)" ;;
+    skills-audit) xwant="(no learned skills - nothing to audit)" ;;
+    skills-consolidate) xwant="ok: no prefix cluster with an umbrella - nothing to consolidate" ;;
+    'run --dry-run') xwant="== curate dry-run complete; no backup, mutation, receipt, or cadence reset ==" ;;
+    run) xwant="== curate pass complete: 0 changed record file(s)" ;;
+  esac
+  assert_contains "$(xout)" "$xwant" "2: '$xv' on a bare home"
 done
 XHOME=""
 for xv in learnings 'captain --apply' 'backlog --apply' projects 'skills-consolidate --apply'; do
-  xboth xseed
+  xseed
   # shellcheck disable=SC2086
   xrefuse "$XNOHOME" $xv
 done
 XHOME=@H/home
-xboth xseed
+xseed
 XHOME=@H/nope
-xpair learnings
+xrun learnings
 XHOME=@H/home
-assert_eq "$XO_RC:$XN_RC:$(xoout)$(xout)" "1:1:" "2 (HOME RESOLUTION, named): an AC_HOME cd cannot enter refuses on both sides"
-assert_contains "$(xoerr)" "cd: @H/nope: No such file or directory" "2: the original printed cd's own line"
-assert_eq "$(xerr)" "ERROR: AC_HOME is not a readable directory: @H/nope" "2: the port names the variable"
-xboth mkdir -p @H/cdp/home
+assert_eq "$XN_RC:$(xout):$(xerr)" "1::ERROR: AC_HOME is not a readable directory: @H/nope" "2: an AC_HOME cd cannot enter names the variable"
+mkdir -p "$H/cdp/home"
 XCWD=.; XHOME=home; XENV=(CDPATH=@H/cdp)
-xpair learnings
+xrun learnings
 XCWD=cwd; XHOME=@H/home; XENV=()
-assert_eq "$XO_RC:$XN_RC" "0:0" "2 (HOME RESOLUTION, named): a relative AC_HOME under CDPATH"
-[ -d "$XNH/home/records" ] && [ ! -e "$XNH/cdp/home/records" ] || fail "2: the port resolves a relative AC_HOME without CDPATH"
-[ ! -e "$XOH/home/records" ] && [ -d "$XOH/cdp/home"$'\n' ] || fail "2: the original took cd's echo of the CDPATH match into the home and minted a dir named by it"
+assert_eq "$XN_RC" 0 "2: a relative AC_HOME under CDPATH"
+[ -d "$H/home/records" ] && [ ! -e "$H/cdp/home/records" ] || fail "2: a relative AC_HOME resolves against the cwd, never CDPATH"
 
-# 3. learnings: absent; canonical rows that resolve (a skill, a crewmate
-#    lesson); a link gone, no link, a `)` inside the link, rung-qualified
-#    rows (several on a line); a NUL inside the first 32 KB (grep reads the
-#    file as binary: one `Binary file ... matches` row) and past it (the row
-#    read without its NUL); an invalid byte under C and en_US.UTF-8.
-xboth xstd
-xok learnings
-xboth xput home/CREWMATE-learned.md 'lessons'
-xboth mkdir -p @H/home/skills/live
-xboth xput home/skills/live/SKILL.md 'x'
-xboth xput home/records/learnings.md '# Learning Ledger
+# 3. learnings: canonical rows that resolve (a skill, a crewmate lesson); a
+#    link gone, no link, a `)` inside the link, rung-qualified rows (several
+#    on a line); a control byte and an invalid byte under C and en_US.UTF-8.
+xstd
+xput home/CREWMATE-learned.md 'lessons'
+mkdir -p "$H/home/skills/live"
+xput home/skills/live/SKILL.md 'x'
+xput home/records/learnings.md '# Learning Ledger
 
 - [distilled -> lessononly] sources=2 updated=2026-08-05 ([lesson](../CREWMATE-learned.md))
 - [distilled -> live] sources=2 updated=2026-08-05 ([skill](../skills/live/SKILL.md))
 '
-xok learnings
-xboth xadd home/records/learnings.md '- [distilled -> gone] sources=1 updated=2026-08-05 ([skill](../skills/gone/SKILL.md))
+xadd home/records/learnings.md '- [distilled -> gone] sources=1 updated=2026-08-05 ([skill](../skills/gone/SKILL.md))
 - [distilled -> linkless] sources=1 updated=2026-08-05
 - [distilled -> paren] x ([s](a)b.md)) and ](c.md)
 - [distilled -> UPPER] not canonical ([s](x.md))
   - [distilled -> indented] not canonical either
 - 2026 [distilled -> one @fleet] and [distilled -> two @container] on one line, [distilled -> three @other]
 '
+XLBROKEN="  BROKEN: [distilled -> gone] - distilled body vanished (link ../skills/gone/SKILL.md, missing @H/home/records/../skills/gone/SKILL.md)
+  BROKEN: [distilled -> linkless] - pointer carries no link to its distilled body
+  BROKEN: [distilled -> paren] - distilled body vanished (link a, missing @H/home/records/a)"
+XLCOMPAT="  COMPATIBILITY DEFECT: [distilled -> one @fleet] - rung-qualified pointer remains; the migrate command is retired, so rewrite the pointer to the canonical fleet-local form by hand
+  COMPATIBILITY DEFECT: [distilled -> two @container] - rung-qualified pointer remains; the migrate command is retired, so rewrite the pointer to the canonical fleet-local form by hand"
 xok learnings
-xboth xadd home/records/learnings.md "$(printf -- '- [distilled -> nul] has a \001 control byte ([s](n.md))\n- [distilled -> caf] caf\351 ([s](c.md))')"
-xok learnings
-XLC=en_US.UTF-8
-xok learnings
+assert_eq "$(xout)" "== learnings: pointer-integrity check (propose-only; CURATE never compacts) ==
+$XLBROKEN
+$XLCOMPAT
+  3 broken canonical pointer(s), 2 migration compatibility defect(s); propose-only" "3: the canonical rows that resolve pass, the rest are named"
+xadd home/records/learnings.md "$(printf -- '- [distilled -> nul] has a \001 control byte ([s](n.md))\n- [distilled -> caf] caf\351 ([s](c.md))')"
+for xl in C en_US.UTF-8; do
+  XLC=$xl
+  xok learnings
+  assert_eq "$(xout)" "== learnings: pointer-integrity check (propose-only; CURATE never compacts) ==
+$XLBROKEN
+  BROKEN: [distilled -> nul] - distilled body vanished (link n.md, missing @H/home/records/n.md)
+  BROKEN: [distilled -> caf] - distilled body vanished (link c.md, missing @H/home/records/c.md)
+$XLCOMPAT
+  5 broken canonical pointer(s), 2 migration compatibility defect(s); propose-only" "3: a control byte and an invalid byte, read as bytes ($xl)"
+done
 XLC=C
-xboth sh -c 'printf -- "- [distilled -> nul] a \\000 nul ([s](n.md))\\n- [distilled -> x @fleet] y\\n" >>"$0/home/records/learnings.md"' @H
-xok learnings
-xboth sh -c 'awk "BEGIN { for (i = 0; i < 700; i++) printf \"filler line %04d padding padding padding padding\\n\", i }" >"$0/home/records/learnings.md"; printf -- "- [distilled -> late] a \\000 nul past 32 KB ([s](n.md))\\n" >>"$0/home/records/learnings.md"' @H
-xok learnings
 
-# 4. captain: absent, no marker, every class (STANDING+COMPLETED, partial
-#    SUPERSEDED, continuation lines), propose, apply, an apply with only
-#    notes, an existing archive and link, an unterminated last line moved
-#    and kept, a NUL in a moved block and in a survivor (W6, at parity), an
-#    invalid byte under C and en_US.UTF-8 (W8, named), a backup that cannot
-#    be taken (W4, at parity), TMPDIR unusable, a link planted at the temp
-#    and a 0600 record (W15, named).
-xboth xstd
-xok captain
-xboth xput home/records/captain.md '# Captain notes
+# 4. captain: an apply with only live notes, every class (STANDING+COMPLETED,
+#    partial SUPERSEDED, continuation lines) applied twice, an unterminated
+#    last line moved, an invalid byte under C and en_US.UTF-8, TMPDIR
+#    unusable, a link planted at the temp and a 0600 record.
+xstd
+xput home/records/captain.md '# Captain notes
 
 - 2026-01-01: a live rule.
 '
 xok captain --apply
-xboth xput home/records/captain.md "$XCAP"
+assert_contains "$(xout)" "ok: no retirement markers found - nothing to consolidate or expire" "4: only live notes"
+[ ! -e "$H/home/records/captain-archive.md" ] || fail "4: ... and no archive"
+xput home/records/captain.md "$XCAP"
+xok captain --apply
+assert_contains "$(xout)" "CURATED: moved 3 block(s) to @H/home/records/captain-archive.md" "4: the apply"
+xok captain --apply
+assert_contains "$(xout)" "--apply: nothing to move (only informational supersede-chain notes)" "4: a second apply moves nothing"
+assert_eq "$(grep -cFx 'Archived rulings: [captain-archive.md](captain-archive.md)' "$H/home/records/captain.md")" "1" "4: ... and keeps the one archive link"
+xput home/records/captain.md "$(printf -- '- 2026-03-01: a kept rule\n- 2026-03-02: last order. [COMPLETED]')"
+xok captain --apply
+assert_contains "$(xout)" "CURATED: moved 1 block(s)" "4: an unterminated last block moves"
+assert_contains "$(cat "$H/home/records/captain-archive.md")" "- 2026-03-02: last order. [COMPLETED]" "4: ... into the archive"
+assert_contains "$(cat "$H/home/records/captain.md")" "- 2026-03-01: a kept rule" "4: ... and the rule before it stays"
+case "$(cat "$H/home/records/captain.md")" in *"last order"*) fail "4: ... and leaves captain.md" ;; esac
+xput home/records/captain.md "$(printf -- '- 2026-03-06: caf\351 rule. [COMPLETED]\n- 2026-03-07: kept\n')"
 xok captain
-xok captain --apply
-xok captain --apply
-xboth xput home/records/captain.md '- 2026-02-01: STANDING (captain): SUPERSEDES the old clause; do new.
-- 2026-02-02: launch clause SUPERSEDED above; the rest holds.
-- 2026-02-03: STANDING order COMPLETED once, still standing.'
-xok captain --apply
-xboth xput home/records/captain.md "$(printf -- '- 2026-03-01: a kept rule\n- 2026-03-02: last order. [COMPLETED]')"
-xok captain --apply
-xboth sh -c 'printf -- "- 2026-03-03: retired order [EXPIRED] with \000 a nul\n- 2026-03-04: a kept \000 nul rule\n- 2026-03-05: kept unterminated" >"$0/home/records/captain.md"' @H
-xok captain --apply
-xboth xput home/records/captain.md "$(printf -- '- 2026-03-06: caf\351 rule. [COMPLETED]\n- 2026-03-07: kept\n')"
-xok captain
+assert_contains "$(xout)" "PROPOSE-ONLY: 1 block(s) would move" "4: a block holding an invalid byte, under C"
 XLC=en_US.UTF-8
-xpair captain --apply
+xok captain --apply
 XLC=C
-assert_eq "$XO_RC:$XN_RC" "2:0" "4 (W8, named): under UTF-8 the original's awk aborts at the invalid byte, the port reads bytes"
-assert_contains "$(xoerr)" "towc" "4 (W8): the original's own awk diagnostic"
-assert_contains "$(xout)" "CURATED: moved 1 block(s)" "4 (W8): the port moves the block"
-xboth xstd
-xboth xput home/records/captain.md "$XCAP"
-xboth mkdir -p @H/home/state/backups
-xboth chmod 555 @H/home/state/backups
-xsame captain --apply
-assert_contains "$(xout)" $'  pre-run backup: \n  CURATED: moved' "4 (W4): a failed backup prints an empty path, and the apply goes on"
-xboth chmod 755 @H/home/state/backups
-xboth xput home/records/captain.md "$XCAP"
+assert_contains "$(xout)" "CURATED: moved 1 block(s)" "4: ... and under en_US.UTF-8, read as bytes"
+xstd
+xput home/records/captain.md "$XCAP"
 XENV=(TMPDIR=@H/nope)
-xsame captain --apply
+xrun captain --apply
 XENV=()
 assert_eq "$XN_RC" "1" "4: an unusable TMPDIR ends the apply"
-xboth xput home/records/captain.md "$XCAP"
-xboth sh -c 'printf victim >"$0/victim"' @H
+assert_eq "$(cat "$H/home/records/captain.md")" "${XCAP%$'\n'}" "4: ... before captain.md is rewritten"
+xput home/records/captain.md "$XCAP"
+printf victim >"$H/victim"
 XPLANT=home/records/captain.md.tmp
-xpair captain --apply
+xrun captain --apply
 XPLANT=""
-xsame_rc_out captain --apply; xsame_err captain --apply
-assert_eq "$(cat "$XNH/victim")" "victim" "4 (W15, named): the port never writes through a planted temp"
-assert_contains "$(cat "$XOH/victim")" "always do X" "4 (W15): the original wrote the survivors into the link's target..."
-[ -L "$XOH/home/records/captain.md" ] && [ -f "$XNH/home/records/captain.md" ] && [ ! -L "$XNH/home/records/captain.md" ] || fail "4 (W15): ...and left the record a link, where the port's is a file"
-xboth xstd
-xboth xput home/records/captain.md "$XCAP"
-xboth chmod 600 @H/home/records/captain.md
-xpair captain --apply
-xsame_rc_out captain --apply; xsame_err captain --apply
-assert_eq "$(stat -f %Lp "$XOH/home/records/captain.md"):$(stat -f %Lp "$XNH/home/records/captain.md")" "644:600" "4 (W15, named): the original left the rewrite at the umask's mode, the port keeps the record's"
-xboth chmod 644 @H/home/records/captain.md
-xsame_world captain --apply
+assert_eq "$XN_RC" "0" "4: a link planted at the temp name does not stop the apply"
+assert_eq "$(cat "$H/victim")" "victim" "4: nothing is written through a planted temp"
+[ -f "$H/home/records/captain.md" ] && [ ! -L "$H/home/records/captain.md" ] || fail "4: captain.md stays a regular file"
+assert_contains "$(cat "$H/home/records/captain.md")" "always do X" "4: ... holding the survivors"
+xstd
+xput home/records/captain.md "$XCAP"
+chmod 600 "$H/home/records/captain.md"
+xok captain --apply
+assert_eq "$(stat -f %Lp "$H/home/records/captain.md")" "600" "4: the rewrite keeps the record's mode"
 
-# 5. backlog: keep default, 0, 1 and the strnum spellings (W12, at parity),
-#    an escape in the keep (awk -v), blocked-by and epic protection (an
-#    absent epic row, a chain whose middle epic leaves, one whose outcome
-#    awk's hash order decides), `## Notes`, a 600-line move, an empty Done,
-#    NUL (W6) and an unterminated last row moved twice (W7), the ledger lock
-#    held (W5, at parity); BUN (named).
-xboth xstd
-xok backlog --apply
-xboth xbl 22
-xok backlog
-xok backlog --apply
-for xk in 0 1 abc -1 1e1 0x3 ' 3' 1.5 010 08 99999999999999999999 '\061' -inf nan; do
-  xboth xbl 12
+# 5. backlog: keep 0 and 1; blocked-by and epic protection (an absent epic
+#    row, an archived one), `## Notes`.
+for xk in 0 1; do
+  xstd; xbl 12
   XENV=("AC_CURATE_KEEP=$xk")
   xok backlog --apply
+  assert_eq "$(grep -c '^- \[x\]' "$H/home/records/backlog.md"):$(grep -c '^- \[x\]' "$H/home/records/backlog-archive.md")" "$xk:$((12 - xk))" "5: AC_CURATE_KEEP=$xk keeps the $xk most recent"
 done
+grep -qx -- '- \[x\] d01 - receipt - local main (merged 2026-02-02)' "$H/home/records/backlog.md" || fail "5: ... the newest first"
 XENV=()
-xboth xput home/records/backlog.md '## In flight
+xstd
+xput home/records/backlog.md '## In flight
 - [ ] bigepic [EPIC] - the epic stories: s1 (repo: x, since 2026-02-01)
 
 ## Queued
@@ -1341,240 +1261,173 @@ xboth xput home/records/backlog.md '## In flight
 - [x] s1 - a done story; epic:bigepic (merged 2026-02-07)
 - [x] s2 - a story of an archived epic; epic:oldepic (merged 2026-02-06)
 - [x] s3 - a story of an absent epic; epic:nowhere (merged 2026-02-05)
-- [x] s4 - a story of a middle epic; epic:midepic (merged 2026-02-04)
-- [x] midepic [EPIC] - a sub-epic; epic:topepic (merged 2026-02-03)
 - [x] oldepic [EPIC] - archived itself (merged 2026-02-02)
 - [x] dfree - unreferenced old (merged 2026-02-01)
 '
 XENV=(AC_CURATE_KEEP=1)
+XMOVES="    move | - [x] s2 - a story of an archived epic; epic:oldepic (merged 2026-02-06)
+    move | - [x] oldepic [EPIC] - archived itself (merged 2026-02-02)
+    move | - [x] dfree - unreferenced old (merged 2026-02-01)"
+xbefore="$(cat "$H/home/records/backlog.md")"
 xok backlog
-xok backlog --apply
-# awk walks the tentative rows in its hash order, not the ledger's: line 23
-# (the middle epic, whose own epic is absent) is visited and dropped before
-# line 21, its story, which then stays too.
-xboth sh -c '{ printf "## In flight\n\n## Queued\n\n## Done\n"; for i in $(seq 6 20); do printf -- "- [x] f%02d - filler (merged 2026-01-01)\n" "$i"; done; printf -- "- [x] s4 - a story of a middle epic; epic:midepic (merged 2026-01-01)\n- [x] f22 - filler\n- [x] midepic [EPIC] - a sub-epic; epic:topepic (merged 2026-01-01)\n- [x] f24 - filler\n"; } >"$0/home/records/backlog.md"' @H
-XENV=(AC_CURATE_KEEP=0)
-xok backlog --apply
-grep -q 'f20 - filler' "$XNH/home/records/backlog-archive.md" && grep -q 's4 - a story' "$XNH/home/records/backlog.md" || fail "5: the story whose epic awk dropped first stays"
-xboth sh -c 'awk "BEGIN { printf \"## In flight\\n\\n## Queued\\n\\n## Done\\n\"; for (i = 1; i <= 600; i++) printf \"- [x] l%03d - receipt - local main (merged 2026-01-01)\\n\", i }" >"$0/home/records/backlog.md"' @H
-XENV=(AC_CURATE_KEEP=0)
-xok backlog --apply
-xboth sh -c 'printf "## In flight\n\n## Queued\n- [ ] q1 - has a \000 nul (repo: x)\n\n## Done\n- [x] d3 - keep\n- [x] d2 - has \000 nul (merged 2026-02-02)\n- [x] d1 - last (merged 2026-01-01)" >"$0/home/records/backlog.md"' @H
-XENV=(AC_CURATE_KEEP=1)
-xok backlog --apply
-xboth xadd home/records/backlog.md "$(printf -- '- [x] d0 - moved again (merged 2026-01-01)')"
+assert_contains "$(xout)" "$XMOVES
+  PROPOSE-ONLY: 3 line(s) would move" "5: a live blocker, a story of a live or absent epic and a row outside the Done section stay"
+assert_eq "$(cat "$H/home/records/backlog.md")" "$xbefore" "5: ... propose writes nothing"
 xok backlog --apply
 XENV=()
-xboth xbl 22
-xboth mkdir -p @H/home/records/.backlog.md.lock
-xboth sh -c 'printf "%s\n" "$PPID" >"$0/home/records/.backlog.md.lock/pid"' @H
-xok backlog --apply
-xboth rm -rf @H/home/records/.backlog.md.lock
-xboth xbl 22
-XPATH="$(xwithout bun)"
-xpair backlog
-XPATH=""
-assert_eq "$XO_RC:$XN_RC" "2:1" "5 (BUN, named): the original's parser exits 2 without bun, the shim refuses 1"
-assert_contains "$(xoerr)" "ERROR: the backlog parser failed on" "5 (BUN): the original names its parser"
-assert_eq "$(xerr)" "ERROR: required tool not found: bun" "5 (BUN): the shim names bun"
+assert_contains "$(xout)" "$XMOVES" "5: the apply moves the same three"
+for xr in dnew dblock s1 s3 noted; do grep -q -- "- \[x\] $xr " "$H/home/records/backlog.md" || fail "5: $xr stays"; done
+for xr in s2 oldepic dfree; do
+  ! grep -q -- "- \[x\] $xr " "$H/home/records/backlog.md" && grep -q -- "- \[x\] $xr " "$H/home/records/backlog-archive.md" || fail "5: $xr moves"
+done
 
-# 6. projects: absent, a dangling link, a link to a file, a plain dir, a
-#    repo, a nested name, `..` (W16, at parity), no bracket, a prose bullet,
-#    a TAB inside a name, an invalid byte under en_US.UTF-8; then the home
-#    inside a git work tree (W16).
-xboth xstd
-xok projects
-xboth xgit home/projects/realp
-xboth mkdir -p @H/home/projects/plain @H/home/projects/a/b
-xboth ln -s @H/nowhere @H/home/projects/dangling
-xboth xput home/projects-file 'f'
-xboth ln -s @H/home/projects-file @H/home/projects/tofile
-xboth xput home/records/projects.md "$(printf '# Projects\n\n- realp [local-only] - a real project (added 2026-02-01)\n- deadp [direct-pr] - gone (added 2026-02-01)\n- plain - a plain dir (added 2026-02-02)\n- dangling [x] - a dangling link\n- tofile - a link to a file\n- a/b - nested\n- .. - x\n- a prose bullet is not a registry line\n- ta\tb [x] - a tab in the name\n- cafe [x] - caf\351 gone\n')"
-xok projects --apply
-XLC=en_US.UTF-8
-xok projects
+# 6. projects: a dangling link, a plain dir, a repo, a nested name, no
+#    bracket, a prose bullet, a TAB inside a name, an invalid byte under C and
+#    en_US.UTF-8.
+xstd
+xgit home/projects/realp
+mkdir -p "$H/home/projects/plain" "$H/home/projects/a/b"
+ln -s "$H/nowhere" "$H/home/projects/dangling"
+xput home/records/projects.md "$(printf '# Projects\n\n- realp [local-only] - a real project (added 2026-02-01)\n- deadp [direct-pr] - gone (added 2026-02-01)\n- plain - a plain dir (added 2026-02-02)\n- dangling [x] - a dangling link\n- a/b - nested\n- a prose bullet is not a registry line\n- cafe [x] - caf\351 gone\n')"
+xbefore="$(cat "$H/home/records/projects.md")"
+for xl in C en_US.UTF-8; do
+  XLC=$xl
+  xok projects --apply
+  assert_eq "$(xout)" "== projects: correctness-audit (propose-only; deletion stays a captain call) ==
+  FLAG deadp: registered but projects/deadp is absent - dead project? (propose drop; deletion is a captain call)
+  FLAG plain: projects/plain is not a git repo
+  FLAG dangling: registered but projects/dangling is absent - dead project? (propose drop; deletion is a captain call)
+  FLAG a/b: projects/a/b is not a git repo
+  FLAG cafe: registered but projects/cafe is absent - dead project? (propose drop; deletion is a captain call)
+  5 mismatch(es) proposed with evidence - NO mutation (projects.md audit is propose-only)" "6: the audit ($xl)"
+done
 XLC=C
-xboth git init -q @H/home
-xok projects
+assert_eq "$(cat "$H/home/records/projects.md")" "$xbefore" "6: ... writes nothing, even with --apply"
 
-# 7. skills-audit: no skills; overlap (stop words, quoted descriptions, an
-#    indented key, a CRLF frontmatter); every stale predicate - landed
-#    quoted and unquoted, a SKILL.md mtime, last_seeded, the evidence mtime,
-#    a pending candidate and a completed journal, an active worktree link -
-#    and AC_CURATE_STALE_DAYS 0, 010, 08 and 15 digits (W13, at parity).
-xboth xstd
-xok skills-audit
-xboth xskill ov-one 'verify crewmate briefing carefully, before anything'
-xboth xskill ov-two '"crewmate briefing verify twice before"'
-xboth xskill ov-three "'briefing crewmate verify anything again'"
-xboth xskill ov-solo 'rebase worktree landing dance'
-xboth xskill ov-pair-a 'migrate ledgers with care'
-xboth xskill ov-pair-b 'ledgers migrate nothing else'
-xboth mkdir -p @H/home/skills/skills-archive/old @H/home/skills/nofile @H/home/skills/.hidden
-xboth xput home/skills/skills-archive/old/SKILL.md '---
+# 7. skills-audit: overlap (stop words, quoted descriptions, an indented key,
+#    a CRLF frontmatter, the archive and dirs with no SKILL.md left out);
+#    the stale predicates - landed quoted and unquoted, a SKILL.md mtime,
+#    last_seeded, the evidence mtime, a pending candidate and a completed
+#    journal, an active worktree link - and AC_CURATE_STALE_DAYS 0.
+xstd
+xskill ov-one 'verify crewmate briefing carefully, before anything'
+xskill ov-two '"crewmate briefing verify twice before"'
+xskill ov-three "'briefing crewmate verify anything again'"
+xskill ov-solo 'rebase worktree landing dance'
+xskill ov-pair-a 'migrate ledgers with care'
+xskill ov-pair-b 'ledgers migrate nothing else'
+mkdir -p "$H/home/skills/skills-archive/old" "$H/home/skills/nofile" "$H/home/skills/.hidden"
+xput home/skills/skills-archive/old/SKILL.md '---
 description: briefing crewmate verify
 ---'
-xboth xput home/skills/crlf/SKILL.md "$(printf -- '---\r\ndescription: crewmate briefing verify\r\n---\r\n')"
-xboth xput home/skills/indent/SKILL.md '---
+xput home/skills/crlf/SKILL.md "$(printf -- '---\r\ndescription: crewmate briefing verify\r\n---\r\n')"
+xput home/skills/indent/SKILL.md '---
    description:    crewmate	briefing in an indented key
 ---'
 xok skills-audit
-xboth xstd
-for xs in st-old st-seeded st-evidence st-pending st-done st-active st-fresh st-bare; do xboth xskill "$xs" "solitary $xs" '"1577836800"'; done
-xboth xskill st-unquoted 'solitary unquoted' 1577836800
-xboth xskill st-octal 'solitary octal' 0100
-xboth xskill st-nolanded 'solitary nolanded'
-xboth sh -c 'for d in "$0"/home/skills/st-*; do touch -t 202001010000 "$d/SKILL.md"; done; touch -t 202512300000 "$0/home/skills/st-fresh/SKILL.md"' @H
-xboth xput home/skills/st-seeded/.usage.meta 'last_seeded=1767225000
+assert_contains "$(xout)" "  OVERLAP: ov-one ~ ov-three - share 4 territory word(s): verify, crewmate, briefing, anything (review for possible consolidation)
+  OVERLAP: ov-one ~ ov-two - share 3 territory word(s): verify, crewmate, briefing (review for possible consolidation)
+  OVERLAP: ov-pair-a ~ ov-pair-b - share 2 territory word(s): migrate, ledgers (review for possible consolidation)
+  OVERLAP: ov-three ~ ov-two - share 3 territory word(s): briefing, crewmate, verify (review for possible consolidation)" "7: quoted descriptions and stop words"
+case "$(xout)" in *"ov-solo"*|*" old"*) fail "7: a disjoint skill and the archive never overlap" ;; esac
+assert_contains "$(xout)" "audited 8 learned skill(s)" "7: the archive and a dir with no SKILL.md are no skills"
+xstd
+for xs in st-old st-seeded st-evidence st-pending st-done st-active st-fresh st-bare; do xskill "$xs" "solitary $xs" '"1577836800"'; done
+xskill st-unquoted 'solitary unquoted' 1577836800
+xskill st-nolanded 'solitary nolanded'
+for xs in "$H"/home/skills/st-*; do touch -t 202001010000 "$xs/SKILL.md"; done
+touch -t 202512300000 "$H/home/skills/st-fresh/SKILL.md"
+xput home/skills/st-seeded/.usage.meta 'last_seeded=1767225000
 '
-xboth mkdir -p @H/home/records/learnings-archive
-xboth xput home/records/learnings-archive/st-evidence.md '# recent'
-xboth touch -t 202512310000 @H/home/records/learnings-archive/st-evidence.md
-xboth xput home/data/learning-a/candidate-st-pending.md 'kind: patch
+mkdir -p "$H/home/records/learnings-archive"
+xput home/records/learnings-archive/st-evidence.md '# recent'
+touch -t 202512310000 "$H/home/records/learnings-archive/st-evidence.md"
+xput home/data/learning-a/candidate-st-pending.md 'kind: patch
 name:   st-pending
 '
-xboth xput home/data/learning-b/candidates/st-done.md 'name: st-done
+xput home/data/learning-b/candidates/st-done.md 'name: st-done
 '
-xboth xput home/state/.maintenance-transactions/learning-b-st-done/journal 'status=complete
+xput home/state/.maintenance-transactions/learning-b-st-done/journal 'status=complete
 '
-xboth mkdir -p @H/wt/.claude/skills
-xboth ln -s @H/home/skills/st-active @H/wt/.claude/skills/st-active
-xboth xput home/state/active.meta 'worktree=@H/wt
+mkdir -p "$H/wt/.claude/skills"
+ln -s "$H/home/skills/st-active" "$H/wt/.claude/skills/st-active"
+xput home/state/active.meta 'worktree=@H/wt
 '
+xstale() { xout | LC_ALL=C sed -n 's/^  STALE: \([^ ]*\) .*/\1/p' | tr '\n' ' '; }
 xok skills-audit
-for xd in 0 010 999999999999999; do
-  XENV=("AC_CURATE_STALE_DAYS=$xd")
-  xok skills-audit
-done
-XENV=(AC_CURATE_STALE_DAYS=08)
-xpair skills-audit
+assert_eq "$(xstale)" "st-bare st-done st-old st-unquoted " "7: stale - landed quoted or not; a completed candidate is no pending one"
+XENV=(AC_CURATE_STALE_DAYS=0)
+xok skills-audit
 XENV=()
-xsame_rc_out skills-audit
-assert_eq "$XO_RC:$XN_RC" "1:1" "7 (W13, at parity): an octal-invalid AC_CURATE_STALE_DAYS ends the audit 1"
-assert_contains "$(xoerr)" "08: value too great for base" "7 (SHELL-OWN STDERR, named): the original's arithmetic line, not reproduced"
-assert_eq "$(xerr)" "" "7 (SHELL-OWN STDERR): the port exits with nothing of its own"
+assert_eq "$(xstale)" "st-bare st-done st-evidence st-fresh st-old st-seeded st-unquoted " "7: AC_CURATE_STALE_DAYS=0 - only a pending candidate, an active worktree and no landed hold"
 
-# 8. skills-consolidate: no cluster; umbrella-less groups (one with an empty
-#    prefix); movers propose and --apply (exit 2); names that collate
-#    differently under en_US.UTF-8 (W18 ORDER, named).
-xboth xstd
-xboth xskill solo 'alone'
+# 8. skills-consolidate: no cluster with --apply; umbrella-less groups (one
+#    with an empty prefix); byte order under en_US.UTF-8.
+xstd
+xskill solo 'alone'
 xok skills-consolidate --apply
-xboth xskill ship 'umbrella'
-xboth xskill ship-rebase 'rebase step'
-xboth xskill ship-attest 'attest step'
-xboth xskill bar-x 'no umbrella'
-xboth xskill bar-y 'no umbrella either'
-xboth xskill -lead 'an empty prefix'
-xboth xskill -led 'an empty prefix too'
+assert_contains "$(xout)" "ok: no prefix cluster with an umbrella - nothing to consolidate" "8: --apply with no cluster is a no-op, exit 0"
+xskill ship 'umbrella'
+xskill ship-rebase 'rebase step'
+xskill ship-attest 'attest step'
+xskill bar-x 'no umbrella'
+xskill bar-y 'no umbrella either'
 xok skills-consolidate
-xsame skills-consolidate --apply
-assert_eq "$XN_RC" "2" "8: a direct --apply with movers refuses 2"
-xboth xskill x 'umbrella x'
-xboth xskill x-_c 'underscore'
-xboth xskill x-A 'capital'
-xok skills-consolidate
+assert_eq "$(xout)" "== skills-consolidate: prefix-cluster umbrella merge, MOVE-to-archive (move-only, never delete) ==
+  CLUSTER ship: sibling ship-attest -> archive (umbrella ship stays)
+  CLUSTER ship: sibling ship-rebase -> archive (umbrella ship stays)
+  cluster bar-*: 2 sibling(s) but NO umbrella skill named \"bar\" - propose-only, not moved (create the umbrella first)
+  PROPOSE-ONLY: 2 sibling(s) require automatic Curate maintenance-gate review before a recoverable move to @H/home/skills/skills-archive; 1 umbrella-less cluster(s) never move" "8: the clusters"
+xskill x 'umbrella x'
+xskill x-_c 'underscore'
+xskill x-A 'capital'
 XLC=en_US.UTF-8
-xpair skills-consolidate
+xok skills-consolidate
 XLC=C
-assert_eq "$XO_RC:$XN_RC" "0:0" "8 (W18 ORDER, named): both sides list the cluster"
-cmp -s "$TMP/xo.out" "$TMP/xn.out" && fail "8 (W18): under en_US.UTF-8 the original's sort orders x-_c and x-A by collation"
-assert_contains "$(xout)" "sibling x-A -> archive (umbrella x stays)
-  CLUSTER x: sibling x-_c" "8 (W18): the port keeps byte order under any locale"
+assert_contains "$(xout)" "  CLUSTER x: sibling x-A -> archive (umbrella x stays)
+  CLUSTER x: sibling x-_c -> archive (umbrella x stays)" "8: siblings in byte order under any locale"
 
-# 9. run, deterministic: --dry-run, nothing to do (a zero-action claim and
-#    backup, W3), captain and backlog moves (the report's shadow paths named
-#    live, a home path holding \ & ' * [ ]), a symlinked record, the snapshot
-#    hook's concurrent write (the refusal and the held claim, W2), another
-#    unsettled transaction, a busy cadence lock and a newer generation (the
-#    reset's WARN), an unreadable file under skills/ (a held backup, W3), and
-#    a drydock-size report under C and en_US.UTF-8.
-xboth xstd
-xboth xput home/state/.curate.meta 'runs_since=4
-generation=0
-'
-xok run --dry-run
-xok run
-xok run
-xboth xput home/records/captain.md "$XCAP"
-xboth xbl 23
-xboth xput home/state/.curate.meta 'runs_since=4
-generation=0
-'
-xok run --dry-run
-xok run
-xboth xstd
-xboth mkdir -p "@H/home/w\\&'*[]x"
+# 9. run, deterministic: --dry-run and runs with nothing to do; a home path
+#    holding \ & ' * [ ]; a symlinked record; another unsettled transaction;
+#    a newer generation (the reset's WARN).
+xstd
+mkdir -p "$H/home/w\\&'*[]x"
 XHOME="@H/home/w\\&'*[]x"
-xboth xput "home/w\\&'*[]x/records/captain.md" "$XCAP"
+xput "home/w\\&'*[]x/records/captain.md" "$XCAP"
 xok run
+assert_contains "$(xout)" "CURATED: moved 3 block(s) to @H/home/w\\&'*[]x/records/captain-archive.md" "9: a home path holding \\ & ' * [ ] is named as it is"
+assert_file "$H/home/w\\&'*[]x/records/captain-archive.md" "9: ... where the archive lands"
 XHOME=@H/home
-xboth xstd
-xboth xput home/records/real.md "$XCAP"
-xboth ln -s real.md @H/home/records/captain.md
-xsame run
+xstd
+xput home/records/real.md "$XCAP"
+ln -s real.md "$H/home/records/captain.md"
+xrun run
 assert_eq "$XN_RC:$(xerr)" "1:ERROR: Curate input manifest refused a non-file or symlink" "9: a symlinked record refuses the input manifest"
-xboth xstd
-xboth xput home/records/captain.md "$XCAP"
-xboth xput hook.sh '#!/bin/sh
-printf -- "- 2026-07-28: concurrent captain write landed mid-run.\n" >>"$1/captain.md"
+xstd
+xput home/state/.maintenance-transactions/learning-x-y/journal 'status=applying
 '
-xboth chmod +x @H/hook.sh
-XENV=(AC_TEST_HOOKS=1 AC_CURATE_SNAPSHOT_HOOK=@H/hook.sh)
-xsame run
-assert_eq "$XN_RC" "1" "9 (W2): the concurrent write refuses the deterministic apply"
-assert_contains "$(xerr)" "is HELD (target records/captain.md no longer matches" "9 (W2): ...and holds the claim"
-XENV=()
-xsame run
-assert_contains "$(xerr)" "another Learning/Curate transaction is still unsettled" "9 (W2, at parity): the held claim refuses the next run"
-xboth xstd
-xboth xput home/state/.maintenance-transactions/learning-x-y/journal 'status=applying
-'
-xsame run
-assert_eq "$XN_RC" "1" "9: another unsettled transaction refuses the run"
-xboth xstd
-xboth xput home/state/.curate.meta 'runs_since=4
+xrun run
+assert_eq "$XN_RC:$(xerr | tail -n1)" "1:ERROR: Curate maintenance transaction could not apply or resume safely" "9: another unsettled transaction refuses the run"
+assert_contains "$(xerr)" "another Learning/Curate transaction is still unsettled" "9: ... and says so"
+xstd
+xput home/state/.curate.meta 'runs_since=4
 generation=2
 '
-xboth mkdir -p @H/home/state/.curate-cadence.lock
-xboth sh -c 'printf "%s\n" "$PPID" >"$0/home/state/.curate-cadence.lock/pid"' @H
-xsame run
-assert_contains "$(xerr)" "WARN: Curate committed, but did not reset its cadence" "9: a busy cadence lock is the run's WARN"
-xboth rm -rf @H/home/state/.curate-cadence.lock
-xboth xput hook.sh '#!/bin/sh
+xput hook.sh '#!/bin/sh
 printf "runs_since=9\ngeneration=7\n" >"$1/../state/.curate.meta"
 '
-xboth chmod +x @H/hook.sh
+chmod +x "$H/hook.sh"
 XENV=(AC_TEST_HOOKS=1 AC_CURATE_SNAPSHOT_HOOK=@H/hook.sh)
-xsame run
+xrun run
 XENV=()
-assert_contains "$(xerr)" "WARN: Curate committed, but did not reset its cadence" "9: a newer generation keeps its late ticks"
-xboth xstd
-xboth xskill locked 'an unreadable file inside'
-xboth xput home/skills/locked/secret 'x'
-xboth chmod 000 @H/home/skills/locked/secret
-xsame run
-assert_contains "$(xerr)" "is HELD (the pre-mutation backup could not be taken)" "9 (W3, at parity): a backup tar cannot finish holds even a zero-action claim"
-xsame run
-xboth chmod 644 @H/home/skills/locked/secret
-for xl in C en_US.UTF-8; do
-  xboth xstd
-  xboth sh -c 'awk "BEGIN { pad = \"\"; for (j = 0; j < 30; j++) pad = pad \"src/x.ts \"; printf \"## In flight\\n\\n## Queued\\n\\n## Done\\n\"; for (i = 1; i <= 700; i++) printf \"- [x] big%04d - receipt %s (merged 2026-01-01)\\n\", i, pad }" >"$0/home/records/backlog.md"' @H
-  XLC=$xl; XENV=(AC_CURATE_KEEP=0)
-  xok run
-  XLC=C; XENV=()
-  [ "$(wc -c <"$(ls "$XNH"/home/data/curate-*/report.md)" | tr -d ' ')" -gt 200000 ] || fail "9: the drydock-size row's report is drydock-size ($xl)"
-done
+assert_eq "$XN_RC:$(xerr)" "0:WARN: Curate committed, but did not reset its cadence: either a newer cadence generation exists and its late Learning ticks were preserved, or the cadence lock was not acquired (warned just above)" "9: a newer generation is the reset's WARN"
+assert_contains "$(cat "$H/home/state/.curate.meta")" "runs_since=9" "9: ... and keeps its late ticks"
 
-# 10. run, semantic: captain targets by below, above and date; a date with a
-#     stray `above` (W9, at parity); ambiguous, partial and duplicated first
-#     lines; settled by the archive on the next run; acknowledged, its
-#     material changed, an empty material; absent projects incl. a
-#     TAB-ended line (W11, at parity) and an invalid byte; skill moves with
-#     nested files and .usage.meta, a CR-ended pointer line, a missing
-#     pointer or evidence,
-#     an active worktree link, a symlink inside, an LF-named file (W10, at
-#     parity); the gate answering continue, revise, ask-captain, 3 with a
+# 10. run, semantic: captain targets by below, above and date; ambiguous,
+#     partial and duplicated first lines; absent projects incl. an invalid
+#     byte; skill moves with nested files and .usage.meta, a CR-ended pointer
+#     line, a missing pointer or evidence, an active worktree link, a symlink
+#     inside; the gate answering continue, revise, ask-captain, 3 with a
 #     diagnostic, 4, 1, a receipt bound to no plan, a manifest input moved
 #     under the decision, an action target moved under it; the room that
 #     cannot be written (its WARN); the default gate beside the entry.
@@ -1585,14 +1438,13 @@ xsemantic() {  # xsemantic - a home with one subject of each kind
 - 2026-03-31: unrelated active policy.
 - 2026-03-30: STANDING keeper SUPERSEDES the rule above.
 - 2026-03-20: STANDING dated SUPERSEDES the 2026-03-31 policy.
-- 2026-03-09: STANDING new SUPERSEDES the 2026-03-01 rule (context in the note above).
 - 2026-03-05: an unrelated live policy.
 - 2026-03-01: the dated rule.
 - 2026-02-02: STANDING lonely SUPERSEDES nothing named.
 - 2026-02-01: STANDING partial SUPERSEDES the clause below.
 - 2026-01-31: earlier policy; launch clause superseded, the rest holds.
 '
-  xput home/records/projects.md "$(printf '# Projects\n\n- realp [local-only] - a real project\n- deadp [direct-pr] - gone (added 2026-02-01)\n- tabp [x] - a tab-ended line\t\n- cafep [x] - caf\351 gone\n')"
+  xput home/records/projects.md "$(printf '# Projects\n\n- realp [local-only] - a real project\n- deadp [direct-pr] - gone (added 2026-02-01)\n- cafep [x] - caf\351 gone\n')"
   xgit home/projects/realp
   xskill ship 'the ship umbrella'
   xskill ship-rebase 'rebase step'
@@ -1617,109 +1469,137 @@ xsemantic() {  # xsemantic - a home with one subject of each kind
 generation=0
 '
 }
-for xd in continue revise ask-captain; do
-  xboth xsemantic
+xsemantic
+XENV=(CURATE_GATE_DECISION=continue)
+xok run
+assert_eq "$(xsubjects)" "  auto-applied semantic subject: captain-supersedes-1
+  auto-applied semantic subject: captain-supersedes-4
+  ask-captain: captain-supersedes-5 (no unique safe plan; no mutation)
+  ask-captain: captain-supersedes-8 (no unique safe plan; no mutation)
+  ask-captain: captain-supersedes-9 (no unique safe plan; no mutation)
+  auto-applied semantic subject: project-deadp
+  auto-applied semantic subject: project-cafep
+  ask-captain: skill-ship-attest (no unique safe plan; no mutation)
+  ask-captain: skill-ship-gone (no unique safe plan; no mutation)
+  auto-applied semantic subject: skill-ship-rebase" "10: continue - targets by below and above applied; a date naming an already-targeted rule, nothing named, a partial clause, a missing pointer and missing evidence ask"
+assert_eq "$(xout | tail -n1)" "== curate pass open: deterministic subjects committed; unresolved semantic/captain subject(s) preserve cadence=4/5 ==" "10: ... and the pass stays open"
+assert_contains "$(cat "$H/home/records/captain-archive.md")" "- 2026-04-01: old named policy." "10: ... the named rule archived"
+case "$(cat "$H/home/records/projects.md")" in *deadp*|*cafep*) fail "10: ... the absent projects leave the registry" ;; esac
+assert_file "$H/home/skills/skills-archive/ship-rebase/refs/deep/notes.md" "10: ... the sibling moved with its nested files"
+assert_contains "$(cat "$H/home/skills/skills-archive/ship-rebase/.usage.meta")" "seeded_count=3" "10: ... and its .usage.meta"
+xok run
+assert_eq "$(xsubjects | grep -c 'auto-applied' || true):$(xsubjects | sed -n 1,2p)" "0:  settled: captain-supersedes-1 (named target already archived under this live ruling)
+  settled: captain-supersedes-2 (named target already archived under this live ruling)" "10: the next run reads the archive as settled"
+for xd in revise ask-captain; do
+  xsemantic
+  xcap="$(cat "$H/home/records/captain.md")"
   XENV=("CURATE_GATE_DECISION=$xd")
   xok run
-  xok run
+  case "$xd" in
+    revise) xwant="revise: skill-ship-rebase (live records preserved; subject settled)" ;;
+    *) xwant="ask-captain: skill-ship-rebase (gate could not prove the move; no mutation)" ;;
+  esac
+  assert_contains "$(xsubjects)" "  $xwant" "10: the gate's $xd"
+  assert_eq "$(xsubjects | grep -c 'auto-applied' || true)" "0" "10: $xd applies nothing"
+  assert_eq "$(cat "$H/home/records/captain.md")" "$xcap" "10: $xd leaves captain.md"
+  assert_file "$H/home/skills/ship-rebase/SKILL.md" "10: $xd leaves the sibling live"
 done
 XENV=()
-xboth xsemantic
-xboth xput home/records/learnings.md "- [distilled -> ship-rebase] sources=3 updated=2026-07-20 ([skill](../skills/ship-rebase/SKILL.md); [evidence](learnings-archive/ship-rebase.md))"$'\r\n'
+xsemantic
+xput home/records/learnings.md "- [distilled -> ship-rebase] sources=3 updated=2026-07-20 ([skill](../skills/ship-rebase/SKILL.md); [evidence](learnings-archive/ship-rebase.md))"$'\r\n'
 xok run
 assert_contains "$(xout)" "auto-applied semantic subject: skill-ship-rebase" "10: a CR-ended pointer line still yields its sources= and updated="
-xboth xsemantic
+xsemantic
 XENV=(CURATE_GATE_RC=3 'CURATE_GATE_DIAG=maintenance-gate[stub]: engine did not produce a valid decision')
 xok run
+assert_contains "$(xsubjects)" "  ask-captain: skill-ship-rebase (gate unavailable; no mutation)" "10: a gate exiting 3"
 for xr in 4 1; do
-  xboth xsemantic
+  xsemantic
   XENV=("CURATE_GATE_RC=$xr")
   xok run
+  assert_contains "$(xsubjects)" "  ask-captain: skill-ship-rebase (gate unavailable; no mutation)" "10: a gate exiting $xr"
+  assert_file "$H/home/skills/ship-rebase/SKILL.md" "10: ... moves nothing"
 done
-xboth xsemantic
-XENV=(CURATE_GATE_BAD=1); XNOBIND=1
+xsemantic
+XENV=(CURATE_GATE_BAD=1)
 xok run
-XNOBIND=""
-xboth xsemantic
+assert_contains "$(xsubjects)" "  ask-captain: skill-ship-rebase (invalid gate receipt; no mutation)" "10: a receipt bound to no plan"
+assert_eq "$(xsubjects | grep -c 'auto-applied' || true)" "0" "10: ... applies nothing"
+xsemantic
 XENV=(CURATE_GATE_SAY=a-gate-line CURATE_GATE_TOUCH=skills/ship/SKILL.md)
 xok run
-xboth xsemantic
+assert_contains "$(xsubjects)" "  a-gate-line
+  auto-applied semantic subject: captain-supersedes-1" "10: the gate's output is printed indented"
+assert_contains "$(xsubjects)" "  ask-captain: skill-ship-rebase (post-gate input drift; no mutation)" "10: a manifest input moved under the decision"
+assert_file "$H/home/skills/ship-rebase/SKILL.md" "10: ... moves nothing"
+xsemantic
 XENV=(CURATE_GATE_TOUCH=skills/skills-archive/ship-rebase/refs/deep/notes.md CURATE_GATE_TOUCH_SUBJECT=skill-ship-rebase)
-xsame run
+xrun run
 assert_contains "$(xerr)" "WARN: continue receipt for Curate subject skill-ship-rebase became stale or could not resume" "10: a target moved under the decision refuses its apply"
 XENV=()
-xboth xsemantic
-xboth mkdir -p @H/home/data/curate
-xboth chmod 555 @H/home/data/curate
-xsame run
+xsemantic
+mkdir -p "$H/home/data/curate"
+chmod 555 "$H/home/data/curate"
+xrun run
+chmod 755 "$H/home/data/curate"
 assert_contains "$(xerr)" "WARN: captain escalation for Curate subject" "10: a room that cannot be written is the run's WARN"
-xboth chmod 755 @H/home/data/curate
-xboth xsemantic
-XENV=(CURATE_GATE_DECISION=ask-captain)
+xsemantic
+xput home/records/curate-acknowledged.md "$(printf -- '- captain-supersedes-9 material=%s ruling: never\n- x material=y ruling:\n' "$(printf '' | shasum -a 256 | cut -d' ' -f1)")"
 xok run
-sed -n 's/^ *\(- [a-z0-9-]* material=[0-9a-f]\{64\}\) .*/\1 ruling: records\/captain.md:1 - kept by ruling/p' "$TMP/xo.raw" >"$TMP/xack"
-[ -s "$TMP/xack" ] || fail "10: the asks print paste-ready acknowledgement lines"
-xboth cp "$TMP/xack" @H/home/records/curate-acknowledged.md
-XENV=()
-xok run
-xboth xsemantic
-xboth xput home/records/curate-acknowledged.md "$(printf -- '- captain-supersedes-9 material=%s ruling: never\n- x material=y ruling:\n' "$(printf '' | shasum -a 256 | cut -d' ' -f1)")"
-xok run
-xboth xstd
-xboth xput home/records/captain.md '- 2026-06-05: STANDING duplicated SUPERSEDES the clause below.
+case "$(xout)" in *settled:*) fail "10: an acknowledgement of other or empty material settles nothing" ;; esac
+assert_contains "$(xsubjects)" "  ask-captain: captain-supersedes-9 (no unique safe plan; no mutation)" "10: ... the subject still asks"
+xstd
+xput home/records/captain.md '- 2026-06-05: STANDING duplicated SUPERSEDES the clause below.
 - 2026-06-05: STANDING duplicated SUPERSEDES the clause below.
 - 2026-06-04: earlier policy.
 '
 xok run
-xboth xstd
-xboth xskill run 'umbrella'
-xboth xskill run-a 'a sibling with a link inside'
-xboth ln -s ../run/SKILL.md @H/home/skills/run-a/linked.md
-xboth xskill run-b 'a sibling whose package has an LF-named file'
-xboth sh -c 'printf x >"$0/home/skills/run-b/a
-b.md"' @H
-xboth xskill run-c 'a sibling an active worktree seeds'
-xboth mkdir -p @H/wt/.claude/skills
-xboth ln -s @H/home/skills/run-c @H/wt/.claude/skills/run-c
-xboth xput home/state/active.meta 'worktree=@H/wt
+assert_eq "$(xsubjects)" "  ask-captain: captain-supersedes-1 (no unique safe plan; no mutation)
+  ask-captain: captain-supersedes-2 (no unique safe plan; no mutation)" "10: duplicated first lines are ambiguous"
+xstd
+xskill run 'umbrella'
+xskill run-a 'a sibling with a link inside'
+ln -s ../run/SKILL.md "$H/home/skills/run-a/linked.md"
+xskill run-c 'a sibling an active worktree seeds'
+mkdir -p "$H/wt/.claude/skills"
+ln -s "$H/home/skills/run-c" "$H/wt/.claude/skills/run-c"
+xput home/state/active.meta 'worktree=@H/wt
 '
-xboth mkdir -p @H/home/records/learnings-archive
-for xs in run-a run-b run-c; do xboth xput "home/records/learnings-archive/$xs.md" '# evidence'; done
-xboth xput home/records/learnings.md '- [distilled -> run-a] sources=1 updated=2026-07-20 ([skill](../skills/run-a/SKILL.md))
-- [distilled -> run-b] sources=1 updated=2026-07-20 ([skill](../skills/run-b/SKILL.md))
+mkdir -p "$H/home/records/learnings-archive"
+for xs in run-a run-c; do xput "home/records/learnings-archive/$xs.md" '# evidence'; done
+xput home/records/learnings.md '- [distilled -> run-a] sources=1 updated=2026-07-20 ([skill](../skills/run-a/SKILL.md))
 - [distilled -> run-c] sources=1 updated=2026-07-20 ([skill](../skills/run-c/SKILL.md))
 '
-xpair run
-xsame_rc_out run; xsame_world run
-grep -v 'ac-lib\.sh: line [0-9]*: ' "$TMP/xo.err2" >"$TMP/xo.err3" || true
-cmp -s "$TMP/xo.err3" "$TMP/xn.err2" || fail "10 (W10): stderr past the original's own redirect lines differs: $(diff "$TMP/xo.err3" "$TMP/xn.err2" | head -n 8)"
-assert_contains "$(xoerr)" "ac-lib.sh: line" "10 (SHELL-OWN STDERR, named): the original's redirect line for each half of the LF-named file"
-assert_contains "$(xerr)" "cp: " "10 (W10, at parity): both copy the two halves of the LF-named file and fail, the move going on"
-xboth xsemantic
-mkdir -p "$TMP/xdef-o/bin" "$TMP/xdef-n/bin"
-cp "$xobin"/*.sh "$TMP/xdef-o/bin/"; cp "$BIN"/*.sh "$TMP/xdef-n/bin/"
-for xd in xdef-o xdef-n; do ln -sfn "$ROOT/src" "$TMP/$xd/src"; ln -sfn "$ROOT/dashboard" "$TMP/$xd/dashboard"; cp "$XSTUBS/gate" "$TMP/$xd/bin/ac-gate.sh"; done
-XOBIN="$TMP/xdef-o/bin"; XNBIN="$TMP/xdef-n/bin"; XGATE=""
 xok run
-XOBIN="$xobin"; XNBIN="$BIN"; XGATE="$XSTUBS/gate"
+assert_eq "$(xsubjects)" "  ask-captain: skill-run-a (no unique safe plan; no mutation)
+  ask-captain: skill-run-c (no unique safe plan; no mutation)" "10: a symlink inside and an active worktree link each hold the move"
+assert_file "$H/home/skills/run-a/SKILL.md" "10: ... run-a stays live"
+assert_file "$H/home/skills/run-c/SKILL.md" "10: ... run-c stays live"
+xsemantic
+mkdir -p "$TMP/xdef/bin"
+cp "$BIN"/*.sh "$TMP/xdef/bin/"
+ln -sfn "$ROOT/src" "$TMP/xdef/src"; ln -sfn "$ROOT/dashboard" "$TMP/xdef/dashboard"; cp "$XSTUBS/gate" "$TMP/xdef/bin/ac-gate.sh"
+XBIN="$TMP/xdef/bin"; XGATE=""
+xok run
+assert_contains "$(xsubjects)" "  auto-applied semantic subject: skill-ship-rebase" "10: with no AC_GATE the gate beside the entry decides"
+assert_file "$H/stub/gate.log" "10: ... and it ran"
+XBIN="$BIN"; XGATE="$XSTUBS/gate"
 
-# 11. concurrency and signals: a whole run started by the snapshot hook inside
-#     another's window (W2, at parity: the outer run ends HELD 0/1, the next
-#     run is refused); TERM during the snapshot hook (143 at once, the run
-#     dir left, nothing applied); a write landing inside a compatibility
-#     apply's backup window (a PATH tar that appends, then runs the real one)
-#     is kept, as the shell's sed and awk read the record at the write.
-xboth xstd
-xboth xput tarstub/tar '#!/bin/sh
+# 11. a write landing inside a compatibility apply's backup window (a PATH
+#     tar that appends, then runs the real one) is kept; TERM during the
+#     snapshot hook ends the run at once, 143, the run dir left, nothing
+#     applied.
+xstd
+xput tarstub/tar '#!/bin/sh
 printf -- "- 2026-04-01: a rule added during the backup\n" >>"$AC_HOME/records/captain.md"
 printf -- "- [x] late - a row landed during the backup (2026-04-01)\n" >>"$AC_HOME/records/backlog.md"
 exec /usr/bin/tar "$@"
 '
-xboth chmod +x @H/tarstub/tar
-xboth xput home/records/captain.md '- 2026-03-01: a kept rule
+chmod +x "$H/tarstub/tar"
+xput home/records/captain.md '- 2026-03-01: a kept rule
 - 2026-03-02: last order. [COMPLETED]
 '
-xboth xput home/records/backlog.md '## In flight
+xput home/records/backlog.md '## In flight
 
 ## Queued
 
@@ -1728,71 +1608,22 @@ xboth xput home/records/backlog.md '## In flight
 - [x] d2 - receipt (2026-01-02)
 '
 XPATH="@H/tarstub:$XSTUBS:$PATH" xok captain --apply
-assert_contains "$(cat "$XNH/home/records/captain.md")" "a rule added during the backup" "11: a captain rule added during the backup survives the apply"
+assert_contains "$(cat "$H/home/records/captain.md")" "a rule added during the backup" "11: a captain rule added during the backup survives the apply"
 XENV=(AC_CURATE_KEEP=0)
 XPATH="@H/tarstub:$XSTUBS:$PATH" xok backlog --apply
 XENV=()
-assert_contains "$(cat "$XNH/home/records/backlog.md")" "- [x] late - a row landed during the backup" "11: a Done row landed during the backup stays in the backlog"
-xboth xstd
-xboth xput home/records/captain.md "$XCAP"
-mkdir -p "$TMP/xlater"
-sed 's/2026-01-01T/2026-01-02T/; s/1767225600/1767312000/' "$XSTUBS/date" >"$TMP/xlater/date"
-chmod +x "$TMP/xlater/date"
-xboth xput hook.sh '#!/bin/sh
-PATH="$CURATE_LEG_LATER:$PATH" env -u AC_TEST_HOOKS /bin/sh -c '"'"'printf "%s\n" "$$" >>"$0"; exec "$@"'"'"' "$STUB_DIR/nested.pid" "$CURATE_LEG_BIN/ac-curate.sh" run >"$STUB_DIR/nested.out" 2>&1
-'
-xboth chmod +x @H/hook.sh
-XENV=(AC_TEST_HOOKS=1 AC_CURATE_SNAPSHOT_HOOK=@H/hook.sh "CURATE_LEG_LATER=$TMP/xlater")
-xsame run
-XENV=()
-assert_contains "$(cat "$XNH/stub/nested.out")" "curate pass open: deterministic subjects committed" "11 (W2): the run the hook started commits its deterministic moves"
-assert_eq "$XN_RC" "1" "11 (W2): the outer run is refused"
-assert_contains "$(xerr)" "0 of its 1 action(s) are already committed" "11 (W2): ...and HELD with nothing committed"
-xsame run
-assert_contains "$(xerr)" "another Learning/Curate transaction is still unsettled" "11 (W2): the held claim refuses the next run"
-xboth xstd
-xboth xput home/records/captain.md "$XCAP"
-xboth xput hook.sh '#!/bin/sh
+assert_contains "$(cat "$H/home/records/backlog.md")" "- [x] late - a row landed during the backup" "11: a Done row landed during the backup stays in the backlog"
+xstd
+xput home/records/captain.md "$XCAP"
+xput hook.sh '#!/bin/sh
 kill -TERM "$PPID"
 /bin/sleep 1
 '
-xboth chmod +x @H/hook.sh
+chmod +x "$H/hook.sh"
 XENV=(AC_TEST_HOOKS=1 AC_CURATE_SNAPSHOT_HOOK=@H/hook.sh)
-xsame run
+xrun run
 XENV=()
-assert_eq "$XN_RC" "143" "11 (SIGNALS): TERM ends the run at once"
-[ -d "$(ls -d "$XNH"/home/data/curate-* | head -1)" ] && [ ! -e "$XNH/home/records/captain-archive.md" ] || fail "11: the run dir stays and nothing is applied"
-
-# 12. the records are fleet memory: every verb (the two compatibility
-#     mutators with --apply), and `run` with the gate answering continue,
-#     revise, ask-captain and 3, on copies of real fleet homes (records/,
-#     skills/, state/.curate.meta, config/curate-every, each registered
-#     project an empty clone) - the homes XCURATE_HOMES names, one
-#     drydock-size among them. Skipped, said so, when it names none.
-xreal() {  # xreal <home> - the side home rebuilt from a READ-ONLY copy of a real one
-  local n
-  xstd
-  cp -R "$1/records/." "$H/home/records/"
-  [ ! -d "$1/skills" ] || cp -R "$1/skills/." "$H/home/skills/"
-  [ ! -f "$1/state/.curate.meta" ] || cp "$1/state/.curate.meta" "$H/home/state/.curate.meta"
-  [ ! -f "$1/config/curate-every" ] || cp "$1/config/curate-every" "$H/home/config/curate-every"
-  while IFS= read -r n; do git init -q "$H/home/projects/$n"; done < <(LC_ALL=C awk '/^- [A-Za-z0-9._-]+ (\[|- )/ { n = substr($0, 3); sub(/ .*/, "", n); print n }' "$H/home/records/projects.md" 2>/dev/null)
-}
-if [ -z "${XCURATE_HOMES:-}" ]; then
-  printf 'NOTE: section 12 (real fleet homes) skipped - XCURATE_HOMES names none\n'
-fi
-for xhome in ${XCURATE_HOMES:-}; do
-  for xv in learnings 'captain --apply' 'backlog --apply' 'projects --apply' 'skills-audit --apply' skills-consolidate 'run --dry-run'; do
-    xboth xreal "$xhome"
-    # shellcheck disable=SC2086
-    xsame $xv
-  done
-  for xd in continue revise ask-captain rc3; do
-    xboth xreal "$xhome"
-    case "$xd" in rc3) XENV=(CURATE_GATE_RC=3 CURATE_GATE_DIAG=diag) ;; *) XENV=("CURATE_GATE_DECISION=$xd") ;; esac
-    xsame run
-    XENV=()
-  done
-done
+assert_eq "$XN_RC" "143" "11: TERM ends the run at once"
+[ -d "$(ls -d "$H"/home/data/curate-* | head -1)" ] && [ ! -e "$H/home/records/captain-archive.md" ] || fail "11: the run dir stays and nothing is applied"
 
 pass

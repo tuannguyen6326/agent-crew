@@ -1,9 +1,8 @@
 // done.ts - the agent-side PUSH of a completion. AUTHORITATIVE for the push
 // contract; src/watch.ts's PUSH CHANNEL block owns the watcher half. The entry
 // is bin/ac-done.sh (a shim that starts this file through bin/ac-bun.sh); THIS
-// header is the authoritative spec, and the bash original it replaced stays
-// frozen at tests/fixtures/ac-done.sh as the oracle the differential leg of
-// tests/sh/ac-done.test.sh holds this module to.
+// header is the authoritative spec, and tests/sh/ac-done.test.sh is its
+// contract test.
 //
 //   ac-done.sh <id> <marker>
 //
@@ -89,15 +88,8 @@
 // pane's PATH: `ERROR: required tool not found: bun`, exit 1, BEFORE any
 // stamp or record exists) costs only the watcher's next poll tick.
 //
-// DIVERGENCES from the bash original, named in the differential leg: the
-// shell's own stderr for a failed stamp (`line 83: ...: No such file or
-// directory` / `Permission denied`) and for an unenterable AC_HOME (`cd: ...`)
-// is not reproduced - the ERROR lines above stand there with the same exit;
-// an argv byte that is not valid UTF-8 reaches this module as U+FFFD (bun's
-// argv decoding), so such a marker or id is stamped and recorded as EF BF BD
-// where the bash under LC_ALL=C carried the byte; under the crewmate's UTF-8
-// locale the bash's `tr` TRUNCATED the record's payload at the first such
-// byte (exit 0, a defect), where this module folds bytes and keeps them all.
+// An argv byte that is not valid UTF-8 reaches this module as U+FFFD (bun's
+// argv decoding), so such a marker or id is stamped and recorded as EF BF BD.
 import { rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { die, enterCaller, stateDir, wakePublish, watcherNudge } from "./lib.ts";
 
@@ -123,7 +115,10 @@ try {
 } catch (e) {
   die(b(`cannot write the dedup stamp ${bytes(stamp)}: ${(e as { code?: string }).code ?? "error"}`));
 }
+// A stale .rewake-<id> from the OLD marker's redraw latch must go with it too,
+// or a pushed new marker would inherit a latch that was never armed for it.
 rmSync(`${sd}/.seen-hash-${id}`, { force: true });
+rmSync(`${sd}/.rewake-${id}`, { force: true });
 
 if (!wakePublish(sd, scope, "report", bytes(id), bytes(marker))) die(b(`wake NOT published for ${bytes(id)} - the completion is not durable; say so in the pane`));
 

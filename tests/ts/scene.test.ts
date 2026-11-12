@@ -4,8 +4,7 @@
 // `sleep 1` (the PATH's sleep, so one stub fast-forwards both, through the one
 // lock-dir grammar that keeps a bash and a TypeScript writer excluding each
 // other). The CLI contract itself (every verb, stdout, stderr, exit, the store
-// left behind) is tests/sh/ac-scene.test.sh's, whose differential leg runs the
-// frozen bash original beside the shim.
+// left behind) is tests/sh/ac-scene.test.sh's.
 import { expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

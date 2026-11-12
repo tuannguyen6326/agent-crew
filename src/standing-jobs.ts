@@ -2,10 +2,8 @@
 // session-start digest: reports each DECLARED job's state from
 // records/standing-jobs.md, with the exact re-create action. The entry is
 // bin/ac-standing-jobs.sh (a shim that starts this file through
-// bin/ac-bun.sh); THIS header is the authoritative spec, and the bash original
-// it replaced stays frozen at tests/fixtures/ac-standing-jobs.sh as the oracle
-// the differential leg of tests/sh/ac-standing-jobs.test.sh holds this module
-// to.
+// bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-standing-jobs.test.sh is its contract test.
 //
 // CronCreate is SESSION-ONLY: the job lives in harness session memory, is
 // never written to disk, and dies with the session (the CronCreate tool's own
@@ -69,11 +67,9 @@
 // way `while IFS= read -r line` read it - an unterminated last line is NOT a
 // line (a hand-edited file without a final newline loses its last job in both
 // modes), a CR before the LF stays inside the last field, and a NUL byte ends
-// the line. Two declared divergences from the original: a byte that is not
-// valid UTF-8 is parsed as a byte whatever the caller's locale, where BSD sed
-// under a UTF-8 locale aborted the original mid-output (exit 1); and a digest
-// over a present file this process cannot read says nothing on stderr, where
-// the original's stderr was bash's own redirect error.
+// the line. A byte that is not valid UTF-8 is parsed as a byte whatever the
+// caller's locale, and a digest over a present file this process cannot read
+// says nothing on stderr.
 import { accessSync, constants, readFileSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { die, enterCaller, recordsDir } from "./lib.ts";

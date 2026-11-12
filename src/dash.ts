@@ -1,9 +1,8 @@
 // dash.ts - the captain dashboard in the TERMINAL (the web one is
 // dashboard/app.ts): one render of five sections, or `--watch` redrawing it
 // forever. The entry is bin/ac-dash.sh (a shim that starts this file through
-// bin/ac-bun.sh); THIS header is the authoritative spec, and the bash original
-// it replaced stays frozen at tests/fixtures/ac-dash.sh as the oracle the
-// differential leg of tests/sh/ac-dash.test.sh holds this module to.
+// bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-dash.test.sh is its contract test.
 //
 //   ac-dash.sh                # render once, exit 0
 //   ac-dash.sh --watch [<s>]  # clear, render, trailer, sleep <s> (default 5),
@@ -23,18 +22,16 @@
 // HOME: AC_HOME through physicalDir (`cd && pwd -P`). Unset -> ac_home's
 // refusal, exit 1, nothing on stdout; not enterable -> `AC_HOME is not a
 // readable directory: <AC_HOME>`, exit 1. The view MINTS state/, records/ and
-// projects/ with a spawned `mkdir -p` each, as the path helpers the original
-// called inside `$(...)` did: a mkdir that fails (a regular file at the path)
-// prints its own line and the render goes on with that path, exit 0 - the
-// substitution still handed the path over. config/ and data/ are not minted.
+// projects/ with a spawned `mkdir -p` each: a mkdir that fails (a regular
+// file at the path) prints its own line and the render goes on with that
+// path, exit 0. config/ and data/ are not minted.
 //
 // RENDER (stdout, bytes; `%-Ns` pads by BYTES like bash's printf, never cuts):
 //   ⚓ <basename of the physical home>  captain: <c>  backend: <b>  flow: <f>
 //       c/b/f = config/captain|backend|flow, first line, [:space:]-trimmed under
 //       the locale bash was given (configReadDir), NULs dropped; defaults
-//       captain / herdr / auto when absent; "" when present but unreadable (the
-//       original's `head` failed inside the substitution; its stderr is the
-//       tool's own and not reproduced).
+//       captain / herdr / auto when absent; "" when present but unreadable,
+//       nothing on stderr.
 //   <blank>
 //   CREW
 //     <id %-16s> <kind %-10s> <project %-14s> <state>   per state/<n>.meta
@@ -135,22 +132,14 @@
 // src/backlog.ts (bunChild), clear and sleep (--watch). <bin> is the bin/ this
 // module was STARTED from (process.cwd() before enterCaller leaves it -
 // bin/ac-bun.sh runs bun in <bin>/..), so a copied bin/ drives its own
-// siblings. ac-backend.sh, which the original sourced and never called, is
-// not read.
+// siblings.
 //
-// NAMED DIVERGENCES from the frozen original: a homeless run dies ONCE with
-// the refusal and prints nothing, where the original printed it three times
-// around a header/CREW/ROOMS render and died at `BACKLOG` (exit 1 both); an
-// AC_HOME that cannot be entered names the variable where the shell printed
-// its `cd:` lines (exit 1 both; HOME RESOLUTION ruling); metas and pools are
-// listed in byte order (bash's glob followed libc collation under a UTF-8
-// locale); awk's `can't open file` line and `head`'s permission line are not
-// reproduced; N on a child that ended non-zero is the child's; a SIGINT
-// addressed to the process ALONE while its sleep runs ends --watch here, where
-// bash ran its INT trap only once the foreground child had died of the INT
-// (ctrl-c, which reaches both, ends both). Everything else - the three minted
-// dirs, the directory row, the one-meta death, the joined WARN line, the
-// dropped unterminated room line - is reproduced.
+// SIGINT addressed to the process ALONE while its sleep runs ends --watch too
+// (ctrl-c reaches both).
+//
+// AT PARITY with the bash original (each until its own fix lands): the three
+// minted dirs, the directory row, the one-meta death, the joined WARN line,
+// the dropped unterminated room line.
 import { existsSync, readdirSync, readFileSync, statSync, writeSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { isatty } from "node:tty";
@@ -247,7 +236,7 @@ const roomLine = (raw: string): void => {
   out(`  ${c}${line}${C_0}\n`);
 };
 
-// The list is read as the original's `while read -r` read its pipe: every
+// The list is read as `while read -r` reads a pipe: every
 // complete line printed the moment it arrives, the unterminated tail held
 // back - and joined to the WARN when the list fails, dropped when it does not.
 async function renderRooms(): Promise<void> {

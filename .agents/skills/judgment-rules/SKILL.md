@@ -1,6 +1,6 @@
 ---
 name: judgment-rules
-description: The full text of the four fleet-wide judgment rules: finding-authority (binds a finding when written), evidence-class (binds a review request), financial-code proof (binds a resolution on money paths), and verify-before-assert (binds any chief claim about a mechanism, rule or authority). Load before writing a finding, requesting or judging a review, resolving anything on financially sensitive code without the captain, or when AGENTS.md's one-line summary of a rule leaves a case open.
+description: Full text of the four fleet judgment rules: finding-authority, evidence-class, financial-code proof, verify-before-assert. Load before writing a finding, requesting or judging a review, or resolving money-path code.
 ---
 
 # judgment-rules

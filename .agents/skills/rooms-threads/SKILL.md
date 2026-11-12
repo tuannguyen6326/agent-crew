@@ -1,6 +1,6 @@
 ---
 name: rooms-threads
-description: Escalation etiquette and the family room/thread model: when to wake the captain, select-style asks, room receipts (TRIAGE/GATE/ASK/DECIDED/SELF-APPROVED/GATE-LOOPED), the reply-attribution ladder, remote orders and Slack mirroring, style constraints, room lifecycle and hand-back, promotion to roomchiefs and the room-parallel cap, intra-family fan-out, and consent-routing. Load before asking the captain anything, posting or closing a room, promoting or demoting a roomchief, fanning out, or handling a captain message about a promoted family.
+description: Escalation etiquette and the room/thread model: waking the captain, room receipts, reply attribution, roomchief promotion. Load before asking the captain, posting or closing a room, promoting a roomchief, or handling a promoted family.
 ---
 
 # rooms-threads

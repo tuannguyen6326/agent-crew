@@ -1,6 +1,6 @@
 ---
 name: ac-brain
-description: Query and maintain the per-home memory engine - recall (hybrid search over the home's records with citations and trust labels), remember/forget working-memory facts with provenance, entity cards, context_pack for session rehydrate, delta for cheap wakes, links-to reverse lookups, sync, doctor, and the one expensive synthesize verb. Use when hunting fleet context the tier reads did not answer, before minting a family (create_safety), on wakes, after compaction, or to record a durable session fact. Additive tool - the intake-triage knowledge-read law is unchanged.
+description: Per-home memory engine: recall with citations and trust labels, remember/forget facts, context_pack, delta, sync. Use when tier reads leave fleet context open, on wakes, or after compaction.
 ---
 
 # ac-brain

@@ -2,8 +2,7 @@
 // original differentially: dataDir against ac_data_dir (the physical path, the
 // mkdir side effect, the homeless refusal). The CLI contract itself (every
 // verb, stdout, stderr, exit, the tree left behind) is
-// tests/sh/ac-archive.test.sh's, whose differential leg runs the frozen bash
-// original beside the shim.
+// tests/sh/ac-archive.test.sh's.
 import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";

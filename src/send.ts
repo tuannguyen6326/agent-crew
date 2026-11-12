@@ -1,9 +1,8 @@
 // send.ts - send one literal line (or one named key) to a crewmate pane; the
 // marked order channel to a crewdeputy; the write-side marker guard. The entry
 // is bin/ac-send.sh (a shim that starts this file through bin/ac-bun.sh); THIS
-// header is the authoritative spec, and the bash original it replaced stays
-// frozen at tests/fixtures/ac-send.sh as the oracle the differential leg of
-// tests/sh/ac-send.test.sh holds this module to.
+// header is the authoritative spec, and tests/sh/ac-send.test.sh is its
+// contract test.
 //
 // Usage: ac-send.sh <id> [--force] '<text>'
 //        ac-send.sh <id> [--force] --key <Enter|Escape|C-c>
@@ -198,9 +197,14 @@
 //     dropped - a delivered steer, text or key, IS the answer a captain-wait
 //     stamped pane was parked on, and herdr re-adopts a released pane only on
 //     the state TRANSITION this steer supplies (contract: ac-backend.sh
-//     CAPTAIN-WAIT STAMP). Then stdout: `<verb> <target>`, <target>
-//     backendCall("target") as `$( )` read it - `herdr:pane-<pane>` or
-//     `orca:<handle>`.
+//     CAPTAIN-WAIT STAMP). The same non-slash steer also removes
+//     state/.ended-<id> (the ENDED BUSY LATCH, watch.ts header) AND
+//     state/.rewake-<id> (its sibling the REWAKE LATCH, same header): a
+//     reply answered and re-ended, or a gate round answered and re-printed,
+//     inside one poll is that same transition, and must not stay latched
+//     quiet waiting for a busy poll that may never come. Then stdout:
+//     `<verb> <target>`, <target> backendCall("target") as `$( )` read it -
+//     `herdr:pane-<pane>` or `orca:<handle>`.
 //
 // STDIN BY POSITION (backendCall's comment): the guard and every top-level
 // herdr call read the caller's stdin; nested reads read /dev/null; orca reads
@@ -210,55 +214,33 @@
 // status on the key path; awk's for a deputy lookup that failed; date's for a
 // stamp that failed; 141, silently, when the reader has closed stdout.
 //
-// NAMED DIVERGENCES from the frozen original, each in the leg:
-// - A DRIVER THAT FAILED TO LOAD: the original's liveness call returned
-//   bash's 127, the BACKEND line; the port's verbs are native and have no
-//   driver to lose (oracle-only row).
-// - BUN ABSENT from PATH: the original's guard (a bun shim) printed `ERROR:
-//   required tool not found: bun` and the send went on; the port's own shim
-//   prints that line and exits 1. So the Stop hook bin/ac-compact-advise.sh's
-//   detached opt-in `--send` (config/compact-auto=on) logs `send failed
-//   (ERROR: required tool not found: bun )` to its send.log where the original
-//   typed /compact: that opt-in path depends on bun through this entry, by
-//   design.
-// - STDIN BY HISTORY (V1): once harness_up's own `done <<<` had
-//   run, bash 3.2 handed a later `$( )`'s herdr - the submit check's `pane
-//   read` - the caller's stdin; the port's reads /dev/null.
+// ALSO:
+// - BUN ABSENT from PATH: the shim prints `ERROR: required tool not found:
+//   bun` and exits 1. So the Stop hook bin/ac-compact-advise.sh's detached
+//   opt-in `--send` (config/compact-auto=on) logs `send failed (ERROR:
+//   required tool not found: bun )` to its send.log: that opt-in path depends
+//   on bun through this entry, by design.
 // - The marker guard's verb list is judged by its text (a-z, |, -) under
-//   every locale; bash 3.2's case range collated under UTF-8 and let an
-//   uppercase verb (an AC_CAPTAIN_RE override) pass and warn.
+//   every locale, so an uppercase verb (an AC_CAPTAIN_RE override) never
+//   warns.
 // - Bytes: argv and the environment arrive decoded, so an <id> or text byte
 //   that is not UTF-8 is U+FFFD in a refusal, a child's argv and the typed
-//   text where the original kept the byte (its W2 - tr cutting the record at
-//   such a byte under a UTF-8 locale - and its W3 - wc's `Illegal byte
-//   sequence` line in a REFUTED count - cannot arise); so is such a byte of
-//   the meta's backend= in AC_BACKEND.
+//   text; so is such a byte of the meta's backend= in AC_BACKEND.
 // - The HOME RESOLUTION ruling: an AC_HOME that cannot be entered names the
-//   variable (`ERROR: AC_HOME is not a readable directory: <h>`) where the
-//   shell printed cd's own line; exit and stdout alike.
-// - Shell-own stderr is not reproduced: the redirection error of a status
-//   file that cannot be appended (W5 - exit 1 kept), `command not found`, a
-//   guard path that is a directory, HOME unset where the transcript root
-//   needed it (unobservable on both sides).
-// - The deputy lookup's two awks run one after the other where the
-//   original's ran at once: a lookup that matched early and exited while the
-//   parse still wrote a registry past the pipe buffer could end the original
-//   with SIGPIPE's 141 - a race no registry of that size has.
+//   variable (`ERROR: AC_HOME is not a readable directory: <h>`).
 //
 // CALLERS (exit status only, all fail-soft): src/promote.ts's pane notice
 // (stdout and stderr dropped), dashboard/app.ts's composer and chief sends,
 // bin/ac-compact-advise.sh's `--send` (`|| verdict='send failed'`, its merged
-// output flattened into send.log), tests/fixtures/ac-promote.sh (`if`); chiefs
+// output flattened into send.log); chiefs
 // run it by hand (the harness-operations, task-lifecycle,
 // stuck-crewmate-recovery, rooms-threads, remote-orders and deputies-domains
 // skills); refusals across bin/ and src/ name it as the remedy.
 // tests/sh/ac-guard.test.sh greps the literal `ac-guard.sh` in the shim's text.
-import { statSync, writeSync } from "node:fs";
+import { rmSync, statSync, writeSync } from "node:fs";
 import {
-  arrivalWait,
   backendCall,
   backendName,
-  bareMarkerVerbs,
   deputyParse,
   deputyRegistry,
   die,
@@ -268,10 +250,12 @@ import {
   shellStatus,
   spawnShellSync,
   STARTED_BIN,
+  stateDir,
   statusAppend,
   taskBackend,
   taskMeta,
 } from "./lib.ts";
+import { arrivalWait, bareMarkerVerbs } from "./lib-send.ts";
 
 const IO = { stdin: "inherit", stdout: "inherit", stderr: "inherit" } as const;
 const cutNul = (s: string): string => s.replace(/\0[\s\S]*$/, "");
@@ -440,5 +424,18 @@ if (rest[0] === "--key") {
   }
   if (!recorded) process.exit(1);
 }
-if (!slash) call("clear_wait", [id], { stdin: "inherit", stdout: "inherit", stderr: "ignore" });
+if (!slash) {
+  call("clear_wait", [id], { stdin: "inherit", stdout: "inherit", stderr: "ignore" });
+  // ENDED BUSY LATCH / REWAKE LATCH (watch.ts header): the watcher's own
+  // clear is a poll-sampled busy read, which a reply answered and re-ended
+  // or re-printed inside one AC_POLL interval never crosses. A delivered
+  // steer other than a slash command is already the fleet's recognized
+  // answer to a parked pane (CAPTAIN-WAIT STAMP, ac-backend.sh) - clearing
+  // both latches on the SAME transition closes that gap without waiting for
+  // a busy poll that may never come.
+  try {
+    rmSync(`${stateDir()}/.ended-${id}`, { force: true });
+    rmSync(`${stateDir()}/.rewake-${id}`, { force: true });
+  } catch {}
+}
 say(`${verb} ${subst(backendCall("target", [id], { stdin: "inherit", stdout: "pipe", stderr: "inherit", subshell: true }).out)}`);

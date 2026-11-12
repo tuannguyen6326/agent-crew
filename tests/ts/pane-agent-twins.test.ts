@@ -1,4 +1,4 @@
-// pane-agent-twins.test.ts - the pane-agent twins of src/lib.ts held to the
+// pane-agent-twins.test.ts - the pane-agent twins of src/lib.ts and src/lib-verify.ts held to the
 // LIVE bash helpers they twin, each run in the call context bin/ac-pane-agent.sh
 // gave it: inside `$(...)`, or bare with no errexit (the status read after the
 // call). bin/ac-lib.sh: transcriptFinalEpoch (ac_transcript_final_epoch, which
@@ -9,7 +9,7 @@
 // Every row compares stdout, stderr (less the shell's own `line N:` lines),
 // the status, the stub log and the side's tree.
 //
-// DISPUTED: the implementation of each helper (the live bash vs src/lib.ts's pane-agent twins)
+// DISPUTED: the implementation of each helper (the live bash vs the pane-agent twins of src/lib.ts and src/lib-verify.ts)
 // HELD-CONSTANT: one side root per side and row seeded alike (a home at <side>/home with state/ records/ data/ config/, transcripts under <side>, the stubs' answer files, call counters and log at <side>/stub, TMPDIR at <side>/tmp); argv; env (PATH = refusing claude/codex/opencode/pi/cursor-agent/docker/codegraph/gh stand-ins, then herdr, orca, sleep and date stubs, the host's jq and git, bun alone, /bin plus /usr/bin without those names - no row can reach a real backend or harness; LC_ALL=C unless a row names UTF-8; TZ=UTC; HOME an empty dir unless a row unsets it; AC_SEND_SETTLE=0 and AC_STARTUP_DIALOG_BUDGET=2 unless a row names others; STUB_DIR, TMPDIR, AC_HOME, the row's own names); cwd (the distro root, so the bash's ac_bun_exec and the twins name one src/); stdin (/dev/null).
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -19,6 +19,7 @@ import { join } from "node:path";
 const ROOT = realpathSync(join(import.meta.dir, "..", ".."));
 const BIN = join(ROOT, "bin");
 const LIB = join(ROOT, "src", "lib.ts");
+const LIBV = join(ROOT, "src", "lib-verify.ts");
 const W = realpathSync(mkdtempSync(join(tmpdir(), "ac-pane-agent-twins-ts-")));
 afterAll(() => {
   Bun.spawnSync(["chmod", "-R", "u+rwX", W]);
@@ -99,7 +100,7 @@ mkdirSync(NOHOME);
 type Row = {
   // the bash call, after sourcing ac-lib.sh and ac-backend.sh, its arguments "$@"
   bash: string;
-  // the twin's body: L is src/lib.ts, A the arguments, say/sayU write latin1/UTF-8
+  // the twin's body: L is src/lib.ts merged with src/lib-verify.ts, A the arguments, say/sayU write latin1/UTF-8
   twin: string;
   args?: string[];
   seed?: (s: string) => void;
@@ -148,7 +149,7 @@ function read(f: string): string {
   }
 }
 
-const PRE = `import { writeSync } from "node:fs"; const L = await import(${JSON.stringify(LIB)}); const say = (s) => void writeSync(1, Buffer.from(s, "latin1")); const sayU = (s) => void writeSync(1, Buffer.from(s, "utf8")); const cap = (b) => b.toString("latin1").replace(/\\0/g, "").replace(/\\n+$/, "");`;
+const PRE = `import { writeSync } from "node:fs"; const L = { ...await import(${JSON.stringify(LIB)}), ...await import(${JSON.stringify(LIBV)}) }; const say = (s) => void writeSync(1, Buffer.from(s, "latin1")); const sayU = (s) => void writeSync(1, Buffer.from(s, "utf8")); const cap = (b) => b.toString("latin1").replace(/\\0/g, "").replace(/\\n+$/, "");`;
 
 let rows = 0;
 function side(row: Row, s: string, oracle: boolean): Side {

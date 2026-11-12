@@ -1,6 +1,6 @@
 ---
 name: epic-intake
-description: Decompose a multi-deliverable order into an epic - a gated story map with a dependency DAG, per-story intake, push-driven scheduling via ac-ready.sh, a parallelism cap, and a file-overlap backstop. Use when an order carries several independently-landable deliverables (or the captain says "epic"), or when a staged task's design stage reveals separable deliverables.
+description: Decompose a multi-deliverable order into an epic: gated story map, dependency DAG, per-story intake, push-driven scheduling. Use when an order carries several independently-landable deliverables or the captain says epic.
 ---
 
 # epic-intake
@@ -89,6 +89,9 @@ The epic has its OWN room (umbrella: map gate, amendments, cross-story
 decisions) and its own backlog line whose rollup you refresh at every landing
 checkpoint. The epic flips Done only when ALL stories are terminal AND the
 map's integration verification ran.
+
+A story's data dir (room, briefs, reports) sits inside the epic's at `data/<epic>/<story>/`, marked `.family`; the header of `src/brief.ts` owns the layout.
+A story archives with its epic when the epic closes.
 
 PREREQUISITE for epic scheduling to survive a promoted roomchief's own
 watcher going dark: NOT that you hold the per-home session lock to RUN

@@ -2,9 +2,8 @@
 // SessionStart hook; cursor's sessionStart too).
 // The entry is bin/ac-sessionstart-nudge.sh, the fail-open hook shim that
 // starts this file through bin/ac-bun.sh's ac_bun_exec_hook; THIS header is the
-// authoritative spec, and the bash original it replaced stays frozen at
-// tests/fixtures/ac-sessionstart-nudge.sh as the oracle the differential leg of
-// tests/sh/ac-sessionstart-nudge.test.sh holds this module to.
+// authoritative spec, and tests/sh/ac-sessionstart-nudge.test.sh its contract
+// test.
 //
 // Wired in .claude/settings.json for source startup|resume|clear|compact
 // (compact gets its own re-orientation arm below) and in .cursor/hooks.json.
@@ -105,24 +104,18 @@
 // days. A homeless session is deliberately NOT handed the reminder (the script
 // it names dies on the same predicate).
 //
-// A BROKEN PORT. The frozen original needs bash and its bin/ siblings
-// (ac-lib.sh, ac-wake-lib.sh, ac-lock.sh): copying
-// tests/fixtures/ac-sessionstart-nudge.sh over bin/ac-sessionstart-nudge.sh in
-// the checkout the fleets run restores it whole until the fix lands; the
-// captain's revert of the land is the last resort.
-//
-// AT PARITY (each pinned in the leg until its own fix lands):
+// AT PARITY (each stands until its own fix lands):
 // - a home that is a SUBDIRECTORY of a git checkout reads as a linked worktree
 //   (the bare rev-parse pair, the turn-end guard's own wart) and is never
 //   reminded;
 // - a compact payload is matched on its FIRST LINE only, so a pretty-printed
 //   payload whose `"source"` sits on a later line is no compact.
 //
-// DIVERGENCES from the original (the leg names each one a row can show):
-// - BUN: with no bun on PATH the shim exits 0 at once and says nothing, where
-//   the original reminded, oriented or signalled; a module that cannot load is
-//   the same silence. The homeless signal is therefore lost exactly where bun
-//   is missing too.
+// ALSO:
+// - BUN: with no bun on PATH the shim exits 0 at once, saying so in one stderr
+//   line and injecting nothing; a module that cannot load is the same no-op,
+//   said the same way.
+//   The homeless signal is therefore lost exactly where bun is missing too.
 // - HOME RESOLUTION: an AC_HOME whose name ends in LF is the directory it
 //   names, and a relative one is entered without CDPATH; a caller whose cwd
 //   Bun cannot enter resolves no relative AC_HOME (silent).

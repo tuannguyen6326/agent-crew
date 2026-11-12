@@ -1,8 +1,7 @@
 // session.ts - open (or print) a claude resume of a crewmate's session. The
 // entry is bin/ac-session.sh (a shim that starts this file through
-// bin/ac-bun.sh); THIS header is the authoritative spec, and the bash original
-// it replaced stays frozen at tests/fixtures/ac-session.sh as the oracle the
-// differential leg of tests/sh/ac-session.test.sh holds this module to.
+// bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-session.test.sh is its contract test.
 //
 //   ac-session.sh <id>          # SAFE view: resume with --fork-session -
 //                               # reading/replying never mutates the
@@ -18,7 +17,7 @@
 // usage line included). A worktree that is gone is a WARN, never a refusal.
 //
 // The meta is read as bytes (latin1) and written back the same way, so a path
-// the bash original printed byte for byte still is. The filesystem wants the
+// is printed byte for byte as the meta spells it. The filesystem wants the
 // native (UTF-8) spelling of those bytes, and the id arrives native from Bun's
 // argv: each value keeps both forms, bytes for printing, native for paths.
 import { statSync, writeSync } from "node:fs";

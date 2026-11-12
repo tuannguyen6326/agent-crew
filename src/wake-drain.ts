@@ -1,11 +1,9 @@
 // wake-drain.ts - the chief's consume path: drain this session's queued
 // wakes, report the unacknowledged completions in its scope, and assert
 // watcher liveness. The entry is bin/ac-wake-drain.sh (a shim that starts this
-// file through bin/ac-bun.sh); THIS header is the authoritative spec, and the
-// bash original it replaced stays frozen at tests/fixtures/ac-wake-drain.sh as
-// the oracle the differential leg of tests/sh/ac-wake-drain.test.sh holds
-// this module to. The store contract it consumes - keying, atomicity,
-// ordering, purity - is bin/ac-wake-lib.sh's.
+// file through bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-wake-drain.test.sh is its contract test. The store contract it
+// consumes - keying, atomicity, ordering, purity - is bin/ac-wake-lib.sh's.
 //
 // Usage: ac-wake-drain.sh
 //        ac-wake-drain.sh ack <id> [<id>...]
@@ -205,37 +203,23 @@
 // /dev/null, orca the stdin passed; only status 0 is live, so a refused
 // backend name reads gone and that family's spool drains.
 //
-// DIVERGENCES from the original, named in the differential leg:
+// ALSO:
 // - W8, THE CLAIM MATCH: the sweep keeps a live claimer whose command names
 //   `/src/wake-drain.ts` as well as `ac-wake-drain` - a drainer the shim
-//   started is bun running this module, and the original's match alone read
-//   it as a reused pid and re-emitted its records.
+//   started is bun running this module.
 // - W24 ORDER: claim dirs, records, family spools and metas are walked in
-//   byte order (the leg runs the oracle under LC_ALL=C); bash 3.2's glob
-//   followed libc collation under a UTF-8 locale.
-// - THE ORPHAN PROBE's stdin: the original's ran with the family-list pipe as
-//   stdin (an orca CLI could read it - src/guard.ts names the same); the
-//   port's reads /dev/null.
-// - A name in the clock's text sees only <name> (stamp or beat), where the
-//   original's arithmetic saw every variable in its scope (`id`, `meta`...).
-// - Shell-own stderr is not reproduced: `[: integer expression expected`
-//   (W15, W25), the arithmetic and `unbound variable` lines, `command not
-//   found` for a missing sibling.
-// - The HOME RESOLUTION ruling: an AC_HOME cd cannot enter is named here,
-//   where the shell printed cd's own line.
+//   byte order under every locale.
+// - A name in the clock's text sees only <name> (stamp or beat).
 // - Bytes: argv and env arrive decoded and file names are read as UTF-8, so a
 //   byte that is not UTF-8 there (an id, AC_BUSY_RE) is U+FFFD; record and
 //   status contents stay bytes. Such a byte of a task meta's backend= is
 //   U+FFFD in AC_BACKEND, so in every later child's environment (W19).
 // - `command -v jq` is Bun.which, which skips a jq on PATH that is not
-//   executable where bash's lookup returned it (the epic-ship precedent).
-// - THE CLOSED READER: with stdout's reader gone the port ends at its first
+//   executable.
+// - THE CLOSED READER: with stdout's reader gone the drain ends at its first
 //   failing write, 141; one inside a spool's rendering leaves that spool's
 //   records in the claim for the next drain's sweep to emit - toward
-//   duplication, as the sweep fails. The original lost only the rendering
-//   subshell of its `awk | annotate_wakes` pipeline to SIGPIPE, removed the
-//   claim and went on: those records consumed unseen, exit 0 when nothing its
-//   main shell printed later hit the pipe.
+//   duplication, as the sweep fails.
 //
 // CALLERS: bin/ac-session-start.sh runs it under `set -euo pipefail` and
 // degrades a failure to `WARN: wake drain unavailable (bin/ac-wake-drain.sh
@@ -250,16 +234,12 @@ import {
   backendName,
   BUSY_RE,
   CAPTAIN_RE,
-  chiefChildLive,
-  chiefGateParked,
-  claimLive,
   die,
   enterCaller,
   familyOfId,
   metaGet,
   metaIsSelf,
   metaIsVerify,
-  metaPaths,
   NO_HOME,
   nowRaw,
   physicalDir,
@@ -275,6 +255,7 @@ import {
   wakeSpoolPath,
   watcherBeatRead,
 } from "./lib.ts";
+import { chiefChildLive, chiefGateParked, claimLive, metaPaths } from "./lib-wake-drain.ts";
 
 const DELTA_JQ = `
       if .first_wake == true then "brain-delta: cursor registered for \\($who) (first wake)"

@@ -1379,9 +1379,8 @@ git -C "$repo" worktree remove --force "$stray19" >/dev/null 2>&1 || true
 git -C "$repo" branch -D crew/t19 >/dev/null 2>&1 || true
 
 # --- the same silence one loop away: a verifier's own vanished lease ----------
-# The bash teardown's archive_and_reap_verifier (frozen in
-# tests/fixtures/ac-teardown.sh) carried the IDENTICAL predicate @9b39f00
-# fixed one statement above it in the sibling loop - a
+# The bash teardown's archive_and_reap_verifier carried the IDENTICAL
+# predicate @9b39f00 fixed one statement above it in the sibling loop - a
 # verifier lease whose directory has vanished was skipped in total silence.
 # Torn down directly (the dualqa idiom above): a verifier meta IS the id.
 vlease20="$TMP/vanished-verifier-lease-t20"
@@ -1461,10 +1460,9 @@ assert_contains "$err23" "post it by hand:" "the warning names the exact command
 assert_contains "$err23" "ac-room.sh post dem bad crewchief" "the hand command names the family and actor"
 
 # --- reapPaneFile: a read failure keeps the record instead of deleting it ---
-# The bash teardown's reap_pane_file (frozen in tests/fixtures/ac-teardown.sh)
-# collapsed "could not read the file" into the same silent rm -f as "no first
-# field" - the spec (src/teardown.ts's header, REAP) promises a read failure
-# is warned by pane id/path AND the record
+# The bash teardown's reap_pane_file collapsed "could not read the file"
+# into the same silent rm -f as "no first field" - the spec (src/teardown.ts's
+# header, REAP) promises a read failure is warned by pane id/path AND the record
 # KEPT so a later attempt still has it. Verified empirically on this host
 # (awk, under this script's `set -euo pipefail`):
 # DISPUTED: whether `awk 'NR==1{print $1}' "$f" 2>/dev/null` exits non-zero on
@@ -1548,21 +1546,9 @@ for v in -5 12x 0 00; do
   assert_contains "$(cat "$TMP/$t.err")" "WARN: not signalling qa serve pid '$v' ($fl/.crew/qa/qrun25/serve.pid): not a process id - a qa serve process may still be running and could not be identified" "a serve.pid of '$v' is named, not signalled"
   assert_file "$fl/.crew/qa/qrun25/serve.pid" "a serve.pid of '$v' is kept for the hand that inspects it"
 done
-# 1 negates to -1: refused too. Run on the function with a kill spy, so not
-# even a broken guard can send a real signal - the frozen original's, which the
-# port's killServePid is held to under the same spy (tests/ts/teardown.test.ts).
-{
-  printf 'kill() { printf "%%s\\n" "$*" >>"$KSP_LOG"; return 0; }\n'
-  printf 'ac_warn() { printf "WARN: %%s\\n" "$*" >&2; }\n'
-  sed -n '/^kill_serve_pid() {/,/^}/p' "$ROOT/tests/fixtures/ac-teardown.sh"
-  printf 'kill_serve_pid "$1"\n'
-} >"$TMP/ksp.sh"
-mkdir -p "$TMP/ksp"
-printf '1\n' >"$TMP/ksp/serve.pid"
-ksp_err="$(KSP_LOG="$TMP/ksp.kills" bash "$TMP/ksp.sh" "$TMP/ksp/serve.pid" 2>&1)"
-assert_eq "$ksp_err" "WARN: not signalling qa serve pid '1' ($TMP/ksp/serve.pid): not a process id - a qa serve process may still be running and could not be identified" "a serve.pid of 1 is named, not signalled"
-assert_no_file "$TMP/ksp.kills" "a serve.pid of 1 meets no kill of any kind"
-assert_file "$TMP/ksp/serve.pid" "a serve.pid of 1 is kept"
+# 1 negates to -1, every process of the user, so no live teardown is ever
+# handed it: tests/ts/teardown.test.ts proves killServePid refuses it under a
+# kill spy.
 
 # --- bounded qa-infra sweep: docker can no longer park or silence teardown -----
 # The last step (ac-qa.sh infra down) had no bound and no evidence channel: a
@@ -2280,6 +2266,113 @@ if [ "$(id -u)" != 0 ]; then
   mv "$TMP/orca-bl.keep" "$AC_HOME/records/backlog.md"
   rm -rf "$AC_HOME/data/oep"
 fi
+
+# teardown-keeps-empty-crew-branch-on-orca-base-branch, cause 1: the branch
+# drop reads git's own worktree registration, which can still hold a stale
+# entry for a directory that is already gone - whether orca's release raced
+# git's deregistration, or simply never called `git worktree remove` for it.
+# Measured: `git branch -d` then refuses "used by worktree" against the
+# administrative entry alone, and `git worktree remove <path>` on an
+# already-missing directory clears it with no race to time - so the fixture
+# below reproduces the STATE (a worktree git still lists whose directory is
+# gone) rather than the timing, and the fix must not care which produced it.
+"$BIN/ac-brief.sh" race1 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" race1 "$repo" --harness fake --mode local-only >/dev/null 2>&1 \
+  || fail "an orca-backend crew spawn for the race fixture must succeed"
+race_wt="$(sed -n 's/^worktree=//p' "$AC_HOME/state/race1.meta" | head -1)"
+rm -rf "$race_wt"
+worktrees="$(git -C "$repo" worktree list --porcelain)"
+grep -qF "worktree $race_wt" <<<"$worktrees" \
+  || fail "fixture: git must still list the removed worktree (the stale-registration shape)"
+err="$("$BIN/ac-teardown.sh" race1 2>&1)" || fail "the race fixture's teardown must succeed: $err"
+case "$err" in *"kept crew/race1"*) fail "a 0-commit branch must not stay kept over a stale worktree registration alone: $err" ;; esac
+assert_eq "$(git -C "$repo" branch --list crew/race1)" "" \
+  "the branch drops once the stale registration is cleared, with no race to time"
+
+# The OTHER shape of the same cause: whether
+# `orca worktree rm` removes the directory before it returns is NOT
+# established (its own --help: "Remove a worktree from Orca and git",
+# nothing about ordering) - so the clear must not key on the directory being
+# gone. A no-op orca stand-in reproduces a release that reports SUCCESS
+# without removing anything: the worktree, its directory and git's
+# registration all still there, exactly as the incident's own race would
+# look mid-flight.
+mkdir -p "$TMP/orca-noop"
+cat >"$TMP/orca-noop/orca" <<EOF
+#!/bin/sh
+if [ "\$1 \$2" = "worktree rm" ] && [ -e "$TMP/orca-noop.active" ]; then
+  printf '{"ok":true,"result":{}}\n'
+  exit 0
+fi
+exec "$TMP/stubbin/orca" "\$@"
+EOF
+chmod +x "$TMP/orca-noop/orca"
+"$BIN/ac-brief.sh" race2 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" race2 "$repo" --harness fake --mode local-only >/dev/null 2>&1 \
+  || fail "an orca-backend crew spawn for the async-release fixture must succeed"
+race2_wt="$(sed -n 's/^worktree=//p' "$AC_HOME/state/race2.meta" | head -1)"
+: >"$TMP/orca-noop.active"
+err="$(PATH="$TMP/orca-noop:$PATH" "$BIN/ac-teardown.sh" race2 2>&1)" \
+  || fail "the async-release fixture's teardown must succeed: $err"
+rm -f "$TMP/orca-noop.active"
+case "$err" in *"kept crew/race2"*) fail "a 0-commit branch must not stay kept when orca reports success before removing the worktree: $err" ;; esac
+assert_eq "$(git -C "$repo" branch --list crew/race2)" "" \
+  "the branch drops once a SUCCESSFUL release's still-registered worktree is force-cleared"
+[ ! -d "$race2_wt" ] || fail "the worktree directory itself must be gone too, once force-cleared"
+
+# cause 2: an explicit --base-branch cut from a branch the primary's own
+# HEAD/upstream does not contain is recorded in the meta (lease_base=) so a
+# 0-commit branch cut from it can be proven contained in THAT base and
+# escalated to -D, instead of being judged "not fully merged" against a HEAD
+# it was never cut from.
+git -C "$repo" checkout -qb lbbase
+printf 'lbbase marker\n' >"$repo/lbbase.txt"
+git -C "$repo" add lbbase.txt
+git -C "$repo" commit -qm "lbbase marker"
+git -C "$repo" checkout -q main
+"$BIN/ac-brief.sh" lb1 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" lb1 "$repo" --harness fake --mode local-only --base-branch lbbase >/dev/null 2>&1 \
+  || fail "an orca-backend crew spawn with --base-branch must succeed on the fake orca"
+assert_eq "$(sed -n 's/^lease_base=//p' "$AC_HOME/state/lb1.meta")" "lbbase" \
+  "the lease base branch is recorded in the meta for teardown's containment proof"
+"$BIN/ac-teardown.sh" lb1 --force >/dev/null 2>&1
+assert_eq "$(git -C "$repo" branch --list crew/lb1)" "" \
+  "a 0-commit branch cut from the recorded lease base is deleted (-D), not kept as 'not fully merged'"
+
+# The guard: a branch with its OWN unlanded commit past that base is still
+# KEPT - the relaxation must never cost work (isAncestor fails naturally once
+# the branch carries a commit the base does not).
+"$BIN/ac-brief.sh" lb2 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" lb2 "$repo" --harness fake --mode local-only --base-branch lbbase >/dev/null 2>&1 \
+  || fail "an orca-backend crew spawn with --base-branch must succeed on the fake orca"
+lb2wt="$(sed -n 's/^worktree=//p' "$AC_HOME/state/lb2.meta" | head -1)"
+printf 'own work\n' >"$lb2wt/lb2.txt"
+git -C "$lb2wt" add lb2.txt
+git -C "$lb2wt" -c user.email=t@t -c user.name=t commit -qm "lb2 own work"
+err="$("$BIN/ac-teardown.sh" lb2 --force 2>&1)" || fail "the guard fixture's forced teardown must still succeed: $err"
+assert_contains "$err" "kept crew/lb2" "the branch-drop step still refuses a branch with its own commit past the base"
+assert_eq "$(git -C "$repo" branch --list crew/lb2)" "  crew/lb2" \
+  "a branch with its OWN commit past the recorded lease base is kept, not escalated to -D"
+git -C "$repo" branch -D crew/lb2 lbbase >/dev/null 2>&1
+
+# The sharper guard: --base-branch naming the task's OWN family branch. A
+# live sibling may legitimately continue crew/<family> (the delivery-review
+# skill's fresh-execution recovery), so nothing refuses this at spawn - the
+# teardown side must refuse it instead, because isAncestor(x,x) is always
+# true and would otherwise -D the WHOLE family branch, unlanded commits
+# included. Built directly (no spawn): the escalation guard is teardown's
+# own, independent of how lease_base came to equal the branch.
+git -C "$repo" checkout -qb crew/lb3 main
+printf 'lb3 unlanded work\n' >"$repo/lb3.txt"
+git -C "$repo" add lb3.txt
+git -C "$repo" -c user.email=t@t -c user.name=t commit -qm "lb3 unlanded work"
+git -C "$repo" checkout -q main
+printf 'kind=ship\nbackend=herdr\nproject_dir=%s\nlease_base=crew/lb3\n' "$repo" >"$AC_HOME/state/lb3.meta"
+err="$("$BIN/ac-teardown.sh" lb3 --force 2>&1)" || fail "the self-reference fixture's forced teardown must still succeed: $err"
+assert_contains "$err" "kept crew/lb3" "a --base-branch naming the task's OWN family branch must never self-merge"
+assert_eq "$(git -C "$repo" branch --list crew/lb3)" "  crew/lb3" \
+  "the WHOLE family branch survives - isAncestor(x,x) must never read as proof of containment"
+git -C "$repo" branch -D crew/lb3 >/dev/null 2>&1
 
 printf 'herdr\n' >"$AC_HOME/config/backend"
 

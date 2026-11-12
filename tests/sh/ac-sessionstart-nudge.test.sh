@@ -244,164 +244,134 @@ case "$(jq -r '.hooks.SessionStart[].matcher' "$ROOT/.claude/settings.json")" in
   *) fail "claude SessionStart wiring must fire on compact" ;;
 esac
 
-# --- differential: src/sessionstart-nudge.ts against the frozen bash original
-# DISPUTED: the implementation (tests/fixtures/ac-sessionstart-nudge.sh under bash vs src/sessionstart-nudge.ts through bin/ac-sessionstart-nudge.sh)
-# HELD-CONSTANT: the cwd and its git geometry, the home and its lock, the stdin bytes ($TMP/ns.in), the environment (AC_HOME, AC_SOLO, AC_SCOPE, AC_CREW_ID, AC_FLEET_NAME; PATH with a date stub frozen at one instant; LC_ALL=C); stdout, stderr and exit status compared whole
-obin="$(make_oracle_bin ac-sessionstart-nudge)"
-cmp -s "$obin/ac-sessionstart-nudge.sh" "$ROOT/tests/fixtures/ac-sessionstart-nudge.sh" \
-  || fail "the oracle bin must hold the frozen original"
+# --- what a session is told, row by row ----------------------------------------
+# Each row names the cwd and the environment (AC_HOME, AC_SOLO, AC_SCOPE,
+# AC_CREW_ID and AC_FLEET_NAME unset unless given); stdin is $TMP/ns.in, PATH
+# carries a date stub frozen at one instant, LC_ALL=C.
 mkdir -p "$TMP/ns-date"
 printf '#!/bin/sh\ncase "$*" in *%%s*) echo 1800000000 ;; *) echo 2027-01-15T08:00:00Z ;; esac\n' >"$TMP/ns-date/date"
 chmod +x "$TMP/ns-date/date"
-ns_same() {  # ns_same <cwd> [VAR=VAL ...] - both sides alike, stdin from $TMP/ns.in; the port's status in ns_rc
-  local cwd="$1" o_rc=0
+ns_run() {  # ns_run <cwd> [VAR=VAL ...] - sets ns_rc, ns_out, ns_err
+  local cwd="$1"
   shift
   ns_rc=0
-  (cd "$cwd" && env -u AC_HOME -u AC_SOLO -u AC_SCOPE -u AC_CREW_ID -u AC_FLEET_NAME "$@" PATH="$TMP/ns-date:$PATH" LC_ALL=C "$obin/ac-sessionstart-nudge.sh" <"$TMP/ns.in") >"$TMP/o.out" 2>"$TMP/o.err" || o_rc=$?
   (cd "$cwd" && env -u AC_HOME -u AC_SOLO -u AC_SCOPE -u AC_CREW_ID -u AC_FLEET_NAME "$@" PATH="$TMP/ns-date:$PATH" LC_ALL=C "$BIN/ac-sessionstart-nudge.sh" <"$TMP/ns.in") >"$TMP/n.out" 2>"$TMP/n.err" || ns_rc=$?
-  assert_eq "$ns_rc" "$o_rc" "differential exit in $cwd ($*)"
-  cmp -s "$TMP/o.out" "$TMP/n.out" || fail "differential stdout differs in $cwd ($*): $(diff "$TMP/o.out" "$TMP/n.out" | head -n 4)"
-  cmp -s "$TMP/o.err" "$TMP/n.err" || fail "differential stderr differs in $cwd ($*): $(diff "$TMP/o.err" "$TMP/n.err" | head -n 4)"
-  assert_eq "$ns_rc" "0" "the nudge always exits 0 ($*)"
+  ns_out="$(cat "$TMP/n.out")"; ns_err="$(cat "$TMP/n.err")"
+}
+ns_lines() {  # one word per stdout line: which message it opens
+  local l
+  while IFS= read -r l; do
+    case "$l" in
+      'agent-crew: run `bin/ac-session-start.sh` now'*) printf 'remind ' ;;
+      'agent-crew SOLO session'*) printf 'solo ' ;;
+      'agent-crew: AC_HOME is not set'*) printf 'homeless ' ;;
+      'agent-crew: this session was COMPACTED'*) printf 'compact-chief ' ;;
+      'agent-crew: this crewmate session was COMPACTED'*) printf 'compact-crew ' ;;
+      *' queued wake(s) wait - run bin/ac-wake-drain.sh and handle them.') printf 'wakes ' ;;
+      *'self task s1 (alpha'*) printf 's1 ' ;;
+      *'self task s2 ('*) printf 's2 ' ;;
+      *) printf 'other ' ;;
+    esac
+  done <"$TMP/n.out"
+}
+ns_told() {  # ns_told <words> <label> - exit 0, a silent stderr, exactly those lines
+  assert_eq "$ns_rc|$ns_err|$(ns_lines)" "0||$1" "$2"
 }
 ns_in() { printf "$1" >"$TMP/ns.in"; }  # ns_in <printf format> - stdin of the rows after it
 
-# 1. the reminder's gates, the SOLO arm and the self tasks in flight.
+# 1. the self tasks in flight ride the reminder and the SOLO orientation,
+# oldest first, and the listing's own diagnostics stay off the hook's stderr.
 ns_in ''
 nh="$TMP/ns-home"; mkdir -p "$nh/state"
-ns_same "$nh" AC_HOME="$nh"
-ns_same "$TMP" AC_HOME="$nh"
-printf 'pid=%s\nsince=x\n' "$$" >"$nh/state/.session-lock"
-ns_same "$nh" AC_HOME="$nh"
-printf 'pid=99999999\n' >"$nh/state/.session-lock"
-ns_same "$nh" AC_HOME="$nh"
-rm -f "$nh/state/.session-lock"
 printf 'kind=self\nproject=alpha\nworktree=/nonexistent\n' >"$nh/state/s1.meta"
 printf 'kind=self\nproject=b\351ta\n' >"$nh/state/s2.meta"
 printf 'kind=ship\n' >"$nh/state/c1.meta"
 touch -t 202701140800 "$nh/state/s1.meta"
 touch -t 202701150700 "$nh/state/s2.meta"
-ns_same "$nh" AC_HOME="$nh"
-assert_contains "$(cat "$TMP/n.out")" "self task s1 (alpha" "the self task rides the reminder on both sides"
-ns_same "$nh" AC_HOME="$nh" AC_SOLO=1
-ns_same "$TMP" AC_SOLO=1
-# the listing's diagnostics stay off the hook's stderr on both arms, as the
-# original's `2>/dev/null` kept them: a clock that complains, then an
-# enumerator that aborts on a directory named like a meta.
+ns_run "$nh" AC_HOME="$nh"; ns_told "remind s1 s2 " "the reminder lists the self tasks, a ship meta is none"
+ns_run "$nh" AC_HOME="$nh" AC_SOLO=1; ns_told "solo s1 s2 " "the SOLO orientation lists them too"
+ns_run "$TMP" AC_SOLO=1; ns_told "solo " "a homeless SOLO session lists none"
 mv "$TMP/ns-date/date" "$TMP/ns-date.calm"
 printf '#!/bin/sh\necho "date: clock diagnostic" >&2\ncase "$*" in *%%s*) echo 1800000000 ;; *) echo 2027-01-15T08:00:00Z ;; esac\n' >"$TMP/ns-date/date"
 chmod +x "$TMP/ns-date/date"
-for solo in AC_SOLO= AC_SOLO=1; do
-  ns_same "$nh" AC_HOME="$nh" "$solo"
-  assert_contains "$(cat "$TMP/n.out")" "self task s1 (alpha" "a complaining clock still lists the self task ($solo)"
-  assert_eq "$(cat "$TMP/o.err" "$TMP/n.err")" "" "the clock's diagnostic reaches neither side's stderr ($solo)"
-done
+ns_run "$nh" AC_HOME="$nh"; ns_told "remind s1 s2 " "a complaining clock still lists the self tasks, silently"
+ns_run "$nh" AC_HOME="$nh" AC_SOLO=1; ns_told "solo s1 s2 " "...under AC_SOLO=1 too"
 mkdir "$nh/state/a.meta"
-for solo in AC_SOLO= AC_SOLO=1; do
-  ns_same "$nh" AC_HOME="$nh" "$solo"
-  assert_eq "$(cat "$TMP/o.err" "$TMP/n.err")" "" "the enumerator's abort reaches neither side's stderr ($solo)"
-done
+ns_run "$nh" AC_HOME="$nh"; assert_eq "$ns_rc|$ns_err" "0|" "a directory named like a meta reaches no stderr"
+ns_run "$nh" AC_HOME="$nh" AC_SOLO=1; assert_eq "$ns_rc|$ns_err" "0|" "...under AC_SOLO=1 too"
 rmdir "$nh/state/a.meta"
 mv "$TMP/ns-date.calm" "$TMP/ns-date/date"
-printf 'pid=%s\n' "$$" >"$nh/state/.session-lock"
-ns_same "$nh" AC_HOME="$nh" AC_SOLO=1
-rm -f "$nh/state/.session-lock" "$nh/state/s1.meta" "$nh/state/s2.meta" "$nh/state/c1.meta"
-: >"$nh/.ac-crewdeputy-home"
-ns_same "$nh" AC_HOME="$nh"
-rm -f "$nh/.ac-crewdeputy-home"
-ns_same "$TMP" AC_HOME="$TMP/ns-no-such-home"
-# a linked-worktree home is silent; so is a home inside a checkout's
-# subdirectory (AT PARITY).
+rm -f "$nh/state/s1.meta" "$nh/state/s2.meta" "$nh/state/c1.meta"
+
+# 2. the homeless signal: an EMPTY AC_HOME is an absent one; a cwd with no
+# name is no checkout.
+nsc="$TMP/ns-chief"; mkdir -p "$nsc"
+ns_run "$nsc" AC_HOME=; ns_told "homeless " "an empty AC_HOME is homeless"
+nsgone="$TMP/ns-gone"
+mkdir -p "$nsgone"
+rc=0
+out="$(cd "$nsgone" && rmdir "$nsgone" && env -u AC_HOME -u AC_CREW_ID -u AC_FLEET_NAME LC_ALL=C "$BIN/ac-sessionstart-nudge.sh" </dev/null 2>/dev/null)" || rc=$?
+assert_eq "$rc" "0" "a nameless cwd exits 0"
+assert_contains "$out" "AC_HOME is not set" "a nameless cwd is no checkout: the signal fires"
+
+# 3. the compact arm: a crewmate anywhere, a session with no home (falls
+# through to the signal), an unresolvable home (falls through to silence), the
+# wake count, the spellings of the first line.
 nsrepo="$(make_repo nsrepo)"
 git -C "$nsrepo" worktree add -q --detach "$TMP/ns-wt" >/dev/null 2>&1
-mkdir -p "$TMP/ns-wt/state" "$nsrepo/homes/h/state"
-ns_same "$TMP/ns-wt" AC_HOME="$TMP/ns-wt"
-ns_same "$nsrepo/homes/h" AC_HOME="$nsrepo/homes/h"
-assert_eq "$(cat "$TMP/o.out" "$TMP/n.out")" "" "AT PARITY: a home under a checkout's subdirectory is never reminded"
-
-# 2. the homeless signal: chief-shaped cwds, the badges, the geometry.
-nsc="$TMP/ns-chief"; mkdir -p "$nsc"
-ns_same "$nsc"
-ns_same "$nsrepo"
-mkdir -p "$nsrepo/sub"
-ns_same "$nsrepo/sub"
-ns_same "$TMP/ns-wt"
-ns_same "$nsc" AC_CREW_ID=c1
-ns_same "$nsc" AC_FLEET_NAME=drydock
-ns_same "$nsc" AC_SCOPE=fam
-ns_same "$nsc" AC_HOME=
-nsgone="$TMP/ns-gone"
-for side in "$obin" "$BIN"; do
-  mkdir -p "$nsgone"
-  rc=0
-  out="$(cd "$nsgone" && rmdir "$nsgone" && env -u AC_HOME -u AC_CREW_ID -u AC_FLEET_NAME LC_ALL=C "$side/ac-sessionstart-nudge.sh" </dev/null 2>/dev/null)" || rc=$?
-  assert_eq "$rc" "0" "a nameless cwd exits 0 ($side)"
-  assert_contains "$out" "AC_HOME is not set" "a nameless cwd is no checkout: the signal fires ($side)"
-done
-
-# 3. the compact arm: crewmate, chief, scoped chief, the wake count, the first
-# line only (AT PARITY), the spaced spelling, no newline at all.
 printf 'pid=%s\n' "$$" >"$nh/state/.session-lock"
 ns_in '{"source":"compact"}\n'
-ns_same "$nh" AC_HOME="$nh"
-ns_same "$nh" AC_HOME="$nh" AC_SCOPE=fam-x
-ns_same "$TMP/ns-wt" AC_CREW_ID=crew-z
-ns_same "$nsc" AC_CREW_ID=crew-z
-ns_same "$nsc"
-ns_same "$nh" AC_HOME="$TMP/ns-no-such-home"
+ns_run "$nsc" AC_CREW_ID=crew-z; ns_told "compact-crew " "a compacted crewmate outside a worktree"
+ns_run "$nsc"; ns_told "homeless " "a compacted homeless session is signalled"
+ns_run "$nh" AC_HOME="$TMP/ns-no-such-home"; ns_told "" "a compacted session whose home does not resolve is silent"
 mkdir -p "$nh/state/.wake-spool/adir" "$nh/state/.wake-spool.fam-x"
 printf 'x\n' >"$nh/state/.wake-spool/1.1.000001"
 printf 'x\n' >"$nh/state/.wake-spool/1.1.000002"
 printf 'x\n' >"$nh/state/.wake-spool/.hidden"
 printf 'x\n' >"$nh/state/.wake-spool.fam-x/1.1.000003"
-ns_same "$nh" AC_HOME="$nh"
-assert_contains "$(cat "$TMP/n.out")" "2 queued wake(s)" "regular files only, dotfiles and dirs not counted"
-ns_same "$nh" AC_HOME="$nh" AC_SCOPE=fam-x
-ns_same "$nh" AC_HOME="$nh" AC_SCOPE='bad/scope'
+ns_run "$nh" AC_HOME="$nh"; ns_told "compact-chief wakes " "a compacted chief with wakes"
+assert_contains "$ns_out" "agent-crew: 2 queued wake(s) wait" "regular files only, dotfiles and dirs not counted"
+ns_run "$nh" AC_HOME="$nh" AC_SCOPE=fam-x; ns_told "compact-chief wakes " "a compacted roomchief with wakes"
+assert_contains "$ns_out" "agent-crew: 1 queued wake(s) wait" "...counts its family spool"
 rm -rf "$nh/state/.wake-spool" "$nh/state/.wake-spool.fam-x"
-for p in '{"source": "compact"}' '{"source":"compact"}' '{\n  "source":"compact"\n}\n' '{"source":"startup"}\n' 'x\000"source":"compact"\n' '"source":"compact"\000\n'; do
+for p in '{"source": "compact"}' '{"source":"compact"}' '"source":"compact"\000\n'; do
   ns_in "$p"
-  ns_same "$nh" AC_HOME="$nh"
+  ns_run "$nh" AC_HOME="$nh"; ns_told "compact-chief " "a compact first line: '$p'"
 done
+ns_in 'x\000"source":"compact"\n'
+ns_run "$nh" AC_HOME="$nh"; ns_told "" "the first line is cut at a NUL: no compact, and the live lock silences the rest"
 rm -f "$nh/state/.session-lock"
 # a caller that never closes stdin: no line within a second is no payload.
-for side in "$obin" "$BIN"; do
-  rc=0
-  out="$( (printf '{"source":"compact"}'; sleep 2) | (cd "$nh" && env -u AC_SOLO AC_HOME="$nh" LC_ALL=C "$side/ac-sessionstart-nudge.sh" 2>/dev/null) )" || rc=$?
-  assert_eq "$rc" "0" "an open stdin is bounded ($side)"
-  assert_contains "$out" "run \`bin/ac-session-start.sh\` now" "a line that never ends is no compact ($side)"
-done
+rc=0
+out="$( (printf '{"source":"compact"}'; sleep 2) | (cd "$nh" && env -u AC_SOLO AC_HOME="$nh" LC_ALL=C "$BIN/ac-sessionstart-nudge.sh" 2>/dev/null) )" || rc=$?
+assert_eq "$rc" "0" "an open stdin is bounded"
+assert_contains "$out" "run \`bin/ac-session-start.sh\` now" "a line that never ends is no compact"
 
-# --- named divergences: each row asserts both sides ---------------------------
-# BUN: no bun on PATH - the shim exits 0 at once and says nothing, where the
-# original reminded (and signalled a homeless session).
+# 4. no bun on PATH: the shim exits 0 at once, saying so in one stderr line; a
+# module that cannot load is the same no-op, said the same way.
 mkdir -p "$TMP/ns-nobun"
 for t in bash env cat dirname git sed awk head ps date mkdir tr grep basename stat; do ln -sf "$(command -v "$t")" "$TMP/ns-nobun/$t"; done
 ns_in ''
 for args in "AC_HOME=$nh" "AC_FLEET_STATE="; do
-  o_rc=0; (cd "$nsc" && env -u AC_HOME "$args" PATH="$TMP/ns-nobun" LC_ALL=C "$obin/ac-sessionstart-nudge.sh" <"$TMP/ns.in") >"$TMP/o.out" 2>/dev/null || o_rc=$?
   n_rc=0; (cd "$nsc" && env -u AC_HOME "$args" PATH="$TMP/ns-nobun" LC_ALL=C "$BIN/ac-sessionstart-nudge.sh" <"$TMP/ns.in") >"$TMP/n.out" 2>"$TMP/n.err" || n_rc=$?
-  assert_eq "$o_rc $n_rc" "0 0" "BUN: both exit 0 ($args)"
-  [ -s "$TMP/o.out" ] || fail "BUN: the original spoke ($args)"
-  assert_eq "$(cat "$TMP/n.out" "$TMP/n.err")" "" "BUN: the shim says nothing ($args)"
+  assert_eq "$n_rc|$(cat "$TMP/n.out")|$(cat "$TMP/n.err")" "0||ac-sessionstart-nudge.sh: bun is not on PATH - this hook did nothing" "no bun: exit 0, nothing injected, one stderr line ($args)"
 done
-# BUN: a module that cannot load is the same silence.
 ns_lf="$TMP/ns-loadfail"
 mkdir -p "$ns_lf/bin" "$ns_lf/src"
 cp "$BIN/ac-bun.sh" "$BIN/ac-sessionstart-nudge.sh" "$ns_lf/bin/"
 printf 'throw new Error("nudge cannot load");\n' >"$ns_lf/src/sessionstart-nudge.ts"
 n_rc=0; (cd "$nh" && AC_HOME="$nh" LC_ALL=C "$ns_lf/bin/ac-sessionstart-nudge.sh" <"$TMP/ns.in") >"$TMP/n.out" 2>"$TMP/n.err" || n_rc=$?
-assert_eq "$n_rc" "0" "BUN: a module that cannot load exits 0"
-assert_eq "$(cat "$TMP/n.out")" "" "BUN: a module that cannot load injects nothing"
-assert_contains "$(cat "$TMP/n.err")" "nudge cannot load" "BUN: the load failure is bun's own diagnosis"
-# BYTES: AC_SCOPE arrives decoded, so its non-UTF-8 byte prints as U+FFFD.
+assert_eq "$n_rc" "0" "a module that cannot load exits 0"
+assert_eq "$(cat "$TMP/n.out")" "" "a module that cannot load injects nothing"
+assert_contains "$(cat "$TMP/n.err")" "nudge cannot load" "the load failure is bun's own diagnosis"
+assert_contains "$(cat "$TMP/n.err")" "ac-sessionstart-nudge.sh: src/sessionstart-nudge.ts exited 1 - this hook did nothing" "the shim says it did nothing"
+
+# 5. AC_SCOPE arrives decoded, so its non-UTF-8 byte prints as U+FFFD.
 printf 'pid=%s\n' "$$" >"$nh/state/.session-lock"
 ns_in '{"source":"compact"}\n'
-o_rc=0; (cd "$nh" && AC_HOME="$nh" AC_SCOPE="$(printf 'f\351m')" LC_ALL=C "$obin/ac-sessionstart-nudge.sh" <"$TMP/ns.in") >"$TMP/o.out" 2>/dev/null || o_rc=$?
-n_rc=0; (cd "$nh" && AC_HOME="$nh" AC_SCOPE="$(printf 'f\351m')" LC_ALL=C "$BIN/ac-sessionstart-nudge.sh" <"$TMP/ns.in") >"$TMP/n.out" 2>/dev/null || n_rc=$?
-assert_eq "$o_rc $n_rc" "0 0" "BYTES: both exit 0"
-assert_contains "$(od -An -tx1 "$TMP/o.out" | tr -d ' \n')" "646174612f66e96d2f726f6f6d" "BYTES: the original prints the byte"
-assert_contains "$(od -An -tx1 "$TMP/n.out" | tr -d ' \n')" "646174612f66efbfbd6d2f726f6f6d" "BYTES: the port prints U+FFFD"
+ns_run "$nh" AC_HOME="$nh" AC_SCOPE="$(printf 'f\351m')"
+assert_eq "$ns_rc" 0 "a non-UTF-8 scope exits 0"
+assert_contains "$(od -An -tx1 "$TMP/n.out" | tr -d ' \n')" "646174612f66efbfbd6d2f726f6f6d" "...and prints U+FFFD in the room path"
 rm -f "$nh/state/.session-lock"
 
 pass

@@ -2,10 +2,9 @@
 // machine around a remote transport (inbox stash, wake queue, task links,
 // landing follow-ups). The entry is bin/ac-remote.sh (a shim that starts this
 // file through bin/ac-bun.sh); THIS header is the authoritative spec, including
-// for the Slack hook pair under docs/examples/slack-remote/, and the bash
-// original it replaced stays frozen at tests/fixtures/ac-remote.sh as the
-// oracle the differential leg of tests/sh/ac-remote.test.sh holds this module
-// to. Prose elsewhere naming the original's functions resolves here:
+// for the Slack hook pair under docs/examples/slack-remote/, and
+// tests/sh/ac-remote.test.sh is its contract test. Prose elsewhere naming the
+// bash original's functions resolves here:
 // ingest_stream is the INGEST CORE, cmd_poll is poll, run_ack the
 // LIFECYCLE-ACK call and family_send the family sender.
 //
@@ -162,8 +161,7 @@
 //   The turn-end guard's landing-receipt check reads that file; no hook needed.
 // push-pending - silent exit 0 without an executable config/remote-reply.
 //   Each data/<family>/room.md that is a regular file, families in BYTE order
-//   (dot names never; the original's glob followed the caller's collation -
-//   ORDER rule, named): a family the rid guard refuses is `WARN: push-pending:
+//   (dot names never): a family the rid guard refuses is `WARN: push-pending:
 //   skipped family with unsafe name: <family>` (every run); its PENDING LINES
 //   (roomPendingLines, src/lib.ts: the unanswered GATE/ASK lines oldest first,
 //   each DECIDED settling the oldest open one, a room that cannot be read
@@ -324,7 +322,7 @@
 //                  stderr ours; its OWN process group; bounded as above
 //
 // MECHANICS, the four places a naive port reads differently, each pinned by a
-// leg row (tests/sh/ac-remote.test.sh) and a unit test (tests/ts/remote.test.ts):
+// row of tests/sh/ac-remote.test.sh and a unit test (tests/ts/remote.test.ts):
 //   1. A capture reads its pipe to EOF, as `$(...)` did - never only to the
 //      child's exit: a hook that exits while a child it forked keeps stdout
 //      open holds the poll and the family send until that child lets go
@@ -348,12 +346,12 @@
 //      skip its own $BASH_ENV; the ack launcher's `set -m` gives it the
 //      `monitor` the original's backgrounding under `set -m` gave it.
 //   4. The ack hook starts detached - setsid, so it leads its own group and
-//      session where `set -m` gave the original's job a group only (named) -
+//      session where `set -m` gave the original's job a group only -
 //      and a TERM to the poll's group (ac-watch.sh's reap) leaves it alive
 //      under ppid 1, its rid's stash and wake committed and its `remote-order`
 //      line never printed (W21).
 //
-// FILES, byte-identical with the original's: the stash
+// FILES: the stash
 // state/remote-inbox/<rid>.json (the raw line + LF, jq's line for an order);
 // <rid>.replies.md beside it; the wake record above; state/<id>.meta and
 // state/archive/<id>/meta (remote_request=, remote_request_ts=);
@@ -365,33 +363,24 @@
 // command line, never a file name. Only a guarded rid names a file, and hooks
 // get identifiers in env and text on stdin.
 //
-// DIVERGENCES from the original, each named in the differential leg:
+// ALSO:
 // - the USAGE HEADER is this one; an AC_HOME cd cannot enter is physicalDir's
-//   refusal (the original printed cd's line, then tried to write the
-//   filesystem root's /.ac-root - W3).
-// - shell-own stderr is not reproduced: the redirect failures (the pointer -
-//   W2 -, the stash temp - W8 -, an unreadable --text-file - W23, W24), bash's
-//   arithmetic and `[` noise (W18), its exec text for a bad interpreter or a
-//   directory hook (each side's own shell's - W12, W20) and for a text past
-//   ARG_MAX (W17); the exit statuses are kept, and the port names a failed
-//   write `cannot write <path>: <errno>`.
-// - EXCLUSIVE temps (W36): the original wrote `.stash.<rid>.<$$>` and
-//   `<meta>.tmp.<$$>` THROUGH a planted symlink; here each is created
-//   exclusively and a meta's mode is kept. A meta set over a file it cannot
-//   read is a refusal here (swallowed inside the family send) where the
-//   original's grep failed and its mv left
-//   the file holding the one new line, exit 0; a NUL byte in one is kept where
-//   the original's grep printed `Binary file ... matches` into it.
+//   refusal (W3).
+// - a failed write is named `cannot write <path>: <errno>` (the pointer - W2
+//   -, the stash temp - W8); an unreadable --text-file keeps its status
+//   (W23, W24).
+// - EXCLUSIVE temps (W36): `.stash.<rid>.<pid>` and `<meta>.tmp.<pid>` are
+//   each created exclusively, never written through a planted symlink, and a
+//   meta's mode is kept. A meta set over a file it cannot read is a refusal
+//   (swallowed inside the family send); a NUL byte in one is kept.
 // - argv arrives decoded: a byte that is not UTF-8 in an argv text reaches jq
-//   as one U+FFFD per byte where the original's jq made one per sequence
-//   (`\xed\xa0\x80` is three here); a rid or family with a non-ASCII letter is
-//   refused under every locale, where bash 3.2's range let one through under
-//   UTF-8; a .thread value that is not UTF-8 cannot cross into a hook's env.
-// - families and rooms are walked in BYTE order (ORDER rule); the leg runs the
-//   original under LC_ALL=C.
+//   as one U+FFFD per byte (`\xed\xa0\x80` is three); a rid or family with a
+//   non-ASCII letter is refused under every locale; a .thread value that is
+//   not UTF-8 cannot cross into a hook's env.
+// - families and rooms are walked in BYTE order (ORDER rule).
 // - the ack hook's own group is a session too (setsid); nothing observable to
 //   a hook that does not ask. A shebang-less hook runs under /bin/sh (bash in
-//   POSIX mode on macOS) where the original's bash ran it in its own mode.
+//   POSIX mode on macOS).
 //
 // CALLERS, all fail soft (a bun-less PATH makes the shim print `ERROR:
 // required tool not found: bun`, exit 1): bin/ac-watch.sh's remote slot runs
@@ -412,6 +401,7 @@ import {
   childrenIgnoreInt,
   die,
   enterCaller,
+  familyDirs,
   iso,
   launchable,
   metaGet,
@@ -1197,19 +1187,15 @@ function doneStamp(argv: string[]): void {
   say(1, `done-stamped ${family}\n`);
 }
 
-const byteOrder = (a: string, b: string): number => Buffer.compare(Buffer.from(a), Buffer.from(b));
-
 async function pushPending(): Promise<void> {
   const hook = `${homeDir("config")}/remote-reply`;
   if (!isFile(hook) || !isExec(hook)) return;
   const stamp = `${stateDir}/.remote-push-stamp`;
-  const data = homeDir("data");
-  let names: string[] = [];
-  try {
-    names = readdirSync(data);
-  } catch {}
-  for (const family of names.filter((n) => !n.startsWith(".")).sort(byteOrder)) {
-    const room = `${data}/${family}/room.md`;
+  // Every family dir, a story's inside its epic's included (familyDirs); the
+  // family is the dir's own name.
+  for (const dir of familyDirs(homeDir("data"))) {
+    const family = dir.slice(dir.lastIndexOf("/") + 1);
+    const room = `${dir}/room.md`;
     if (!isFile(room)) continue;
     if (!ridOk(family)) {
       warnB(`push-pending: skipped family with unsafe name: ${b8(family)}`);

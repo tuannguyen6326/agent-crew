@@ -1,13 +1,11 @@
 // watch.ts - the chief's zero-token fleet watcher for any backend, one
 // long-running process per arm. The entry is bin/ac-watch.sh (a shim that
 // starts this file through bin/ac-bun.sh); THIS header is the authoritative
-// spec, and the bash original it replaced stays frozen at
-// tests/fixtures/ac-watch.sh as the oracle the differential leg of
-// tests/sh/ac-watch.test.sh holds this module to. Its blocks follow a run in
-// code order: the exits, --release, the scope and skip guards, the signals,
-// the arm, then the loop - push check, beacon, brain freshen, the pane pass,
-// the remote slot, heartbeat, poll wait - and last the knobs and the port's
-// own terms.
+// spec, and tests/sh/ac-watch.test.sh is its contract test. Its blocks follow
+// a run in code order: the exits, --release, the scope and skip guards, the
+// signals, the arm, then the loop - push check, beacon, brain freshen, the
+// pane pass, the remote slot, heartbeat, poll wait - and last the knobs and
+// the port's own terms.
 //
 // Usage: ac-watch.sh [--once | --release <pid>]
 //
@@ -307,6 +305,28 @@
 // watcher at once. ac-watch-policy-hook.sh denies those patterns for sessions
 // rooted in THIS repo; sessions rooted elsewhere are unguarded, so this message
 // is the only barrier they get.
+// AN ORPHANED AUTOARM INCUMBENT (autoarm-orphan-holds-watcher-lock, 2026-10):
+// the Stop hook that marks an arm BOUNDED (AC_AUTOARM) can itself outlive its
+// session (reparented to pid 1, src/watch-autoarm.ts's header owns that
+// evidence), leaving the marked watcher alive and the lock held with no
+// session left to free it before the budget runs out. Every FLEET
+// (AC_WATCH_ONLY=="") AC_AUTOARM arm stamps $lock/autoarm with the arming
+// session's OWN session-lock pid (sessionLockPid), not this watcher's - a
+// scoped arm stamps it empty, since its lock carries no home-wide
+// session-lock to ever compare against. A LATER fleet arm under AC_AUTOARM
+// that finds the SAME-CONFIG singleton held reads that stamp back
+// (autoarmIncumbentOrphaned, src/lib.ts) - a mismatch against the CURRENT
+// session-lock pid, or a recorded pid that no longer answers kill -0, proves
+// that session is gone, and tryReclaimOrphanAutoarm marks (stampOrphanReclaim,
+// the SAME marker --release uses, so the incumbent's own exit traces
+// `orphan-reclaim` instead of the indistinguishable `watcher killed
+// externally`) and TERMs the incumbent watcher, then gives the retry real
+// slack (lockAcquire's own pidAlive poll, not an instant `already running`)
+// rather than reporting coverage it does not yet hold. Scoped (AC_WATCH_ONLY)
+// arms never reach this at all: comparing a scoped incumbent's holder against
+// the FLEET session-lock would condemn a live scoped watcher on an unrelated
+// pid. A DIFFERING config keeps its existing loud refusal unchanged - this is
+// an orphan check, never a config-match override.
 // Liveness beacon: state/.last-watcher-beat[.<fam>] (epoch secs, refreshed
 // every poll - see the scope note above); the turn-end guard treats a stale
 // beacon as "watcher down". On EXIT the watcher STANDS ITS BEACON DOWN (writes
@@ -445,6 +465,40 @@
 // .seen-<id> semantics are unchanged, and the AC_DECISION_RE re-stamp reconcile
 // still wins the pass it fires on (a re-wake follows on the next poll if the
 // pane keeps moving).
+//
+// REWAKE LATCH (watch-marker-rewake-cosmetic-redraw), the sibling of ENDED
+// BUSY LATCH for a pane that STILL carries a marker. The hash discriminator
+// above cannot tell a genuine turn from claude's own TUI redraws (the
+// "Compacting conversation…" spinner, its settling line, a recap) - every
+// frame changes the tail hash exactly like new work does, so it re-fired
+// `report:<id>` for the SAME already-delivered marker on every poll the
+// redraw kept animating (observed live: an already-delivered `paused:` line,
+// ~every 30s, 2026-10-16; an ack never settled it). Rather than pattern-
+// matching claude's redraw prose (less general, and the fallback ENDED BUSY
+// LATCH itself rejected), this reuses that latch's exact shape: a one-shot
+// per-id stamp, state/.rewake-<id>. UNLIKE its sibling, it does not start
+// cleared: it is armed the INSTANT the chief is TOLD about a marker - the
+// new-marker wake, PUSH ADOPT, or this very branch's own fire - so a
+// cosmetic redraw right after that telling costs nothing either, not only
+// the second one. Cleared only by a busy poll (the same `if (busy)` edge
+// that clears .ended-<id>), a brand-new marker arriving - on the pane's own
+// dedup, or through ac-done.sh's PUSH channel, which drops the same stamp -
+// which retires the OLD marker's latch and arms its own, or a delivered
+// non-slash steer (send.ts, the same site that clears .ended-<id>): a
+// steered gate round answered and re-printed inside one AC_POLL interval is
+// that same transition and must not wait on a busy poll that may never
+// come. While the latch stands, every churn under the unchanged marker is
+// anchored silently - no stamp, no wake - whether it is the first one or
+// the fiftieth. RESIDUAL, stated rather than hidden: an UNSTEERED gate-loop
+// round that revises and re-prints the marker entirely inside one AC_POLL
+// interval, with no busy sample in between, is indistinguishable from a
+// redraw and stays suppressed here until some later round is slow enough to
+// be sampled busy or is itself steered - but ac-done.sh's PUSH channel wakes
+// on every completion unconditionally (src/done.ts: no latch, no dedup
+// against this stamp), so any crewmate that PUSHES its own completion still
+// wakes its chief regardless; only a round the watcher alone observes, with
+// neither a busy sample nor a steer, is silently anchored.
+//
 // BACKGROUND DEFER (paused-rewake-on-moving-pane): a turn that ENDED with a
 // background agent, shell or monitor still running reads not busy, yet its tail keeps
 // moving (subagent progress, completion notices) under the very marker the chief
@@ -582,15 +636,49 @@
 // reported chief-facing completion (done/failed/paused/merged - an AC_CAPTAIN_RE
 // match that is NOT a captain-wait marker). Its report: wake fired when the
 // marker was fresh; the marker has merely scrolled past the bounded 25-line tail,
-// so the pane now reads as a bare ended turn. Re-firing ended: there is the bug
-// this closes - .stale-<id> is cleared by every cosmetic TUI redraw, so the loud
-// wake re-armed every quiet window forever. Such a pane is anchored SILENTLY
-// (touch .stale-<id> + a status note, no wake), the same once-only shape as the
-// push-channel anchor. The memory is DROPPED the moment the pane is seen BUSY
-// again (a re-task busies it, and once its completion marker has also scrolled
-// out the .seen-<id> is cleared), which re-arms the loud net for genuinely-new
-// prose-only work. Completion-class ONLY: a captain-wait marker parks the pane
-// BLOCKED and is handled by the ask path, never here.
+// so the pane now reads as a bare ended turn. Re-firing ended: was the bug this
+// closed for a pane WITH a completion marker - .stale-<id> is cleared by every
+// cosmetic TUI redraw, so the loud wake re-armed every quiet window forever.
+// Such a pane is anchored SILENTLY (touch .stale-<id> + a status note, no
+// wake), the same once-only shape as the push-channel anchor. The memory is
+// DROPPED the moment the pane is seen BUSY again (a re-task busies it, and
+// once its completion marker has also scrolled out the .seen-<id> is
+// cleared), which re-arms the loud net for genuinely-new prose-only work.
+// Completion-class ONLY: a captain-wait marker parks the pane BLOCKED and is
+// handled by the ask path, never here. A pane with NO marker at all - a
+// prose-only ask, the live case this arm was built for - has nothing here to
+// anchor on; ENDED BUSY LATCH below closes the same redraw for that case.
+//
+// ENDED BUSY LATCH (watch-ended-busy-latch). The marker-less sibling of the
+// anchor above: a pane that ended its turn on PROSE alone (the captain's own
+// question, or a chief's) has no .seen-<id> to anchor on, so claude's idle
+// auto-compaction ("Compacted while idle, before the prompt cache expired")
+// or its recap line ("recap:") kept clearing .stale-<id> like any other
+// redraw and the loud wake fired again every AC_STALE window forever
+// (observed live: ~10 identical ended: wakes on one roomchief pane in 23h, 4
+// on one crewmate pane - 2026-10-16). Closing it does not touch .stale-<id>'s
+// own clearing (STALE DEFERRAL and the soft stale: arm still want every
+// redraw to restart THEIR clock): a separate one-shot latch, .ended-<id>,
+// survives a redraw untouched and is cleared by any poll that reads the pane
+// BUSY (not gated to the 0->1 edge - harmless, since a cleared latch has
+// nothing left to clear on the next busy poll) - a genuine new turn, never a
+// repaint. `ended:` fires once per idle episode: the first fire touches
+// .ended-<id>; every redraw-only repoll after it is anchored the same way as
+// the marker case (touch .stale-<id> + a status note, no wake); the next
+// busy poll clears the latch so a genuinely new ask wakes loudly again -
+// and so does a delivered steer other than a slash command (src/send.ts,
+// its own clear_wait site): that transition already answers the parked
+// pane (CAPTAIN-WAIT STAMP, ac-backend.sh) whether or not any poll ever
+// samples the reply busy, closing the common case of a steered reply
+// answered and re-ended inside one AC_POLL interval. FAILS TOWARD WAKING on
+// first sight: a pane that never once read BUSY before its first ended:
+// still wakes - the latch starts CLEARED, so there is nothing yet to
+// suppress. RESIDUAL, stated rather than hidden: an UNSTEERED turn - the
+// captain typing straight into the pane, or a background-notification wake
+// - that starts and ends inside one AC_POLL interval crosses neither a busy
+// poll nor a steer's clear_wait, so it is indistinguishable from a redraw
+// and stays suppressed until some later turn is slow enough to be sampled
+// busy; the durable room/chief channel is the one to use meanwhile.
 //
 // JEV NOTE (the System One net, config/jev). On the two quiet-arm wakes -
 // the loud ended: and the soft stale: - and ONLY there, the watcher asks
@@ -612,20 +700,39 @@
 // (its header owns the questions, score, floor and knob) and a ready verdict
 // appends ` compact=advise score=<s> floor=<f> usage=<u>` - a hint for the
 // chief, who may `ac-send.sh <id> /compact`; the watcher never sends it.
-// STALE DEFERRAL (watch-stale-defer-on-declared-wait). The stale arm measured
-// idle time alone, and its one dedup (.stale-<id>) is cleared by any cosmetic
-// redraw - so a worker that had SAID why it is quiet, or one parked at a gate on
-// the captain, was re-reported stale every AC_STALE window. On the branch about
-// to emit stale: (never the healthy path, which pays nothing, and never ended:),
-// the worker's word is read first, in two forms (declaredWait owns the reads):
+// Under config/compact-auto=on the adviser is handed a crewmate's task as
+// `--auto <id>` (a meta whose kind is neither roomchief nor crewdeputy - a
+// roomchief's own Stop hook owns that act, a crewdeputy keeps the hint) and
+// sends /compact itself, the note then reading ` compact=auto ...` (its
+// header: AUTO FOR A CREWMATE). Under any other knob value the call is the
+// original's, argument for argument.
+// STALE DEFERRAL (watch-stale-wakes-unbounded, carrying forward watch-stale-
+// defer-on-declared-wait). The stale arm measured idle time alone, and its
+// one dedup (.stale-<id>) is cleared by any cosmetic redraw - so a worker
+// that had SAID why it is quiet, one parked at a gate on the captain, or one
+// the captain had parked by hand, was re-reported stale every AC_STALE
+// window. On the branch about to emit stale: (never the healthy path, which
+// pays nothing, and never ended:), the worker's word is read first, in three
+// forms (declaredWait owns the reads, in this order):
 //  - DECLARED WAIT: the LAST line of state/<id>.status (the line ac-crew-state.sh
 //    reports) is a captain-wait marker (AC_DECISION_RE: needs-decision:,
 //    blocked:, checks-passed:) or `paused:` - the AC_CAPTAIN_RE verbs that mean
 //    "stopped on purpose"; `done:` is NOT a wait (it waits on the chief's reap,
 //    which the stale wake exists to prompt), and this watcher's OWN wait-shaped
 //    notes (WATCH_ASK_NOTE, WATCH_ENDED_NOTE) are its verdicts, not the worker's
-//    word, so they never defer.
-//  - GATE PARKED: the line explains nothing, but the latest review findings file
+//    word, so they never defer. A `paused:` line naming its own `until <epoch>`
+//    (pausedWaitExpired, src/lib.ts) stops deferring once that epoch is no
+//    later than now - the worker's own deadline outranks the declaration
+//    itself, the one case where the wait expires before a fresh sighting.
+//  - BACKLOG HOLD: no status-line wait (or an expired one), but the task's own
+//    backlog row - its exact id, else its family's (rowForId, src/lib.ts) -
+//    carries the captain's `[@held]` (acDoneline, src/backlog.ts). The DATED
+//    arm releases ITSELF (docs/backlog.md): READY on and after hold_until,
+//    the same comparison bin/ac-task.sh start and ac-ready.sh already use,
+//    so an expired dated hold is no hold here either. The row text itself is
+//    the dedup key, so an edit to the row (not merely its own re-sighting) is
+//    what a fresh declaration means here.
+//  - GATE PARKED: neither of the above, but the latest review findings file
 //    (the family's newest verify/codereview round, or the crew-ship run's
 //    findings/review.json - newest mtime wins) holds a finding whose `action`
 //    is exactly `ask-user` with no recorded `decision`, read by jq KEY - a
@@ -639,11 +746,45 @@
 // A deferral RESTARTS the idle clock (.change-<id>, the stamp the arm measures
 // from - not merely .stale-<id>) and logs `deferred-stale:<id> <reason>` to the
 // arm log, ONCE per declaration (.deferred-<id> holds the key: the status line
-// plus the log's byte size, or the findings path plus its content hash). The
-// SAME declaration a full AC_STALE window later falls through to today's stale:
-// - the declaration itself went stale - and a NEW one defers again. The
-// declaration outranks the liveness verdict because it is what the worker said
-// about its own silence; it never outranks the clock twice.
+// plus the log's byte size, the row text, or the findings path plus its content
+// hash). The SAME declaration keeps deferring on every later sighting too - the
+// idle clock restarts again and again, with no second arm-log line - and
+// re-surfaces to today's stale: only once AC_PAUSE_RESURFACE seconds have
+// passed since the declaration was last seen fresh (.deferred-since-<id>, a
+// clock in the same .change-/.busy- family); that resurfacing itself restarts
+// the cadence, so it fires at most once per AC_PAUSE_RESURFACE window, never a
+// burst. A NEW declaration (its key changed) defers again on its own dedup,
+// unbound by whatever cadence the old one was on; so does the OLD one, should
+// it reappear - the declaration's own dedup (.deferred-/.deferred-since-<id>)
+// is cleared the moment declaredWait reads no active declaration AT ALL
+// (released, re-held under different text, or a status line that moved on),
+// and a busy poll clears it too, same as ENDED BUSY LATCH and REWAKE LATCH
+// (header): a real turn means the declaration was evidence about the silence
+// BEFORE it, never about the one after. The declaration outranks the
+// liveness verdict because it is what the worker said (or the captain
+// ordered) about the silence; it never outranks the clock FOREVER.
+//
+// STALE WAKE CAP (watch-stale-wakes-unbounded). Independent of the deferral
+// above, and scoped to the SAME narrow branch that deferral owns - never the
+// ended:/limited:/needs-login: wakes above it, which stay actionable however
+// capped a pane is, since those are hard signals the cap was never meant to
+// bound. It bounds the OTHER half of the incident: a pane that redraws with
+// NO declaration at all (nothing above defers it) still got a fresh stale:
+// every AC_STALE window forever, since .stale-<id> is the one dedup a redraw
+// clears. AC_STALE_MAX_WAKES (default 0, off - today's cap-less path, byte
+// for byte, and any stale .stale-capped-<id> from a PRIOR on-period simply
+// ignored) counts only an UNDECLARED stale: emit (.stale-count-<id>, reset
+// where a busy poll already clears .ended-/.rewake-<id>: a real turn, never
+// a cosmetic redraw, is what earns a fresh N-wake budget) - a RESURFACED
+// deferral wake never spends this budget, since AC_PAUSE_RESURFACE above is
+// its own, independent bound. At the cap, the SAME stale: wake carries one
+// extra PERMANENTLY-STALE clause and writes .stale-capped-<id>, which a guard
+// just above the deferral read then holds the pane silent behind (not the
+// hard signals above it) until AC_STALE_CAP_HORIZON seconds pass (the
+// marker's own clock, self-healing like .change-/.busy-, and clearing the
+// counter with it) or an operator removes the marker by hand - which gets
+// the SAME fresh budget: a leftover maxed-out count sitting without its
+// marker is read as 0, never let to re-cap the very next wake.
 //
 // SUPERVISING-CHIEF QUIET (watch-chief-child-quiet). `stale` is documented as
 // the SOFT signal, but a wake IS this watcher's EXIT - so a merely-quiet pane
@@ -667,6 +808,10 @@
 // marker cleared and the IDENTICAL non-news re-tripped on the next quiet window
 // - acking it never settled it. A predicate re-asked every poll has nothing to
 // re-trip: no wake is emitted, so there is no dedup for a pane change to undo.
+// (ENDED BUSY LATCH above later gave the ended: arm itself a redraw-surviving
+// dedup, but that only stops a REPEAT fire for the SAME idle episode; it says
+// nothing about a chief with a live child, which still needs a question
+// re-asked live, never a marker remembered from one.)
 // BOTH ARMS, and this REVERSES watch-idle-loud-wake's original "`ended:` stays
 // loud however busy the family is" (ended-wake-refires-on-a-prose-reporting-
 // chief). What the reversal closes is a RULE CONFLICT, not a missing case: the
@@ -885,26 +1030,8 @@
 // foreground child; a handler runs at the next checkpoint - the top of each
 // loop phase, each pane, and before any reason line prints.
 //
-// ESCAPE HATCH. A broken port leaves the lab without supervision (every pane
-// wake, the push acceleration, the remote slot, and then every chief turn end,
-// which the turn-end guard blocks on the stale beacon); the solo session never
-// arms a watcher, so it never stops the slice that fixes one. Run the frozen
-// original from a scratch bin/ at a physical path:
-//   o=$(cd "$(mktemp -d)" && pwd -P); mkdir "$o/bin"; cp bin/*.sh "$o/bin/"
-//   ln -s "$PWD/src" "$o/src"; ln -s "$PWD/dashboard" "$o/dashboard"
-//   cp tests/fixtures/ac-watch.sh "$o/bin/ac-watch.sh"
-// then the chief arms `AC_HOME=<home> "$o/bin/ac-watch.sh"` (with its usual
-// AC_WATCH_SKIP or AC_WATCH_ONLY) as its harness's background task and
-// releases with either side's --release: the lock, marker, beacon and stamp
-// formats are shared, and the copy's command line names ac-watch, which every
-// nudge accepts. The autoarm hook runs the watcher beside itself, so either
-// point the Stop hook's command at "$o/bin/ac-watch-autoarm.sh" or keep a
-// hand-armed copy running (the hook then reads `already running` and stands
-// aside). The copy bakes nothing of its path into state. LANDING: bash reads
-// its script lazily, so land with no bash watcher running from the file -
-// release the fleet watcher and let a scoped one end, or re-arm at once.
-//
-// AT PARITY (each pinned in the leg until its own fix lands):
+// AT PARITY with the bash original, and deliberately left unasserted by the
+// contract test (each until its own fix lands):
 // - W1: any argument but `--once` and `--release` ARMS: a typo (`-h`,
 //   `--onc`) is a fleet arm that acquires the session lock for the caller.
 // - W2: under a UTF-8 locale an invalid byte in the 40-line capture stops the
@@ -937,55 +1064,55 @@
 // - W10: `.deferred-<id>` is written but absent from the one reap list
 //   (taskStamps, ac_task_stamps), so a reused id inherits a deferral.
 //
-// DIVERGENCES from the original (the leg names each one a row can show):
-// - BUN: every verb needs bun now - the shim's `ERROR: required tool not
-//   found: bun`, exit 1, no stdout, which the autoarm hook's no-reason-line arm
-//   hands back - where --once and a scoped arm ran without it.
+// ALSO:
+// - ORPHAN RECLAIM: a held singleton under AC_AUTOARM can reclaim a
+//   SAME-CONFIG marked incumbent whose arming session is gone instead of
+//   answering `already running` (AN ORPHANED AUTOARM INCUMBENT, above).
+// - COMPACT AUTO: under config/compact-auto=on the adviser call for a
+//   crewmate carries `--auto <id>` (COMPACT NOTE, above).
+// - BUN: every verb needs bun - the shim's `ERROR: required tool not found:
+//   bun`, exit 1, no stdout, which the autoarm hook's no-reason-line arm hands
+//   back.
 // - THE PROCESS is `bun --no-env-file <root>/src/watch.ts <cwd> [args]`: the
 //   arm log's chain names it `bun`, and the nudge's watcher match (watcherPid,
 //   ac_watcher_pid) accepts `/src/watch.ts` beside `ac-watch`.
 // - SIGNAL TIMING: a TERM/INT is handled at the next checkpoint, so one landing
 //   inside a pane's pass lets that pane's stamps and record land before the
-//   signal line; a second TERM inside the handler is ignored, where the
-//   original's reset trap let it kill at once.
-// - W8: AC_SCOPE's grammar is read per its text, where bash 3.2's range under a
-//   UTF-8 locale let an accented letter through (`café` scoped there).
+//   signal line; a second TERM inside the handler is ignored.
+// - W8: AC_SCOPE's grammar is read per its text, so an accented letter is no
+//   scope under a UTF-8 locale either (`café` is the fleet's).
 // - W9: the comma lists are split, never globbed against the caller's cwd.
 // - W11 EXCLUSIVE TEMPS: the arm-log trim, the beacon, the remote poll's two
 //   capture files and jev's error file are created exclusively (the name, then
-//   `.<n>` past one taken), and the release marker lands by rename, where the
-//   original wrote through whatever sat at each predictable name.
-// - W12 SHELL-OWN STDERR is not reproduced, the status kept: `[: <x>: integer
-//   expression expected`, `<x>: unbound variable`, `value too great for base`,
-//   a redirection's own failure, and a missing child's `No such file or
-//   directory` - which the original also captured into the jev/compact error
-//   line and the remote poll's last stderr line.
-// - FAIL-PATH: a touch, rm or stamp that fails prints nothing, where touch and
-//   rm printed their own line; an unwritable brain attempt stamp skips that
-//   fire, where the original's errexit ended the run; a reason line stdout
-//   cannot take leaves the exit's beacon its 0 alone, where the original's
-//   printf kept the line buffered and the beacon write flushed it in first.
+//   `.<n>` past one taken), and the release marker lands by rename - never
+//   written through whatever sits at a predictable name.
+// - W12 SHELL-OWN STDERR: no shell's own line is printed, the status kept - an
+//   integer test on a non-integer, an unbound variable, a value too great for
+//   its base, a redirection's own failure, a missing child - nor captured into
+//   the jev/compact error line or the remote poll's last stderr line.
+// - FAIL-PATH: a touch, rm or stamp that fails prints nothing; an unwritable
+//   brain attempt stamp skips that fire; a reason line stdout cannot take
+//   leaves the exit's beacon its 0 alone.
 // - SIGPIPE: a closed stdout ends the run 141 with the exit cleanup, even
 //   with PIPE ignored at entry - Bun ignores it itself before any code runs,
 //   so an inherited SIG_IGN cannot be told apart.
 // - INHERITED SIG_IGN reaches no child but INT's: Bun starts every child at
 //   default dispositions, so a poll `sleep` or a backend call ends on a HUP or
-//   TERM the original's children would have ignored.
-// - The coverage revoke's typed line runs in this process (the original's ran
-//   in a subshell), so its verified-send settle `sleep`s are direct children
-//   for that call: a push nudge landing then ends one ("nudged") instead of
-//   reading mid-poll, and the record waits for the next loop top.
-// - The remote poll leads its own SESSION, where `set -m` made a group only.
+//   TERM the watcher itself ignores.
+// - The coverage revoke's typed line runs in this process, so its
+//   verified-send settle `sleep`s are direct children for that call: a push
+//   nudge landing then ends one ("nudged") instead of reading mid-poll, and
+//   the record waits for the next loop top.
+// - The remote poll leads its own SESSION.
 // - CHILDREN resolve from the bin/ bun was started in (ac-lock.sh,
-//   ac-remote.sh, ac-jev.sh, ac-compact-advise.sh, ac-brain.sh), where the
-//   original joined `$(dirname "$0")` - the same files through a home's link.
+//   ac-remote.sh, ac-jev.sh, ac-compact-advise.sh, ac-brain.sh) - the same
+//   files through a home's link.
 // - HOME RESOLUTION: an AC_HOME cd cannot enter is `ERROR: AC_HOME is not a
-//   readable directory: <h>`, where the original printed cd's own line.
+//   readable directory: <h>`.
 // - BYTES: argv and the environment arrive decoded, so a byte that is no UTF-8
 //   in a scope or list variable, a meta's file name, or a marker handed back to
 //   the backend's wait stamp reaches its line or child as U+FFFD.
-// - A pid-less lock dir's age is read off the host clock (lockAcquire), where
-//   the original read date(1).
+// - A pid-less lock dir's age is read off the host clock (lockAcquire).
 //
 // CALLERS: the chief arms it as its harness's OWN background task (CLAUDE.md
 // section 7, the task-lifecycle and rooms-threads skills, session start's
@@ -1011,33 +1138,36 @@ import {
   DECISION_RE,
   STARTED_BIN,
   arithValue,
+  autoarmIncumbentOrphaned,
   backendAgentIdle,
   backendCall,
   backendName,
   brainFreshen,
   chiefBusyPath,
-  chiefChildLive,
-  chiefGateParked,
   childrenIgnoreInt,
   cksumPosix,
-  claudeTranscriptPath,
   configDir,
   configReadSoft,
   crewMetas,
   dataDir,
   die,
   enterCaller,
+  envHome,
   exclusiveTemp,
+  famDir,
   familyOfId,
   fileMtime,
   iso,
+  ledgerRead,
   lockAcquire,
   lockRelease,
   metaGet,
   nowRaw,
+  pausedWaitExpired,
   pidChain,
   roomFile,
   roomchiefLive,
+  rowForId,
   shellStatus,
   spawnShell,
   spawnShellSync,
@@ -1058,6 +1188,9 @@ import {
   watcherBeatRead,
   writeAll,
 } from "./lib.ts";
+import { chiefChildLive, chiefGateParked } from "./lib-wake-drain.ts";
+import { claudeTranscriptPath } from "./lib-send.ts";
+import { acDoneline } from "./backlog.ts";
 
 // Read before any listener exists: Bun installs a handler with the first
 // one, even over a disposition the process started with as ignored.
@@ -1438,7 +1571,13 @@ const pollTarget = env("AC_WATCH_ONLY") !== "" ? `only:${b8(env("AC_WATCH_ONLY")
 
 // A data dir, or a state meta of the family, its roomchief or a member.
 function familyKnown(fam: string): boolean {
-  if (isDir(`${dataDir()}/${fam}`)) return true;
+  let famd = "";
+  try {
+    famd = famDir(fam);
+  } catch {
+    return true;
+  }
+  if (isDir(famd)) return true;
   if (existsSync(`${sd}/${fam}.meta`)) return true;
   const cut = `${sd}/${fam}`.lastIndexOf("/");
   const dir = `${sd}/${fam}`.slice(0, cut);
@@ -1695,6 +1834,63 @@ async function ownerGate(): Promise<void> {
   }
 }
 
+// The home's session-lock pid (src/lock.ts), read the same way
+// remotePollAllowed below reads it - the identity an autoarm arm stamps into
+// $lock/autoarm and later compares against to tell its own incumbent from an
+// orphaned one.
+function sessionLockPid(): string {
+  try {
+    return cap(metaGet(`${sd}/.session-lock`, "pid"));
+  } catch {
+    return "";
+  }
+}
+
+// The reclaim's own trace: the SAME marker --release uses (releaseNote
+// reads any reason), so the incumbent's own exit logs `orphan-reclaim by
+// owner` instead of the `watcher killed externally` every unexplained kill
+// already gets investigated as. Best-effort - a marker that fails to write
+// still lets the kill and the retry proceed, because reclaiming coverage
+// matters more than the trace of why.
+function stampOrphanReclaim(target: string): void {
+  const marker = releaseMarker(target);
+  try {
+    const t = exclusiveTemp(`${marker}.tmp`);
+    try {
+      writeAll(t.fd, B(`releaser=${process.pid}\ntarget=${target}\nreason=orphan-reclaim\nepoch=${nowRaw()}\n`));
+    } finally {
+      closeSync(t.fd);
+    }
+    spawnShellSync(["mv", "-f", t.path, marker], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+  } catch {}
+}
+
+// heldRefusal's SAME-CONFIG, marked-incumbent gate (below) already narrows
+// to the one case this answers: is THAT incumbent's session gone
+// (autoarmIncumbentOrphaned, src/lib.ts), and if so, reclaim it - never the
+// scoped or differing-config cases the header rules out of this path.
+function tryReclaimOrphanAutoarm(): boolean {
+  if (env("AC_AUTOARM") === "" || env("AC_WATCH_ONLY") !== "") return false;
+  if (skipSet(readCap(configFile)) !== skipSet(b8(env("AC_WATCH_SKIP")))) return false;
+  if (!autoarmIncumbentOrphaned(readCap(`${lock}/autoarm`), sessionLockPid())) return false;
+  const target = readCap(`${lock}/pid`);
+  if (!/^[0-9]+$/.test(target)) return false;
+  watchLog(`release ALLOWED pid=${target} reason=orphan-reclaim - the autoarm incumbent's own session is gone`);
+  stampOrphanReclaim(target);
+  try {
+    process.kill(Number(target), "SIGTERM");
+  } catch {
+    rmF(releaseMarker(target));
+  }
+  // Bounded, never instant: the SIGNALS handling this TERM reaches only
+  // checks it at its next checkpoint, so a pane pass of sync backend calls
+  // can outlast a short wait. lockAcquire's own retry already polls
+  // pidAlive(target) every second (lockStale, src/lib.ts) - real slack here
+  // beats falling back to heldRefusal's `already running`, which would
+  // misreport a target that is still actively dying.
+  return lockAcquire(lock, 20);
+}
+
 // The lock is held by a LIVE watcher (a dead or stale one was reclaimed by
 // lockAcquire). An IDENTICAL arm is idempotent; a DIFFERING one refuses
 // loudly so the caller releases the stale config instead of silently
@@ -1735,15 +1931,21 @@ function heldRefusal(): never {
 await topLevel(async () => {
   if (once) return;
   if (env("AC_WATCH_ONLY") === "") await ownerGate();
-  if (!lockAcquire(lock, 0, () => {})) heldRefusal();
+  if (!lockAcquire(lock, 0, () => {}) && !tryReclaimOrphanAutoarm()) heldRefusal();
   try {
     writeFileSync(configFile, B(`${b8(env("AC_WATCH_SKIP"))}\n`));
   } catch {
     process.exit(1);
   }
   // Inside the lock dir, so the release retires it with the lock: the marker
-  // can never outlive the watcher it describes.
-  if (env("AC_AUTOARM") !== "") stamp(`${lock}/autoarm`, "");
+  // can never outlive the watcher it describes. A FLEET arm's content is the
+  // session-lock pid, not this watcher's own - tryReclaimOrphanAutoarm
+  // compares a LATER arm's incumbent read against this value to tell its
+  // session apart from a dead one. A scoped arm has no home-wide
+  // session-lock to record (tryReclaimOrphanAutoarm never reads a scoped
+  // incumbent's stamp either) - empty, exactly as before this fix, since
+  // only isFile (the hand-arm refusal, below) reads a scoped marker.
+  if (env("AC_AUTOARM") !== "") stamp(`${lock}/autoarm`, env("AC_WATCH_ONLY") === "" ? `${sessionLockPid()}\n` : "");
   armed = true;
   process.on("exit", exitCleanup);
   watchLog(`arm pid=${process.pid} target=${pollTarget} poll=${b8(knob("AC_POLL", "15"))}s heartbeat=${b8(knob("AC_HEARTBEAT", "600"))}s chain=${pidChain()}`);
@@ -1825,7 +2027,7 @@ function latestFindingsOf(id: string): string | null {
     accessSync(`${sd}/${id}.meta`, constants.R_OK);
     wt = metaGet(`${sd}/${id}.meta`, "worktree");
   } catch {}
-  const rounds = `${dataDir()}/${busyFamilyOf(id)}/verify/codereview`;
+  const rounds = `${famDir(busyFamilyOf(id))}/verify/codereview`;
   const cands = globIn(rounds).map((r) => `${r}/findings.json`);
   cands.push(`${wt === "" ? "/nonexistent" : u8(wt)}/.crew/ship/current/findings/review.json`);
   let best = "";
@@ -1937,11 +2139,16 @@ function jevNote(idB: string, tail: string): string {
 // transcript is judged ready for /compact; AC_COMPACT_ADVISE is the seam.
 function compactNote(id: string, idB: string): string {
   let sid = "";
+  let kind = "";
   try {
     accessSync(`${sd}/${id}.meta`, constants.R_OK);
     sid = metaGet(`${sd}/${id}.meta`, "session_id");
+    kind = metaGet(`${sd}/${id}.meta`, "kind");
   } catch {}
   if (sid === "") return "";
+  // Named only under the knob, so every other fleet calls the adviser as the
+  // bash original did.
+  const auto = configReadSoft("compact-auto", "off", "ignore") === "on" && kind !== "roomchief" && kind !== "crewdeputy" ? ["--auto", id] : [];
   const tx = claudeTranscriptPath(sid);
   if (tx === null) return "";
   const err = mktemp(`${tmpRoot()}/ac-watch-compact.XXXXXX`);
@@ -1951,7 +2158,7 @@ function compactNote(id: string, idB: string): string {
     const fd = openSync(u8(err), "w");
     let r: ReturnType<typeof spawnShellSync> | null = null;
     try {
-      r = spawnShellSync([process.env.AC_COMPACT_ADVISE || `${STARTED_BIN}/ac-compact-advise.sh`, u8(tx), "--role", "crew"], { stdin: "inherit", stdout: "pipe", stderr: fd });
+      r = spawnShellSync([process.env.AC_COMPACT_ADVISE || `${STARTED_BIN}/ac-compact-advise.sh`, u8(tx), "--role", "crew", ...auto], { stdin: "inherit", stdout: "pipe", stderr: fd });
     } catch {}
     closeSync(fd);
     out = r !== null && shellStatus(r) === 0 ? cap(Buffer.from(r.stdout).toString("latin1")) : "";
@@ -1972,9 +2179,11 @@ function compactNote(id: string, idB: string): string {
 
 // `<reason>\t<dedup key>` when <id>'s silence is EXPLAINED (STALE
 // DEFERRAL), else null: the status log's last line when the WORKER wrote a
-// captain-wait marker or `paused:` (keyed with the log's byte size, so a
-// re-appended identical line is a new declaration), else the latest findings
-// holding an undecided ask-user, read by jq KEY.
+// captain-wait marker or an unexpired `paused:` (keyed with the log's byte
+// size, so a re-appended identical line is a new declaration), else the
+// task's own backlog row carrying the captain's `[@held]`, keyed by the row
+// itself, else the latest findings holding an undecided ask-user, read by jq
+// KEY.
 function declaredWait(id: string): string | null {
   const f = taskStatus(id);
   let text = "";
@@ -1988,11 +2197,28 @@ function declaredWait(id: string): string | null {
   const waitRe = DECISION_RE.replace("(needs-decision|blocked|checks-passed):", "(needs-decision|blocked|checks-passed|paused):");
   if (last !== "" && last !== WATCH_ASK_NOTE && last !== WATCH_ENDED_NOTE && grepQ(waitRe, last)) {
     const verb = firstLine(cap(grepOut("-oE", "(needs-decision|blocked|checks-passed|paused):", last)));
-    let size = "";
-    try {
-      size = String(statSync(f).size);
-    } catch {}
-    return `declared-wait ${verb.replace(/:$/, "")}\t${size}:${last}`;
+    // The worker's own `until` outranks the declaration itself (header) -
+    // checked on the EXTRACTED verb, never a hand-anchored prefix test on
+    // `last`, so a glyph-prefixed marker line (the pane's own rendering,
+    // W2) reads the same as a bare one.
+    if (verb !== "paused:" || !pausedWaitExpired(last)) {
+      let size = "";
+      try {
+        size = String(statSync(f).size);
+      } catch {}
+      return `declared-wait ${verb.replace(/:$/, "")}\t${size}:${last}`;
+    }
+  }
+  let row: string | null = null;
+  try {
+    row = rowForId(id, ledgerRead(`${envHome()}/records/backlog.md`));
+  } catch {}
+  if (row !== null) {
+    const held = acDoneline(row);
+    // The DATED arm releases ITSELF (docs/backlog.md): READY on and after
+    // hold_until, the same comparison bin/ac-task.sh start and ac-ready.sh
+    // use - an expired dated hold is no hold here either.
+    if (held.hold === "1" && (held.hold_until === "" || held.hold_until > iso().slice(0, 10))) return `backlog-hold\t${row}`;
   }
   const fl = latestFindingsOf(id);
   if (fl === null) return null;
@@ -2171,6 +2397,14 @@ async function checkPane(meta: string): Promise<string | null> {
   const busyFile = st("busy");
   if (busy) {
     if (!existsSync(busyFile)) stamp(busyFile, `${nowRaw()}\n`);
+    // A busy poll is what clears ENDED BUSY LATCH and REWAKE LATCH (header):
+    // a genuine new turn, never a cosmetic redraw, re-arms either arm - and
+    // the STALE WAKE CAP's own counter (header): redraw churn is what drives
+    // the repeat wakes the cap bounds, so only a real turn resets it, never
+    // the hash change a redraw alone produces. A real turn ends a STALE
+    // DEFERRAL's grip too (header): the declaration the worker made before
+    // this turn is not evidence about the silence AFTER it.
+    rmF(st("ended"), st("rewake"), st("stale-count"), st("deferred"), st("deferred-since"));
   } else rmF(busyFile, st("busy-stalled"));
   const hash = String(cksumPosix(B(tail)));
   const changedFile = st("change");
@@ -2202,9 +2436,9 @@ async function checkPane(meta: string): Promise<string | null> {
     const seenHash = readCap(st("seen-hash"));
     if (!markerSeen(marker, seen)) {
       stamp(st("seen"), `${marker}\n`);
-      // A NEW marker re-parks the pane: the supersession record covers the
-      // old one only.
-      rmF(st("superseded"));
+      // A NEW marker re-parks the pane: the supersession record and the OLD
+      // marker's re-wake latch are both retired here.
+      rmF(st("superseded"), st("rewake"));
       statusAppend(id, marker);
       // Only a PARKED pane is stamped - a stamp taken while busy is released
       // with no state transition ahead of it, and herdr then holds no
@@ -2214,6 +2448,14 @@ async function checkPane(meta: string): Promise<string | null> {
         if (!busy) routed(backendCall("mark_wait", [id, u8(marker)], stdio));
       } else routed(backendCall("clear_wait", [id], stdio));
       stamp(st("seen-hash"), `${hash}\n`);
+      // REWAKE LATCH (header): armed the instant the chief is TOLD about
+      // this marker, not on its first redraw - a cosmetic churn right after
+      // this very wake must cost nothing either. UNLESS the pane is still
+      // showing background work right now: BACKGROUND DEFER's own eventual
+      // fire arms it then, and arming here too would suppress that deferred
+      // wake before it ever happens ("a deferred pass stamps nothing",
+      // BACKGROUND DEFER header, applies to this stamp too).
+      if (!grepQ(BACKGROUND_RE, lastLine(grepOut("-E", "^✻ ", tail)))) touch(st("rewake"));
       // LAST-MOMENT RECHECK: ac-done.sh stamps .seen-<id> BEFORE it
       // publishes, so a stamp no longer ours that still covers this marker
       // means its record exists or is one syscall away.
@@ -2228,12 +2470,23 @@ async function checkPane(meta: string): Promise<string | null> {
       routed(backendCall("mark_wait", [id, u8(marker)], stdio));
     } else if (hash !== seenHash && !busy && !grepQ(BACKGROUND_RE, lastLine(grepOut("-E", "^✻ ", tail)))) {
       stamp(st("seen-hash"), `${hash}\n`);
-      if (seenHash !== "") {
+      if (seenHash === "") {
+        // PUSH ADOPT: no hash was recorded for this already-seen marker, so
+        // the agent's own push consumed it - the push already told the
+        // chief about this marker, so arm the latch here too (same as any
+        // other telling) and anchor silently, never movement.
+        touch(st("rewake"));
+      } else if (!existsSync(st("rewake"))) {
+        // REWAKE LATCH (header): the cosmetic-redraw sibling of ENDED BUSY
+        // LATCH, armed the moment the chief is told about a marker - by the
+        // new-marker branch above, PUSH ADOPT above, or this very fire -
+        // and cleared only by a busy poll, a brand-new marker, or a
+        // delivered non-slash steer (send.ts). Every further churn under
+        // the SAME marker with none of those between is anchored silently.
+        touch(st("rewake"));
         queueWake("report", idB, `${marker} (pane advanced since the last wake)`);
         return reasonLine(`report:${idB}`);
       }
-      // PUSH ADOPT: no hash was recorded for this already-seen marker, so the
-      // agent's own push consumed it - anchored silently, never movement.
     }
     // No early return: a deduped marker must not silence the artifact channel.
   }
@@ -2305,35 +2558,96 @@ async function checkPane(meta: string): Promise<string | null> {
       queueWake("needs-login", idB, `stopped on an expired provider login (${login}) - only the captain signing that harness in again unblocks it; do not steer it`);
       return reasonLine(`needs-login:${idB}`);
     }
-    // COMPLETION ALREADY REPORTED: anchored silently, or the loud wake
-    // re-fires every quiet window - .stale-<id> is cleared by any redraw.
+    // COMPLETION ALREADY REPORTED: anchored silently when a marker was
+    // already seen, or the loud wake re-fires every quiet window - .stale-<id>
+    // is cleared by any redraw. ENDED BUSY LATCH right below covers the same
+    // redraw for a pane with no marker to anchor on.
     const seen = readCap(st("seen"));
     if (seen !== "" && grepQ(CAPTAIN_RE, seen) && !grepQ(DECISION_RE, seen)) {
       touch(st("stale"));
       statusAppend(id, "ended its turn after a reported completion - awaiting reap");
       return null;
     }
+    // ENDED BUSY LATCH (header): already fired ended: for this idle episode
+    // with no busy edge since - a redraw, not a new turn. Anchor the same way.
+    if (existsSync(st("ended"))) {
+      touch(st("stale"));
+      statusAppend(id, "ended its turn again with no new turn since - a cosmetic redraw, not news");
+      return null;
+    }
     touch(st("stale"));
+    touch(st("ended"));
     statusAppend(id, WATCH_ENDED_NOTE);
     routed(backendCall("mark_wait", [id, "ended its turn with no report line"], stdio));
     queueWake("ended", idB, `ended its turn ${idle}s ago with no report line - read the pane, the ask may be prose${jevNote(idB, tail)}${compactNote(id, idB)}`);
     return reasonLine(`ended:${idB}`);
   }
-  // STALE DEFERRAL: the worker's word outranks the idle clock ONCE per
-  // declaration - the TIMER restarts, so the same declaration a full window
-  // later falls through to stale.
+  // STALE WAKE CAP (header): scoped to the deferral/stale path below ONLY -
+  // ended:/limited:/needs-login: above stay actionable even while capped,
+  // since those are hard signals the cap never meant to bound.
+  // AC_STALE_MAX_WAKES=0 (default, capOn false) never touches this at all,
+  // leaving today's cap-less path byte-for-byte.
+  const maxWakes = knob("AC_STALE_MAX_WAKES", "0");
+  const capOn = test(maxWakes, "-gt", "0");
+  const cappedFile = st("stale-capped");
+  if (capOn && existsSync(cappedFile)) {
+    if (test(String(minus(now, arith(clockStamp(cappedFile)))), "-ge", knob("AC_STALE_CAP_HORIZON", "86400"))) rmF(cappedFile, st("stale-count"));
+    else return null;
+  }
+  // STALE DEFERRAL (header): the worker's word outranks the idle clock -
+  // restarting the clock on every sighting of the SAME declaration, not
+  // just its first, and re-surfacing only on the AC_PAUSE_RESURFACE cadence
+  // instead of the very next AC_STALE window.
   const dw = declaredWait(id);
+  const deferredFile = st("deferred");
+  const sinceFile = st("deferred-since");
+  let resurfaced = false;
   if (dw !== null) {
     const key = dw.slice(dw.indexOf("\t") + 1);
-    if (key !== readCap(st("deferred"))) {
-      stamp(st("deferred"), `${key}\n`);
+    if (key !== readCap(deferredFile)) {
+      stamp(deferredFile, `${key}\n`);
+      stamp(sinceFile, `${nowRaw()}\n`);
       stamp(changedFile, `${nowRaw()}\n`);
       watchLog(`deferred-stale:${idB} ${dw.slice(0, dw.indexOf("\t"))}`);
       return null;
     }
+    if (!test(String(minus(now, arith(clockStamp(sinceFile)))), "-ge", knob("AC_PAUSE_RESURFACE", "14400"))) {
+      stamp(changedFile, `${nowRaw()}\n`);
+      return null;
+    }
+    // RESURFACE: the cadence elapsed - restart it (so the next sighting
+    // defers for a full AC_PAUSE_RESURFACE again) and fall through to the
+    // stale: emit below, exactly as an undeclared pane would.
+    stamp(sinceFile, `${nowRaw()}\n`);
+    resurfaced = true;
+  } else {
+    // The declaration ITSELF is gone (released, re-held under different
+    // text, or never existed) - a later identical-looking one is a fresh
+    // sighting, never a repeat of a dedup this silence no longer explains.
+    rmF(deferredFile, sinceFile);
   }
   touch(st("stale"));
-  queueWake("stale", idB, `quiet for ${idle}s with no report line${jevNote(idB, tail)}${compactNote(id, idB)}`);
+  // STALE WAKE CAP continued: counts only an UNDECLARED stale: emit - a
+  // RESURFACED one already has its own AC_PAUSE_RESURFACE bound above, so it
+  // never also spends the cap's budget.
+  let capNote = "";
+  if (capOn && !resurfaced) {
+    const countFile = st("stale-count");
+    const prevCountRaw = readCap(countFile);
+    const prevCount = /^[0-9]+$/.test(prevCountRaw) ? BigInt(prevCountRaw) : 0n;
+    // A marker-only removal (the horizon's own clear above already took the
+    // counter with it) can leave a maxed-out count sitting here - never let
+    // a leftover count re-cap the very next wake: removing the marker by
+    // hand means a fresh N-wake budget, not N+1.
+    const base = test(String(prevCount), "-ge", maxWakes) ? 0n : prevCount;
+    const count = String(BigInt.asIntN(64, base + 1n));
+    stamp(countFile, `${count}\n`);
+    if (test(count, "-ge", maxWakes)) {
+      stamp(cappedFile, `${nowRaw()}\n`);
+      capNote = ` - PERMANENTLY-STALE: capped at ${maxWakes} wakes (AC_STALE_MAX_WAKES) - silent until AC_STALE_CAP_HORIZON passes or the marker is removed`;
+    }
+  }
+  queueWake("stale", idB, `quiet for ${idle}s with no report line${capNote}${jevNote(idB, tail)}${compactNote(id, idB)}`);
   return reasonLine(`stale:${idB}`);
 }
 

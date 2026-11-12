@@ -4,8 +4,7 @@
 // -c1-60`); and src/know.ts's value-flag arms, which
 // tests/sh/flag-values.test.sh's static grep over bin/*.sh no longer sees
 // now that bin/ac-know.sh is a shim. The CLI contract itself is
-// tests/sh/ac-know.test.sh's, whose differential leg runs the frozen
-// original beside the shim.
+// tests/sh/ac-know.test.sh's.
 //
 // DISPUTED: the implementation of each helper (the bash vs src/lib.ts)
 // HELD-CONSTANT: one side root per side and row seeded alike (a home at <side>/home, repos at <side>/<name> built by the same git commands with fixed dates); argv; env (PATH = the host's bun and git, /bin and /usr/bin without herdr, orca, docker or codegraph; LC_ALL=C unless a row names UTF-8; HOME, TMPDIR, AC_HOME only where a row sets it); cwd (the distro root); stdin (/dev/null); stdout, stderr and the status compared whole (the side root spelled S).

@@ -1,8 +1,7 @@
 // room.ts - per-task-family rooms, the captain-facing thread of one task. The
 // entry is bin/ac-room.sh (a shim that starts this file through
-// bin/ac-bun.sh); THIS header is the authoritative spec, and the bash original
-// it replaced stays frozen at tests/fixtures/ac-room.sh as the oracle the
-// differential leg of tests/sh/ac-room.test.sh holds this module to.
+// bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-room.test.sh is its contract test.
 //
 // A room is data/<family>/room.md - an append-only, timestamped ledger of
 // everything the captain cares about for that family: stage transitions,
@@ -306,27 +305,13 @@
 // a child's status where its failure ends the run (128+signal for a signal,
 // 127 for one that could not start).
 //
-// DIVERGENCES from the original, named in the differential leg:
-// - W26: the usage text is this header (the shim's is a pointer), and `rows`
-//   answers the projection where the original printed its header.
-// - W1, W6: `[a-zA-Z0-9_-]` and `[A-Z]` are read per the text; bash 3.2's
-//   ranges under a UTF-8 locale let `café` and `lower:` through.
-// - W3, W4 (the HOME RESOLUTION ruling): homeless, post refuses ONCE where the
-//   original printed the refusal per swallowed `$(ac_home)` and went on to
-//   `mkdir -p /<family>`; an AC_HOME cd cannot enter is `AC_HOME is not a
-//   readable directory: <h>` where the shell printed cd's own lines.
-// - W7 and every other argv byte: argv arrives decoded, so a text byte that
-//   is not UTF-8 is posted as U+FFFD - the mirror's sed then never aborts on
-//   it the way BSD sed aborted the original under UTF-8, after the append.
-//   So is such a byte of the chief meta's backend= in AC_BACKEND, and so in
-//   open's unsupported-backend refusal.
-// - W24 and bash's own stderr are not reproduced: the redirection line of an
-//   unreadable report, `command not found`, a failed append's line.
-// - W27 ORDER: the rooms, the metas and the archive years are walked in byte
-//   order (the oracle runs under LC_ALL=C); bash 3.2's glob followed the UTF-8
-//   collation.
-// - A DRIVER THAT FAILED TO LOAD: bash's 127 (open's BACKEND refusal, a guard
-//   reading not live) has no counterpart - the backend verbs are native.
+// `[a-zA-Z0-9_-]` and `[A-Z]` are read per the text under every locale (W1,
+// W6). Homeless, post refuses ONCE; an AC_HOME cd cannot enter is `AC_HOME is
+// not a readable directory: <h>` (W3, W4). argv arrives decoded, so a text
+// byte that is not UTF-8 is posted as U+FFFD (W7), and so is such a byte of
+// the chief meta's backend= in AC_BACKEND, and so in open's
+// unsupported-backend refusal. The rooms, the metas and the archive years are
+// walked in byte order under every locale (W27).
 //
 // CALLERS, every one fail-soft already (a bun-less PATH degrades each to its
 // own WARN or UNKNOWN): bin/ac-session-start.sh (list, `|| printf 'WARN
@@ -348,6 +333,9 @@ import {
   die,
   enterCaller,
   envHome,
+  famDir,
+  famDirMint,
+  familyDirs,
   familyOfId,
   metaGet,
   metaIsVerify,
@@ -574,11 +562,20 @@ function post(args: string[], stdout: Out): void {
     die(
       `post: ${family} has a LIVE roomchief - its own TRIAGE/GATE/ASK/SELF-APPROVED/LANDED/HANDBACK/GATE-ROUTING/R1-DISPOSITION/DECIDED/STAGE-ADMISSION receipts belong to it, never to an unscoped caller (rooms-threads skill: 'Two chiefs on one family is a role violation, not extra help')`,
     );
-  const f = `${dataDir()}/${family}/room.md`;
+  let famd = "";
+  try {
+    famd = famDir(family);
+  } catch (e) {
+    die((e as Error).message);
+  }
+  const f = `${famd}/room.md`;
   if (!isDir(dirname(f))) {
     const s = run(["mkdir", "-p", dirname(f)], stdout, "inherit").status;
     if (s !== 0) process.exit(s);
   }
+  try {
+    famDirMint(family);
+  } catch {}
   try {
     if (!isFile(f)) writeFileSync(f, utf8(`# Room: ${family}\n\n`));
   } catch {
@@ -716,15 +713,8 @@ function readRow(line: string): [string, string, string, string] {
 
 function cmdList(): void {
   const h = home();
-  const data = `${h}/data`;
-  let names: string[] = [];
-  try {
-    names = readdirSync(data);
-  } catch {}
-  const rooms = names
-    .filter((n) => !n.startsWith("."))
-    .sort((a, b) => Buffer.compare(utf8(a), utf8(b)))
-    .map((n) => `${data}/${n}/room.md`)
+  const rooms = familyDirs(`${h}/data`)
+    .map((dir) => `${dir}/room.md`)
     .filter((p) => {
       try {
         lstatSync(p);
@@ -763,7 +753,7 @@ function cmdClose(args: string[]): void {
   const family = args[0] ?? "";
   const outcome = args.length > 1 ? args.slice(1).join(" ") : "landed";
   if (!family) die("usage: ac-room.sh close <family> <outcome...>");
-  const f = `${softSubdir("data", true)}/${family}/room.md`;
+  const f = `${famDir(family, softSubdir("data", true))}/room.md`;
   if (!isFile(f)) die(`no room for ${family}`);
   const sd = stateDir();
   let metas: string[] = [];
@@ -958,7 +948,7 @@ function cmdGateVerify(args: string[]): void {
   if (!short) die("gate-verify stage must be spec|architecture|plan|design");
   if (!plainNonEmpty(report)) die("gate-verify --report must name a non-empty plain file");
   const phys = physical(report);
-  const expected = `${dataDir()}/${family}/${short}/report.md`;
+  const expected = `${famDir(family)}/${short}/report.md`;
   if (phys !== expected) die(`gate-verify --report must be ${expected}`);
   post([family, `${family}-chief`, `GATE-VERIFY: stage=${stage} round=${round} report_sha256=${sha(phys)} verdict=pass grounds=${grounds}`], "inherit");
 }
@@ -976,7 +966,7 @@ function cmdGateRoute(args: string[]): void {
   if (!short) die("gate-route stage must be spec|architecture|plan|design");
   if (!plainNonEmpty(report)) die("gate-route --report must name a non-empty plain file");
   const phys = physical(report);
-  const expected = `${dataDir()}/${family}/${short}/report.md`;
+  const expected = `${famDir(family)}/${short}/report.md`;
   if (phys !== expected) die(`gate-route --report must be ${expected}`);
   const route = authority === "captain" ? "captain" : uncertainty === "yes" || consequence === "high" ? "second-chief" : "chief";
   post(
@@ -1014,9 +1004,9 @@ function cmdDisposition(args: string[]): void {
   if (!["chief-owned", "captain-owned", "mixed", "none"].includes(authority)) die("disposition authority must be chief-owned|captain-owned|mixed|none");
   if (!plainNonEmpty(r1)) die("disposition --r1 must name a non-empty plain file");
   const r1phys = physical(r1);
-  const expectedR1 = `${dataDir()}/${family}/${short}/second-chief-r1.md`;
+  const expectedR1 = `${famDir(family)}/${short}/second-chief-r1.md`;
   if (r1phys !== expectedR1) die(`disposition --r1 must be ${expectedR1}`);
-  const expectedReport = `${dataDir()}/${family}/${short}/report.md`;
+  const expectedReport = `${famDir(family)}/${short}/report.md`;
   if (!plainNonEmpty(expectedReport)) die(`disposition requires a non-empty current report at ${expectedReport}`);
   const report = physical(expectedReport);
   const expected = pipeline([["awk", REVIEW_BODY], ["awk", R1_IDS], ["paste", "-sd,", "-"]], r1phys);

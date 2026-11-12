@@ -2,10 +2,9 @@
 // answers with calibrated probabilities out, behind ONE per-fleet knob.
 // The entry is bin/ac-jev.sh (a shim that starts this file through
 // bin/ac-bun.sh); THIS header is the authoritative spec for the knob, the
-// provider table, the wire, the shadow log and the fail direction, and the
-// bash original it replaced stays frozen at tests/fixtures/ac-jev.sh as the
-// oracle the differential leg of tests/sh/ac-jev.test.sh holds this module
-// to. Design and evidence: the fleet's data/research-jev-model/{spec,report}.md.
+// provider table, the wire, the shadow log and the fail direction, and
+// tests/sh/ac-jev.test.sh its contract test. Design and evidence: the fleet's
+// data/research-jev-model/{spec,report}.md.
 //
 // Usage:
 //   ac-jev.sh ask --site <name> --state-file <f>
@@ -98,7 +97,7 @@
 // provider=<p> key=<none|present(<entry>)|missing(<entry>)> endpoint=<url|?>
 // log=<home|?>/state/jev-shadow.jsonl`, exit 0.
 //
-// AT PARITY (each pinned in the leg until its own fix lands):
+// AT PARITY (each stands until its own fix lands):
 // - the usage text stops one line short of `status` (the original printed its
 //   header's lines 8-13);
 // - a flag with no value ends the run 1, not usage 2;
@@ -114,18 +113,13 @@
 //   mkdir that fails; the record's jq after the lock is taken, which leaves
 //   the lock) ends the run with that child's status.
 //
-// DIVERGENCES from the original (the leg names each one a row can show):
+// ALSO:
 // - BUN: without bun the shim refuses `ERROR: required tool not found: bun`
 //   exit 1 before usage; every caller reads that as no proposal.
 // - EXCLUSIVE TEMPS: label's rewrite goes through <log>.tmp.<pid> created
-//   exclusively, where the original wrote through whatever sat at its
-//   `.tmp.$$`.
-// - SHA: the SHA-256 is computed in process, where the original piped through
-//   shasum (perl): a host without shasum gave an empty state_sha there.
-// - SHELL-OWN STDERR is not reproduced: set -u's line for a flag with no
-//   value, a redirection that cannot write, and the `command not found` line a
-//   curl missing from PATH left in the transport reason (the port's reason is
-//   empty there).
+//   exclusively.
+// - SHA: the SHA-256 is computed in process; no shasum is needed.
+// - A curl missing from PATH leaves the transport reason empty.
 // - HOME RESOLUTION: an AC_HOME cd cannot enter is `ERROR: AC_HOME is not a
 //   readable directory: <h>`, exit 1; one whose name ends in LF is the
 //   directory it names; a relative state file from a caller cwd Bun cannot

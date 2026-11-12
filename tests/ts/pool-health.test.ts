@@ -1,10 +1,8 @@
-// pool-health.test.ts - the lib.ts twins src/pool-health.ts introduced, held to
-// their bash originals differentially: now against ac_now, tabFields against `IFS=$'\t' read -r`, and leaseAgeSecs
-// against lease_age_secs lifted from the frozen original, over the stamps BSD
-// strptime rolls or refuses - with date(1) stubbed on PATH so `date +%s`
-// answers one instant to both sides. The CLI contract itself is
-// tests/sh/ac-pool-health.test.sh's, whose differential leg runs the frozen
-// original beside the shim.
+// pool-health.test.ts - the lib.ts twins src/pool-health.ts introduced: now
+// against the live ac_now, tabFields against `IFS=$'\t' read -r`, and
+// leaseAgeSecs over the stamps BSD strptime rolls or refuses - with date(1)
+// stubbed on PATH so `date +%s` answers one instant. The CLI contract itself is
+// tests/sh/ac-pool-health.test.sh's.
 import { afterEach, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -13,7 +11,6 @@ import { leaseAgeSecs, now, tabFields } from "../../src/lib.ts";
 
 const root = join(import.meta.dir, "..", "..");
 const binDir = join(root, "bin");
-const oracle = join(root, "tests", "fixtures", "ac-pool-health.sh");
 const savedEnv = { ...process.env };
 afterEach(() => {
   for (const k of Object.keys(process.env)) if (!(k in savedEnv)) delete process.env[k];
@@ -74,45 +71,34 @@ test("tabFields splits a row as IFS=$'\\t' read -r assigns six names", () => {
   }
 });
 
-// The stamps BSD strptime rolls (Feb 30, day 00, :60) or refuses (month 00/13,
-// day 32, hour 24, minute 60), the pattern's own refusals, and a plain one;
-// the bash side is the original's lease_age_secs itself, lifted from the
-// frozen oracle, and the stub freezes `now` for both so the ages are exact.
-test("leaseAgeSecs answers exactly what lease_age_secs does over BSD strptime's acceptance set", () => {
+// The stamps BSD strptime rolls (Feb 30 is Mar 1, day 00 the last of the month
+// before, :60 the next minute) or refuses (month 00/13, day 32, hour 24, minute
+// 60), the pattern's own refusals, and a plain one; the stub freezes `now` at
+// 1800000000, so each age is that less the stamp's UTC epoch, whatever the zone.
+test("leaseAgeSecs reads a UTC stamp's age over BSD strptime's acceptance set", () => {
   const d = stubDate();
   try {
-    const stamps = [
-      "2024-02-30T00:00:00Z",
-      "2024-01-00T00:00:00Z",
-      "2026-01-01T00:00:60Z",
-      "2026-13-01T00:00:00Z",
-      "2026-00-10T00:00:00Z",
-      "2026-01-32T00:00:00Z",
-      "2026-01-01T24:00:00Z",
-      "2026-01-01T00:60:00Z",
-      "2026-01-01T00:00:00Z",
-      "2099-01-01T00:00:00Z",
-      "2026-1-01T00:00:00Z",
-      "2026-01-01T00:00:00",
-      " 2026-01-01T00:00:00Z",
-      "bogus",
-      "",
+    const ages: [string, number | null][] = [
+      ["2024-02-30T00:00:00Z", 1800000000 - 1709251200],
+      ["2024-01-00T00:00:00Z", 1800000000 - 1703980800],
+      ["2026-01-01T00:00:60Z", 1800000000 - 1767225660],
+      ["2026-13-01T00:00:00Z", null],
+      ["2026-00-10T00:00:00Z", null],
+      ["2026-01-32T00:00:00Z", null],
+      ["2026-01-01T24:00:00Z", null],
+      ["2026-01-01T00:60:00Z", null],
+      ["2026-01-01T00:00:00Z", 1800000000 - 1767225600],
+      ["2099-01-01T00:00:00Z", 1800000000 - 4070908800],
+      ["2026-1-01T00:00:00Z", null],
+      ["2026-01-01T00:00:00", null],
+      [" 2026-01-01T00:00:00Z", null],
+      ["bogus", null],
+      ["", null],
     ];
     for (const tz of ["Asia/Ho_Chi_Minh", "America/Los_Angeles"]) {
       process.env.TZ = tz;
-      for (const ts of stamps) {
-        const want = bash(
-          'unset EPOCHSECONDS; eval "$(sed -n "/^lease_age_secs()/,/^}/p" "$1")"; lease_age_secs "$2"',
-          oracle,
-          ts,
-        );
-        expect(want.rc).toBe(0);
-        const got = leaseAgeSecs(ts);
-        expect([tz, ts, got === null ? "" : `${got}\n`]).toEqual([tz, ts, want.out]);
-      }
+      for (const [ts, want] of ages) expect([tz, ts, leaseAgeSecs(ts)]).toEqual([tz, ts, want]);
     }
-    expect(leaseAgeSecs("2024-02-30T00:00:00Z")).toBe(1800000000 - 1709251200);
-    expect(leaseAgeSecs("2026-13-01T00:00:00Z")).toBeNull();
   } finally {
     rmSync(d, { recursive: true, force: true });
   }

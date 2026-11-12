@@ -2,10 +2,10 @@
 // boundary Learning and Curate share: the receipt check and the read-evidence
 // check. src/curate.ts and src/learn.ts call receiptValidate in process for
 // their receipt boundary and src/gate.ts imports readEvidence for the gate's
-// write-time check; the CLI below is what the frozen bash helpers
-// (tests/fixtures/ac-maintenance-retired.sh, for the oracles that still run
-// them) start through bin/ac-bun.sh, always inside a subshell because
-// ac_bun_exec execs. THIS header is the authoritative spec. The lib's
+// write-time check. No live script starts the CLI below -
+// tests/ts/maintenance-receipt.test.ts alone drives it; a bash caller starts
+// it through bin/ac-bun.sh inside a subshell, because ac_bun_exec execs.
+// THIS header is the authoritative spec. The lib's
 // READ-EVIDENCE block owns the rationale, and its AC_MAINTENANCE_QUOTE_MIN
 // (src/gate.ts prints the same value into the judge prompt, held to it by
 // tests/ts/gate.test.ts) arrives here as <quote-min>.
@@ -47,7 +47,7 @@
 //       under RECEIPT-CHECK, else exit 1 with nothing printed. The caller has
 //       already proved the receipt and the manifest plain files and passed the
 //       plan through the plan validation (maintenancePlanValidate,
-//       src/lib.ts; its bash original is frozen for the oracles).
+//       src/lib.ts).
 // A usage error, and a relative path when the caller's cwd has no name, exit 1
 // with an ERROR line on stderr - a refusal, never a pass.
 //

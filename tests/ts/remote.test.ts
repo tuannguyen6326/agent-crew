@@ -1,10 +1,9 @@
 // remote.test.ts - the lib.ts twins src/remote.ts introduced (nowRaw, vnTs,
-// roomPendingLines, childrenIgnoreInt) and its own byte-level readers
-// (quoteOffender, the META SET key match, the family-keyed stamp read, the
-// ack arithmetic), each held to the bash it replaced; and the four process
+// roomPendingLines, childrenIgnoreInt) and its own byte-level readers (the
+// META SET key match, the family-keyed stamp read, the ack arithmetic), each
+// held to the bash it replaced, quoteOffender to its spec; and the four process
 // mechanics its header names, each pinned against a direct bash probe of the
-// same shape. The CLI contract itself is tests/sh/ac-remote.test.sh's, whose
-// differential leg runs the frozen bash original beside the shim.
+// same shape. The CLI contract itself is tests/sh/ac-remote.test.sh's.
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -27,13 +26,6 @@ const L = (s: string): Buffer => Buffer.from(s, "latin1");
 function bash(script: string, args: string[], env: Record<string, string> = {}): { out: string; rc: number } {
   const r = Bun.spawnSync(["/bin/bash", "-c", script, "_", ...args], { env: { PATH: process.env.PATH!, ...env }, stdout: "pipe", stderr: "pipe" });
   return { out: r.stdout.toString("latin1"), rc: r.exitCode ?? -1 };
-}
-
-// The bash original's own text of a function, frozen with it.
-function frozen(name: string): string {
-  const lines = readFileSync(join(ROOT, "tests", "fixtures", "ac-remote.sh"), "latin1").split("\n");
-  const start = lines.indexOf(`${name}() {`);
-  return lines.slice(start, lines.indexOf("}", start) + 1).join("\n");
 }
 
 const STUBS = join(W, "stubs");
@@ -93,16 +85,26 @@ test("roomPendingLines is the retired ac_room_pending_lines, room for room", () 
   expect(roomPendingLines(join(W, "absent"))).toBe("");
 });
 
-test("quoteOffender is quote_offender: 60 bytes under C, 60 characters under UTF-8 (an invalid byte one)", () => {
-  const texts = ["short", "x".repeat(60), "x".repeat(61), "two\nlines", "\xc3\xa9".repeat(61), `${"\xc3\xa9".repeat(59)}ab\xe9c`, `${"x".repeat(59)}\xe2\x82\xac`, "\xed\xa0\x80".repeat(30), ""];
+test("quoteOffender: the first line, cut to 60 bytes under C or 60 characters under UTF-8 (an invalid byte one), `...` when cut or longer", () => {
+  const e = "\xc3\xa9";
+  const rows: [string, string, string][] = [
+    ["short", "short", "short"],
+    ["x".repeat(60), "x".repeat(60), "x".repeat(60)],
+    ["x".repeat(61), `${"x".repeat(60)}...`, `${"x".repeat(60)}...`],
+    ["two\nlines", "two...", "two..."],
+    [e.repeat(61), `${e.repeat(30)}...`, `${e.repeat(60)}...`],
+    [`${e.repeat(59)}ab\xe9c`, `${e.repeat(30)}...`, `${e.repeat(59)}a...`],
+    [`${"x".repeat(59)}\xe2\x82\xac`, `${"x".repeat(59)}\xe2...`, `${"x".repeat(59)}\xe2\x82\xac`],
+    ["\xed\xa0\x80".repeat(30), `${"\xed\xa0\x80".repeat(20)}...`, `${"\xed\xa0\x80".repeat(20)}...`],
+    ["", "", ""],
+  ];
   const saved = process.env.LC_ALL;
   try {
-    for (const loc of ["C", "en_US.UTF-8"]) {
-      process.env.LC_ALL = loc;
-      for (const t of texts) {
-        const sh = bash(`${frozen("quote_offender")}; quote_offender "$(cat "$1")"`, [file(L(t))], { LC_ALL: loc });
-        expect(L(quoteOffender(t))).toEqual(L(sh.out));
-      }
+    for (const [t, c, utf8] of rows) {
+      process.env.LC_ALL = "C";
+      expect(L(quoteOffender(t))).toEqual(L(c));
+      process.env.LC_ALL = "en_US.UTF-8";
+      expect(L(quoteOffender(t))).toEqual(L(utf8));
     }
   } finally {
     if (saved === undefined) delete process.env.LC_ALL;
@@ -161,12 +163,10 @@ function entry(h: string, args: string[], stdin = ""): { out: string; err: strin
   return { out: r.stdout.toString(), err: r.stderr.toString(), rc: r.exitCode ?? -1, ms: Date.now() - t0 };
 }
 
-test("1. a capture reads to EOF as `$(...)` did: an orphan holding stdout holds it, where a spawnSync returns at the exit", () => {
+test("1. a capture reads to EOF as `$(...)` did: an orphan holding stdout holds it (a spawnSync returned at the exit before Bun 1.4.4)", () => {
   const orphan = hook("orphan", '(sleep 1; printf "1800.1\\n") & exit 0');
   const sh = bash(`out="$("$1")"; printf '%s' "$out"`, [orphan]);
   expect(sh.out).toBe("1800.1");
-  const naive = Bun.spawnSync([orphan], { stdout: "pipe" });
-  expect(naive.stdout.toString()).toBe("");
   const h = home();
   writeFileSync(join(h, "config", "remote-reply"), readFileSync(orphan));
   chmodSync(join(h, "config", "remote-reply"), 0o755);

@@ -1,8 +1,7 @@
 // dash.test.ts - the lib.ts twin src/dash.ts introduced, held to its bash
 // original differentially: projectsDir against ac_projects_dir (the physical
 // path, the mkdir side effect, the homeless refusal). The CLI contract itself
-// (the five sections, --watch, every exit) is tests/sh/ac-dash.test.sh's, whose
-// differential leg runs the frozen bash original beside the shim.
+// (the five sections, --watch, every exit) is tests/sh/ac-dash.test.sh's.
 import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";

@@ -1,8 +1,7 @@
 // notify.ts - best-effort captain notification (the wedge-alarm surface). The
 // entry is bin/ac-notify.sh (a shim that starts this file through
-// bin/ac-bun.sh); THIS header is the authoritative spec, and the bash original
-// it replaced stays frozen at tests/fixtures/ac-notify.sh as the oracle the
-// differential leg of tests/sh/ac-notify.test.sh holds this module to. Its one
+// bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-notify.test.sh is its contract test. Its one
 // caller is src/room.ts's post, which calls notify() in-process on the
 // blocked-by-captain edge (tests/sh/ac-notify-surface.test.sh pins that
 // single call site).
@@ -30,14 +29,12 @@
 // Every spawned channel inherits stdin, has its stdout and stderr dropped, and
 // a status other than 0 - or a binary that cannot start - rings the bell.
 //
-// DIVERGENCES from the original, named in the differential leg: argv and the
-// environment arrive decoded, so a title or message byte that is not UTF-8
-// reaches the bell, herdr, osascript and the hook as U+FFFD; the shell's own
-// `cd:` lines for an AC_HOME it cannot enter are not reproduced; `herdr` and
-// `osascript` are found by Bun.which, which skips a PATH file that is not
-// executable where `command -v` took it. A PATH without bun is the shim's
-// `ERROR: required tool not found: bun`, exit 1 - the one exit not 0, which no
-// caller meets: the room calls notify() in-process.
+// argv and the environment arrive decoded, so a title or message byte that is
+// not UTF-8 reaches the bell, herdr, osascript and the hook as U+FFFD; an
+// AC_HOME that cannot be entered prints nothing; `herdr` and `osascript` are
+// found by Bun.which, which skips a PATH file that is not executable. A PATH
+// without bun is the shim's `ERROR: required tool not found: bun`, exit 1 - the
+// one exit not 0, which no caller meets: the room calls notify() in-process.
 import { writeSync } from "node:fs";
 import { configReadSoft, enterCaller, spawnShellSync } from "./lib.ts";
 

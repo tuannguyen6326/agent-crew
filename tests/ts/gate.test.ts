@@ -1,13 +1,12 @@
 // gate.test.ts - what src/gate.ts brought into src/lib.ts, held to the LIVE
 // bash it twins: harnessKnown (ac_harness_known), chiefBusyPath and
 // chiefBusyHeld (ac_chief_busy_path / ac_chief_busy_held, which ac-verify and
-// ac-watch keep calling), transcriptFinal (ac_transcript_final),
-// maintenancePlanValidate (ac_maintenance_plan_validate, frozen at
-// tests/fixtures/ac-maintenance-retired.sh for the oracles) and herdrTabOpen (ac_herdr_tab_open, which ac-ship,
-// ac-qa and the pane agent keep calling); and the read-evidence floor the
-// prompt prints, held to the lib's AC_MAINTENANCE_QUOTE_MIN. The CLI contract
-// itself is tests/sh/ac-gate.test.sh's, whose differential leg runs the frozen
-// original beside the shim.
+// ac-watch keep calling) and herdrTabOpen (ac_herdr_tab_open, which ac-ship,
+// ac-qa and the pane agent keep calling); transcriptFinal and
+// maintenancePlanValidate, held to the answers the comment above each states;
+// and the read-evidence floor the prompt prints, held to the lib's
+// AC_MAINTENANCE_QUOTE_MIN. The CLI contract itself is
+// tests/sh/ac-gate.test.sh's.
 //
 // DISPUTED: the implementation of each helper (the bash vs src/lib.ts)
 // HELD-CONSTANT: one side root per side and row seeded alike (a home at <side>/home, a family data dir, markers, transcripts, a maintenance run with its plan and staged files, a fake herdr logging its argv to <side>/herdr.log); argv; env (PATH = a fake-herdr dir, then the host's bun and jq, then /bin and /usr/bin without herdr, orca, docker, codegraph or jq; LC_ALL=C; HOME, TMPDIR, AC_HOME only where a row sets it); cwd (the distro root); stdin (/dev/null); stdout, stderr, the status and the side root's files after the call compared whole (the side root spelled S).
@@ -58,8 +57,8 @@ chmodSync(join(FAKE, "herdr"), 0o755);
 const PATH = `${FAKE}:${TOOLS}:${BASE}`;
 
 type Row = {
-  // the bash call, run after sourcing ac-lib.sh and <libs>, its arguments "$@"
-  bash: string;
+  // the bash call, run after sourcing ac-lib.sh and <libs>, its arguments "$@"; none for a row only the twin runs
+  bash?: string;
   libs?: string[];
   // the twin's body: L is src/lib.ts, A the arguments
   twin: string;
@@ -122,6 +121,17 @@ function same(label: string, row: Row): { o: Side; t: Side } {
   const view = (x: Side) => ({ label, out: x.out, err: x.err, rc: x.rc, files: x.files, herdr: x.herdr });
   expect(view(p.t)).toEqual(view(p.o));
   return p;
+}
+
+// The twin alone on a fresh side root, and whether it left the seeded files
+// as it found them.
+function twin(row: Row): Side & { untouched: boolean } {
+  const s = join(W, `r${rows++}`);
+  mkdirSync(join(s, "home"), { recursive: true });
+  row.seed?.(s);
+  const before = listing(s);
+  const t = side(row, s, false);
+  return { ...t, untouched: t.files === before };
 }
 
 const sha = (b: string | Buffer): string => createHash("sha256").update(b).digest("hex");
@@ -206,27 +216,28 @@ test("chiefBusyHeld: an unreadable marker warns as ac_meta_get does, reads dead 
 });
 
 const TRANSCRIPT: Row = {
-  bash: `t="$(ac_transcript_final "$1")"; rc=$?; printf '%s' "$t"; (exit "$rc")`,
-  libs: ["../tests/fixtures/ac-pipeline-lib.sh"],
   twin: `const r = L.transcriptFinal(A[0]); writeSync(1, Buffer.from(r.text, "latin1")); return r.status;`,
   args: ["@S/t.jsonl"],
 };
 const said = (...texts: string[]): string => `${JSON.stringify({ type: "assistant", message: { content: texts.map((t) => ({ type: "text", text: t })) } })}\n`;
 
-test("transcriptFinal: the last assistant message's text parts, jq's status kept", () => {
-  const cases: [string, string | null][] = [
-    ["one message", said("# Decision\ncontinue\n")],
-    ["the last of several, parts joined by LF", said("first") + JSON.stringify({ type: "user", message: { content: [] } }) + "\n" + said("a", "b")],
-    ["a tool part between texts", `${JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "x" }, { type: "tool_use" }, { type: "text", text: "y" }] } })}\n`],
-    ["no assistant message", `${JSON.stringify({ type: "user" })}\n`],
-    ["not JSON", "not json\n"],
-    ["empty", ""],
-    ["trailing newlines and a NUL", said("body\u0000tail\n\n\n")],
-    ["missing", null],
+test("transcriptFinal: the last assistant message's text parts as `$(...)` reads them, jq's status kept", () => {
+  const cases: [string, string | null, string][] = [
+    ["one message", said("# Decision\ncontinue\n"), "# Decision\ncontinue|rc=0"],
+    ["the last of several, parts joined by LF", said("first") + JSON.stringify({ type: "user", message: { content: [] } }) + "\n" + said("a", "b"), "a\nb|rc=0"],
+    ["a tool part between texts", `${JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "x" }, { type: "tool_use" }, { type: "text", text: "y" }] } })}\n`, "x\ny|rc=0"],
+    ["no assistant message", `${JSON.stringify({ type: "user" })}\n`, "|rc=5"],
+    ["not JSON", "not json\n", "|rc=5"],
+    ["empty", "", "|rc=5"],
+    ["trailing newlines and a NUL", said("body\u0000tail\n\n\n"), "bodytail|rc=0"],
+    ["missing", null, "|rc=2"],
   ];
-  for (const [label, body] of cases)
-    same(`transcript: ${label}`, { ...TRANSCRIPT, seed: (s) => body !== null && writeFileSync(join(s, "t.jsonl"), body) });
-  same("transcript: a directory", { ...TRANSCRIPT, seed: (s) => mkdirSync(join(s, "t.jsonl")) });
+  for (const [label, body, out] of cases) {
+    const t = twin({ ...TRANSCRIPT, seed: (s) => body !== null && writeFileSync(join(s, "t.jsonl"), body) });
+    expect({ label, out: t.out, err: t.err, untouched: t.untouched }).toEqual({ label, out, err: "", untouched: true });
+  }
+  const dir = twin({ ...TRANSCRIPT, seed: (s) => mkdirSync(join(s, "t.jsonl")) });
+  expect({ out: dir.out, err: dir.err, untouched: dir.untouched }).toEqual({ out: "|rc=2", err: "", untouched: true });
 });
 
 // A maintenance run under <home>/data with one staged file per action, the
@@ -244,47 +255,49 @@ function run(s: string, edit: (p: Record<string, unknown>, a: Action[]) => void 
   if (!existsSync(join(r, "plan.json"))) put(join(r, "plan.json"), JSON.stringify(plan));
 }
 const VALIDATE = (edit?: (p: Record<string, unknown>, a: Action[]) => void, extra?: (run: string, home: string, plan: string) => void): Row => ({
-  bash: `ac_maintenance_plan_validate "$1" "$2"`,
-  libs: ["ac-maintenance-lib.sh", "ac-bun.sh", "../tests/fixtures/ac-maintenance-retired.sh"],
   twin: `return L.maintenancePlanValidate(A[0], A[1]) ? 0 : 1;`,
   args: ["@S/home/data/learning-1/plan.json", "@S/home/data/learning-1"],
   env: { AC_HOME: "@S/home" },
   seed: (s) => run(s, edit, extra),
 });
+// A verdict is its status alone: nothing printed, nothing written.
+function judged(label: string, row: Row, ok: boolean): void {
+  const t = twin(row);
+  expect({ label, out: t.out, err: t.err, untouched: t.untouched }).toEqual({ label, out: `|rc=${ok ? 0 : 1}`, err: "", untouched: true });
+}
 
-test("maintenancePlanValidate: the closed schema, the paths and the staged hashes, as the frozen bash judges them", () => {
-  const ok = same("a valid plan", VALIDATE());
-  expect(ok.t.out).toBe("|rc=0");
-  same("a second document", VALIDATE(undefined, (r) => put(join(r, "plan.json"), "{}\n{}\n")));
-  same("not JSON", VALIDATE(undefined, (r) => put(join(r, "plan.json"), "nope\n")));
-  same("an extra key", VALIDATE((p) => (p.extra = 1)));
-  same("a wrong schema", VALIDATE((p) => (p.schema = "v2")));
-  same("a wrong mode", VALIDATE((p) => (p.mode = "qa")));
-  same("a subject with a newline", VALIDATE((p) => (p.subject = "x\n")));
-  same("an uppercase manifest hash", VALIDATE((p) => (p.input_manifest_sha256 = sha("candidate evidence\n").toUpperCase())));
-  same("an unknown op", VALIDATE((_, a) => (a[0]!.op = "delete-skill")));
-  same("a dotdot target", VALIDATE((_, a) => (a[0]!.target = "skills/../x")));
-  same("an absolute target", VALIDATE((_, a) => (a[0]!.target = "/skills/x")));
-  same("a target outside the allowed roots", VALIDATE((_, a) => (a[0]!.target = "config/x")));
-  same("a staged path outside staged/", VALIDATE((_, a) => (a[0]!.staged = "input-manifest.md")));
-  same("a duplicate target", VALIDATE((_, a) => a.push({ ...a[0]! })));
-  same("a staged hash mismatch", VALIDATE((_, a) => (a[0]!.new_sha256 = sha("other"))));
-  same("a missing staged file", VALIDATE(undefined, (r) => rmSync(join(r, "staged", "skills", "x", "SKILL.md"))));
-  same("a staged file that is a link", VALIDATE(undefined, (r) => {
+test("maintenancePlanValidate: the closed schema, the paths and the staged hashes", () => {
+  judged("a valid plan", VALIDATE(), true);
+  judged("a second document", VALIDATE(undefined, (r) => put(join(r, "plan.json"), "{}\n{}\n")), false);
+  judged("not JSON", VALIDATE(undefined, (r) => put(join(r, "plan.json"), "nope\n")), false);
+  judged("an extra key", VALIDATE((p) => (p.extra = 1)), false);
+  judged("a wrong schema", VALIDATE((p) => (p.schema = "v2")), false);
+  judged("a wrong mode", VALIDATE((p) => (p.mode = "qa")), false);
+  judged("a subject with a newline", VALIDATE((p) => (p.subject = "x\n")), false);
+  judged("an uppercase manifest hash", VALIDATE((p) => (p.input_manifest_sha256 = sha("candidate evidence\n").toUpperCase())), false);
+  judged("an unknown op", VALIDATE((_, a) => (a[0]!.op = "delete-skill")), false);
+  judged("a dotdot target", VALIDATE((_, a) => (a[0]!.target = "skills/../x")), false);
+  judged("an absolute target", VALIDATE((_, a) => (a[0]!.target = "/skills/x")), false);
+  judged("a target outside the allowed roots", VALIDATE((_, a) => (a[0]!.target = "config/x")), false);
+  judged("a staged path outside staged/", VALIDATE((_, a) => (a[0]!.staged = "input-manifest.md")), false);
+  judged("a duplicate target", VALIDATE((_, a) => a.push({ ...a[0]! })), false);
+  judged("a staged hash mismatch", VALIDATE((_, a) => (a[0]!.new_sha256 = sha("other"))), false);
+  judged("a missing staged file", VALIDATE(undefined, (r) => rmSync(join(r, "staged", "skills", "x", "SKILL.md"))), false);
+  judged("a staged file that is a link", VALIDATE(undefined, (r) => {
     const f = join(r, "staged", "skills", "x", "SKILL.md");
     rmSync(f);
     put(join(r, "elsewhere"), "skill body\n");
     symlinkSync(join(r, "elsewhere"), f);
-  }));
-  same("a staged path component that is a link", VALIDATE(undefined, (r) => {
+  }), false);
+  judged("a staged path component that is a link", VALIDATE(undefined, (r) => {
     rmSync(join(r, "staged", "skills"), { recursive: true });
     put(join(r, "real", "x", "SKILL.md"), "skill body\n");
     symlinkSync(join(r, "real"), join(r, "staged", "skills"));
-  }));
-  same("a target component in the home that is a link", VALIDATE(undefined, (_, home) => {
+  }), false);
+  judged("a target component in the home that is a link", VALIDATE(undefined, (_, home) => {
     mkdirSync(join(home, "elsewhere"));
     symlinkSync(join(home, "elsewhere"), join(home, "skills"));
-  }));
+  }), false);
   const MOVE = (src: boolean, tgt: boolean, old = "-"): Row =>
     VALIDATE(
       (_, a) => {
@@ -295,30 +308,25 @@ test("maintenancePlanValidate: the closed schema, the paths and the staged hashe
         if (tgt) put(join(home, "skills", "skills-archive", "x", "SKILL.md"), "skill body\n");
       },
     );
-  same("move-skill from its live source", MOVE(true, false));
-  same("move-skill already archived", MOVE(false, true));
-  same("move-skill with neither", MOVE(false, false));
-  same("move-skill with an old hash", MOVE(true, false, sha("x")));
+  judged("move-skill from its live source", MOVE(true, false), true);
+  judged("move-skill already archived", MOVE(false, true), true);
+  judged("move-skill with neither", MOVE(false, false), false);
+  judged("move-skill with an old hash", MOVE(true, false, sha("x")), false);
   // A live source that is there but unreadable is judged, never passed over
-  // for the archived copy; the bash's own redirect line is not reproduced
-  // (SHELL-OWN STDERR), its refusal is.
-  if (process.getuid?.() !== 0) {
-    const p = pair({
+  // for the archived copy.
+  if (process.getuid?.() !== 0)
+    judged("move-skill with an unreadable live source", {
       ...MOVE(true, true),
       seed: (s) => {
         MOVE(true, true).seed!(s);
         chmodSync(join(s, "home", "skills", "x", "SKILL.md"), 0);
       },
-    });
-    expect([p.t.out, p.t.rc, p.t.files]).toEqual([p.o.out, p.o.rc, p.o.files]);
-    expect(p.o.out).toBe("|rc=1");
-    expect([p.o.err.includes("S/home/skills/x/SKILL.md: Permission denied"), p.t.err]).toEqual([true, ""]);
-  }
-  same("a plan that is a link", VALIDATE(undefined, (r, _, plan) => {
+    }, false);
+  judged("a plan that is a link", VALIDATE(undefined, (r, _, plan) => {
     put(join(r, "real-plan.json"), plan);
     symlinkSync(join(r, "real-plan.json"), join(r, "plan.json"));
-  }));
-  expect(same("no jq on PATH", { ...VALIDATE(), path: `${NOJQ}:${BASE}` }).t.out).toBe("|rc=1");
+  }), false);
+  judged("no jq on PATH", { ...VALIDATE(), path: `${NOJQ}:${BASE}` }, false);
 });
 
 const OPEN: Row = {

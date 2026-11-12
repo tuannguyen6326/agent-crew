@@ -297,19 +297,18 @@ case "$out" in *PARKED*|*debrief*) fail "a live roomchief is not a parked fleet:
 rc=0; out="$(printf '{}' | AC_HOME="$rh" AC_SCOPE=famR "$BIN/ac-turnend-guard.sh" 2>&1)" || rc=$?
 assert_eq "$rc" "0" "the roomchief's own scoped session owes no coverage for its own pane: $out"
 
-# --- differential: src/turnend-guard.ts against the frozen bash original -----
-# DISPUTED: the implementation (tests/fixtures/ac-turnend-guard.sh under bash vs src/turnend-guard.ts through bin/ac-turnend-guard.sh)
-# HELD-CONSTANT: each row's home, copied whole for each side (no output names the home's path); the payload; the environment (AC_SCOPE, AC_SOLO, AC_GUARD_GRACE, AC_STOPHOOK_LOG_KEEP; PATH with a date stub frozen at one instant and the helpers' refusing herdr/orca; LC_ALL=C unless a row says otherwise); the test shell as the lock holder's ancestor; stdout, stderr, exit status and each side's home tree after the run compared whole
-obin="$(make_oracle_bin ac-turnend-guard)"
-cmp -s "$obin/ac-turnend-guard.sh" "$ROOT/tests/fixtures/ac-turnend-guard.sh" \
-  || fail "the oracle bin must hold the frozen original"
+# --- the verdicts, row by row -------------------------------------------------
+# Each run works on a fresh copy ($h.n) of the row's home; the environment is
+# AC_SCOPE, AC_SOLO, AC_GUARD_GRACE and AC_STOPHOOK_LOG_KEEP as the row gives
+# them, a PATH `date` frozen at one instant (epoch 1800000000) ahead of the
+# helpers' refusing herdr/orca, LC_ALL=C; the test shell is the lock holder's
+# ancestor.
 mkdir -p "$TMP/te-date"
-cat >"$TMP/te-date/date" <<'EOF'
+cat >"$TMP/te-date/date" <<'EOD'
 #!/bin/sh
 case "$*" in *%s*) echo 1800000000 ;; *) echo 2027-01-15T08:00:00Z ;; esac
-EOF
+EOD
 chmod +x "$TMP/te-date/date"
-te_prep() { :; }
 te_world() {  # te_world <name> - a fresh fleet home, printed
   local h="$TMP/te/$1"
   rm -rf "$h"
@@ -317,32 +316,16 @@ te_world() {  # te_world <name> - a fresh fleet home, printed
   : >"$h/records/backlog.md"
   printf '%s\n' "$h"
 }
-te_same() {  # te_same <home> <payload> [VAR=VAL ...] - each side on its own copy of <home>; the port's status in te_rc
-  local h="$1" pl="$2" o_rc=0
-  shift 2
-  rm -rf "$h.o" "$h.n"
-  cp -R "$h" "$h.o"
+te_verdict() {  # te_verdict <0|2> <home> <payload> [VAR=VAL ...] - one run on <home>.n; sets te_out, te_err
+  local want="$1" h="$2" pl="$3" rc=0
+  shift 3
+  rm -rf "$h.n"
   cp -R "$h" "$h.n"
-  te_prep "$h.o"
-  te_prep "$h.n"
-  te_rc=0
-  (printf '%s' "$pl" | env -u AC_SOLO -u AC_SCOPE AC_HOME="$h.o" "$@" PATH="$TMP/te-date:$PATH" LC_ALL="${DIFF_LC:-C}" "$obin/ac-turnend-guard.sh") >"$TMP/o.out" 2>"$TMP/o.err" || o_rc=$?
-  (printf '%s' "$pl" | env -u AC_SOLO -u AC_SCOPE AC_HOME="$h.n" "$@" PATH="$TMP/te-date:$PATH" LC_ALL="${DIFF_LC:-C}" "$BIN/ac-turnend-guard.sh") >"$TMP/n.out" 2>"$TMP/n.err" || te_rc=$?
-  chmod -R u+rwX "$h.o" "$h.n"
-  assert_eq "$te_rc" "$o_rc" "differential exit ($*) in $h"
-  # the one line that names a path (an unreadable meta's WARN) names each side's copy
-  o_txt="$(cat "$TMP/o.out"; printf x)"; n_txt="$(cat "$TMP/n.out"; printf x)"
-  assert_eq "${n_txt//"$h.n"/HOME}" "${o_txt//"$h.o"/HOME}" "differential stdout ($*)"
-  o_txt="$(cat "$TMP/o.err"; printf x)"; n_txt="$(cat "$TMP/n.err"; printf x)"
-  assert_eq "${n_txt//"$h.n"/HOME}" "${o_txt//"$h.o"/HOME}" "differential stderr ($*)"
-  diff -r "$h.o" "$h.n" >"$TMP/te.diff" 2>&1 || fail "differential home trees differ ($*): $(head -n 6 "$TMP/te.diff")"
+  (printf '%s' "$pl" | env -u AC_SOLO -u AC_SCOPE AC_HOME="$h.n" "$@" PATH="$TMP/te-date:$PATH" LC_ALL="${TE_LC:-C}" "$BIN/ac-turnend-guard.sh") >"$TMP/n.out" 2>"$TMP/n.err" || rc=$?
+  assert_eq "$rc" "$want" "turn-end verdict ($pl $*) in $h"
+  te_out="$(cat "$TMP/n.out")"; te_err="$(cat "$TMP/n.err")"
 }
-te_verdict() {  # te_verdict <0|2> <home> <payload> [VAR=VAL ...]
-  local want="$1"
-  shift
-  te_same "$@"
-  assert_eq "$te_rc" "$want" "turn-end verdict ($*)"
-}
+te_trace() { cat "$1.n/state/.stop-hooks.log"; }
 te_room() {  # te_room <home> <family> <entry...> - a room holding these entries
   local h="$1" fam="$2" e
   shift 2
@@ -350,29 +333,45 @@ te_room() {  # te_room <home> <family> <entry...> - a room holding these entries
   printf '# Room: %s\n\n' "$fam" >"$h/data/$fam/room.md"
   for e in "$@"; do printf -- '- [2027-01-15T07:00:00Z] %s\n' "$e" >>"$h/data/$fam/room.md"; done
 }
+TE_TS="2027-01-15T08:00:00Z hook=turnend-guard"
+TE_QUEUED="agent-crew: queued wakes are pending. Run bin/ac-wake-drain.sh and handle them before ending the turn."
+TE_ARM="Arm bin/ac-watch.sh as a background task before ending the turn."
+te_handback() { printf 'agent-crew: room(s) in HANDBACK - a roomchief reported back and is still waiting: %s. Demote it' "$1"; }
 
-# 1. idle and parked; the stop_hook_active text; a payload of nothing.
+# 1. idle and parked; the stop_hook_active text; a payload of nothing; a
+#    scoped session and a fleet with a READY item are never reminded.
 h="$(te_world idle)"
 te_verdict 0 "$h" '{}'
-assert_contains "$(cat "$TMP/n.out")" "PARKED" "an idle fleet is reminded on both sides"
+assert_contains "$te_out" "PARKED" "1: an idle fleet is reminded"
+assert_eq "$te_err" "" "1: ...with nothing on stderr"
+assert_eq "$(te_trace "$h")" "$TE_TS verdict=stood-aside reason=clean scope=fleet queued=no inflight=0 age=n/a handback=none" "1: the clean trace line"
 te_verdict 0 "$h" ''
+assert_contains "$te_out" "PARKED" "1: an empty payload is judged like any"
 te_verdict 0 "$h" '{"stop_hook_active":true}'
-te_verdict 0 "$h" '{"stop_hook_active": true}'
+assert_eq "$te_out$te_err" "" "1: stop_hook_active stands down silent"
+assert_no_file "$h.n/state/.stop-hooks.log" "1: ...and untraced"
 te_verdict 0 "$h" '{}' AC_SCOPE=famQ
-printf -- '- [ ] t1 - queued work (repo: x)\n' >"$h/records/backlog.md"
+assert_eq "$te_out" "" "1: a scoped session is never reminded"
+assert_eq "$(te_trace "$h")" "$TE_TS verdict=stood-aside reason=clean scope=famQ queued=no inflight=0 age=n/a handback=n/a" "1: the scoped trace line"
+printf -- '## Queued\n- [ ] t1 - queued work (repo: x)\n' >"$h/records/backlog.md"
 te_verdict 0 "$h" '{}'
+assert_eq "$te_out" "" "1: a READY item keeps the reminder silent"
 
 # 2. queued wakes: the fleet spool, a family spool for its scope, an orphan family.
 h="$(te_world queued)"
 mkdir -p "$h/state/.wake-spool"
 printf '9\treport\tq1\tdone: x\n' >"$h/state/.wake-spool/1.1.000000"
 te_verdict 2 "$h" '{}'
+assert_eq "$te_err" "$TE_QUEUED" "2: the fleet spool holds the fleet's turn"
+assert_eq "$(te_trace "$h")" "$TE_TS verdict=blocked reason=queued-wakes scope=fleet queued=yes inflight=0 age=n/a handback=none" "2: the blocked trace line"
 te_verdict 0 "$h" '{}' AC_SCOPE=famQ
 rm -rf "$h/state/.wake-spool"
 mkdir -p "$h/state/.wake-spool.famQ"
 printf '9\treport\tq2\tdone: x\n' >"$h/state/.wake-spool.famQ/1.1.000000"
 te_verdict 2 "$h" '{}' AC_SCOPE=famQ
+assert_eq "$te_err" "$TE_QUEUED" "2: a family spool holds its own scope"
 te_verdict 2 "$h" '{}'
+assert_eq "$te_err" "$TE_QUEUED" "2: an orphan family spool holds the fleet"
 te_verdict 0 "$h" '{}' AC_SCOPE=famZ
 
 # 3. the tally and the beacon: crew with no beacon, a fresh, stale, stood-down,
@@ -380,9 +379,20 @@ te_verdict 0 "$h" '{}' AC_SCOPE=famZ
 h="$(te_world beacon)"
 printf 'kind=ship\n' >"$h/state/c1.meta"
 te_verdict 2 "$h" '{}'
-for beat in 1800000000 1799999000 0 abc 01799999990 ''; do
+assert_eq "$te_err" "agent-crew: 1 crewmate(s) in flight but no beat on record (no beacon - nothing has armed a watcher here). $TE_ARM" "3: crew with no beacon"
+printf '1800000000\n' >"$h/state/.last-watcher-beat"
+te_verdict 0 "$h" '{}'
+assert_eq "$(te_trace "$h")" "$TE_TS verdict=stood-aside reason=clean scope=fleet queued=no inflight=1 age=0s handback=none" "3: a fresh beacon covers the crew"
+printf '1799999000\n' >"$h/state/.last-watcher-beat"
+te_verdict 2 "$h" '{}'
+assert_eq "$te_err" "agent-crew: 1 crewmate(s) in flight but the watcher beacon is stale (1000s). $TE_ARM" "3: a stale beacon"
+printf '0\n' >"$h/state/.last-watcher-beat"
+te_verdict 2 "$h" '{}'
+assert_contains "$te_err" "no beat on record (a watcher stood its beacon down on exit - drain and re-arm)" "3: a stood-down beacon"
+for beat in abc 01799999990 ''; do
   printf '%s\n' "$beat" >"$h/state/.last-watcher-beat"
-  te_same "$h" '{}'
+  te_verdict 2 "$h" '{}'
+  assert_contains "$te_err" "no beat on record (the beacon is unreadable)" "3: beacon '$beat' is unreadable"
 done
 printf '1799999000\n' >"$h/state/.last-watcher-beat"
 te_verdict 0 "$h" '{}' AC_GUARD_GRACE=5000
@@ -395,53 +405,54 @@ for kind in self crewdeputy verify-codereview; do
 done
 printf 'kind=roomchief\n' >"$h/state/famR-chief.meta"
 te_verdict 2 "$h" '{}'
+assert_contains "$te_err" "1 crewmate(s) in flight" "3: a roomchief counts for the fleet session"
 te_verdict 0 "$h" '{}' AC_SCOPE=famR
 rm -f "$h/state/famR-chief.meta" "$h/state/k1.meta"
 printf 'window=crew:x\n' >"$h/state/nokind.meta"
 te_verdict 2 "$h" '{}'
-# an unreadable crew meta counts, its WARN on the block's stderr (AT PARITY)
-if [ "$(id -u)" != 0 ]; then
-  te_prep() { chmod 000 "$1/state/nokind.meta"; }
-  te_verdict 2 "$h" '{}'
-  te_prep() { :; }
-fi
+assert_contains "$te_err" "1 crewmate(s) in flight" "3: a meta with no kind counts"
 
-# 4. HANDBACK: alongside a queued wake and a stale beacon, alone, cleared by each
-# retiring entry, two families in byte order, a room set that cannot be read.
+# 4. HANDBACK: alone, alongside a queued wake and a stale beacon, cleared by
+# each retiring entry, two families in byte order.
 h="$(te_world handback)"
 te_room "$h" famB 'famB-chief> HANDBACK: landed, please demote'
 te_room "$h" famA 'famA-chief> HANDBACK: landed' 'crewchief> HANDBACK-REFUSED: remedy first' 'famA-chief> HANDBACK: again'
 te_verdict 2 "$h" '{}'
-assert_contains "$(cat "$TMP/n.err")" "waiting: famA famB." "both families, in byte order"
+assert_contains "$te_err" "$(te_handback 'famA famB')" "4: both families, in byte order"
+assert_eq "$(te_trace "$h")" "$TE_TS verdict=blocked reason=handback-pending scope=fleet queued=no inflight=0 age=n/a handback=famA famB" "4: the handback trace line"
 mkdir -p "$h/state/.wake-spool"
 printf '9\treport\thb\tdone: x\n' >"$h/state/.wake-spool/1.1.000000"
 te_verdict 2 "$h" '{}'
+assert_contains "$te_err" "$TE_QUEUED
+$(te_handback 'famA famB')" "4: HANDBACK rides a queued-wake block"
 rm -rf "$h/state/.wake-spool"
 printf 'kind=ship\n' >"$h/state/c1.meta"
 te_verdict 2 "$h" '{}'
+assert_contains "$te_err" "$TE_ARM
+$(te_handback 'famA famB')" "4: HANDBACK rides a stale-watcher block"
 rm -f "$h/state/c1.meta"
 te_verdict 0 "$h" '{}' AC_SCOPE=famA
 for retire in 'crewchief> HANDBACK-REFUSED: no' 'crewchief> DEMOTED: famB-chief' 'crewchief> CLOSED: done'; do
   te_room "$h" famB 'famB-chief> HANDBACK: landed' "$retire"
-  te_same "$h" '{}'
+  te_verdict 2 "$h" '{}'
+  assert_contains "$te_err" "$(te_handback famA)" "4: '$retire' retires famB's hand-back, famA still waits"
 done
-te_room "$h" famB 'famB-chief> HANDBACK: landed'
-mkdir -p "$h/data/zz/room.md"
-te_verdict 0 "$h" '{}'
-rm -rf "$h/data/zz"
 te_room "$h" famC 'crewchief> GATE: pick one' 'famC-chief> HANDBACK: x' 'crewchief> DEMOTED: famC-chief'
 rm -rf "$h/data/famA" "$h/data/famB"
 te_verdict 0 "$h" '{}'
+assert_eq "$te_out" "" "4: a pending gate keeps the PARKED reminder silent"
 te_room "$h" famC 'crewchief> GATE: pick one' 'crewchief> DECIDED: a'
 te_verdict 0 "$h" '{}'
+assert_contains "$te_out" "PARKED" "4: a decided gate leaves the inbox at 0"
 
-# 5. standing coverage: the lock held by the test shell (an ancestor of both
-# sides), remote-poll executable or not, a fresh beacon.
+# 5. standing coverage: the lock held by the test shell (an ancestor of the
+# guard), remote-poll executable or not, a fresh beacon.
 h="$(te_world standing)"
 printf 'pid=%s\nsince=now\n' "$$" >"$h/state/.session-lock"
 printf '#!/bin/sh\nexit 0\n' >"$h/config/remote-poll"
 chmod +x "$h/config/remote-poll"
 te_verdict 2 "$h" '{}'
+assert_eq "$te_err" "agent-crew: remote orders are wired but nothing is polling - arm bin/ac-watch.sh as a background task (it stays up when idle)." "5: the standing-coverage block"
 printf '1800000000\n' >"$h/state/.last-watcher-beat"
 te_verdict 0 "$h" '{}'
 rm -f "$h/state/.last-watcher-beat"
@@ -450,19 +461,20 @@ te_verdict 0 "$h" '{}'
 chmod +x "$h/config/remote-poll"
 te_verdict 0 "$h" '{}' AC_SCOPE=famS
 
-# 6. the read-only lock: a live foreign holder, a dead one, kill -0's own
-# grammar for 0, -1 and +<pid> (AT PARITY), a word that is no pid.
+# 6. the read-only lock: a live foreign holder, a dead one, a word that is no
+# pid, the first pid= line read.
 h="$(te_world lock)"
 printf 'kind=ship\n' >"$h/state/c1.meta"
 hold_open telockhold; telockpid=$HOLD_PID
 printf 'pid=%s\nsince=now\n' "$telockpid" >"$h/state/.session-lock"
 te_verdict 0 "$h" '{}'
+assert_eq "$(te_trace "$h")" "$TE_TS verdict=stood-aside reason=read-only-lock scope=fleet queued=n/a inflight=n/a age=n/a handback=n/a" "6: a read-only session stands aside"
 te_verdict 2 "$h" '{}' AC_SCOPE=famL
 hold_close telockhold "$telockpid"
 te_verdict 2 "$h" '{}'
-for p in 0 -1 "+$$" abc ''; do
+for p in abc ''; do
   printf 'pid=%s\n' "$p" >"$h/state/.session-lock"
-  te_same "$h" '{}'
+  te_verdict 2 "$h" '{}'
 done
 printf 'since=now\npid=%s\npid=1\n' "$$" >"$h/state/.session-lock"
 te_verdict 2 "$h" '{}'
@@ -473,11 +485,15 @@ h="$(te_world landing)"
 printf -- '- [x] old1 - landed\n' >"$h/records/backlog.md"
 te_room "$h" new1 'new1> TRIAGE: x'
 te_verdict 0 "$h" '{}'
+assert_no_file "$h.n/state/.landing-seen" "7: mirror off seeds no baseline"
 printf 'on\n' >"$h/config/remote-mirror"
 te_verdict 0 "$h" '{}'
-printf -- '- [x] old1 - landed\n' >"$h/state/.landing-seen"
+assert_eq "$(cat "$h.n/state/.landing-seen")" "old1" "7: the first run seeds the baseline silently"
+printf 'old1\n' >"$h/state/.landing-seen"
 printf -- '- [x] old1 - landed\n- [x] new1 - landed (merged 2027-01-15)\n- [x] noroom - landed\n' >"$h/records/backlog.md"
 te_verdict 2 "$h" '{}'
+assert_eq "$te_err" "agent-crew: a task landed (backlog Done) but its Slack done-report may be unposted for: new1. Post it then stamp it (bin/ac-remote.sh done-stamp <family>) - this repeats every turn end until it is stamped." "7: the new Done id with a room is owed, the one with none is not"
+assert_eq "$(cat "$h.n/state/.landing-seen")" "old1" "7: the baseline never grows"
 printf 'new1=2027-01-15\n' >"$h/state/.landing-receipt-stamp"
 te_verdict 0 "$h" '{}'
 printf 'chief\n' >"$h/config/remote-mirror"
@@ -487,101 +503,73 @@ te_verdict 0 "$h" '{}' AC_SCOPE=new1
 printf 'off\n' >"$h/config/remote-mirror"
 te_verdict 0 "$h" '{}'
 
-# 8. the trace trim; the inert shapes (a linked worktree, a home inside a git
-# checkout's subdirectory - AT PARITY).
+# 8. the trace trim: past twice the keep, the log keeps its last <keep> lines.
 h="$(te_world trim)"
 for i in 1 2 3 4 5; do printf 'old %s\n' "$i" >>"$h/state/.stop-hooks.log"; done
-te_same "$h" '{}' AC_STOPHOOK_LOG_KEEP=2
-te_same "$h" '{}' AC_STOPHOOK_LOG_KEEP=010
-trrepo="$(make_repo terepo)"
-git -C "$trrepo" worktree add -q -b tewt "$TMP/tewt"
-mkdir -p "$TMP/tewt/state" "$trrepo/homes/h/state"
-printf 'kind=ship\n' >"$TMP/tewt/state/c1.meta"
-printf 'kind=ship\n' >"$trrepo/homes/h/state/c1.meta"
-for hh in "$TMP/tewt" "$trrepo/homes/h"; do
-  o_rc=0; (printf '{}' | AC_HOME="$hh" LC_ALL=C "$obin/ac-turnend-guard.sh") >"$TMP/o.out" 2>&1 || o_rc=$?
-  n_rc=0; (printf '{}' | AC_HOME="$hh" LC_ALL=C "$BIN/ac-turnend-guard.sh") >"$TMP/n.out" 2>&1 || n_rc=$?
-  assert_eq "$o_rc $n_rc" "0 0" "an inert home allows on both sides: $hh"
-  assert_eq "$(cat "$TMP/o.out" "$TMP/n.out")" "" "an inert home says nothing: $hh"
-  assert_no_file "$hh/state/.stop-hooks.log" "an inert home is never traced: $hh"
-done
+te_verdict 0 "$h" '{}' AC_STOPHOOK_LOG_KEEP=2
+assert_eq "$(te_trace "$h")" "old 5
+$TE_TS verdict=stood-aside reason=clean scope=fleet queued=no inflight=0 age=n/a handback=none" "8: six lines past a keep of 2 leave the last two"
+assert_eq "$(ls -A "$h.n/state")" ".stop-hooks.log" "8: the trim leaves no temp"
 
 # 9. SOLO: no self task, a clean one, a dirty one (the systemMessage JSON).
 h="$(te_world solo)"
 solorepo="$(make_repo tesolo)"
 te_verdict 0 "$h" '{}' AC_SOLO=1
+assert_eq "$te_out$te_err" "" "9: no self task is silence"
 printf 'kind=self\nproject=tesolo\nworktree=%s\n' "$solorepo" >"$h/state/sl1.meta"
 te_verdict 0 "$h" '{}' AC_SOLO=1
+assert_eq "$te_out$te_err" "" "9: a clean slice is silence"
 printf 'wip\n' >>"$solorepo/file.txt"
-te_verdict 0 "$h" '{}' AC_SOLO=1
-assert_contains "$(cat "$TMP/n.out")" "slice sl1 - the session" "the dirty slice is named"
 printf 'kind=self\nworktree=/nonexistent-te\n' >"$h/state/sl2.meta"
+mkdir -p "$h/state/.wake-spool"
+printf '9\treport\tso\tdone: x\n' >"$h/state/.wake-spool/1.1.000000"
 te_verdict 0 "$h" '{}' AC_SOLO=1
-# the enumerator's abort on a directory named like a meta stays off the hook's
-# stderr, as the original's `2>/dev/null` kept it.
-mkdir "$h/state/a.meta"
-te_verdict 0 "$h" '{}' AC_SOLO=1
-assert_eq "$(cat "$TMP/o.err" "$TMP/n.err")" "" "the enumerator's abort reaches neither side's stderr (SOLO)"
-rmdir "$h/state/a.meta"
+assert_eq "$(jq -r .systemMessage <<<"$te_out")" "solo: uncommitted changes in slice sl1 - the session's end strands them; commit, land (bin/ac-teardown.sh <id>) or leave them on purpose" "9: the dirty slice is named, the one with no worktree is not"
+assert_eq "$te_err" "" "9: a solo session is never blocked on a queued wake"
+assert_no_file "$h.n/state/.stop-hooks.log" "9: the SOLO arm is untraced"
 
-# --- named divergences: each row asserts both sides ---------------------------
+# 10. no bun on PATH: the shim allows at once, saying so in one stderr line; a
+# module that cannot load is the same no-op, never a held stop.
 h="$(te_world named)"
 mkdir -p "$h/state/.wake-spool"
 printf '9\treport\tnb\tdone: x\n' >"$h/state/.wake-spool/1.1.000000"
-# BUN: no bun on PATH - the shim allows at once and says nothing; the original
-# (bash, jq and its libs) held the stop.
 mkdir -p "$TMP/te-nobun"
 for t in bash env cat dirname jq git sed awk head tail ps date mkdir mv wc tr grep basename; do ln -sf "$(command -v "$t")" "$TMP/te-nobun/$t"; done
-o_rc=0; (printf '{}' | AC_HOME="$h" PATH="$TMP/te-nobun" LC_ALL=C "$obin/ac-turnend-guard.sh") >"$TMP/o.out" 2>"$TMP/o.err" || o_rc=$?
 n_rc=0; (printf '{}' | AC_HOME="$h" PATH="$TMP/te-nobun" LC_ALL=C "$BIN/ac-turnend-guard.sh") >"$TMP/n.out" 2>"$TMP/n.err" || n_rc=$?
-assert_eq "$o_rc $n_rc" "2 0" "BUN: the original holds the stop with no bun on PATH, the shim allows"
-assert_contains "$(cat "$TMP/o.err")" "queued wakes are pending" "BUN: the original's reason"
-assert_eq "$(cat "$TMP/n.out" "$TMP/n.err")" "" "BUN: the shim says nothing"
-# BUN: a module that cannot load is the shim's no-op, never a held stop.
+assert_eq "$n_rc:$(cat "$TMP/n.out")" "0:" "10: without bun the shim allows, nothing on stdout"
+assert_eq "$(cat "$TMP/n.err")" "ac-turnend-guard.sh: bun is not on PATH - this hook did nothing" "10: ...saying so in one stderr line"
 te_lf="$TMP/te-loadfail"
 mkdir -p "$te_lf/bin" "$te_lf/src"
 cp "$BIN/ac-bun.sh" "$BIN/ac-turnend-guard.sh" "$te_lf/bin/"
 printf 'throw new Error("turn-end guard cannot load");\n' >"$te_lf/src/turnend-guard.ts"
 n_rc=0; (printf '{}' | AC_HOME="$h" LC_ALL=C "$te_lf/bin/ac-turnend-guard.sh") >"$TMP/n.out" 2>"$TMP/n.err" || n_rc=$?
-assert_eq "$n_rc" "0" "BUN: a module that cannot load never holds the stop"
-assert_eq "$(cat "$TMP/n.out")" "" "BUN: a module that cannot load prints nothing on stdout"
-assert_contains "$(cat "$TMP/n.err")" "turn-end guard cannot load" "BUN: the load failure is bun's own diagnosis"
-# AT PARITY: a keep knob naming a variable ended the original 0 under set -u
-# after its reason line, the line count's status; the module ends 0 there too,
-# so neither the shim's fold nor the stop is involved.
-o_rc=0; (printf '{}' | AC_HOME="$h" AC_STOPHOOK_LOG_KEEP=nokeep PATH="$TMP/te-date:$PATH" LC_ALL=C "$obin/ac-turnend-guard.sh") >/dev/null 2>&1 || o_rc=$?
-n_rc=0; (printf '{}' | AC_HOME="$h" AC_STOPHOOK_LOG_KEEP=nokeep PATH="$TMP/te-date:$PATH" LC_ALL=C "$BIN/ac-turnend-guard.sh") >/dev/null 2>&1 || n_rc=$?
-m_rc=0; (cd "$ROOT" && printf '{}' | AC_HOME="$h" AC_STOPHOOK_LOG_KEEP=nokeep PATH="$TMP/te-date:$PATH" LC_ALL=C bun --no-env-file "$ROOT/src/turnend-guard.ts" "$TMP") >/dev/null 2>&1 || m_rc=$?
-assert_eq "$o_rc $m_rc $n_rc" "0 0 0" "AT PARITY: an identifier keep ends the original, the module and the shim 0"
-rm -rf "$h/state/.wake-spool"
-# KEEP ARITHMETIC: a keep knob `$(( ))` cannot read made the original abandon
-# each whole top-level statement around a trace, so an idle fleet fell through
-# to the stale-watcher line with 0 crew in flight; the port skips the trim.
+assert_eq "$n_rc:$(cat "$TMP/n.out")" "0:" "10: a module that cannot load never holds the stop"
+assert_contains "$(cat "$TMP/n.err")" "ac-turnend-guard.sh: src/turnend-guard.ts exited 1 - this hook did nothing" "10: ...and the shim says it did nothing"
+
+# 11. a keep knob the arithmetic cannot read only skips the trim: the fleet is
+# judged as with any keep.
 h="$(te_world keep)"
-o_rc=0; (printf '{}' | AC_HOME="$h" AC_STOPHOOK_LOG_KEEP=2x PATH="$TMP/te-date:$PATH" LC_ALL=C "$obin/ac-turnend-guard.sh") >"$TMP/o.out" 2>"$TMP/o.err" || o_rc=$?
-n_rc=0; (printf '{}' | AC_HOME="$h" AC_STOPHOOK_LOG_KEEP=2x PATH="$TMP/te-date:$PATH" LC_ALL=C "$BIN/ac-turnend-guard.sh") >"$TMP/n.out" 2>"$TMP/n.err" || n_rc=$?
-assert_eq "$o_rc $n_rc" "0 0" "KEEP ARITHMETIC: neither side holds the stop"
-assert_contains "$(cat "$TMP/o.err")" "0 crewmate(s) in flight" "KEEP ARITHMETIC: the original fell through to the stale-watcher line"
-assert_contains "$(cat "$TMP/n.out")" "PARKED" "KEEP ARITHMETIC: the port judges the idle fleet as parked"
-assert_eq "$(cat "$TMP/n.err")" "" "KEEP ARITHMETIC: the port says nothing on stderr"
-# SHELL-OWN STDERR: a grace that is no integer - both judge the beacon fresh;
-# only the original prints `[`'s own line.
-printf 'kind=ship\n' >"$h/state/c1.meta"
-o_rc=0; (printf '{}' | AC_HOME="$h" AC_GUARD_GRACE=abc PATH="$TMP/te-date:$PATH" LC_ALL=C "$obin/ac-turnend-guard.sh") >"$TMP/o.out" 2>"$TMP/o.err" || o_rc=$?
-n_rc=0; (printf '{}' | AC_HOME="$h" AC_GUARD_GRACE=abc PATH="$TMP/te-date:$PATH" LC_ALL=C "$BIN/ac-turnend-guard.sh") >"$TMP/n.out" 2>"$TMP/n.err" || n_rc=$?
-assert_eq "$o_rc $n_rc" "0 0" "SHELL-OWN: a grace that is no integer never holds the stop"
-assert_contains "$(cat "$TMP/o.err")" "integer expression expected" "SHELL-OWN: the original's line is the shell's"
-assert_eq "$(cat "$TMP/n.err")" "" "SHELL-OWN: the port adds none"
-rm -f "$h/state/c1.meta"
-# ORDER: the rooms are named in byte order; the original's glob followed the
-# locale's collation, so under UTF-8 `famb` precedes `famC` there.
+te_verdict 0 "$h" '{}' AC_STOPHOOK_LOG_KEEP=2x
+assert_contains "$te_out" "PARKED" "11: an idle fleet is still judged parked"
+assert_eq "$te_err" "" "11: ...with nothing on stderr"
+mkdir -p "$h/state/.wake-spool"
+printf '9\treport\tkp\tdone: x\n' >"$h/state/.wake-spool/1.1.000000"
+te_verdict 2 "$h" '{}' AC_STOPHOOK_LOG_KEEP=2x
+assert_eq "$te_err" "$TE_QUEUED" "11: a queued-wake block keeps its exit 2"
+
+# 12. the rooms are named in byte order whatever the locale; a story's room at
+# data/<epic>/<story>/ (the dir marked .family, src/brief.ts's header owns the
+# layout) is judged and named by the story, never its epic.
 h="$(te_world order)"
 te_room "$h" famb 'famb-chief> HANDBACK: x'
 te_room "$h" famC 'famC-chief> HANDBACK: x'
-o_rc=0; (printf '{}' | AC_HOME="$h" PATH="$TMP/te-date:$PATH" LC_ALL=en_US.UTF-8 "$obin/ac-turnend-guard.sh") >/dev/null 2>"$TMP/o.err" || o_rc=$?
-n_rc=0; (printf '{}' | AC_HOME="$h" PATH="$TMP/te-date:$PATH" LC_ALL=en_US.UTF-8 "$BIN/ac-turnend-guard.sh") >/dev/null 2>"$TMP/n.err" || n_rc=$?
-assert_eq "$o_rc $n_rc" "2 2" "ORDER: both hold the stop"
-assert_contains "$(cat "$TMP/o.err")" "waiting: famb famC." "ORDER: the original collates under UTF-8"
-assert_contains "$(cat "$TMP/n.err")" "waiting: famC famb." "ORDER: the port reads byte order"
+TE_LC=en_US.UTF-8 te_verdict 2 "$h" '{}'
+assert_contains "$te_err" "$(te_handback 'famC famb')" "12: byte order under a UTF-8 locale"
+h="$(te_world nested)"
+mkdir -p "$h/data/ep/story"
+: >"$h/data/ep/story/.family"
+printf '# Room: story\n\n- [2027-01-15T07:00:00Z] story-chief> HANDBACK: landed\n' >"$h/data/ep/story/room.md"
+te_verdict 2 "$h" '{}'
+assert_contains "$te_err" "$(te_handback story)" "12: a nested story room holds the stop under its own name"
 
 pass

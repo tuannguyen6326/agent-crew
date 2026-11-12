@@ -3,9 +3,7 @@
 // JSON document (--json), or the home paths alone (--paths), so the captain
 // surveys every fleet without visiting each one. The entry is bin/ac-fleets.sh
 // (a shim that starts this file through bin/ac-bun.sh); THIS header is the
-// authoritative spec, and the bash original it replaced stays frozen at
-// tests/fixtures/ac-fleets.sh as the oracle the differential leg of
-// tests/sh/ac-fleets.test.sh holds this module to.
+// authoritative spec, and tests/sh/ac-fleets.test.sh is its contract test.
 //
 //   ac-fleets.sh [--json | --paths] [<container>]
 //   ac-fleets.sh -h | --help
@@ -160,14 +158,9 @@
 // names that root - import.meta.dir would resolve through a copied bin's src/
 // link to the distro checkout and call the wrong ac-room.sh.
 //
-// NAMED DIVERGENCES from the frozen original: `-h` prints THIS header; dirs
-// and metas are listed in byte order (bash's glob followed libc collation
-// under a UTF-8 locale); jq's stderr on the depth poison is not reproduced;
-// on a text-mode read that fails, the tool's own stderr (`tail: ...:
-// Permission denied`, `head: ...`) is not reproduced - exit and stdout are;
-// the home is bound through physicalDir. A zero-padded cadence counter reads
-// as its decimal value on both sides (jq takes `--argjson 007` as 7). Reads
-// only - no lock, no mkdir, no temp file, nothing written under any home.
+// A zero-padded cadence counter reads as its decimal value (jq takes
+// `--argjson 007` as 7). Reads only - no lock, no mkdir, no temp file, nothing
+// written under any home.
 import { existsSync, readdirSync, readFileSync, statSync, writeSync } from "node:fs";
 import { configReadDir, die, enterCaller, iso, metaGet, metaIsVerify, now, physicalDir, spawnShellSync, wakeFamilySpools, watcherBeatRead } from "./lib.ts";
 

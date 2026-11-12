@@ -20,8 +20,8 @@
 # SPLIT (audit-f3, codebase-audit-2026-07-29 finding 3): the ac_qa_*
 # validation block, the wake/spool/room/chief-quiet block, and the
 # Learning/Curate cadence + maintenance-transaction block moved out to
-# ac-qa-lib.sh (frozen in tests/fixtures/ since its last live caller was
-# ported), bin/ac-wake-lib.sh and bin/ac-maintenance-lib.sh respectively -
+# ac-qa-lib.sh (retired since its last live caller was ported),
+# bin/ac-wake-lib.sh and bin/ac-maintenance-lib.sh respectively -
 # each sourced by the callers that need it, never by this file. The two
 # herdr-specific pane-agent workspace/tab helpers moved to bin/ac-backend.sh.
 #
@@ -262,10 +262,14 @@ ac_skill_usage_bump() {
 
 # --- mkdir lock with stale-owner recovery ------------------------------------
 # Portable to macOS (no flock(1)). `mkdir` is the atomic claim; the lock dir
-# then records the owner PID in `pid`. A lock nobody holds any more is STALE
+# then records the owner PID in `pid` and the owner's start time (ps lstart,
+# bytes) in `start`. A lock nobody holds any more is STALE
 # and is reclaimed - ac_lock_stale below is the ONE definition of that, and it
-# covers BOTH shapes a dead holder leaves:
+# covers the THREE shapes a dead holder leaves:
 #   - `pid` names a process that no longer exists (it died after publishing);
+#   - `pid` names a LIVE process whose start differs from `start` - the OS
+#     handed the dead holder's number to a later process, which a liveness
+#     check alone would read as the holder for ever;
 #   - `pid` is ABSENT or EMPTY - an external kill landed in the window between
 #     `mkdir` and the `printf` that publishes the pid. This shape wedged the
 #     fleet watcher: a leaked empty dir is owned by nobody, yet every re-arm
@@ -315,13 +319,27 @@ ac_file_mtime() {
   printf '%s\n' "$m"
 }
 
+ac_pid_start() {
+  # ac_pid_start <pid> - the process's start time as ps prints it, empty when
+  # ps cannot say. Compared byte for byte, never parsed, ps's column padding
+  # trimmed so the width it pads to never tells two readings apart.
+  LC_ALL=C ps -o lstart= -p "$1" 2>/dev/null | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' || true
+}
+
 ac_lock_stale() {
   # ac_lock_stale <lockdir> - 0 when the lock is STALE (see the block above).
-  local lockdir="$1" owner mtime grace="${AC_LOCK_STALE_GRACE:-5}"
+  # A live pid whose process started after the holder recorded its start is
+  # a reused number, not the holder; a dir with no start file (an older
+  # writer's) is judged by liveness alone.
+  local lockdir="$1" owner mtime start now grace="${AC_LOCK_STALE_GRACE:-5}"
   owner="$(cat "$lockdir/pid" 2>/dev/null || true)"
   if [ -n "$owner" ]; then
-    ac_pid_alive "$owner" && return 1
-    return 0
+    ac_pid_alive "$owner" || return 0
+    start="$(cat "$lockdir/start" 2>/dev/null || true)"
+    [ -n "$start" ] || return 1
+    now="$(ac_pid_start "$owner")"
+    [ -n "$now" ] && [ "$now" != "$start" ] && return 0
+    return 1
   fi
   mtime="$(ac_file_mtime "$lockdir")" || return 1
   [ "$(( $(ac_now) - mtime ))" -ge "$grace" ]
@@ -343,6 +361,9 @@ ac_lock_acquire() {
     waited=$((waited + 1))
   done
   printf '%s\n' "$$" >"$lockdir/pid"
+  local start
+  start="$(ac_pid_start "$$")"
+  [ -z "$start" ] || printf '%s\n' "$start" >"$lockdir/start"
 }
 
 ac_lock_release() {
@@ -414,7 +435,7 @@ ac_compact_pct_env() {
   # Claude's own auto-compact then fires at that percent of the window instead
   # of just under its end (claude 2.1.284: min(window*pct/100, window-13000)).
   # Out-of-range values are dropped with one reason line on stderr, because
-  # claude ignores them silently. Twinned in src/lib.ts (compactPctEnv,
+  # claude ignores them silently. Twinned in src/lib-spawn.ts (compactPctEnv,
   # tests/ts/spawn-twins.test.ts).
   local p
   p="$(ac_config_read compact-pct '')"
@@ -721,7 +742,7 @@ ac_domain_view_entry() {
   # The MEMBERSHIP invariant is link RESOLUTION, not the link text - which is
   # what makes an absolute link as valid as a relative one and what survives a
   # rename. ONE predicate with TWO consumers: `ac-domain.sh validate` explains
-  # each class (through domainViewEntry, the src/lib.ts twin
+  # each class (through domainViewEntry, the src/lib-domain.ts twin
   # tests/ts/domain.test.ts holds to this function), and ac-spawn.sh's
   # pre-lease guard accepts only `ok` - a guard
   # that merely tested existence would pass a plain directory or a link
@@ -1016,12 +1037,84 @@ ac_stage_dir_for_id() {
   printf '%s/%s%s\n' "$fam" "$stage" "$rev"
 }
 
+ac_fam_dir() {
+  # ac_fam_dir <family> - the data dir holding <family>'s files, by what
+  # EXISTS: data/<family> when it is there, else the ONE data/<epic>/<family>/
+  # one level down that carries the `.family` marker. A story of an epic lives
+  # inside its epic's dir (src/brief.ts's header owns the layout), and the
+  # marker is what tells a story apart from a crewmate's own work/ or verify/
+  # subdir - a bare dir never passes for one. Two marked dirs for one family
+  # die, named in byte order. A family nowhere on disk is placed by the live
+  # ledger (ac_ledger_epic_of): a story's path under its epic, else the flat
+  # path - so the writer that creates it lands it right, and ac_fam_dir_mint is
+  # how it creates it. An unsafe name never reaches the glob. data/archive/ is
+  # no epic: archived rooms are ac_room_file's own rung.
+  local fam="$1" d flat c hits="" e
+  d="$(ac_data_dir)" || d=""
+  flat="$d/$fam"
+  [ -d "$flat" ] && { printf '%s\n' "$flat"; return 0; }
+  case "$fam" in ""|*[!a-zA-Z0-9_-]*) printf '%s\n' "$flat"; return 0 ;; esac
+  for c in "$d"/*/"$fam"/.family; do
+    [ -f "$c" ] || continue
+    c="${c%/.family}"
+    [ "${c#"$d"/archive/}" = "$c" ] || continue
+    hits="$hits$c"$'\n'
+  done
+  if [ -z "$hits" ]; then
+    e=""
+    [ -z "$d" ] || e="$(ac_ledger_epic_of "$fam")"
+    [ -z "$e" ] || flat="$d/$e/$fam"
+    printf '%s\n' "$flat"
+    return 0
+  fi
+  hits="$(printf '%s' "$hits" | LC_ALL=C sort)"
+  case "$hits" in
+    *$'\n'*) ac_die "ambiguous family data for $fam: dirs at both $(printf '%s\n' "$hits" | sed -n 1p) and $(printf '%s\n' "$hits" | sed -n 2p)" ;;
+  esac
+  printf '%s\n' "$hits"
+}
+
+ac_ledger_epic_of() {
+  # ac_ledger_epic_of <id> - the epic a story belongs to, by the live ledger:
+  # the first row with that id carries epic:<e>, <e> is not the id itself, and
+  # <e> has a row of its own bracketed [EPIC] (docs/backlog.md's grammar) -
+  # else "". A token naming no [EPIC] row is a stray pointer, never a layout
+  # instruction. No ledger, or one that cannot be read, is no epic; rc 0. The
+  # ledger is LOOKED AT, never minted: a path resolve must not create records/
+  # (ac_fence_dir would), so the fence's two rungs are spelled here unminted.
+  local f h
+  if [ -z "${AC_HOME:-}" ] && [ -n "${AC_FLEET_STATE:-}" ]; then
+    f="${AC_FLEET_STATE%/}/../records/backlog.md"
+  else
+    h="$(ac_home)" || return 0
+    f="$h/records/backlog.md"
+  fi
+  [ -f "$f" ] || return 0
+  LC_ALL=C awk -v want="$1" "$AC_DONELINE_AWK"'
+    BEGIN { w[want] }
+    /^- \[/ { ac_doneline($0, o); if (o["terminal"] == "epic") ep[o["id"]] = 1; if ((o["id"] in w) && !seen) { seen = 1; e = o["epic"] } }
+    END { if (seen && e != "" && !(e in w) && (e in ep)) print e }' "$f" 2>/dev/null || true
+}
+
+ac_fam_dir_mint() {
+  # ac_fam_dir_mint <family> - ac_fam_dir with the dir created, a nested one (a
+  # story under its epic) marked `.family` so every later read finds it with
+  # no ledger - the row is pruned long before the dir is archived.
+  local dir d
+  dir="$(ac_fam_dir "$1")" || return 1
+  mkdir -p "$dir" || return 1
+  d="$(ac_data_dir)" || return 1
+  case "$dir" in "$d"/*/*) : >"$dir/.family" || return 1 ;; esac
+  printf '%s\n' "$dir"
+}
+
 ac_task_dir() {
   # ac_task_dir <id> - the data dir holding <id>'s brief/report, resolved by
   # what EXISTS: the nested staged dir when its brief lives there (for an
-  # unsuffixed id that means data/<id>/implement), else the flat data/<id>.
+  # unsuffixed id that means <family dir>/implement), else the id's own family
+  # dir (ac_fam_dir: data/<id>, or data/<epic>/<id> for a story).
   # Briefs in both places is ambiguous and dies. Neither existing prints the
-  # flat dir - callers that need the brief check for it themselves.
+  # family dir - callers that need the brief check for it themselves.
   #
   # A roomchief (<family>-chief) never has a brief - the room IS its brief
   # (rooms-threads skill) - so the nested chief dir is accepted on its
@@ -1031,19 +1124,19 @@ ac_task_dir() {
   # creates that dir, so this resolver cannot require it first
   # (chicken-and-egg). A family whose OWN name merely ends in -chief (no
   # parent data/<base>/ dir) never satisfies this and keeps resolving flat.
-  local id="$1" d sub nested="" flat stage fam base slug
-  d="$(ac_data_dir)"
-  flat="$d/$id"
+  local id="$1" sub nested="" flat stage fam famd base slug
+  flat="$(ac_fam_dir "$id")" || return 1
   sub="$(ac_stage_dir_for_id "$id")"
   if [ -n "$sub" ]; then
-    nested="$d/$sub"
     stage="${sub#*/}"
     fam="${sub%%/*}"
+    famd="$(ac_fam_dir "$fam")" || return 1
+    nested="$famd/$stage"
   elif [ -f "$flat/implement/brief.md" ]; then
     nested="$flat/implement"
   fi
   if [ -n "$nested" ] \
-    && { [ -f "$nested/brief.md" ] || { [ "${stage:-}" = chief ] && [ -d "$d/$fam" ]; }; }; then
+    && { [ -f "$nested/brief.md" ] || { [ "${stage:-}" = chief ] && [ -d "$famd" ]; }; }; then
     [ -f "$flat/brief.md" ] \
       && ac_die "ambiguous task data for $id: briefs at both $nested and $flat"
     printf '%s\n' "$nested"
@@ -1056,10 +1149,11 @@ ac_task_dir() {
     while [ "${base%-*}" != "$base" ]; do
       base="${base%-*}"
       slug="${id#"$base"-}"
-      if [ -f "$d/$base/tasks/$slug/brief.md" ]; then
+      famd="$(ac_fam_dir "$base")" || return 1
+      if [ -f "$famd/tasks/$slug/brief.md" ]; then
         [ -f "$flat/brief.md" ] \
-          && ac_die "ambiguous task data for $id: briefs at both $d/$base/tasks/$slug and $flat"
-        printf '%s\n' "$d/$base/tasks/$slug"
+          && ac_die "ambiguous task data for $id: briefs at both $famd/tasks/$slug and $flat"
+        printf '%s\n' "$famd/tasks/$slug"
         return 0
       fi
     done
@@ -1077,7 +1171,7 @@ ac_room_file() {
   # READ side only, deliberately. ac-room.sh's own room_file() stays the live
   # path for `post`/`close`: appending into an archived room would hide a
   # re-opened family from `list`, the captain inbox and the turn-end guard, all
-  # of which glob data/*/room.md by design (every archived family is CLOSED, so
+  # of which walk live family dirs only (familyDirs, src/lib.ts) by design (every archived family is CLOSED, so
   # they contribute nothing there - measured, not assumed). Posting to an
   # archived family therefore opens a FRESH live room; restore it first
   # (`ac-archive.sh restore <family>`) when one continuous room is wanted.
@@ -1094,20 +1188,28 @@ ac_room_file() {
   # what EXISTS, and resolution restarts on that family - never on the sub-task
   # id itself, which would otherwise answer with a room path that can never
   # exist.
-  local fam="$1" live archived base slug
-  live="$(ac_data_dir)/$fam/room.md"
+  local fam="$1" live archived base slug d
+  live="$(ac_fam_dir "$fam")/room.md" || return 1
   [ -f "$live" ] && { printf '%s\n' "$live"; return 0; }
   case "$fam" in *[!a-zA-Z0-9_-]*) printf '%s\n' "$live"; return 0 ;; esac
-  for archived in "$(ac_data_dir)"/archive/*/"$fam"/room.md; do
+  d="$(ac_data_dir)" || d=""
+  for archived in "$d"/archive/*/"$fam"/room.md; do
     [ -f "$archived" ] || continue
     printf '%s\n' "$archived"
+    return 0
+  done
+  # A story archived WITH its epic (src/archive.ts moves the epic dir whole)
+  # sits one level down, still carrying its marker.
+  for archived in "$d"/archive/*/*/"$fam"/.family; do
+    [ -f "$archived" ] && [ -f "${archived%/.family}/room.md" ] || continue
+    printf '%s\n' "${archived%/.family}/room.md"
     return 0
   done
   base="$fam"
   while [ "${base%-*}" != "$base" ]; do
     base="${base%-*}"
     slug="${fam#"$base"-}"
-    if [ -f "$(ac_data_dir)/$base/tasks/$slug/brief.md" ]; then
+    if [ -f "$(ac_fam_dir "$base")/tasks/$slug/brief.md" ]; then
       ac_room_file "$base"
       return 0
     fi
@@ -1485,7 +1587,7 @@ ac_task_stamps() {
   # ac_task_stamps <state_dir> <id> - print every per-id watcher stamp path,
   # one per line: the AUTHORITATIVE reap list (audit-f4). The writers stay in
   # bin/ac-watch.sh and bin/ac-done.sh; the reaper (src/teardown.ts) iterates
-  # this list's twin, taskStamps in src/lib.ts, which tests/ts/teardown.test.ts
+  # this list's twin, taskStamps in src/lib-teardown.ts, which tests/ts/teardown.test.ts
   # holds to THIS one, instead of a hand copy - the hand list had already
   # leaked once (11 orphan .change-* stamps observed live, ac-teardown.sh's
   # own comment), then leaked again by omission when
@@ -1494,7 +1596,8 @@ ac_task_stamps() {
   # with.
   local sd="$1" tid="$2" b
   for b in hash change seen seen-hash stale gone ask unobservable \
-    report-hash superseded busy busy-stalled; do
+    report-hash superseded busy busy-stalled ended rewake \
+    stale-count stale-capped deferred-since; do
     printf '%s/.%s-%s\n' "$sd" "$b" "$tid"
   done
 }
@@ -1578,14 +1681,14 @@ ac_family_of_id() {
       printf '%s\n' "${sub%%/*}"; return 0 ;;
     *-r[0-9]|*-r[0-9][0-9])
       base_stage="${stage%-r*}"
-      if [ -d "$(ac_data_dir)/${sub%%/*}/$base_stage" ]; then
+      if [ -d "$(ac_fam_dir "${sub%%/*}")/$base_stage" ]; then
         printf '%s\n' "${sub%%/*}"
       else
         printf '%s\n' "${1%-r*}"
       fi
       return 0 ;;
   esac
-  if [ -d "$(ac_data_dir)/$sub" ]; then
+  if [ -d "$(ac_fam_dir "${sub%%/*}")/$stage" ]; then
     printf '%s\n' "${sub%%/*}"
   else
     printf '%s\n' "$1"
@@ -2207,18 +2310,32 @@ ac_seed_crew_settings() {
   # when the fleet source moves on. Kept out of git status via info/exclude.
   local wt="$1" home_dir rel src
   home_dir="$(ac_home)/.claude"
-  # A home .claude that is the core-4 runtime symlink into the distro
-  # checkout (seedRuntimeLinks, src/lib.ts) holds the distro's settings -
-  # chief-session hook wiring, not fleet crew settings - so it is not a
-  # fleet layer and the container copy stays the crew source.
+  # A home .claude that is the chief's runtime dir holds the distro's
+  # settings - chief-session hook wiring, not fleet crew settings - so it is
+  # not a fleet layer and the container copy stays the crew source. Two
+  # shapes: the runtime symlink into the distro checkout (seedRuntimeLinks,
+  # src/lib.ts), and the real dir bin/ac-home-carriers.sh makes of it, whose
+  # settings.json is that same link and whose settings.local.json carries THIS
+  # home's AC_HOME - the one file that must never reach a crewmate, which it
+  # would turn chief-shaped.
   if [ -d "$home_dir" ]; then
     case "$(cd -P "$home_dir" 2>/dev/null && pwd -P)" in
       "$(ac_root)"|"$(ac_root)"/*) home_dir="" ;;
     esac
   fi
+  if [ -n "$home_dir" ] && [ -L "$home_dir/settings.json" ]; then
+    case "$(readlink "$home_dir/settings.json")" in
+      "$(ac_root)"/*) home_dir="" ;;
+    esac
+  fi
   for rel in settings.json settings.local.json; do
     src="$home_dir/$rel"
     [ -n "$home_dir" ] && [ -f "$src" ] || src="$(dirname "$(ac_home)")/.claude/$rel"
+    # The carrier beside a real per-fleet settings.json override is still the
+    # chief's: a settings.local.json naming AC_HOME never seeds.
+    if [ "$rel" = settings.local.json ] && [ -n "$home_dir" ] && [ "$src" = "$home_dir/$rel" ] && grep -q '"AC_HOME"' "$src" 2>/dev/null; then
+      src="$(dirname "$(ac_home)")/.claude/$rel"
+    fi
     [ -f "$src" ] || continue
     ac_seed_install "$wt" ".claude/$rel" "$src" || true
   done
@@ -2234,7 +2351,7 @@ ac_seed_crew_settings() {
 # of crew worktrees. crew-qa and domain-e2e are seeded together because which
 # one a crewmate needs is decided by the DOMAIN of the task it was spawned for
 # (intake-triage skill), not by anything the seed can see at lease time.
-AC_CREW_SKILLS="${AC_CREW_SKILLS:-crew-ship crew-verify crew-qa domain-e2e document}"
+AC_CREW_SKILLS="${AC_CREW_SKILLS:-crew-ship crew-verify crew-qa domain-e2e document sdlc}"
 
 ac_seed_crew_skills() {
   # ac_seed_crew_skills <worktree> [harness] - symlink the crewmate-facing
@@ -2244,7 +2361,7 @@ ac_seed_crew_skills() {
   # <name> wins; the dst-exists guard skips any name already linked, so an
   # earlier class always beats a later one):
   #   1. built-in (AC_CREW_SKILLS: crew-ship, crew-verify, crew-qa,
-  #      domain-e2e, document) - resolved
+  #      domain-e2e, document, sdlc) - resolved
   #      <container>/.claude/skills/<name> > this checkout's .agents/skills
   #      (distro default), mirroring ac_seed_crewmate_md.
   #   2. fleet-learned - the per-fleet store $AC_HOME/skills/* (ac_skills_dir).
@@ -2253,7 +2370,8 @@ ac_seed_crew_skills() {
   #      subdir (AC_SKILLS_ARCHIVE_BASENAME) is skipped - it holds retired
   #      skills, not one.
   # A repo-shipped skill at <worktree>/.claude/skills/<name> (checked out)
-  # wins over both - its dst already exists. Links are kept out of git
+  # wins over both - its dst already exists, and for a harness whose dst is
+  # another dir (codex, .agents/skills) it is the source linked there. Links are kept out of git
   # status via info/exclude. Symlinks, not copies: a skill update at the
   # source reaches every worktree immediately. With empty learned stores this
   # is byte-identical to seeding class 1 alone.
@@ -2313,10 +2431,28 @@ ac_seed_crew_skills() {
     done
   fi
   for name in $AC_CREW_SKILLS; do
-    src="$(dirname "$(ac_home)")/.claude/skills/$name"
-    [ -d "$src" ] || src="$(ac_root)/.agents/skills/$name"
+    # A repo-shipped skill is the SOURCE when the harness scans a different
+    # dir than .claude/skills (codex): the project's override must reach the
+    # harness that never looks where the project put it. Under .claude/skills
+    # the dst IS that dir and the exists-guard below keeps it, as before.
+    src="$wt/.claude/skills/$name"
+    if ! { [ "$skrel" != .claude/skills ] && [ -d "$src" ] && [ ! -L "$src" ]; }; then
+      src="$(dirname "$(ac_home)")/.claude/skills/$name"
+      [ -d "$src" ] || src="$(ac_root)/.agents/skills/$name"
+    fi
     [ -d "$src" ] || continue
     dst="$wt/$skrel/$name"
+    # A link the seed owns follows the source precedence on EVERY seed: the
+    # pool reuses worktrees, so a slot seeded before the project shipped (or
+    # the container gained) the skill would otherwise keep the older source.
+    # A real directory there is the project's own and is never touched, and
+    # so is a link git tracks (the project shipped it) - ownership is git's
+    # answer at the link's physical path, since a tracked skills dir may
+    # itself be a link.
+    if [ -L "$dst" ] && [ "$(readlink "$dst")" != "$src" ] \
+      && ! { [ -n "$pfx" ] && git -C "$wt" ls-files --error-unmatch -- "${pfx#/}/$name" >/dev/null 2>&1; }; then
+      rm -f "$dst"
+    fi
     if [ ! -e "$dst" ] && [ ! -L "$dst" ]; then
       mkdir -p "$wt/$skrel"
       ln -s "$src" "$dst"
@@ -2415,7 +2551,9 @@ ac_sparse_excluded() {
 
 ac_worktree_status() {
   # ac_worktree_status <wt> - everything a destructive gate must count as work
-  # in a tree: the porcelain with any submodule ignore setting overridden, plus
+  # in a tree: the porcelain with any submodule ignore setting overridden and
+  # untracked files listed whatever the repo's status.showUntrackedFiles says
+  # (a reset's clean would discard one it hid), plus
   # an edit, deletion or mode/type change to a file whose assume-unchanged or
   # skip-worktree bit hides it from `git status` (git-update-index). The exit
   # status is git status's own; the hidden-bit scan only adds `H  <path>`.
@@ -2426,7 +2564,7 @@ ac_worktree_status() {
   # on it. The status never rewrites the index: a leased tree is read while
   # its crewmate's own git may need index.lock.
   local rc=0 rec tag path mode blob f filemode sparse gd op
-  git --no-optional-locks -C "$1" status --porcelain --ignore-submodules=none 2>/dev/null || rc=$?
+  git --no-optional-locks -C "$1" status --porcelain --ignore-submodules=none --untracked-files=normal 2>/dev/null || rc=$?
   filemode="$(git -C "$1" config --get core.fileMode 2>/dev/null || printf 'true')"
   sparse="$(git -C "$1" config --get core.sparseCheckout 2>/dev/null || printf 'false')"
   while IFS= read -r -d '' rec; do
@@ -2904,7 +3042,7 @@ ac_orphan_snapshot_scan() {
 # whose fan-out ledger appeared later than the verdict on disk, and ac-verify,
 # refusing a verdict older than the last scout lane. Both must agree on the
 # clock, so both read the message's ISO stamp here rather than a file mtime.
-# src/lib.ts's transcriptFinalEpoch is held to this function
+# src/lib-verify.ts's transcriptFinalEpoch is held to this function
 # (tests/ts/verify-twins.test.ts).
 ac_transcript_final_epoch() {
   local ts

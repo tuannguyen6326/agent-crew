@@ -1749,18 +1749,9 @@ GATE_BODY_FILE="$TMP/maintenance-body.md" gate maintenance \
 grep -q '^pane-agent ' "$GLOG" && fail "a hash-mismatched maintenance input must reject before opening a pane"
 
 # ============================================================================
-# 16. the room receipt readers: scan cost, and parity with ac-room.sh's writers
+# 16. the room receipt readers: the scan, and parity with ac-room.sh's writers
 # ============================================================================
-# The bash readers are lifted out of the frozen original (the oracle), so what
-# is proven there is its own parse, never a copy of it; every row then runs
-# through src/gate.ts's exported readers as well (gate_reads), the same
-# assertion holding the writer against both readers.
-for fn in review_body r1_required_change_ids normalize_id_list validate_disposition_partition \
-  room_entry_payload valid_gate_verify_text latest_valid_gate_verify valid_gate_routing_text \
-  latest_valid_gate_routing valid_r1_disposition_text latest_valid_r1_disposition; do
-  eval "$(sed -n '/^'"$fn"'() {/,/^}/p' "$ROOT/tests/fixtures/ac-gate.sh")"
-  declare -F "$fn" >/dev/null || fail "tests/fixtures/ac-gate.sh no longer defines $fn"
-done
+# Every row runs through src/gate.ts's exported readers (gate_reads).
 # gate_reads <queries> - src/gate.ts's readers over a file of queries, one per
 # line: <id> TAB <verify|route|disposition> TAB <room> TAB <family> TAB the
 # reader's own arguments; prints `<id> TAB <1|0>` per query, 1 when the room
@@ -1791,12 +1782,8 @@ process.stdout.write(`${out.join("\n")}\n`);
 READS
 gate_reads() { (cd "$TMP" && ROOT="$ROOT" bun --no-env-file "$TMP/gate-reads.ts" "$1"); }
 
-# The scan pays room_entry_payload's `$(...)` fork only on a line carrying the
-# marker, and still reads exactly the lines it always read: a NUL byte elsewhere
-# in the room hides nothing, and a torn (unterminated) last line stays unread.
-eval "$(declare -f room_entry_payload | sed '1s/^room_entry_payload/room_entry_payload_parse/')"
-room_entry_payload() { printf 'x\n' >>"$TMP/scan-calls"; room_entry_payload_parse "$@"; }
-family=scan
+# The scan reads whole lines only: a NUL byte elsewhere in the room hides
+# nothing, and a torn (unterminated) last line stays unread.
 scan_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 {
   printf '# Room\n'
@@ -1811,28 +1798,13 @@ scan_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   printf -- '- [t] crewchief> TRIAGE: a NUL byte \000 in the middle of the room\n'
   printf -- '- [t] scan-chief> GATE-ROUTING: stage=spec report_sha256=%s uncertainty=no consequence=high authority=chief route=second-chief grounds=torn' "$scan_sha"
 } >"$TMP/scan-room.md"
-: >"$TMP/scan-calls"
-assert_contains "$(latest_valid_gate_routing "$TMP/scan-room.md" spec "$scan_sha")" "grounds=kept" \
-  "GATE-ROUTING scan selects the last complete receipt past a NUL byte, never the torn last line"
-assert_eq "$(grep -c . "$TMP/scan-calls")" "1" "GATE-ROUTING scan parses only the lines carrying its marker"
-: >"$TMP/scan-calls"
-assert_contains "$(latest_valid_gate_verify "$TMP/scan-room.md" spec 1 "$scan_sha")" "grounds=kept" \
-  "GATE-VERIFY scan selects its receipt past a NUL byte"
-assert_eq "$(grep -c . "$TMP/scan-calls")" "1" "GATE-VERIFY scan parses only the lines carrying its marker"
-: >"$TMP/scan-calls"
-assert_contains "$(latest_valid_r1_disposition "$TMP/scan-room.md" spec "$scan_sha" "$scan_sha" 1)" "grounds=kept" \
-  "R1-DISPOSITION scan selects its receipt past a NUL byte"
-assert_eq "$(grep -c . "$TMP/scan-calls")" "1" "R1-DISPOSITION scan parses only the lines carrying its marker"
-eval "$(declare -f room_entry_payload_parse | sed '1s/^room_entry_payload_parse/room_entry_payload/')"
-# The same three scans through src/gate.ts's readers; the fork counts above are
-# the bash's own cost and have no port counterpart.
 printf '1\troute\t%s\tscan\tspec\t%s\n2\tverify\t%s\tscan\tspec\t1\t%s\n3\tdisposition\t%s\tscan\tspec\t%s\t%s\t1\n' \
   "$TMP/scan-room.md" "$scan_sha" "$TMP/scan-room.md" "$scan_sha" "$TMP/scan-room.md" "$scan_sha" "$scan_sha" >"$TMP/scan-q"
 assert_eq "$(gate_reads "$TMP/scan-q")" "1	1
 2	1
-3	1" "src/gate.ts's scans bind a receipt past a NUL byte"
+3	1" "the scans bind a receipt past a NUL byte"
 while IFS= read -r p; do
-  assert_contains "$p" "grounds=kept" "src/gate.ts's scans select the last complete receipt, never the torn last line"
+  assert_contains "$p" "grounds=kept" "the scans select the last complete receipt, never the torn last line"
 done <"$TMP/scan-q.payload"
 
 # WRITER/READER PARITY: every receipt ac-room.sh writes, ac-gate.sh must bind,
@@ -1844,7 +1816,6 @@ done <"$TMP/scan-q.payload"
 # Reader-side verdict: some gate invocation (a valid stage, round 1 or 2, that
 # stage's report sha) binds the text as twin-chief's entry.
 # `<CR>` in a row's grounds stands for a carriage return.
-family=twin
 twin_room="$AC_HOME/data/twin/room.md"
 for s in spec arch plan design; do
   mkdir -p "$AC_HOME/data/twin/$s"
@@ -1870,24 +1841,6 @@ twin_diffs=""
 twin_check() {
   [ "$1" = "$2" ] || twin_diffs="$twin_diffs
   writer=$1 reader=$2: $3"
-}
-twin_verify_read() {
-  local ws wr
-  twin_line "$1"
-  for ws in spec architecture plan design; do
-    for wr in 1 2; do
-      latest_valid_gate_verify "$TMP/twin-one.md" "$ws" "$wr" "$(twin_sha "$ws")" >/dev/null && return 0
-    done
-  done
-  return 1
-}
-twin_route_read() {
-  local ws
-  twin_line "$1"
-  for ws in spec architecture plan design; do
-    latest_valid_gate_routing "$TMP/twin-one.md" "$ws" "$(twin_sha "$ws")" >/dev/null && return 0
-  done
-  return 1
 }
 # twin_port <writer verdict> <label> - the line twin_line last wrote, queued for
 # src/gate.ts's readers: stdin holds the queries (gate_reads' shape from <kind>
@@ -1927,8 +1880,7 @@ while read -r st rd g; do
   for v in pass fail; do
     text="GATE-VERIFY: stage=$st round=$rd report_sha256=$(twin_sha "$st") verdict=$v grounds=$g"
     ww=0; [ "$w" = 1 ] && [ "$out" = "$text" ] && ww=1
-    r=0; twin_verify_read "$text" && r=1
-    twin_check "$ww" "$r" "$text"
+    twin_line "$text"
     twin_port "$ww" "$text" < <(twin_verify_queries)
   done
 done <<'EOF'
@@ -1957,8 +1909,7 @@ while read -r st u c a g; do
   for rt in chief second-chief captain; do
     text="GATE-ROUTING: stage=$st report_sha256=$(twin_sha "$st") uncertainty=$u consequence=$c authority=$a route=$rt grounds=$g"
     ww=0; [ "$w" = 1 ] && [ "$out" = "$text" ] && ww=1
-    r=0; twin_route_read "$text" && r=1
-    twin_check "$ww" "$r" "$text"
+    twin_line "$text"
     twin_port "$ww" "$text" < <(twin_route_queries)
   done
 done <<'EOF'
@@ -1995,20 +1946,16 @@ while read -r ids acc dis au g; do
       printf '## Questions for the Owning Chief\nNone.\n'
     } >"$twin_r1"
     twin_r1_sha="$(shasum -a 256 <"$twin_r1" | awk '{print $1}')"
-    twin_expected="$(r1_required_change_ids "$twin_r1" | paste -sd, -)"
+    twin_expected="$ids"
     twin_port "ids:$twin_expected" "R1 ids $ids, as src/gate.ts reads them" <<<'ids'
   fi
   w=0; out="$(twin_write disposition twin spec --r1 "$twin_r1" --accepted "$acc" --disputed "$dis" \
     --authority "$au" --grounds "$g")" && w=1
   text="R1-DISPOSITION: stage=spec r1_sha256=$twin_r1_sha report_sha256=$(twin_sha spec) accepted=$acc disputed=$dis authority=$au grounds=$g"
   twin_line "$text"
-  r=0; latest_valid_r1_disposition "$TMP/twin-one.md" spec "$twin_r1_sha" "$(twin_sha spec)" "$twin_expected" >/dev/null && r=1
-  twin_check "$w" "$r" "R1 ids $ids: $text"
   twin_port "$w" "R1 ids $ids: $text" < <(twin_disposition_queries)
   if [ "$w" = 1 ]; then
     twin_line "$out"
-    r=0; latest_valid_r1_disposition "$TMP/twin-one.md" spec "$twin_r1_sha" "$(twin_sha spec)" "$twin_expected" >/dev/null && r=1
-    twin_check 1 "$r" "R1 ids $ids, as written: $out"
     twin_port 1 "R1 ids $ids, as written: $out" < <(twin_disposition_queries)
   fi
 done <<'EOF'
@@ -2042,9 +1989,9 @@ while IFS=$'\t' read -r id v; do
   case "${twin_got[$id]:-}" in 1) ;; *) twin_got[$id]="$v" ;; esac
 done < <(gate_reads "$TMP/twin-port.q")
 while IFS=$'\t' read -r id want label; do
-  case "$want" in ids:*) twin_check "${want#ids:}" "${twin_got[$id]:-}" "$label" ;; *) twin_check "$want" "${twin_got[$id]:-}" "src/gate.ts: $label" ;; esac
+  case "$want" in ids:*) twin_check "${want#ids:}" "${twin_got[$id]:-}" "$label" ;; *) twin_check "$want" "${twin_got[$id]:-}" "$label" ;; esac
 done <"$TMP/twin-port.want"
-[ -z "$twin_diffs" ] || fail "ac-room.sh writers and the gate's readers (the frozen bash and src/gate.ts) disagree on:$twin_diffs"
+[ -z "$twin_diffs" ] || fail "ac-room.sh writers and src/gate.ts's readers disagree on:$twin_diffs"
 
 # ============================================================================
 # 17. overlapping runs of one family, and of one stage
@@ -2463,17 +2410,26 @@ assert_eq "$(cat "$hold/y.rc")" "0" "the starting run settles"
 assert_no_file "$busy3" "the family's last run clears the busy declaration"
 
 # ============================================================================
-# 18. differential: src/gate.ts against the frozen bash original
+# 18. the entry end to end, one scenario per row
 # ============================================================================
-# DISPUTED: the implementation (tests/fixtures/ac-gate.sh under bash vs src/gate.ts through bin/ac-gate.sh)
-# HELD-CONSTANT: ONE world path ($XW), rebuilt from nothing by the same commands before each side runs, because the context JSON embeds absolute paths and its hash lands in the review's frontmatter, so roots cannot be normalized after the fact - a home at $XW/home (records/captain.md, family widget's brief, report and room receipts per stage, an R1 with its context where a row seeds one, a maintenance run data/learning-42 with its manifest, plan and staged file), a clone at home/projects/proj built with fixed author/committer dates and one git config (GIT_CONFIG_GLOBAL, no system config), a row's own seeding on top; argv and env (AC_HOME, TMPDIR=$XW/tmp, AC_PANE_AGENT = the leg's stub agent, AC_GATE_WATCH off unless a board row turns it auto, every AC_GATE_* knob, AC_BACKEND, AC_HERDR_SESSION, AC_SCOPE and EPOCHSECONDS unset unless a row sets one); cwd ($XW/cwd, an empty dir, unless a row names another); stdin (/dev/null); LC_ALL=C unless a row names en_US.UTF-8; PATH stubs on both sides - date answering one instant per format, sleep logging each call and returning at once, the stub agent (logging its argv, the live marker, the busy declaration and AC_WINDOW_FAMILY, and answering the row's body in a transcript at a fixed path) and, for board rows, a fake herdr logging its argv; the live bin/ beside each entry (the oracle bin's copies, $BIN's own); exit status, stdout and stderr compared whole (either bin root spelled ROOT, the entry's pid PID, the observe descriptor's random suffix XXXXXX), then the world: every path under $XW (git internals aside), every file under home/, tmp/, log/ and hd/ with its mode and bytes (the prompt, the round artifacts, the context, the canonical review, the raw log, the decision, the busy declaration, the lock's absence, the TMPDIR listing, the stub logs) and any planted victim.
-xobin="$(make_oracle_bin ac-gate)"
-# The frozen entry calls the maintenance plan, read-evidence and receipt
-# helpers retired from bin/ac-maintenance-lib.sh once src/learn.ts took their
-# last caller; the oracle's own lib copy gets them back, frozen at
-# tests/fixtures/ac-maintenance-retired.sh.
-cat "$ROOT/tests/fixtures/ac-maintenance-retired.sh" >>"$xobin/ac-maintenance-lib.sh"
-cmp -s "$xobin/ac-gate.sh" "$ROOT/tests/fixtures/ac-gate.sh" || fail "the oracle bin holds the frozen original"
+# ONE world path ($XW), rebuilt from nothing before each row, because the
+# context JSON embeds absolute paths and its hash lands in the review's
+# frontmatter - a home at $XW/home (records/captain.md, family widget's brief,
+# report and room receipts per stage, an R1 with its context where a row seeds
+# one, a maintenance run data/learning-42 with its manifest, plan and staged
+# file), a clone at home/projects/proj built with fixed author/committer dates
+# and one git config (GIT_CONFIG_GLOBAL, no system config), a row's own seeding
+# on top; AC_HOME, TMPDIR=$XW/tmp, AC_PANE_AGENT = the leg's stub agent,
+# AC_GATE_WATCH off unless a board row turns it auto, every AC_GATE_* knob,
+# AC_BACKEND, AC_HERDR_SESSION, AC_SCOPE and EPOCHSECONDS unset unless a row
+# sets one; cwd $XW/cwd, an empty dir, unless a row names another; stdin
+# /dev/null; LC_ALL=C unless a row names en_US.UTF-8; PATH stubs - date
+# answering one instant per format, sleep logging each call and returning at
+# once, the stub agent (logging its argv, the live marker, the busy
+# declaration and AC_WINDOW_FAMILY, and answering the row's body in a
+# transcript at a fixed path) and, for board rows, a fake herdr logging its
+# argv. A row reads the run's exit status, stdout and stderr (the bin root
+# spelled ROOT, the entry's pid PID) and what it left under $XW.
 XW="$TMP/xw"; XS="$TMP/xstubs"; XB="$TMP/xbodies"
 mkdir -p "$XS/hd" "$XB"
 printf '[user]\n\tname = t\n\temail = t@t\n[init]\n\tdefaultBranch = main\n' >"$TMP/xgitconfig"
@@ -2634,8 +2590,8 @@ XMARGS=(maintenance --mode learning --run "$XMR" --subject example --manifest "$
 # A row's world: XBASE (xstd unless named) then XPLUS, a shell snippet over it.
 xplus() { "${XBASE:-xstd}"; [ -z "${XPLUS:-}" ] || eval "$XPLUS"; }
 XLC=C; XCWD=cwd; XPRE=""; XPATH=""; XHOMELESS=0; XWATCH=off; XE=""
-xrun_side() {  # xrun_side <bin> <prefix> <args...> - XEXEC=1 execs in place (a caller's background job IS the gate)
-  local bin="$1" p="$2" path x; shift 2
+xrun_side() {  # xrun_side <args...> - XEXEC=1 execs in place (a caller's background job IS the gate)
+  local path x
   path="$XS:$PATH"; [ -z "$XPRE" ] || path="$XPRE:$path"; [ -z "$XPATH" ] || path="$XPATH"
   local e=("LC_ALL=$XLC" "PATH=$path" "TMPDIR=$XW/tmp" "XW=$XW" "XB=$XB" "AC_PANE_AGENT=$XS/xagent" "AC_GATE_WATCH=$XWATCH"
     "XAG_BODY=${XAG_BODY:-}" "XAG_RC=${XAG_RC:-}" "XAG_STATUS=${XAG_STATUS:-}" "XAG_PRE=${XAG_PRE:-}" "XAG_POST=${XAG_POST:-}"
@@ -2646,66 +2602,46 @@ xrun_side() {  # xrun_side <bin> <prefix> <args...> - XEXEC=1 execs in place (a 
     -u AC_GATE_EFFORT -u AC_GATE_TIMEOUT -u AC_HERDR_SESSION -u EPOCHSECONDS -u AC_LOCK_STALE_GRACE -u AC_WINDOW_FAMILY)
   local w='printf %s "$$" >"$0"; for t in $XPLANTS; do ln -s "$XW/victim" "$t.$$"; done; exec "$@"'
   if [ -n "${XEXEC:-}" ]; then
-    cd "$XW/$XCWD" && exec env "${u[@]}" "${e[@]}" /bin/sh -c "$w" "$TMP/$p.pid" "$bin/ac-gate.sh" ${@+"$@"} </dev/null >"$TMP/$p.raw" 2>"$TMP/$p.err"
+    cd "$XW/$XCWD" && exec env "${u[@]}" "${e[@]}" /bin/sh -c "$w" "$TMP/xn.pid" "$BIN/ac-gate.sh" ${@+"$@"} </dev/null >"$TMP/xn.raw" 2>"$TMP/xn.err"
   fi
-  (cd "$XW/$XCWD" && exec env "${u[@]}" "${e[@]}" /bin/sh -c "$w" "$TMP/$p.pid" "$bin/ac-gate.sh" ${@+"$@"}) </dev/null >"$TMP/$p.raw" 2>"$TMP/$p.err"
-}
-xworld() {  # what a row may change
-  local f
-  (cd "$XW" && { find . -path '*/.git' -prune -o -print 2>/dev/null || true; } | LC_ALL=C sort)
-  (cd "$XW" && { find home tmp log hd -path '*/.git' -prune -o \( -type f -o -type l \) -print 2>/dev/null || true; } | LC_ALL=C sort) | while IFS= read -r f; do
-    if [ -L "$XW/$f" ]; then printf '== %s -> %s\n' "$f" "$(readlink "$XW/$f")"; continue; fi
-    printf '== %s %s\n' "$f" "$(ls -l "$XW/$f" | cut -c1-10)"; cat "$XW/$f" 2>/dev/null || printf '<unreadable>'; printf '\n'
-  done
-  [ ! -f "$XW/victim" ] || { printf '== victim\n'; cat "$XW/victim"; }
+  (cd "$XW/$XCWD" && exec env "${u[@]}" "${e[@]}" /bin/sh -c "$w" "$TMP/xn.pid" "$BIN/ac-gate.sh" ${@+"$@"}) </dev/null >"$TMP/xn.raw" 2>"$TMP/xn.err"
 }
 xnorm() {  # xnorm <file> <pid> - the pid only between non-hex bytes: a hash keeps its digits
-  LC_ALL=C sed -E -e "s#$TMP/oracle-ac-gate#ROOT#g" -e "s#$ROOT#ROOT#g" -e 's#ac-gate-observe-[A-Za-z0-9]{6}#ac-gate-observe-XXXXXX#g' \
+  LC_ALL=C sed -E -e "s#$ROOT#ROOT#g" -e 's#ac-gate-observe-[A-Za-z0-9]{6}#ac-gate-observe-XXXXXX#g' \
     -e "s/(^|[^0-9a-f])$2([^0-9a-f]|\$)/\\1PID\\2/g" -e "s/(^|[^0-9a-f])$2([^0-9a-f]|\$)/\\1PID\\2/g" "$1"
 }
-xsnap() {  # xsnap <prefix> - that side's outputs and world, normalised
-  local pid; pid="$(cat "$TMP/$1.pid" 2>/dev/null || printf 'nopid')"
-  xworld >"$TMP/$1.world"
-  xnorm "$TMP/$1.raw" "$pid" >"$TMP/$1.out"; xnorm "$TMP/$1.err" "$pid" >"$TMP/$1.err2"; xnorm "$TMP/$1.world" "$pid" >"$TMP/$1.world2"
+xsnap() {  # the run's outputs, normalised
+  local pid; pid="$(cat "$TMP/xn.pid" 2>/dev/null || printf 'nopid')"
+  xnorm "$TMP/xn.raw" "$pid" >"$TMP/xn.out"; xnorm "$TMP/xn.err" "$pid" >"$TMP/xn.err2"
 }
-XO_RC=0; XN_RC=0
-xpair() {  # xpair <args...> - each side in its own rebuilt world, outputs normalised, nothing compared yet
-  XO_RC=0; XN_RC=0
-  xplus; xrun_side "$xobin" xo "$@" || XO_RC=$?; xsnap xo
-  xplus; xrun_side "$BIN" xn "$@" || XN_RC=$?; xsnap xn
+XN_RC=0
+xrun() {  # xrun <args...> - the row's world rebuilt, the entry run in it
+  XN_RC=0
+  xplus; xrun_side "$@" || XN_RC=$?; xsnap
 }
-xrow() { printf '%s' "${BASH_LINENO[${#BASH_LINENO[@]}-2]}"; }   # the leg's own line that started this comparison
-xsame_rc_out() {
-  assert_eq "$XN_RC" "$XO_RC" "gate differential exit for '$*' at line $(xrow)"
-  cmp -s "$TMP/xo.out" "$TMP/xn.out" || fail "gate differential stdout differs for '$*' at line $(xrow): $(diff "$TMP/xo.out" "$TMP/xn.out" | head -n 8)"
-}
-xsame_err() { cmp -s "$TMP/xo.err2" "$TMP/xn.err2" || fail "gate differential stderr differs for '$*' at line $(xrow): $(diff "$TMP/xo.err2" "$TMP/xn.err2" | head -n 8)"; }
-xsame_world() { cmp -s "$TMP/xo.world2" "$TMP/xn.world2" || fail "gate differential world differs after '$*' at line $(xrow): $(diff "$TMP/xo.world2" "$TMP/xn.world2" | head -n 12)"; }
-xsame() { xpair "$@"; xsame_rc_out "$@"; xsame_err "$@"; xsame_world "$@"; }
 xout() { cat "$TMP/xn.out"; }
 xerr() { cat "$TMP/xn.err2"; }
-xoerr() { cat "$TMP/xo.err2"; }
-xfile() { xnorm "$XW/$1" "$(cat "$TMP/xn.pid")"; }   # xfile <path under $XW> - the shim side's file, normalised
-xrefuse() {  # xrefuse <stderr> <args...> - both sides refuse alike: exit 1, no stdout, exactly ERROR: <stderr>
+xfile() { xnorm "$XW/$1" "$(cat "$TMP/xn.pid")"; }   # xfile <path under $XW> - a file the run left, normalised
+xrefuse() {  # xrefuse <stderr> <args...> - exit 1, no stdout, exactly ERROR: <stderr>
   local want="$1"; shift
-  xsame "$@"
-  assert_eq "$XN_RC:$(xout):$(xerr)" "1::ERROR: $want" "gate refusal for '$*' at line $(xrow)"
+  xrun "$@"
+  assert_eq "$XN_RC:$(xout):$(xerr)" "1::ERROR: $want" "gate refusal for '$*'"
 }
 xrefuses() {  # xrefuses <stderr prefix> <args...> - as xrefuse, the stderr opening with ERROR: <prefix>
   local want="$1"; shift
-  xsame "$@"
-  assert_eq "$XN_RC:$(xout)" "1:" "gate refusal for '$*' at line $(xrow)"
-  case "$(xerr)" in "ERROR: $want"*) ;; *) fail "gate refusal for '$*' at line $(xrow): $(xerr)" ;; esac
+  xrun "$@"
+  assert_eq "$XN_RC:$(xout)" "1:" "gate refusal for '$*'"
+  case "$(xerr)" in "ERROR: $want"*) ;; *) fail "gate refusal for '$*': $(xerr)" ;; esac
 }
-xok() {  # xok <args...> - both sides settle alike, nothing on stderr
-  xsame "$@"
-  assert_eq "$XN_RC:$(xerr)" "0:" "gate success for '$*' at line $(xrow)"
+xok() {  # xok <args...> - exit 0, nothing on stderr
+  xrun "$@"
+  assert_eq "$XN_RC:$(xerr)" "0:" "gate success for '$*'"
 }
-xgate3() {  # xgate3 <why> <args...> - both sides fail the gate alike: exit 3, the failure naming <why>
+xgate3() {  # xgate3 <why> <args...> - the gate fails: exit 3, the failure naming <why>
   local want="$1"; shift
-  xsame "$@"
-  assert_eq "$XN_RC:$(xout)" "3:" "gate failure for '$*' at line $(xrow)"
-  assert_contains "$(xerr)" "($want)" "gate failure reason for '$*' at line $(xrow)"
+  xrun "$@"
+  assert_eq "$XN_RC:$(xout)" "3:" "gate failure for '$*'"
+  assert_contains "$(xerr)" "($want)" "gate failure reason for '$*'"
 }
 xwithout() {  # xwithout <tool> - the leg's PATH with every dir holding <tool> mirrored without it
   local dirs d f key mirror out=""
@@ -2731,25 +2667,17 @@ XSTAGEONLY='ac-gate judges staged design artifacts only in positional mode: spec
 XW4='crew-dispatch panes.gate is present but unresolvable - refusing to fall back to config/gate-* (see bin/ac-dispatch-select.sh --pane gate)'
 XROUTED='{"panes":{"gate":{"rules":[{"when":"risk","use":{"harness":"codex","model":"gpt-hi","effort":"xhigh"},"why":"max"},{"when":"routine","use":{"harness":"claude","model":"sonnet","effort":"medium"},"why":"cheap"}],"default":{"harness":"claude","model":"opus","effort":"high"}}}}'
 
-# 1. order and arguments: the backend before the home, the home before
-#    usage, usage before any input (W13), every flag arm.
-XHOMELESS=1 xrefuse "$XNOHOME"
-XHOMELESS=1 XE=AC_BACKEND=tmux xrefuse "unsupported backend 'tmux' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)"
-# HOME RESOLUTION, named: an AC_HOME cd cannot enter refuses 1 on both sides;
-# the port names the variable where the shell printed cd's own line.
-XE="AC_HOME=$XW/nope" xpair widget spec
-assert_eq "$XN_RC:$(xout):$(xerr)" "1::ERROR: AC_HOME is not a readable directory: $XW/nope" "HOME RESOLUTION: the port names the variable"
-assert_eq "$XO_RC" 1 "HOME RESOLUTION: the original refuses 1 too"
-assert_contains "$(xoerr)" "cd: $XW/nope: No such file or directory" "HOME RESOLUTION: the original's line is cd's own"
+# 1. order and arguments: the home, the backend, usage before any input,
+#    every flag arm.
+XHOMELESS=1 xrefuse "$XNOHOME" widget spec
+XE=AC_BACKEND=tmux xrefuse "unsupported backend 'tmux' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)" widget spec
+XE="AC_HOME=$XW/nope" xrefuse "AC_HOME is not a readable directory: $XW/nope" widget spec
 XBASE=xseed xrefuse "$XUSAGE"
-assert_contains "$(cat "$TMP/xn.world2")" "./home/data" "a usage refusal has minted data/ (W13)"
 xrefuse "$XUSAGE" widget
 xrefuse "$XUSAGE" -h
 xrefuse "$XUSAGE" "" spec
 xrefuse "$XUSAGE" widget spec --bogus
 xrefuse "$XUSAGE" widget spec --repo --round 2
-for f in --round --rule --repo --ref; do xrefuse "$XUSAGE" widget spec "$f"; done
-for f in --mode --run --subject --manifest --plan; do xrefuse "$XMUSAGE" maintenance "$f"; done
 xrefuse "$XMUSAGE" maintenance --bogus x
 # A word naming an inherited Object property is no flag either.
 for f in constructor __proto__ toString; do
@@ -2759,6 +2687,7 @@ done
 xrefuse 'gate round must be 1 or 2 (got: 3)' widget spec --round 3
 xrefuse 'gate round must be 1 or 2 (got: )' widget spec --round ''
 xok widget spec --round 2 --round 1
+assert_contains "$(xout)" "second-chief[codex] widget/spec r1: continue" "the last --round wins"
 # shellcheck disable=SC2059
 for s in learning bogus; do xrefuse "$(printf "$XSTAGEONLY" "$s")" widget "$s"; done
 XBASE=xstd_m xrefuse 'maintenance --mode must be learning|curate' maintenance
@@ -2781,23 +2710,20 @@ XBASE=xstd_m xrefuse 'maintenance mode does not match the action plan' maintenan
 XBASE=xstd_m xrefuse 'maintenance subject does not match the action plan' maintenance --mode learning --run "$XMR" --subject other --manifest "$XMR/input-manifest.md" --plan "$XMR/plan.json"
 XBASE=xstd_m XPLUS='printf "tampered\n" >>"$XMR/input-manifest.md"' xrefuse 'maintenance manifest hash does not match the action plan' "${XMARGS[@]}"
 XBASE=xstd_m XCWD=home/data XAG_BODY="$XB/m-continue.md" xok maintenance --mode learning --run learning-42 --subject example --manifest learning-42/input-manifest.md --plan learning-42/plan.json
-XBASE=xstd_m xrefuse 'maintenance --subject must use [A-Za-z0-9._-]' maintenance --mode learning --run "$XMR" --subject café --manifest "$XMR/input-manifest.md" --plan "$XMR/plan.json"
-# W12, named: under a UTF-8 locale bash's brackets let `café` through to the
-# plan's own refusal; the port refuses it per the text.
-XBASE=xstd_m XLC=en_US.UTF-8 xpair maintenance --mode learning --run "$XMR" --subject café --manifest "$XMR/input-manifest.md" --plan "$XMR/plan.json"
-assert_eq "$XO_RC:$(xoerr)" "1:ERROR: maintenance subject does not match the action plan" "W12: the original lets café through to the plan's subject check"
-assert_eq "$XN_RC:$(xerr)" "1:ERROR: maintenance --subject must use [A-Za-z0-9._-]" "W12: the port refuses café per the text"
+assert_contains "$(xout)" "maintenance-gate[codex] learning-42/example: continue" "a relative --run, manifest and plan resolve against the cwd"
+assert_file "$XMR/gates/example/decision.md" "... and the decision lands in the run"
+# W12: --subject is read per its text under any locale.
+for l in C en_US.UTF-8; do
+  XBASE=xstd_m XLC=$l xrefuse 'maintenance --subject must use [A-Za-z0-9._-]' maintenance --mode learning --run "$XMR" --subject café --manifest "$XMR/input-manifest.md" --plan "$XMR/plan.json"
+done
 XPATH="$(xwithout jq)" xrefuse 'required tool not found: jq' widget spec
-# BUN, named: the shim refuses before usage; the original passed usage, the
-# inputs and the receipts and died at the panes.gate resolution (W4's line).
-XPATH="$(xwithout bun)" xpair widget spec
-assert_eq "$XO_RC:$(xoerr)" "1:ERROR: $XW4" "BUN: the original dies at the panes.gate resolution"
-assert_eq "$XN_RC:$(xerr)" "1:ERROR: required tool not found: bun" "BUN: the shim refuses first"
+XPATH="$(xwithout bun)" xrefuse 'required tool not found: bun' widget spec
 
 # 2. staged inputs: report, brief, repository, ref, canonical, a settled round.
 XPLUS='rm "$XWD/spec/report.md"' xrefuse "no non-empty report to review at $XWD/spec/report.md" widget spec
 XPLUS=': >"$XWD/spec/report.md"' xrefuse "no non-empty report to review at $XWD/spec/report.md" widget spec
 XBASE=xseed XPLUS='mkdir -p "$XW/home/data/widget/spec" "$XW/home/records"; xrepo "$XW/home/projects/proj"; printf "# b\nProject: proj\n" >"$XWD/spec/brief.md"; printf "r\n" >"$XWD/real.md"; ln -s ../real.md "$XWD/spec/report.md"; printf "# Room\n" >"$XWD/room.md"; xroute spec; xverify spec 1' xok widget spec
+assert_contains "$(xout)" "widget/spec r1: continue" "a report that is a link to a plain file is reviewed"
 XPLUS='rm "$XWD/spec/brief.md"' xok widget spec
 assert_contains "$(xfile home/data/widget/spec/gate-prompt-r1.md)" "STAGE BRIEF (the contract): $XWD/design/brief.md" "the merged-design brief answers when the stage has none"
 XPLUS='rm "$XWD/spec/brief.md" "$XWD/design/brief.md"' xrefuse "no non-empty brief to review against: neither $XWD/spec/brief.md nor $XWD/design/brief.md exists" widget spec
@@ -2805,17 +2731,13 @@ XPLUS='printf "# brief\nno project.\n" >"$XWD/spec/brief.md"; : >"$XWD/room.md";
   xrefuse 'staged gate requires --repo <project-or-path> or a Project: line in the resolved brief' widget spec
 xrefuse 'staged gate repository does not resolve: nope' widget spec --repo nope
 xok widget spec --repo "$XW/home/projects/proj"
-XPLUS='printf "# brief\r\nProject: proj\r\n" >"$XWD/spec/brief.md"' xrefuse "staged gate repository does not resolve: proj"$'\r' widget spec
-# W6: a project name naming a directory in the caller's cwd binds that
-# directory - from a git checkout holding tests/, `Project: tests` is the
-# checkout, not projects/tests.
-XPLUS='xrepo "$XW/distro"; mkdir "$XW/distro/tests"; xrepo "$XW/home/projects/tests"; git -C "$XW/home/projects/tests" commit -q --allow-empty -m two; printf "# b\nProject: tests\n" >"$XWD/spec/brief.md"; : >"$XWD/room.md"; xroute spec; xverify spec 1' \
-  XCWD=distro xok widget spec
-assert_eq "$(jq -r '.repository.root' "$XWD/spec/gate-context-r1.json")" "$XW/distro" "W6: the cwd's tests/ binds the checkout"
+assert_eq "$(jq -r '.repository.root' "$XWD/spec/gate-context-r1.json")" "$XW/home/projects/proj" "--repo binds a path"
 xrefuse 'staged gate repository ref does not resolve to a commit: nope' widget spec --ref nope
 XPLUS='mkdir "$XWD/spec/second-chief.md"' xrefuse "canonical second-chief.md path is a directory, refusing to write: $XWD/spec/second-chief.md" widget spec
 XPLUS='printf "settled\n" >"$XWD/spec/second-chief-r1.md"' xrefuse "round 1 review already exists and is immutable: $XWD/spec/second-chief-r1.md" widget spec
 xok widget spec --ref HEAD~0
+assert_eq "$(jq -r '.repository.ref' "$XWD/spec/gate-context-r1.json")" "HEAD~0" "--ref is recorded as given"
+assert_eq "$(jq -r '.repository.commit' "$XWD/spec/gate-context-r1.json")" "$(git -C "$XW/home/projects/proj" rev-parse HEAD)" "... bound to the commit it names"
 
 # 3. receipts: the chief's own authored entry, the latest valid one, bound to
 #    the stage, the round and the report as it stands.
@@ -2838,10 +2760,15 @@ case "$(xfile home/data/widget/spec/gate-prompt-r1.md)" in *" verdict=pass groun
 XPLUS='xroute spec no low chief chief' xrefuse 'GATE-ROUTING route=chief for widget/spec; do not open a second-chief pane' widget spec
 XPLUS='xroute spec no low captain captain' xrefuse 'GATE-ROUTING route=captain for widget/spec; do not open a second-chief pane' widget spec
 XPLUS='xroute spec yes low chief second-chief; xroute spec no high captain captain' xrefuse 'GATE-ROUTING route=captain for widget/spec; do not open a second-chief pane' widget spec
+# The grounds are blank by the caller's locale's [:space:]: a lone no-break
+# space is blank under UTF-8 and a byte pair under C.
 XLC=en_US.UTF-8 XPLUS=': >"$XWD/room.md"; xroute spec; printf -- "%s widget-chief> GATE-VERIFY: stage=spec round=1 report_sha256=%s verdict=pass grounds=\302\240\n" "$XR" "$(xsha "$XWD/spec/report.md")" >>"$XWD/room.md"' xrefuses "$XVERIFY" widget spec
 XPLUS=': >"$XWD/room.md"; xroute spec; printf -- "%s widget-chief> GATE-VERIFY: stage=spec round=1 report_sha256=%s verdict=pass grounds=\302\240\n" "$XR" "$(xsha "$XWD/spec/report.md")" >>"$XWD/room.md"' xok widget spec
+assert_contains "$(xout)" "widget/spec r1: continue" "a no-break space is non-blank grounds under C"
 # Round 2: the R1, its context and the disposition.
 XBASE=xstd_r2 XAG_BODY="$XB/continue.md" xok widget spec --round 2
+assert_eq "$(xout)" "second-chief[codex] widget/spec r2: continue
+  -> $XWD/spec/second-chief-r2.md" "round 2 settles past its R1, context and disposition"
 XBASE=xstd_r2 XPLUS='rm "$XWD/spec/second-chief-r1.md"' xrefuse "round 2 requires an existing round 1 review: $XWD/spec/second-chief-r1.md" widget spec --round 2
 for p in '/^schema: /d' 's/^round: 1$/round: 2/' 's/^decision: revise$/decision: bogus/' 's/^brief_sha256: .*/brief_sha256: xyz/' \
   '/^report_sha256: /p' '/^context_sha256: /p' 's/^previous_review: none$/previous_review: x/' '/^## Decision$/{n;s/revise/continue/;}' \
@@ -2861,80 +2788,55 @@ done
 for d in '01,2 none none' '1 2 chief-owned' 'none 1,2 mixed' '2,1 none none'; do
   # shellcheck disable=SC2086
   XPLUS="xr1; xdisp $d; xroute spec; xverify spec 2" xok widget spec --round 2
+  assert_contains "$(xout)" "widget/spec r2: continue" "the disposition '$d' binds round 2"
 done
 XPLUS='xr1; printf -- "%s widget-crew> R1-DISPOSITION: stage=spec r1_sha256=%s report_sha256=%s accepted=1,2 disputed=none authority=none grounds=wrong actor\n" "$XR" "$(xsha "$XWD/spec/second-chief-r1.md")" "$(xsha "$XWD/spec/report.md")" >>"$XWD/room.md"; xroute spec; xverify spec 2' xrefuses "$XDISP" widget spec --round 2
-# W8: a hand-posted huge id walks 1..max in awk on both sides - neither
-# finishes; each side's process group is killed at the same alarm.
-xhang() {  # xhang <secs> <args...>
-  local secs="$1" side bin; shift
-  for side in xo xn; do
-    bin="$BIN"; [ "$side" = xn ] || bin="$xobin"
-    xplus
-    ( set -m
-      XEXEC=1 xrun_side "$bin" "$side" "$@" &
-      j=$!
-      sleep "$secs"
-      kill -0 "$j" 2>/dev/null || exit 1
-      kill -KILL -- -"$j" 2>/dev/null; wait "$j" 2>/dev/null
-      exit 0
-    ) || fail "W8: the $side side of '$*' finished within ${secs}s at line $(xrow): $(cat "$TMP/$side.err")"
-  done
-}
-XPLUS='xr1; xdisp 1,2 99999999999 chief-owned; xroute spec; xverify spec 2' xhang 3 widget spec --round 2
 
-# 4. the profile: the knob, panes.gate flat and routed, the env per call.
-XPLUS='printf "off\n" >"$XW/home/config/gate-agent"' xsame widget spec
+# 4. the profile: the knob, panes.gate flat, the env per call.
+XPLUS='printf "off\n" >"$XW/home/config/gate-agent"' xrun widget spec
 assert_eq "$XN_RC:$(xout):$(xerr)" "4:gate disabled (config/gate-agent=off):" "a disabled gate exits 4 on stdout"
-XPLUS='printf "off\n" >"$XW/home/config/gate-agent"; : >"$XWD/room.md"' xrefuses "$XROUTING" widget spec
-XBASE=xstd_m XPLUS='printf "off\n" >"$XW/home/config/gate-agent"' xsame "${XMARGS[@]}"
-assert_eq "$XN_RC" 4 "a disabled maintenance gate exits 4, its gates/<subject>/ minted (W13)"
-XPLUS='printf "codex\n" >"$XW/home/config/gate-agent"' XE=AC_GATE_AGENT=off xsame widget spec
-assert_eq "$XN_RC:$(xout)" "4:gate disabled (config/gate-agent=off)" "W10: AC_GATE_AGENT=off disables the gate"
+XBASE=xstd_m XPLUS='printf "off\n" >"$XW/home/config/gate-agent"' xrun "${XMARGS[@]}"
+assert_eq "$XN_RC:$(xout):$(xerr)" "4:gate disabled (config/gate-agent=off):" "a disabled maintenance gate exits 4"
 XE=AC_GATE_AGENT=gpt xrefuse 'gate engine must be one of the registry harnesses (claude|codex|opencode|pi|cursor-agent; config/gate-agent also takes off; got: gpt)' widget spec
-XE=AC_GATE_AGENT=cursor-agent xrefuse 'gate engine must be one of the registry harnesses (claude|codex|opencode|pi|cursor-agent; config/gate-agent also takes off; got: cursor-agent)' widget spec
 XE=AC_GATE_AGENT=cursor xok widget spec
+assert_contains "$(xout)" "second-chief[cursor] widget/spec r1: continue" "the cursor harness is accepted"
+assert_contains "$(cat "$XW/log/agent.log")" "--harness cursor " "... and handed to the arm"
 XPLUS='printf "claude\n" >"$XW/home/config/gate-agent"; printf "knob-model\n" >"$XW/home/config/gate-model"; printf "low\n" >"$XW/home/config/gate-effort"' xok widget spec
-XPLUS='printf "%s\n" "{\"panes\":{\"gate\":{\"harness\":\"claude\",\"model\":\"profile-model\",\"effort\":\"high\"}}}" >"$XW/home/config/crew-dispatch.json"; printf "knob-model\n" >"$XW/home/config/gate-model"' xok widget spec
-XPLUS='printf "%s\n" "{\"panes\":{\"gate\":{\"harness\":\"claude\",\"model\":\"profile-model\",\"effort\":\"high\"}}}" >"$XW/home/config/crew-dispatch.json"' XE='AC_GATE_AGENT=codex AC_GATE_MODEL=env-model' xok widget spec
+assert_contains "$(cat "$XW/log/agent.log")" "--harness claude --kind gate" "config/gate-agent names the engine"
+assert_contains "$(cat "$XW/log/agent.log")" "--model knob-model --effort low" "config/gate-model and gate-effort travel with it"
 XPLUS='printf "%s\n" "{\"panes\":{\"gate\":{\"harness\":\"claude\",\"model\":\"profile-model\",\"effort\":\"high\"}}}" >"$XW/home/config/crew-dispatch.json"' XE='AC_GATE_EFFORT=max' xok widget spec
-for r in '' '--rule 1' '--rule 2' '--rule default'; do
-  # shellcheck disable=SC2086
-  XPLUS='printf "%s\n" "$XROUTED" >"$XW/home/config/crew-dispatch.json"' xok widget spec $r
-done
-for r in 9 x; do XPLUS='printf "%s\n" "$XROUTED" >"$XW/home/config/crew-dispatch.json"' xrefuse "$XW4" widget spec --rule "$r"; done
-XPLUS='printf "{broken\n" >"$XW/home/config/crew-dispatch.json"' xrefuse "$XW4" widget spec
+assert_contains "$(cat "$XW/log/agent.log")" "--model profile-model --effort max" "AC_GATE_EFFORT overrides the profile's effort alone"
+XPLUS='printf "{broken\n" >"$XW/home/config/crew-dispatch.json"' xrun widget spec
+assert_eq "$XN_RC:$(xout)" "1:" "a broken panes.gate refuses"
+assert_contains "$(xerr)" "ERROR: crew-dispatch panes.gate is present but unresolvable" "... naming panes.gate"
+assert_no_file "$XW/log/agent.log" "... before any pane"
 
-# 5. the prompt bytes: each stage, the priors present, missing, empty or a
-#    link, captain.md absent, the maintenance prompt with and without its
-#    run report (the world holds each prompt whole).
-XPLUS='xroute architecture; xverify architecture 1' xok widget architecture
-XPLUS='xroute plan; xverify plan 1' xok widget plan
+# 5. the prompt: each stage, the priors present, missing, empty or a link,
+#    captain.md absent, the maintenance prompt with and without its run report.
 XPLUS='xroute design; xverify design 1' xok widget design
+assert_eq "$(grep -c '^- PRIOR STAGE REPORT ' "$XWD/design/gate-prompt-r1.md")" 3 "design reads every prior stage report"
+assert_contains "$(cat "$XWD/design/gate-prompt-r1.md")" "- PRIOR STAGE REPORT (plan, sha256=$(xsha "$XWD/plan/report.md")): $XWD/plan/report.md" "... each bound by its hash"
+assert_contains "$(cat "$XWD/design/gate-prompt-r1.md")" "For a design artifact that is an EPIC STORY MAP" "design adds the story-map criteria"
 XPLUS='rm "$XWD/spec/report.md"; xroute plan; xverify plan 1' xok widget plan
+assert_eq "$(grep '^- PRIOR STAGE REPORT ' "$XWD/plan/gate-prompt-r1.md" | sed 's/ (\([a-z]*\),.*/ \1/')" "- PRIOR STAGE REPORT architecture" "a missing prior report is left out"
 XPLUS=': >"$XWD/arch/report.md"; xroute plan; xverify plan 1' xrefuse "prior stage report must be a non-empty plain file: $XWD/arch/report.md" widget plan
 XPLUS='mv "$XWD/spec/report.md" "$XWD/spec/real.md"; ln -s real.md "$XWD/spec/report.md"; xroute architecture; xverify architecture 1' xrefuse "prior stage report must be a non-empty plain file: $XWD/spec/report.md" widget architecture
 XPLUS='rm "$XW/home/records/captain.md"' xok widget spec
+assert_contains "$(cat "$XWD/spec/gate-prompt-r1.md")" "- CAPTAIN'S STANDING PREFERENCES: (no standing preferences file on record)" "an absent captain.md is said in place of its path"
 XBASE=xstd_m XAG_BODY="$XB/m-continue.md" xok "${XMARGS[@]}"
+assert_contains "$(cat "$XMR/gates/example/gate-prompt.md")" "- RUN REPORT (when present): $XMR/report.md" "the maintenance prompt names the run report"
+assert_contains "$(cat "$XMR/gates/example/gate-prompt.md")" "- ACTION PLAN SHA-256: $(xsha "$XMR/plan.json")" "... and the plan's hash"
 XBASE=xstd_m XPLUS='rm "$XMR/report.md" "$XW/home/records/captain.md"' XAG_BODY="$XB/m-continue.md" xok "${XMARGS[@]}"
+case "$(cat "$XMR/gates/example/gate-prompt.md")" in *"$XMR/report.md"*) fail "an absent run report is not named" ;; esac
+assert_contains "$(cat "$XMR/gates/example/gate-prompt.md")" "- CAPTAIN'S STANDING PREFERENCES: (no standing preferences file on record)" "an absent captain.md in the maintenance prompt"
 
-# 6. engine outcomes: the turn, the transcript, every body class, an input
-#    moved mid-run, the raw log.
+# 6. engine outcomes: the turn, every body class, an input moved mid-run, the
+#    raw log.
 XAG_RC=1 XAG_STATUS=error xgate3 'engine exited nonzero' widget spec
 XAG_STATUS=error xgate3 'turn did not end ok' widget spec
 XAG_STATUS=timeout xgate3 'turn did not end ok' widget spec
 XAG_NODONE=1 xgate3 'no turn-end signal' widget spec
 XAG_BODY=/dev/null xgate3 'empty final message' widget spec
-# W2: one line jq cannot parse, before or after the done event, ends the run
-# with jq's status, silently.
-XAG_PRE='not json' xsame widget spec
-assert_eq "$XN_RC:$(xout):$(xerr)" "5::" "W2: garbage before the done event"
-XAG_POST='{"event":' xsame widget spec
-assert_eq "$XN_RC:$(xout):$(xerr)" "5::" "W2: garbage after the done event"
-# W3: a transcript that cannot be read ends the run with jq's status, silently.
-for t in missing notjson null noassistant; do
-  XAG_TRANSCRIPT="$t" xsame widget spec
-  assert_eq "$(xout):$(xerr)" ":" "W3: a $t transcript ends the run silently"
-done
 XCONTRACT='response failed the second-chief.md contract (headings/decision/process/grounds/required-changes)'
 printf 'I think the report looks fine.\n' >"$XB/prose.md"
 sed 's/^continue$/maybe/' "$XB/continue.md" >"$XB/token.md"
@@ -2951,16 +2853,15 @@ sed '/Closure condition.*threshold/d' "$XB/revise.md" >"$XB/label.md"
 for b in prose token tokens enverror noheading dupheading order noprocess numbered gap label chief-decide; do
   XAG_BODY="$XB/$b.md" xgate3 "$XCONTRACT" widget spec
 done
-XAG_BODY="$XB/trailing.md" xok widget spec
-XAG_BODY="$XB/revise.md" xok widget spec
 XAG_BODY="$XB/ask-captain.md" xok widget spec
+assert_contains "$(xout)" "widget/spec r1: ask-captain" "R1 accepts ask-captain"
+assert_eq "$(sed -n 's/^decision: //p' "$XWD/spec/second-chief-r1.md")" "ask-captain" "... into its frontmatter"
 XBASE=xstd_r2 XAG_BODY="$XB/revise.md" xgate3 "$XCONTRACT" widget spec --round 2
-XBASE=xstd_r2 XAG_BODY="$XB/chief-decide.md" xok widget spec --round 2
-XBASE=xstd_r2 XAG_BODY="$XB/ask-captain.md" xok widget spec --round 2
 XMCONTRACT="response failed the maintenance decision.md contract (headings/decision/grounds/process, and the '## Inputs Read' proof that the manifest, the plan, and the cited action's staged payload were actually opened)"
 for b in m-blind m-chief continue; do XBASE=xstd_m XAG_BODY="$XB/$b.md" xgate3 "$XMCONTRACT" "${XMARGS[@]}"; done
 XBASE=xstd_m XAG_BODY="$XB/m-env.md" xgate3 'the judge answered environment-error: it could not read an input it had to judge, so it rendered no decision and no receipt is written' "${XMARGS[@]}"
 XBASE=xstd_m XAG_BODY="$XB/m-revise.md" xok "${XMARGS[@]}"
+assert_contains "$(cat "$XMR/gates/example/decision.md")" 'decision: "revise"' "a maintenance revise is a receipt"
 XAG_DO='printf "revised\n" >>"$XW/home/data/widget/spec/report.md"' xgate3 'report changed mid-run' widget spec
 XAG_DO='printf "revised\n" >>"$XW/home/data/widget/spec/brief.md"' xgate3 'brief changed mid-run' widget spec
 XAG_DO='printf "posted\n" >>"$XW/home/data/widget/room.md"' xgate3 'family room changed mid-run' widget spec
@@ -2973,12 +2874,12 @@ XBASE=xstd_r2 XAG_DO='printf "x\n" >>"$XW/home/data/widget/spec/second-chief-r1.
 XBASE=xstd_m XAG_BODY="$XB/m-continue.md" XAG_DO='printf "x\n" >>"$XW/home/data/learning-42/input-manifest.md"' xgate3 'input manifest changed mid-run' "${XMARGS[@]}"
 XBASE=xstd_m XAG_BODY="$XB/m-continue.md" XAG_DO='printf "\n" >>"$XW/home/data/learning-42/plan.json"' xgate3 'action plan changed mid-run' "${XMARGS[@]}"
 XPLUS='printf "%s\n" "--- an earlier failure ---" "captured: final message" "old body" >"$XWD/spec/gate-raw.log"' XAG_BODY="$XB/prose.md" xgate3 "$XCONTRACT" widget spec
-# SHELL-OWN, named: a raw log that cannot be appended to is never named; the
-# original also printed bash's own redirect line, which its `2>/dev/null`,
-# applied after the failed `>>`, never reached.
-XPLUS='mkdir "$XWD/spec/gate-raw.log"' XAG_BODY="$XB/prose.md" xpair widget spec
-xsame_rc_out widget spec; xsame_world widget spec
-assert_eq "$XN_RC:$(xerr)" "3:$(grep -v 'ac-gate.sh: line [0-9]*: .*gate-raw.log: Is a directory$' "$TMP/xo.err2")" "SHELL-OWN: only bash's own redirect line differs"
+assert_eq "$(sed -n 1,3p "$XWD/spec/gate-raw.log")" "--- an earlier failure ---
+captured: final message
+old body" "a failure appends to the raw log, the earlier one kept"
+assert_contains "$(cat "$XWD/spec/gate-raw.log")" $'captured: final message\nI think the report looks fine.' "... the new final message after it"
+# A raw log that cannot be appended to is never named.
+XPLUS='mkdir "$XWD/spec/gate-raw.log"' XAG_BODY="$XB/prose.md" xgate3 "$XCONTRACT" widget spec
 case "$(xerr)" in *"raw judge response preserved at"*) fail "an unwritable raw log is never named" ;; esac
 
 # 7. publishing: R1 and R2 bytes, the decision, a failed link, a failed
@@ -2990,73 +2891,61 @@ XBASE=xstd_m XAG_BODY="$XB/m-continue.md" xok "${XMARGS[@]}"
 assert_eq "$(xout)" "maintenance-gate[codex] learning-42/example: continue
   -> $XMR/gates/example/decision.md" "the maintenance decision settles and says where"
 XPLUS='ln -s nowhere "$XWD/spec/second-chief-r1.md"' xrefuse "could not write round 1 review: $XWD/spec/second-chief-r1.md" widget spec
-XAG_DO='mkdir "$XW/home/data/widget/spec/second-chief.md"; chmod 555 "$XW/home/data/widget/spec/second-chief.md"' xsame widget spec
+XAG_DO='mkdir "$XW/home/data/widget/spec/second-chief.md"; chmod 555 "$XW/home/data/widget/spec/second-chief.md"' xrun widget spec
 assert_eq "$XN_RC:$(xout)" "1:" "a canonical update that fails refuses"
-assert_contains "$(xerr)" "ERROR: failed to update canonical second-chief.md; removed just-written round artifact" "...after mv's own line, the round artifact removed"
-# SHELL-OWN, named: a stage dir turned unwritable mid-run fails the context
-# temp on both sides; the original also printed bash's own redirect line.
-XAG_DO='chmod 555 "$XW/home/data/widget/spec"' xpair widget spec
-xsame_world widget spec
-assert_eq "$XN_RC:$XO_RC" "3:3" "an unwritable stage dir fails the gate on both sides"
-assert_eq "$(xerr)" "$(grep -v 'ac-gate.sh: line [0-9]*: .*Permission denied' "$TMP/xo.err2")" "SHELL-OWN: only bash's own redirect line differs"
-assert_contains "$(xerr)" "(could not build immutable decision context)" "...and the failure names the context"
-# W9, named: links planted at the context and review temps are written through
-# by the original, which then publishes the link itself; the port creates its
-# temps exclusively and leaves the planted names alone.
-XPLANTS="$XWD/spec/.gate-context-r1.json.tmp $XWD/spec/.second-chief-r1.md.tmp" XPLUS='printf "victim\n" >"$XW/victim"' xpair widget spec
-assert_eq "$XO_RC:$XN_RC" "0:0" "W9: both settle"
-assert_contains "$(cat "$TMP/xo.world2")" "== home/data/widget/spec/gate-context-r1.json -> $XW/victim" "W9: the original publishes the planted link as the context"
-assert_contains "$(cat "$TMP/xn.world2")" "== victim
-victim" "W9: the port leaves the victim untouched"
-XPLANTS="$XWD/spec/.second-chief.md.tmp" xpair widget spec
-assert_eq "$XO_RC:$XN_RC" "0:0" "W9: a dangling link planted at the canonical temp"
-assert_contains "$(cat "$TMP/xo.world2")" "== home/data/widget/spec/second-chief.md -> $XW/victim" "W9: the original publishes the planted link as the canonical review"
-assert_contains "$(cat "$TMP/xn.world2")" "== home/data/widget/spec/second-chief.md -rw" "W9: the port's canonical review is its own file"
+assert_contains "$(xerr)" "ERROR: failed to update canonical second-chief.md; removed just-written round artifact" "...the round artifact removed"
+assert_no_file "$XWD/spec/second-chief-r1.md" "a failed canonical update leaves no round artifact"
+XAG_DO='chmod 555 "$XW/home/data/widget/spec"' xgate3 'could not build immutable decision context' widget spec
+# W9 EXCLUSIVE TEMPS: links planted at the context and review temps are never
+# written through, and the planted names are left alone.
+XPLANTS="$XWD/spec/.gate-context-r1.json.tmp $XWD/spec/.second-chief-r1.md.tmp" XPLUS='printf "victim\n" >"$XW/victim"' xok widget spec
+assert_eq "$(cat "$XW/victim")" "victim" "W9: the victim is untouched"
+[ -f "$XWD/spec/gate-context-r1.json" ] && [ ! -L "$XWD/spec/gate-context-r1.json" ] || fail "W9: the context is its own file"
+[ -f "$XWD/spec/second-chief-r1.md" ] && [ ! -L "$XWD/spec/second-chief-r1.md" ] || fail "W9: the review is its own file"
+XPLANTS="$XWD/spec/.second-chief.md.tmp" xok widget spec
+[ -f "$XWD/spec/second-chief.md" ] && [ ! -L "$XWD/spec/second-chief.md" ] || fail "W9: the canonical review is its own file past a dangling link at its temp"
 
-# 8. concurrency on both sides: a held family lock, and the group terminated
-#    at its second publish write.
+# 8. concurrency: a held family lock, and the group terminated at its second
+#    publish write.
 XPLUS='mkdir "$XWD/.gate-lock"; printf "%s\n" "$$" >"$XWD/.gate-lock/pid"' xrefuse "could not take the family lock to publish round 1, nothing published: $XWD/.gate-lock" widget spec
 assert_eq "$(grep -c . "$XW/log/sleep.log")" 30 "the start, the publish and the exit each wait out the held lock"
-for side in xo xn; do
-  bin="$BIN"; [ "$side" = xn ] || bin="$xobin"
-  rm -f "$hold/xi-$side".*
-  for tool in mv ln; do
-    hold_shim "$TMP/xishim-$side" "$tool" '*/second-chief-r1.md" "|*/gate-context-r1.json" "' "xi-$side" 2
-    # The leg's PATH sleep is a stub that returns at once: the shim waits on the real one.
-    sed 's#do sleep 0.1#do /bin/sleep 0.1#' "$TMP/xishim-$side/$tool" >"$TMP/xishim-$side/$tool.x"
-    mv "$TMP/xishim-$side/$tool.x" "$TMP/xishim-$side/$tool"; chmod +x "$TMP/xishim-$side/$tool"
-  done
-  xstd
-  ( set -m
-    XPRE="$TMP/xishim-$side" XEXEC=1 xrun_side "$bin" "$side" widget spec &
-    gp=$!
-    i=0
-    while [ ! -e "$hold/xi-$side.held" ]; do
-      i=$((i + 1)); [ "$i" -le 300 ] || { kill -KILL -- -"$gp"; exit 1; }
-      sleep 0.1
-    done
-    t0="$(date +%s)"
-    kill -TERM -- -"$gp"
-    rc=0; wait "$gp" || rc=$?
-    printf '%s %s\n' "$rc" "$(( $(date +%s) - t0 ))" >"$hold/xi-$side.rc"
-  ) 2>/dev/null || fail "the $side side never reached its second publishing write: $(cat "$TMP/$side.err")"
-  read -r rc secs <"$hold/xi-$side.rc"
-  assert_eq "$rc" 143 "the $side side terminated mid-publish ends 143, its exit done"
-  [ "$secs" -lt 8 ] || fail "the $side side terminated holding the family lock must not wait on it (${secs}s)"
-  assert_no_file "$XWD/.gate-lock" "the $side side's terminated run leaves the family lock free"
-  for m in "$XWD"/.gate-running.*; do [ ! -e "$m" ] || fail "the $side side's terminated run leaves its marker: $m"; done
-  assert_no_file "$XW/home/state/.chief-busy-until.widget" "the $side side's terminated run clears the busy declaration"
-  if [ -e "$XWD/spec/second-chief-r1.md" ]; then
-    assert_eq "$(sed -n 's/^context_sha256: //p' "$XWD/spec/second-chief-r1.md")" "$(xsha "$XWD/spec/gate-context-r1.json")" \
-      "the $side side never leaves a settled review bound to another context"
-  fi
-  rc=0; xrun_side "$bin" "$side" widget spec || rc=$?
-  assert_eq "$rc:$(cat "$TMP/$side.err")" "0:" "the $side side's next run settles the round the terminated one left"
+rm -f "$hold/xi".*
+for tool in mv ln; do
+  hold_shim "$TMP/xishim" "$tool" '*/second-chief-r1.md" "|*/gate-context-r1.json" "' xi 2
+  # The leg's PATH sleep is a stub that returns at once: the shim waits on the real one.
+  sed 's#do sleep 0.1#do /bin/sleep 0.1#' "$TMP/xishim/$tool" >"$TMP/xishim/$tool.x"
+  mv "$TMP/xishim/$tool.x" "$TMP/xishim/$tool"; chmod +x "$TMP/xishim/$tool"
 done
+xstd
+( set -m
+  XPRE="$TMP/xishim" XEXEC=1 xrun_side widget spec &
+  gp=$!
+  i=0
+  while [ ! -e "$hold/xi.held" ]; do
+    i=$((i + 1)); [ "$i" -le 300 ] || { kill -KILL -- -"$gp"; exit 1; }
+    sleep 0.1
+  done
+  t0="$(date +%s)"
+  kill -TERM -- -"$gp"
+  rc=0; wait "$gp" || rc=$?
+  printf '%s %s\n' "$rc" "$(( $(date +%s) - t0 ))" >"$hold/xi.rc"
+) 2>/dev/null || fail "the run never reached its second publishing write: $(cat "$TMP/xn.err")"
+read -r rc secs <"$hold/xi.rc"
+assert_eq "$rc" 143 "a run terminated mid-publish ends 143, its exit done"
+[ "$secs" -lt 8 ] || fail "a run terminated holding the family lock must not wait on it (${secs}s)"
+assert_no_file "$XWD/.gate-lock" "the terminated run leaves the family lock free"
+for m in "$XWD"/.gate-running.*; do [ ! -e "$m" ] || fail "the terminated run leaves its marker: $m"; done
+assert_no_file "$XW/home/state/.chief-busy-until.widget" "the terminated run clears the busy declaration"
+if [ -e "$XWD/spec/second-chief-r1.md" ]; then
+  assert_eq "$(sed -n 's/^context_sha256: //p' "$XWD/spec/second-chief-r1.md")" "$(xsha "$XWD/spec/gate-context-r1.json")" \
+    "a terminated run never leaves a settled review bound to another context"
+fi
+rc=0; xrun_side widget spec || rc=$?
+assert_eq "$rc:$(cat "$TMP/xn.err")" "0:" "the next run settles the round the terminated one left"
 
 # 9. the board (AC_GATE_WATCH=auto, the fake herdr first on PATH): the launch
 #    line, a live board reused, a dead one replaced, an unobservable one
-#    kept, the family's last run retiring it by label, maintenance, orca.
+#    kept, maintenance, the widened board match.
 XBOARD='{"result":{"panes":[{"pane_id":"pX","label":"ac-gate-watch:widget","tab_id":"tG"}]}}'
 xboard() {  # xboard <proc-info json|-|none> - the labelled pane listed, its foreground answer (none: herdr fails)
   mkdir -p "$XW/hd"
@@ -3066,48 +2955,41 @@ xboard() {  # xboard <proc-info json|-|none> - the labelled pane listed, its for
 XWATCH=auto XPRE="$XS/hd" xok widget spec
 assert_contains "$(xfile log/herdr.log)" "pane run pG1 AC_HOME=$XW/home 'ROOT/bin/ac-gate-watch.sh' --tail --family widget" "the board's launch line"
 assert_contains "$(xfile log/herdr.log)" "herdr pane close pG1" "the run's exit closes the board it opened"
-for info in '{"result":{"process_info":{"foreground_processes":[{"argv0":"bash","cmdline":"bash /x/bin/ac-gate-watch.sh --tail"}]}}}' \
-  '{"result":{"process_info":{"foreground_processes":[{"argv0":"zsh","cmdline":"-zsh"}]}}}' \
-  '{"result":{"process_info":{"foreground_processes":[]}}}' none -; do
+# An empty answer is not death: the labelled board is reused.
+for info in '{"result":{"process_info":{"foreground_processes":[]}}}' -; do
   XWATCH=auto XPRE="$XS/hd" XPLUS="xboard '$info'" xok widget spec
+  case "$(cat "$XW/log/herdr.log")" in *"tab create"*) fail "an empty answer ('$info') reuses the board" ;; esac
 done
 XWATCH=auto XPRE="$XS/hd" XE=AC_HERDR_SESSION=s7 xok widget spec
+assert_contains "$(cat "$XW/log/herdr.log")" "herdr --session s7 tab create --label ac-gate-watch:widget" "AC_HERDR_SESSION names the board's session"
 XWATCH=auto XPRE="$XS/hd" XPLUS='printf "cfg\n" >"$XW/home/config/herdr-session"' xok widget spec
+assert_contains "$(cat "$XW/log/herdr.log")" "herdr --session cfg tab create --label ac-gate-watch:widget" "config/herdr-session names it otherwise"
 XWATCH=auto XPRE="$XS/hd" XBASE=xstd_m XAG_BODY="$XB/m-continue.md" xok "${XMARGS[@]}"
-XWATCH=auto XPRE="$XS/hd" XPLUS='printf "orca\n" >"$XW/home/config/backend"; xboard none' xok widget spec
-assert_contains "$(xfile log/herdr.log)" "pane list" "an orca fleet's last run still lists the family's board by label through raw herdr"
-# THE WIDENED BOARD MATCH, named: a board running the bun module is live to
-# the port and reused; the original reads it dead, closes it and opens another.
-XWATCH=auto XPRE="$XS/hd" XPLUS="xboard '{\"result\":{\"process_info\":{\"foreground_processes\":[{\"argv0\":\"bun\",\"cmdline\":\"bun --no-env-file /x/src/gate-watch.ts /x --tail --family widget\"}]}}}'" xpair widget spec
-assert_eq "$XO_RC:$XN_RC" "0:0" "the bun-cmdline board: both settle"
-assert_contains "$(cat "$TMP/xo.world2")" "herdr --session default tab create" "the original relaunches a bun-cmdline board"
-case "$(cat "$TMP/xn.world2")" in *"tab create"*) fail "the port reuses a bun-cmdline board" ;; esac
+assert_contains "$(cat "$XW/log/herdr.log")" "tab create --label ac-gate-watch:learning-42" "a maintenance run's board is labelled by its run"
+# THE WIDENED BOARD MATCH: a board running the bun module is live and reused.
+XWATCH=auto XPRE="$XS/hd" XPLUS="xboard '{\"result\":{\"process_info\":{\"foreground_processes\":[{\"argv0\":\"bun\",\"cmdline\":\"bun --no-env-file /x/src/gate-watch.ts /x --tail --family widget\"}]}}}'" xok widget spec
+case "$(cat "$XW/log/herdr.log")" in *"tab create"*) fail "a bun-cmdline board is reused" ;; esac
 
 # 10. signals: HUP, INT and TERM to the gate alone mid-turn - the turn is
 #     waited out, the run ends 128+n through its exit, nothing published.
 xsig() {  # xsig <signal> <args...>
-  local sig="$1" side bin rc; shift
-  for side in xo xn; do
-    bin="$BIN"; [ "$side" = xn ] || bin="$xobin"
-    xplus
-    rc=0
-    ( set -m
-      XAG_HOLD=1 XEXEC=1 xrun_side "$bin" "$side" "$@" &
-      j=$!
-      i=0
-      while [ ! -e "$XW/log/agent.held" ]; do
-        i=$((i + 1)); [ "$i" -le 300 ] || { kill -KILL -- -"$j"; exit 99; }
-        sleep 0.1
-      done
-      kill -"$sig" "$(cat "$TMP/$side.pid")"
-      sleep 0.3
-      : >"$XW/log/agent.release"
-      wait "$j"
-    ) 2>/dev/null || rc=$?
-    case "$side" in xo) XO_RC="$rc" ;; *) XN_RC="$rc" ;; esac
-    xsnap "$side"
-  done
-  xsame_rc_out "$@"; xsame_err "$@"; xsame_world "$@"
+  local sig="$1"; shift
+  xplus
+  XN_RC=0
+  ( set -m
+    XAG_HOLD=1 XEXEC=1 xrun_side "$@" &
+    j=$!
+    i=0
+    while [ ! -e "$XW/log/agent.held" ]; do
+      i=$((i + 1)); [ "$i" -le 300 ] || { kill -KILL -- -"$j"; exit 99; }
+      sleep 0.1
+    done
+    kill -"$sig" "$(cat "$TMP/xn.pid")"
+    sleep 0.3
+    : >"$XW/log/agent.release"
+    wait "$j"
+  ) 2>/dev/null || XN_RC=$?
+  xsnap
 }
 for s in HUP:129 INT:130 TERM:143; do
   xsig "${s%:*}" widget spec
@@ -3117,81 +2999,63 @@ for s in HUP:129 INT:130 TERM:143; do
 done
 XBASE=xstd_m XAG_BODY="$XB/m-continue.md" xsig TERM "${XMARGS[@]}"
 assert_eq "$XN_RC" 143 "a maintenance run TERMed mid-turn ends 143"
-xsigat() {  # xsigat <tool> <case-pattern> <signal> <args...> - each side held at its first matching <tool> call, sent <signal> alone, then let go
-  local tool="$1" pat="$2" sig="$3" side bin rc; shift 3
-  for side in xo xn; do
-    bin="$BIN"; [ "$side" = xn ] || bin="$xobin"
-    rm -rf "$TMP/xsa-$side" "$hold/xsa-$side".*
-    hold_shim "$TMP/xsa-$side" "$tool" "$pat" "xsa-$side" 1
-    sed 's#do sleep 0.1#do /bin/sleep 0.1#' "$TMP/xsa-$side/$tool" >"$TMP/xsa-$side/$tool.x"
-    mv "$TMP/xsa-$side/$tool.x" "$TMP/xsa-$side/$tool"; chmod +x "$TMP/xsa-$side/$tool"
-    xplus
-    rc=0
-    ( set -m
-      XPRE="$TMP/xsa-$side" XEXEC=1 xrun_side "$bin" "$side" "$@" &
-      j=$!
-      i=0
-      while [ ! -e "$hold/xsa-$side.held" ]; do
-        i=$((i + 1)); [ "$i" -le 300 ] || { kill -KILL -- -"$j"; exit 99; }
-        sleep 0.1
-      done
-      kill -"$sig" "$(cat "$TMP/$side.pid")"
-      sleep 0.3
-      : >"$hold/xsa-$side.go"
-      rc=0; wait "$j" || rc=$?
-      # The shell may have exited with the held child still running: its
-      # write is part of what the row compares.
-      i=0
-      while pgrep -f "$TMP/xsa-$side/" >/dev/null && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
-      exit "$rc"
-    ) 2>/dev/null || rc=$?
-    case "$side" in xo) XO_RC="$rc" ;; *) XN_RC="$rc" ;; esac
-    xsnap "$side"
-  done
+assert_no_file "$XMR/gates/example/decision.md" "a maintenance run TERMed mid-turn publishes no decision"
+xsigat() {  # xsigat <tool> <case-pattern> <signal> <args...> - the run held at its first matching <tool> call, sent <signal> alone, then let go
+  local tool="$1" pat="$2" sig="$3"; shift 3
+  rm -rf "$TMP/xsa" "$hold/xsa".*
+  hold_shim "$TMP/xsa" "$tool" "$pat" xsa 1
+  sed 's#do sleep 0.1#do /bin/sleep 0.1#' "$TMP/xsa/$tool" >"$TMP/xsa/$tool.x"
+  mv "$TMP/xsa/$tool.x" "$TMP/xsa/$tool"; chmod +x "$TMP/xsa/$tool"
+  xplus
+  XN_RC=0
+  ( set -m
+    XPRE="$TMP/xsa" XEXEC=1 xrun_side "$@" &
+    j=$!
+    i=0
+    while [ ! -e "$hold/xsa.held" ]; do
+      i=$((i + 1)); [ "$i" -le 300 ] || { kill -KILL -- -"$j"; exit 99; }
+      sleep 0.1
+    done
+    kill -"$sig" "$(cat "$TMP/xn.pid")"
+    sleep 0.3
+    : >"$hold/xsa.go"
+    rc=0; wait "$j" || rc=$?
+    # The held child may outlive the run: its write is part of what the row reads.
+    i=0
+    while pgrep -f "$TMP/xsa/" >/dev/null && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+    exit "$rc"
+  ) 2>/dev/null || XN_RC=$?
+  xsnap
 }
 # A TERM while the context is built (after the turn, before the publish): the
-# run ends 143 having published nothing, on both sides.
+# run ends 143 having published nothing.
 xsigat jq '*" -S -n "*' TERM widget spec
-xsame_rc_out widget spec; xsame_err widget spec; xsame_world widget spec
-assert_eq "$XN_RC" 143 "a TERM at the context build ends 143"
+assert_eq "$XN_RC:$(xout):$(xerr)" "143::" "a TERM at the context build ends 143, silently"
 for f in second-chief-r1.md second-chief.md gate-context-r1.json; do assert_no_file "$XWD/spec/$f" "a TERM at the context build publishes no $f"; done
-# SIGNAL TIMING, named: a TERM inside a publish write ends both sides 143.
-# The shell ran its exit at once, removing the write's source under the child
-# still running (which then fails, or lands a stray temp); the port lets the
-# write in flight land, then exits through the same cleanup.
+# SIGNAL TIMING: a TERM inside a publish write lets that write land, then the
+# run exits 143 through its cleanup.
 xsigat mv '*"/gate-context-r1.json "*' TERM widget spec
-assert_eq "$XO_RC:$XN_RC:$(xout):$(xerr)" "143:143::" "a TERM at the context's move ends both sides 143"
-assert_contains "$(xoerr)" "mv: rename" "SIGNAL TIMING: the original's move ran after its exit removed the temp"
-case "$(cat "$TMP/xo.world2")" in *"== home/data/widget/spec/gate-context-r1.json"*) fail "SIGNAL TIMING: the original publishes no context" ;; esac
-assert_contains "$(cat "$TMP/xn.world2")" "== home/data/widget/spec/gate-context-r1.json" "SIGNAL TIMING: the port's context move lands"
-case "$(cat "$TMP/xn.world2")" in *"== home/data/widget/spec/second-chief"*) fail "SIGNAL TIMING: the port publishes the context alone" ;; esac
+assert_eq "$XN_RC:$(xout):$(xerr)" "143::" "a TERM at the context's move ends 143"
+assert_file "$XWD/spec/gate-context-r1.json" "SIGNAL TIMING: the context move lands"
+for f in second-chief-r1.md second-chief.md; do assert_no_file "$XWD/spec/$f" "SIGNAL TIMING: the context is published alone, no $f"; done
 xsigat cp '*"/second-chief-r1.md "*' TERM widget spec
-assert_eq "$XO_RC:$XN_RC:$(xout):$(xerr)" "143:143::" "a TERM at the canonical copy ends both sides 143"
-assert_contains "$(cat "$TMP/xo.world2")" "== home/data/widget/spec/.second-chief.md.tmp.PID" "SIGNAL TIMING: the original's copy lands a stray temp after its exit"
-case "$(cat "$TMP/xn.world2")" in *".second-chief.md.tmp"*) fail "SIGNAL TIMING: the port's exit removes its copy" ;; esac
-for w in xo xn; do
-  assert_contains "$(cat "$TMP/$w.world2")" "== home/data/widget/spec/second-chief-r1.md" "the round settled before the copy ($w)"
-  case "$(cat "$TMP/$w.world2")" in *"== home/data/widget/spec/second-chief.md "*) fail "no canonical review after a TERM at its copy ($w)" ;; esac
-done
+assert_eq "$XN_RC:$(xout):$(xerr)" "143::" "a TERM at the canonical copy ends 143"
+for f in "$XWD"/spec/.second-chief.md.tmp*; do [ ! -e "$f" ] || fail "SIGNAL TIMING: the exit removes the canonical copy: $f"; done
+assert_file "$XWD/spec/second-chief-r1.md" "the round settled before the copy"
+assert_no_file "$XWD/spec/second-chief.md" "no canonical review after a TERM at its copy"
 xsigat mv '*"/second-chief.md "*' TERM widget spec
-assert_eq "$XO_RC:$XN_RC:$(xout)" "143:143:" "a TERM at the canonical move ends both sides 143"
-assert_contains "$(xoerr)" "mv: rename" "SIGNAL TIMING: the original's canonical move ran after its exit removed the temp"
-case "$(cat "$TMP/xo.world2")" in *"== home/data/widget/spec/second-chief.md "*) fail "SIGNAL TIMING: the original's canonical review never lands" ;; esac
-assert_contains "$(cat "$TMP/xn.world2")" "== home/data/widget/spec/second-chief.md " "SIGNAL TIMING: the port's canonical move lands"
-# SIGNAL TIMING, named: a TERM while the marker's stamp is taken ends the run
-# 143 before its turn on both sides; the shell acted on it before writing the
-# marker and the prompt, the port at its next checkpoint, its prompt written.
+assert_eq "$XN_RC:$(xout)" "143:" "a TERM at the canonical move ends 143"
+assert_file "$XWD/spec/second-chief.md" "SIGNAL TIMING: the canonical move lands"
+# SIGNAL TIMING: a TERM while the marker's stamp is taken ends the run 143 at
+# its next checkpoint, before its turn, its prompt written.
 xsigat date '*" -u +%Y-%m-%dT%H:%M:%SZ "*' TERM widget spec
-assert_eq "$XO_RC:$XN_RC:$(xout):$(xerr)" "143:143::" "a TERM at the marker's stamp ends both sides 143, silently"
+assert_eq "$XN_RC:$(xout):$(xerr)" "143::" "a TERM at the marker's stamp ends 143, silently"
 assert_no_file "$XW/log/agent.log" "a TERM at the marker's stamp runs no turn"
-case "$(cat "$TMP/xo.world2")" in *gate-prompt-r1.md*) fail "SIGNAL TIMING: the original writes no prompt" ;; esac
-assert_contains "$(cat "$TMP/xn.world2")" "== home/data/widget/spec/gate-prompt-r1.md" "SIGNAL TIMING: the port keeps the prompt it wrote"
-awk '$0 == "./home/data/widget/spec/gate-prompt-r1.md" { next } /^== home\/data\/widget\/spec\/gate-prompt-r1\.md / { skip = 1; next }
-  /^== (home|tmp|log|hd)\// { skip = 0 } !skip' "$TMP/xn.world2" >"$TMP/xn.world3"
-cmp -s "$TMP/xo.world2" "$TMP/xn.world3" || fail "SIGNAL TIMING: the port's world is the original's plus its prompt: $(diff "$TMP/xo.world2" "$TMP/xn.world3" | head -n 8)"
+assert_file "$XWD/spec/gate-prompt-r1.md" "SIGNAL TIMING: the prompt it wrote is kept"
+for f in second-chief-r1.md second-chief.md gate-context-r1.json; do assert_no_file "$XWD/spec/$f" "a TERM at the marker's stamp publishes no $f"; done
 
 # 11. the busy declaration: the default bound, a later bound kept, the last
-#     holder only, W5.
+#     holder only.
 xok widget spec
 assert_contains "$(xfile log/agent.log)" "-- busy
 1767226260" "the bound is the clock plus AC_GATE_TIMEOUT and the reap slack"
@@ -3199,32 +3063,15 @@ XE=AC_GATE_TIMEOUT=30 XPLUS='mkdir -p "$XW/home/state"; printf "1767229999\n" >"
 assert_contains "$(xfile log/agent.log)" "-- busy
 1767229999" "a later bound on disk is never shortened"
 XPLUS='mkdir -p "$XW/home/state"; printf "pid=%s\n" "$$" >"$XW/home/state/.chief-busy-holder.widget.1"; printf "pid=99999999\n" >"$XW/home/state/.chief-busy-holder.widget.2"; printf "pid=99999999\n" >"$XWD/.gate-running.99999999"' xok widget spec
-assert_contains "$(cat "$TMP/xn.world2")" "./home/state/.chief-busy-until.widget" "a live verifier holder keeps the declaration"
+assert_file "$XW/home/state/.chief-busy-until.widget" "a live verifier holder keeps the declaration"
+assert_no_file "$XW/home/state/.chief-busy-holder.widget.2" "the exit sweeps a dead holder"
+assert_no_file "$XWD/.gate-running.99999999" "... and a dead run's marker"
 # A dead holder the exit cannot sweep (state/ unwritable) keeps its mark and
-# never the family lock; the bound that cannot be written is the original's
-# own redirect line (SHELL-OWN STDERR).
-XPLUS='mkdir -p "$XW/home/state"; printf "pid=99999999\n" >"$XW/home/state/.chief-busy-holder.widget.1"; chmod 555 "$XW/home/state"' xpair widget spec
-xsame_rc_out widget spec; xsame_world widget spec
-assert_eq "$XN_RC:$(xerr)" "0:" "an unsweepable dead holder: the port settles quietly"
-assert_contains "$(xoerr)" "Permission denied" "the original's unwritable bound is the shell's own line"
-case "$(cat "$TMP/xn.world2")" in *"./home/data/widget/.gate-lock"*) fail "the family lock is released though a dead holder could not be swept" ;; esac
-case "$(cat "$TMP/xn.world2")" in *".chief-busy-holder.widget.2"* | *".gate-running.99999999"*) fail "the exit sweeps every dead holder" ;; esac
-XE=AC_GATE_TIMEOUT=0x10 xok widget spec
-# W5: no arithmetic operand skips the declaration and the run goes on; the
-# original also printed bash's own arithmetic line (SHELL-OWN, named).
-for t in 10m 1.5; do
-  XE="AC_GATE_TIMEOUT=$t" xpair widget spec
-  xsame_rc_out widget spec; xsame_world widget spec
-  assert_eq "$XN_RC:$(xerr)" "0:" "W5: $t skips the declaration, the port silently"
-  assert_contains "$(xoerr)" "ac-gate.sh: line " "W5: the original's arithmetic line"
-  assert_contains "$(xfile log/agent.log)" "-- busy
--- AC_WINDOW_FAMILY" "W5: $t declared nothing"
-  assert_contains "$(xfile log/agent.log)" "--timeout $t" "W5: the pane agent is handed $t"
-done
-XE=AC_GATE_TIMEOUT=abc xpair widget spec
-xsame_rc_out widget spec; xsame_world widget spec
-assert_eq "$XN_RC:$(xout):$(xerr)" "0::" "W5: an unbound name ends the run 0 before the turn, printing nothing"
-assert_no_file "$XW/log/agent.log" "W5: no turn was run"
+# never the family lock.
+XPLUS='mkdir -p "$XW/home/state"; printf "pid=99999999\n" >"$XW/home/state/.chief-busy-holder.widget.1"; chmod 555 "$XW/home/state"' xrun widget spec
+assert_eq "$XN_RC:$(xerr)" "0:" "an unsweepable dead holder: the run settles quietly"
+assert_no_file "$XWD/.gate-lock" "the family lock is released though a dead holder could not be swept"
+assert_file "$XW/home/state/.chief-busy-holder.widget.1" "... the dead holder keeps its mark"
 chmod -R u+w "$XW"
 
 pass

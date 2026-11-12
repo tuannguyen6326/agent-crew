@@ -2,10 +2,8 @@
 // issues of a project clone's own `origin` remote and wakes the crewchief once
 // per new item; `comment` posts a caller-authored verdict on a PR once per
 // exact text. The entry is bin/ac-github.sh (a shim that starts this file
-// through bin/ac-bun.sh); THIS header is the authoritative spec, and the bash
-// original it replaced stays frozen at tests/fixtures/ac-github.sh as the
-// oracle the differential leg of tests/sh/ac-github.test.sh holds this module
-// to.
+// through bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-github.test.sh is its contract test.
 //
 // It is a detector only - the intake-triage skill's GitHub-intake design
 // constraints bind every call here:
@@ -57,8 +55,7 @@
 // parse errors and its U+FFFD repair are the contract:
 //   a. `jq -e 'type == "array"'` (output discarded) non-zero: `gh returned a
 //      malformed <kind> list (not a JSON array) - refusing to poll`, the store
-//      dir already minted (W2, kept: gh's stderr shares the capture, so a
-//      `Warning:` line makes a good list malformed)
+//      dir already minted
 //   b. `jq length` (stderr passes through): non-zero - its LAST text's
 //      status - ends the run with it; a count of plain digits >= 100 prints
 //      on stderr `ac-github.sh poll: the <kind> list came back at exactly its
@@ -129,7 +126,10 @@
 // `gh issue list` likewise, `gh pr comment <n> --body <body>` - from the live
 // PATH, cwd <path>, stdin inherited, stdout and stderr MERGED into one capture
 // in gh's write order (both fds share one temp file under TMPDIR, created
-// O_EXCL and unlinked before gh starts), NULs and trailing LFs dropped; a
+// O_EXCL and unlinked before gh starts), NULs and trailing LFs dropped. A
+// list captures stderr in a second such file, read only when gh fails (then
+// after stdout), because gh prints notices like its update check on stderr
+// (`gh help environment`, GH_NO_UPDATE_NOTIFIER); a
 // TMPDIR that cannot hold it is `cannot capture gh's output under <dir>:
 // <code>` before gh runs. gh's own auth is gh's; nothing here reads a token.
 //
@@ -141,34 +141,18 @@
 // index (an author that is a string) aborts jq for the REST of its list - jq's
 // own line on stderr, no later item of that list seen (W7).
 //
-// DIVERGENCES from the original, named in the differential leg:
-// - argv bytes: a byte that is not UTF-8 reaches Bun's argv as U+FFFD - a
-//   body holding one posts U+FFFD where the original, under UTF-8, saw its sed
-//   abort (W5: `RE error: illegal byte sequence`, exit 1, nothing posted) and,
-//   under C, posted the byte (its cksum naming the file); a body sed leaves
-//   holding such a byte (a C-locale `.` in HOME cutting a character) reaches
-//   gh as U+FFFD while the file and cksum keep the byte.
-// - the non-UTF-8 slug refusal above, before gh runs: the original kept the
-//   byte in the store name under C (where the filesystem takes such a name -
-//   APFS refuses it, so there its mkdir failed after gh ran) and cut the slug
-//   at it under UTF-8 (tr's own line).
-// - cd's grammar is gone from gh's cwd: a relative <path> the original's `cd`
-//   found through an exported CDPATH (cd echoed it INTO the capture, so the
-//   list read malformed) and a <path> starting with `-` (cd's option: `gh
-//   <verb> failed: ` with cd's usage on stderr, gh never ran) are entered as
-//   the directory named.
-// - the home through physicalDir: an AC_HOME cd cannot enter is the ERROR
-//   above where the original printed cd's own line.
-// - shell-own stderr is not reproduced: `HOME: unbound variable` (now `HOME is
-//   not set`), a failed redirection (now `cannot write`), `[: ...: integer
-//   expression expected` for a multi-value count, and the shell's exec failure
-//   text the original's `2>&1` put inside gh's capture.
-// - a gh or jq on PATH that is not executable is `not found` here; the
-//   original's `command -v` took it and failed running it.
-// - the capture's TMPDIR refusal above: the original's pipe needed none.
+// ALSO:
+// - argv bytes: a byte that is not UTF-8 reaches Bun's argv as U+FFFD, so a
+//   body holding one posts U+FFFD, its cksum naming the file; a body sed
+//   leaves holding such a byte (a C-locale `.` in HOME cutting a character)
+//   reaches gh as U+FFFD while the file and cksum keep the byte.
+// - gh's cwd is the directory named: an exported CDPATH and a <path> starting
+//   with `-` mean nothing to it.
+// - a gh or jq on PATH that is not executable is `not found`.
+// - a list is read from gh's stdout alone (GH above), so a stderr notice such
+//   as `Warning: an update is available` never makes a good list malformed.
 // - the extractor runs to its end before the first line is read, so jq's own
-//   stderr precedes every item line; the original's loop could interleave once
-//   jq's stdout passed one stdio buffer.
+//   stderr precedes every item line.
 //
 // CALLERS: nothing in bin/, src/, dashboard/, .agents/ or .claude/ runs this
 // entry; the chief runs it by hand per the intake-triage skill, and a fleet
@@ -262,12 +246,10 @@ function storeDir(slug: string): string {
   return store;
 }
 
-// `$(cd <path> && gh ... 2>&1)`: one fd behind both of gh's outputs keeps the
-// order the bytes were written in, which two pipes would lose.
-function gh(repo: string, argv: string[]): { status: number; out: string } {
-  let fd = -1;
-  for (let i = 0; fd === -1; i++) {
+function captureFd(): number {
+  for (let i = 0; ; i++) {
     const p = `${tmpdir()}/ac-github.${process.pid}.${i}`;
+    let fd: number;
     try {
       fd = openSync(p, "wx+", 0o600);
     } catch (e) {
@@ -278,17 +260,32 @@ function gh(repo: string, argv: string[]): { status: number; out: string } {
     try {
       unlinkSync(p);
     } catch {}
+    return fd;
   }
+}
+
+function readFd(fd: number): string {
+  const buf = Buffer.alloc(fstatSync(fd).size);
+  readSync(fd, buf, 0, buf.length, 0);
+  return buf.toString("latin1");
+}
+
+// `$(cd <path> && gh ... 2>&1)`: one fd behind both of gh's outputs keeps the
+// order the bytes were written in, which two pipes would lose.
+function gh(repo: string, argv: string[], stdoutOnly = false): { status: number; out: string } {
+  const fd = captureFd();
+  const errFd = stdoutOnly ? captureFd() : fd;
   try {
     let r: ReturnType<typeof Bun.spawnSync> | null = null;
     try {
-      r = spawnShellSync(["gh", ...argv], { cwd: at(repo)!, stdin: "inherit", stdout: fd, stderr: fd });
+      r = spawnShellSync(["gh", ...argv], { cwd: at(repo)!, stdin: "inherit", stdout: fd, stderr: errFd });
     } catch {}
-    const buf = Buffer.alloc(fstatSync(fd).size);
-    readSync(fd, buf, 0, buf.length, 0);
-    return { status: shellStatus(r), out: captured(buf.toString("latin1")) };
+    const status = shellStatus(r);
+    const out = readFd(fd) + (stdoutOnly && status !== 0 ? readFd(errFd) : "");
+    return { status, out: captured(out) };
   } finally {
     closeSync(fd);
+    if (errFd !== fd) closeSync(errFd);
   }
 }
 
@@ -373,9 +370,9 @@ function poll(argv: string[]): void {
   if (!Bun.which("gh")) die("gh not found on PATH - cannot poll GitHub");
   if (!Bun.which("jq")) die("jq not found on PATH - cannot poll GitHub");
   const slug = slugOf(repo);
-  const prs = gh(repo, ["pr", "list", "--state", "open", "--limit", PAGE, "--json", "number,title,url,author"]);
+  const prs = gh(repo, ["pr", "list", "--state", "open", "--limit", PAGE, "--json", "number,title,url,author"], true);
   if (prs.status !== 0) die(b(`gh pr list failed: ${prs.out}`));
-  const issues = gh(repo, ["issue", "list", "--state", "open", "--limit", PAGE, "--json", "number,title,url,author"]);
+  const issues = gh(repo, ["issue", "list", "--state", "open", "--limit", PAGE, "--json", "number,title,url,author"], true);
   if (issues.status !== 0) die(b(`gh issue list failed: ${issues.out}`));
   const store = storeDir(slug);
   pollItems(store, "pr", prs.out);

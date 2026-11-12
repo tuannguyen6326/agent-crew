@@ -1,18 +1,14 @@
-// github.test.ts - the two lib.ts twins src/github.ts introduced, each held to
-// its bash original differentially: redactPublish against ac_redact_publish in
-// tests/fixtures/ac-pipeline-lib.sh, whose frozen bash copy tests/sh/
-// ac-pipeline-lib.test.sh sources too - a comment PUBLISHES, so a twin that redacts less than
-// the bash leaks an operator path or a URL credential to GitHub; and
-// cksumPosix against /usr/bin/cksum, whose number names every
-// `commented-pr-<n>-<cksum>` idempotence file - one bit off and every verdict
-// already posted is posted again. The CLI contract itself is
-// tests/sh/ac-github.test.sh's, whose differential leg runs the frozen bash
-// original beside the shim.
+// github.test.ts - the two lib.ts twins src/github.ts introduced:
+// redactPublish (ac_redact_publish's) held to the redaction its spec states - a
+// comment PUBLISHES, so a twin that redacts less leaks an operator path or a URL
+// credential to GitHub; and cksumPosix against /usr/bin/cksum, whose number
+// names every `commented-pr-<n>-<cksum>` idempotence file - one bit off and
+// every verdict already posted is posted again. The CLI contract itself is
+// tests/sh/ac-github.test.sh's.
 import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { cksumPosix } from "../../src/lib.ts";
 
-const binDir = join(import.meta.dir, "..", "..", "bin");
 const LIB = join(import.meta.dir, "..", "..", "src", "lib.ts");
 
 type Answer = { out: string; err: string; rc: number };
@@ -22,18 +18,6 @@ function envOf(extra: Env): Record<string, string> {
   const env: Record<string, string> = { PATH: process.env.PATH! };
   for (const [k, v] of Object.entries(extra)) if (v !== undefined) env[k] = v;
   return env;
-}
-
-// The entry runs the helper under `set -euo pipefail`, which is what turns an
-// unset HOME into a refusal rather than an empty BRE.
-function bashSide(text: Buffer, env: Env): Answer {
-  const r = Bun.spawnSync(["bash", "-c", 'set -euo pipefail; . "$1/../tests/fixtures/ac-pipeline-lib.sh"; ac_redact_publish', "--", binDir], {
-    stdin: text,
-    stdout: "pipe",
-    stderr: "pipe",
-    env: envOf(env),
-  });
-  return { out: r.stdout.toString("latin1"), err: r.stderr.toString("latin1"), rc: r.exitCode ?? -1 };
 }
 
 // In a child so sed's own stderr is captured; an unset HOME answers 99, the
@@ -47,62 +31,52 @@ catch (e) { process.exit(e.code === "ENOHOME" ? 99 : e.status); }`;
   return { out: r.stdout.toString("latin1"), err: r.stderr.toString("latin1"), rc: r.exitCode ?? -1 };
 }
 
-function same(text: string | Buffer, env: Env): Answer {
-  const bytes = typeof text === "string" ? Buffer.from(text, "utf8") : text;
-  const want = bashSide(bytes, env);
-  const got = tsSide(bytes, env);
-  expect({ text: bytes.toString("latin1"), env, ...got }).toEqual({ text: bytes.toString("latin1"), env, ...want });
-  return got;
+function redact(text: string, env: Env): Answer {
+  return tsSide(Buffer.from(text, "utf8"), env);
 }
 
 const C = { LC_ALL: "C" };
 const U = { LC_ALL: "en_US.UTF-8" };
 
-test("redactPublish redacts what ac_redact_publish redacts: the pipeline-lib sample, foreign homes, userinfo, every line, the rest byte-intact", () => {
-  for (const loc of [C, U]) {
-    const env = { ...loc, HOME: "/Users/tester" };
-    const sample = same("ran /Users/tester/proj/x then /Users/operator/lab/y and /home/op2/z via https://x:tok123@example.com/repo done\n", env);
-    expect(sample).toEqual({ out: "ran ~/proj/x then ~/lab/y and ~/z via https://***@example.com/repo done\n", err: "", rc: 0 });
-    same("failed at /Users/operator/lab/run.log after push to https://x:tok9@github.com/a/b\n", env);
-    same("line one /home/a.b-c_d/x\n\nline three https://u@h/p and ftp://a:b@c@d/e\n", env);
-    same("no trailing newline /Users/x", env);
-    same("", env);
-    same("& \\1 \\n | ~ * [x] $ ^ stay as they are\n", env);
-    same("/Users/ /home/ ://@h/ s:///@x\n", env);
-  }
+test("redactPublish: HOME, then any /Users/<name> or /home/<name>, to ~, URL userinfo to ***, on every line, the rest byte-intact", () => {
+  const rows: [string, string][] = [
+    ["ran /Users/tester/proj/x then /Users/operator/lab/y and /home/op2/z via https://x:tok123@example.com/repo done\n", "ran ~/proj/x then ~/lab/y and ~/z via https://***@example.com/repo done\n"],
+    ["failed at /Users/operator/lab/run.log after push to https://x:tok9@github.com/a/b\n", "failed at ~/lab/run.log after push to https://***@github.com/a/b\n"],
+    ["line one /home/a.b-c_d/x\n\nline three https://u@h/p and ftp://a:b@c@d/e\n", "line one ~/x\n\nline three https://***@h/p and ftp://***@c@d/e\n"],
+    ["no trailing newline /Users/x", "no trailing newline ~"],
+    ["", ""],
+    ["& \\1 \\n | ~ * [x] $ ^ stay as they are\n", "& \\1 \\n | ~ * [x] $ ^ stay as they are\n"],
+    ["/Users/ /home/ ://@h/ s:///@x\n", "/Users/ /home/ ://@h/ s:///@x\n"],
+  ];
+  for (const loc of [C, U]) for (const [text, out] of rows) expect([loc, text, redact(text, { ...loc, HOME: "/Users/tester" })]).toEqual([loc, text, { out, err: "", rc: 0 }]);
 });
 
 test("redactPublish reads HOME as sed reads it - a BRE, `.` one character under UTF-8 and one byte under C", () => {
   for (const loc of [C, U]) {
-    const dot = same("at /UsersXop/k and /Users.op/j and /Users\u00e9op/m\n", { ...loc, HOME: "/Users.op" });
-    expect(dot.out.startsWith("at ~/k and ~/j and ")).toBe(true);
-    same("/Users/b /Users/aaab /Users/ab\n", { ...loc, HOME: "/Users/a*b" });
-    same("/srv/x1/y /srv/xz/y\n", { ...loc, HOME: "/srv/x[0-9]" });
+    expect(redact("/Users/b /Users/aaab /Users/ab\n", { ...loc, HOME: "/Users/a*b" })).toEqual({ out: "~ ~ ~\n", err: "", rc: 0 });
+    expect(redact("/srv/x1/y /srv/xz/y\n", { ...loc, HOME: "/srv/x[0-9]" })).toEqual({ out: "~/y /srv/xz/y\n", err: "", rc: 0 });
   }
-  // The one locale-dependent answer, pinned so the comparison above is known
-  // to have bitten: under UTF-8 `.` takes the whole é.
-  expect(same("/Users\u00e9op/m\n", { ...U, HOME: "/Users.op" }).out).toBe("~/m\n");
-  expect(same("/Users\u00e9op/m\n", { ...C, HOME: "/Users.op" }).out).toBe(Buffer.from("/Users\u00e9op/m\n", "utf8").toString("latin1"));
+  const dot = "at /UsersXop/k and /Users.op/j and /Users\u00e9op/m\n";
+  expect(redact(dot, { ...U, HOME: "/Users.op" })).toEqual({ out: "at ~/k and ~/j and ~/m\n", err: "", rc: 0 });
+  expect(redact(dot, { ...C, HOME: "/Users.op" })).toEqual({ out: `at ~/k and ~/j and ${Buffer.from("/Users\u00e9op/m\n", "utf8").toString("latin1")}`, err: "", rc: 0 });
 });
 
 test("redactPublish's userinfo class is sed's [:space:] - Unicode under UTF-8, the ASCII six under C", () => {
   const text = "https://a\u00a0b:t@h/ ftp://x\u2003y@h/ s://u\tv@h/ https://ok:tok@h/\n";
-  const c = same(text, { ...C, HOME: "/Users/tester" });
-  const u = same(text, { ...U, HOME: "/Users/tester" });
+  const c = redact(text, { ...C, HOME: "/Users/tester" });
+  const u = redact(text, { ...U, HOME: "/Users/tester" });
   expect(c.out).toBe("https://***@h/ ftp://***@h/ s://u\tv@h/ https://***@h/\n");
   expect(Buffer.from(u.out, "latin1").toString("utf8")).toBe("https://a\u00a0b:t@h/ ftp://x\u2003y@h/ s://u\tv@h/ https://***@h/\n");
 });
 
-test("redactPublish refuses as the bash refuses: sed's own refusal and status for a HOME no BRE can hold, and HOME unset before any spawn", () => {
-  for (const home of ["", "/Users/a|b", "/Users/a\\"]) {
-    const r = same("x\n", { ...C, HOME: home });
-    expect(r.rc).not.toBe(0);
-    expect(r.err).toMatch(/^sed: /);
-  }
-  const bash = bashSide(Buffer.from("x\n"), { ...C, HOME: undefined });
-  expect(bash.rc).toBe(1);
-  expect(bash.err).toContain("HOME: unbound variable");
-  expect(tsSide(Buffer.from("x\n"), { ...C, HOME: undefined })).toEqual({ out: "", err: "", rc: 99 });
+test("redactPublish refuses with sed's own line and status for a HOME no BRE can hold, and throws ENOHOME for HOME unset before any spawn", () => {
+  for (const loc of [C, U])
+    for (const home of ["", "/Users/a|b", "/Users/a\\"]) {
+      const r = redact("x\n", { ...loc, HOME: home });
+      expect([loc, home, r.out, r.rc]).toEqual([loc, home, "", 1]);
+      expect(r.err).toMatch(/^sed: /);
+    }
+  expect(redact("x\n", { ...C, HOME: undefined })).toEqual({ out: "", err: "", rc: 99 });
 });
 
 function cksum(bytes: Uint8Array): number {

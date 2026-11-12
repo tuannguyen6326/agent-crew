@@ -1,7 +1,5 @@
 // maintenance-receipt.test.ts - Bun unit tests for src/maintenance-receipt.ts,
-// one per parser branch. The callers' contract stays owned by
-// tests/sh/ac-maintenance-core.test.sh, which drives the bash names. Run through
-// tests/sh/src.test.sh.
+// one per parser branch. Run through tests/sh/src.test.sh.
 
 import { test, expect, afterAll } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";

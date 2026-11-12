@@ -246,42 +246,6 @@ make_repo() {
   printf '%s\n' "$r"
 }
 
-# Sourced libs with no live caller left, frozen whole under tests/fixtures/.
-# ac-qa-lib.sh sources ac-bun.sh from its own directory, so it is sourced from
-# a bin/ built here, never from tests/fixtures/ itself.
-RETIRED_LIBS="ac-qa-lib.sh ac-pipeline-lib.sh"
-
-make_oracle_bin() {
-  # make_oracle_bin <ac-name> - a bin/ for a port's differential leg: every
-  # live script and retired lib copied beside the bash original frozen at
-  # tests/fixtures/<ac-name>.sh, under a root that links src/ and dashboard/, so
-  # a sibling shim (bin/ac-bun.sh resolves <bin>/..) still starts its module.
-  # Prints the bin dir; the leg runs the oracle from here, the shim from $BIN.
-  local d="$TMP/oracle-$1" lib
-  mkdir -p "$d/bin"
-  cp "$BIN"/*.sh "$d/bin/"
-  for lib in $RETIRED_LIBS; do cp "$ROOT/tests/fixtures/$lib" "$d/bin/$lib"; done
-  ln -s "$ROOT/src" "$d/src"
-  ln -s "$ROOT/dashboard" "$d/dashboard"
-  cp "$ROOT/tests/fixtures/$1.sh" "$d/bin/$1.sh"
-  printf '%s\n' "$d/bin"
-}
-
-make_retired_bin() {
-  # make_retired_bin - make_oracle_bin's bin/ with no entry swapped: the live
-  # scripts plus the retired libs, for a test that sources a retired lib
-  # directly. Built once per suite; prints the bin dir.
-  local d="$TMP/retired" lib
-  if [ ! -d "$d/bin" ]; then
-    mkdir -p "$d/bin"
-    cp "$BIN"/*.sh "$d/bin/"
-    for lib in $RETIRED_LIBS; do cp "$ROOT/tests/fixtures/$lib" "$d/bin/$lib"; done
-    ln -s "$ROOT/src" "$d/src"
-    ln -s "$ROOT/dashboard" "$d/dashboard"
-  fi
-  printf '%s\n' "$d/bin"
-}
-
 # --- delayed kills ------------------------------------------------------------
 #
 # AUTHORITATIVE for how a test bounds a process it started, and for signalling a
@@ -549,6 +513,9 @@ hold_close() {
 #                                 pane whose transcript holds a submitted
 #                                 `claude --...` launch line renders it too, so
 #                                 a spawned claude crewmate shows its composer
+#   $FAKE_HERDR/panes/<p>.nbsp-empty  draw that EMPTY composer as claude 2.1.299
+#                                 does with no hint: `❯`, one NBSP, CR under
+#                                 --ansi, the bare `❯` in a plain read
 #   $FAKE_HERDR/panes/<p>.keep-tail  "<n>" - send-text keeps only the LAST <n>
 #                                 characters, the tail a long send into claude
 #                                 leaves in its composer (measured live)
@@ -860,9 +827,10 @@ case "${1:-} ${2:-}" in
     cat "$d/panes/$3.buf"
     if [ -f "$d/panes/$3.claude-composer" ] || grep -q 'claude --' "$d/panes/$3.buf" 2>/dev/null; then
       rule='────────────────────────────────'
-      printf '%s\n❯ ' "$rule"
-      if [ -s "$d/panes/$3.in" ]; then cat "$d/panes/$3.in"
-      else case "$*" in *--ansi*) printf '\033[2mTry "how does <filepath> work?"\033[0m' ;; *) printf 'Try "how does <filepath> work?"' ;; esac
+      printf '%s\n❯' "$rule"
+      if [ -s "$d/panes/$3.in" ]; then printf ' '; cat "$d/panes/$3.in"
+      elif [ -f "$d/panes/$3.nbsp-empty" ]; then case "$*" in *--ansi*) printf '\302\240\r' ;; esac
+      else case "$*" in *--ansi*) printf ' \033[2mTry "how does <filepath> work?"\033[0m' ;; *) printf ' Try "how does <filepath> work?"' ;; esac
       fi
       printf '\n%s\n  ? for shortcuts\n' "$rule"
     elif [ -s "$d/panes/$3.in" ]; then printf '> '; cat "$d/panes/$3.in"; printf '\n'; fi
@@ -997,6 +965,7 @@ make_fake_orca() {
   # an already-registered path, measured on the real CLI).
   # .create-no-path (worktree create answers ok with an id but NO path - the
   # partial-create shape whose leak the lease must release by id).
+  # worktree-list.json (the envelope `worktree list` serves; absent = no entries).
   # Every call appends one line to $FAKE_ORCA/log.
   export FAKE_ORCA="$TMP/fake-orca"
   mkdir -p "$FAKE_ORCA/terminals" "$TMP/stubbin"
@@ -1092,6 +1061,10 @@ case "${1:-}" in
         wrepo="${wrepo%/.git}"
         git -C "$wrepo" worktree remove --force "$wpath" 2>/dev/null || rm -rf "$wpath"
         printf '{"ok":true,"result":{}}\n'; exit 0 ;;
+      list)
+        if [ -f "$d/worktree-list.json" ]; then cat "$d/worktree-list.json"
+        else printf '{"ok":true,"result":{"worktrees":[]}}\n'; fi
+        exit 0 ;;
       *)
         printf '{"ok":true,"result":{"worktree":{}}}\n'; exit 0 ;;
     esac ;;

@@ -224,11 +224,14 @@ shadow_check() {
 #                   older git every agent trailer would pass unrefused.
 #   jq     1.6    - `--args` / `$ARGS` (bin/ac-brief.sh's qa manifest) exist
 #                   from the 1.6 manual on, not in 1.5's.
-#   bun    1.3.5  - `Bun.Terminal` (dashboard/app.ts's native pty) ships from
-#                   1.3.5 (bun.com/blog/bun-v1.3.5); `bun:sqlite`
-#                   (src/brain.ts) predates it. Required tier: bin/ runs
-#                   the TypeScript under src/ - the ported entries and the
-#                   helpers other scripts start.
+#   bun    1.4.4  - the first build with the fixed brotli decoder
+#                   (CVE-2026-111497, an out-of-bounds write reachable from
+#                   any response fetch decodes; affected 1.0.21-1.4.3), and
+#                   every fetch here is to a remote the fleet does not run.
+#                   `Bun.Terminal` (dashboard/app.ts's native pty, from
+#                   1.3.5) and `bun:sqlite` (src/brain.ts) are older.
+#                   Required tier: bin/ runs the TypeScript under src/ - the
+#                   ported entries and the helpers other scripts start.
 # floor_of/cap_of/cap_probe are the table's three columns; build_check reads
 # them, so adding a row touches no caller.
 floor_of() {
@@ -236,7 +239,7 @@ floor_of() {
     herdr) printf '0.8.0' ;;
     git) printf '2.15.0' ;;
     jq) printf '1.6' ;;
-    bun) printf '1.3.5' ;;
+    bun) printf '1.4.4' ;;
   esac
 }
 cap_of() {

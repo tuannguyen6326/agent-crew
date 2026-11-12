@@ -1226,6 +1226,15 @@ export function chiefFitPx(cols: number, clientWidth: number): number {
   return Math.max(9.5, Math.min(15, (clientWidth - 26) / (cols * 0.6)));
 }
 
+/** A keydown an input method owns, which a composer must not act on: WebKit
+ * fires compositionend BEFORE the keydown of the key that confirms a
+ * candidate, so isComposing reads false there while keyCode is still 229
+ * (MDN "Element: keydown event", keydown events with IME). Pure - the review
+ * chrome and PAGE interpolate its toString(). */
+export function imeOwnsKey(e: { isComposing?: boolean; keyCode?: number }): boolean {
+  return !!e.isComposing || e.keyCode === 229;
+}
+
 export interface ArtifactNode {
   name: string; // this dir's own segment
   key: string; // the full path prefix down to it ("shop/review-r2")

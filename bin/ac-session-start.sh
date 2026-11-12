@@ -9,9 +9,11 @@
 # digest renders informationally.
 #
 # Composes: home identity, session lock, config convergence (crewdeputy
-# homes), toolchain doctor, orphaned-shell-snapshot sweep, queued-wake drain
-# + watcher health, clone staleness hints, worktree-pool health hints, fleet
-# view, backlog head, project registry, and the supervision instruction block.
+# homes), toolchain doctor (plus a `HOOK-DEAD:` line per ported hook module
+# that cannot load, or one for them all when bun is not on PATH),
+# orphaned-shell-snapshot sweep, queued-wake drain + watcher health, clone
+# staleness hints, worktree-pool health hints, fleet view, backlog head,
+# project registry, and the supervision instruction block.
 # The backlog head carries the scheduler report, or its own
 # `WARN   scheduler unavailable` line when ac-ready.sh fails - the same text
 # the wake drain prints, but a read-only digest skips the drain.
@@ -22,7 +24,10 @@
 # digest. It counts and hints, never kills, and prints only when something is
 # wrong - so it is safe in read-only mode too (a pure ps scan, no writes).
 #
-# Ride-alongs after the lock, both non-blocking:
+# Ride-alongs after the lock, all non-blocking:
+# - the home names itself to every harness's hooks (bin/ac-home-carriers.sh;
+#   skipped in read-only mode - it writes the home's harness dirs), so a
+#   later resume whose launch line forgot AC_HOME still runs supervised;
 # - crewdeputy homes pull the parent's inheritable config knobs
 #   (ac_config_converge_from_parent; skipped in read-only mode - convergence
 #   writes config);
@@ -143,6 +148,17 @@ elif [ "$lock_rc" -ne 0 ]; then
   ac_warn "session lock acquire failed (rc=$lock_rc) - continuing unlocked"
 fi
 
+# Home-carriers ride-along: the home names itself to every harness's hooks
+# (src/home-carriers.ts header), so a later resume that forgot AC_HOME on its
+# launch line still runs supervised. Non-blocking - a failed write only warns.
+printf -- '-- home carriers --\n'
+if [ "$read_only" -eq 1 ]; then
+  printf '(read-only: carriers skipped - they write the home'"'"'s harness dirs)\n'
+else
+  car_out="$("$bin_dir/ac-home-carriers.sh" 2>&1)" || true
+  if [ -n "$car_out" ]; then printf '%s\n' "$car_out"; else printf '(no drift)\n'; fi
+fi
+
 # Crewdeputy ride-along: converge inheritable config from the parent home
 # (see header). Non-blocking - a failed pull only warns.
 if ac_is_crewdeputy_home; then
@@ -165,6 +181,35 @@ printf -- '-- toolchain --\n'
 # said nothing at all.
 tc_rc=0
 tc_out="$("$bin_dir/ac-bootstrap.sh" --quiet)" || tc_rc=$?
+# A hook module that cannot load leaves its hook a no-op the harness never
+# shows, so it is built here, never run: each module runs its main at top
+# level, and watch-autoarm's would arm watchers.
+hook_out=""
+if ! command -v bun >/dev/null 2>&1; then
+  hook_out='HOOK-DEAD: every ported hook - bun is not on PATH, so the PreToolUse guards deny every call they see and the other hooks do nothing'
+elif hook_tmp="$(mktemp -d 2>/dev/null)"; then
+  distro_root="$(cd "$bin_dir/.." && pwd -P)"
+  # Only ever called inside $(...): its cd and unsets, ac_bun_start's, keep the
+  # caller's bun configuration out of the build without reaching this shell.
+  hook_build() {
+    local v
+    cd "$distro_root" || return 1
+    for v in $(compgen -e); do case "$v" in BUN_* | JSC_*) unset "$v" ;; esac; done
+    bun build --target=bun "$1" --outdir "$hook_tmp" 2>&1 >/dev/null
+  }
+  for shim in "$bin_dir"/*.sh; do
+    mod="$(sed -nE 's#^ac_bun_exec_(hook|guard) (src/[a-z0-9-]*\.ts) "\$@"$#\2#p' "$shim" | head -n 1)"
+    [ -n "$mod" ] || continue
+    if [ ! -f "$distro_root/$mod" ]; then
+      hook_out="$hook_out${hook_out:+$'\n'}HOOK-DEAD: $mod - bin/${shim##*/} starts it, and it is missing"
+    elif ! build_err="$(hook_build "$mod")"; then
+      build_err="$(printf '%s\n' "$build_err" | grep -m 1 '^error:' || true)"
+      hook_out="$hook_out${hook_out:+$'\n'}HOOK-DEAD: $mod - bin/${shim##*/} cannot load it: ${build_err:-bun build failed}"
+    fi
+  done
+  rm -rf "$hook_tmp"
+fi
+[ -z "$hook_out" ] || tc_out="$tc_out${tc_out:+$'\n'}$hook_out"
 if [ -n "$tc_out" ]; then
   printf '%s\n' "$tc_out"
 elif [ "$tc_rc" -eq 0 ]; then
@@ -456,7 +501,7 @@ if [ "$curate_n" -ge "$curate_x" ]; then
 fi
 
 # An UNSETTLED maintenance transaction refuses every OTHER Learning/Curate
-# transaction (maintenanceApply's claim, src/lib.ts), so one crash between the
+# transaction (maintenanceApply's claim, src/lib-curate.ts), so one crash between the
 # claim and the final `complete` - or one plan whose second action failed -
 # stops the whole knowledge-maintenance loop. It used to do that INVISIBLY: the
 # next learning run warned about a stale receipt and Curate died, neither

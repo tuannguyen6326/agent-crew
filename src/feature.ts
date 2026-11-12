@@ -1,8 +1,7 @@
 // feature.ts - the FEATURE integration-branch verbs (feature-branch-mech). The
 // entry is bin/ac-feature.sh (a shim that starts this file through
-// bin/ac-bun.sh); THIS header is the authoritative spec, and the bash original
-// it replaced stays frozen at tests/fixtures/ac-feature.sh as the oracle the
-// differential leg of tests/sh/ac-feature.test.sh holds this module to.
+// bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-feature.test.sh is its contract test.
 //
 // A feature accumulates SEVERAL crew tasks on one branch per repo that stays
 // LOCAL until ship: create cuts it at the recorded target's freshest tip and
@@ -195,31 +194,26 @@
 // gh's output and ships.env are bytes, and every line built from them is
 // written as those bytes.
 //
-// DIVERGENCES from the original, named in the differential leg:
-// - W6: homeless, create/verify/ship refuse ONCE with the AC_HOME refusal,
-//   where the original printed it twice (a swallowed `$(ac_data_dir)` per
-//   record rung) and then the no-entry remedy; an AC_HOME cd cannot enter is
-//   `AC_HOME is not a readable directory: <h>` once, where the shell printed
-//   cd's own lines and the remedy (exit 1 everywhere).
-// - W1: the ledger awk's own `can't open file` lines are not reproduced, its
-//   exit 2 is.
+// ALSO:
+// - W6: homeless, create/verify/ship refuse ONCE with the AC_HOME refusal; an
+//   AC_HOME cd cannot enter is `AC_HOME is not a readable directory: <h>`
+//   once (exit 1 everywhere).
+// - W1: an unreadable ledger prints nothing of a tool's own; the exit is 2.
 // - W12 (the HOME RESOLUTION ruling): the clone is joined onto the PHYSICAL
 //   home, so under a symlinked AC_HOME the DRY-RUN lines and <cmd> name the
-//   physical clone where the original named AC_HOME as spelled.
-// - bash's own stderr is not reproduced: the job line of a child a signal
-//   ended (`Terminated: 15`), `gh: command not found`, a failed append's
-//   redirection line.
-// - W5: the ships.env key folds per byte under any locale, where the
-//   original folded in the caller's: under a UTF-8 locale bash 3.2's range
-//   kept `é` (`pr_url_é`), so a url the original recorded under such a key
-//   is not seen here and the exit runs again, and the shared-key refusal
-//   fires for other pairs of repos.
+//   physical clone.
+// - No shell stands between this module and its children, so a child a
+//   signal ended, a gh missing from PATH and a failed append add no line of
+//   a shell's own to stderr.
+// - W5: the ships.env key folds per byte under every locale, so a url
+//   recorded under a key folded per character (`pr_url_é`) is not seen here
+//   and the exit runs again.
 // - argv and env arrive decoded: a byte that is not UTF-8 in an argument
 //   reaches this module as U+FFFD, and a branch, target or member id that is
 //   not UTF-8 is spawned decoded; a url gh printed that is not UTF-8 is
 //   recorded and printed as its bytes and reaches the room as its U+FFFD
-//   spelling - the room entry decodes its argv the same way from either
-//   side; a passed/ name that is not UTF-8 reaches ls decoded and fails.
+//   spelling - the room entry decodes its argv too; a passed/ name that is
+//   not UTF-8 reaches ls decoded and fails.
 //
 // CALLERS: no bin/, src/, dashboard/ or hook runs this entry -
 // bin/ac-tree.sh, bin/ac-merge-local.sh, bin/ac-backend-orca.sh and

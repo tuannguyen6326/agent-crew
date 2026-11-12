@@ -2,7 +2,8 @@
 # ac-skills-catalog.test.sh - the catalog-wide schema contract for the built-in
 # skill packages under .agents/skills/. Asserts every TRACKED SKILL.md complies
 # with the Agent Skills specification (https://agentskills.io/specification):
-# dir == name, portable lowercase name <=64, non-empty description <=1024,
+# dir == name, portable lowercase name <=64, non-empty description <=1024
+# (and the catalog's descriptions together within the skill listing budget),
 # top-level frontmatter keys limited to the supported set (no non-standard
 # `user-invocable`), metadata values all strings, no reference `.md` content
 # misplaced under assets/, and SKILL.md stays < 500 lines. Scope is
@@ -204,6 +205,44 @@ for rel in "${skills[@]}"; do
 done
 [ "$found_debrief" = 1 ] || fail "catalog scan did not reach the real .agents/skills (debrief missing)"
 
+# --- Listing budget: the catalog's descriptions fit Claude Code's listing -----
+# Claude Code lists every skill name but keeps descriptions only within a
+# character budget of 1% of the context window, dropping the least-invoked
+# skills' descriptions first - the rarely-loaded chief skills whose
+# descriptions AGENTS.md section 12 uses as its trigger index. The fleet's
+# share is 6000 characters, leaving the rest of the budget to the harness's
+# own skills, the fleet-learned skills seeded beside these and the captain's
+# plugins (https://code.claude.com/docs/en/skills#skill-descriptions-are-cut-short).
+
+desc_budget=6000
+
+# desc_total <SKILL.md...> - the summed length of the packages' descriptions.
+desc_total() {
+  awk '
+    FNR == 1 { d = 0 }
+    /^---[[:space:]]*$/ { d++; next }
+    d == 1 && /^description:/ { s = $0; sub(/^description:[[:space:]]*/, "", s); sub(/[[:space:]]+$/, "", s); total += length(s) }
+    END { print total + 0 }
+  ' "$@"
+}
+
+# check_desc_budget <SKILL.md...> - exit 0 when the descriptions fit, 1 with
+# the total and the three largest on stderr otherwise.
+check_desc_budget() {
+  local total
+  total="$(desc_total "$@")"
+  [ "$total" -le "$desc_budget" ] && return 0
+  {
+    printf 'skill descriptions total %s chars, over the %s listing budget; largest:\n' "$total" "$desc_budget"
+    for f in "$@"; do printf '%s %s\n' "$(desc_total "$f")" "$(basename "$(dirname "$f")")"; done | sort -rn | head -n 3
+  } >&2
+  return 1
+}
+
+skill_paths=()
+for rel in "${skills[@]}"; do skill_paths+=("$ROOT/$rel"); done
+check_desc_budget "${skill_paths[@]}" || fail "the built-in catalog's descriptions overflow the skill listing budget"
+
 # --- Positive synthetic: minimal and string-metadata packages accepted --------
 
 mk_pkg() { # mk_pkg <name> <frontmatter-body...>  -> prints the SKILL.md path
@@ -248,6 +287,15 @@ assert_fails check_skill "$n_bigdesc"         # description > 1024 chars
 
 n_emptydesc="$(mk_pkg n-emptydesc 'name: n-emptydesc' 'description:')"
 assert_fails check_skill "$n_emptydesc"       # empty description
+
+# The listing budget binds the SUM: seven packages each under the per-package
+# cap together overflow it, while one of them alone fits.
+budget_pkgs=()
+for i in 1 2 3 4 5 6 7; do
+  budget_pkgs+=("$(mk_pkg "n-budget-$i" "name: n-budget-$i" "description: $(printf 'y%.0s' $(seq 1 1000))")")
+done
+check_desc_budget "${budget_pkgs[0]}" || fail "one description under the budget must pass"
+assert_fails check_desc_budget "${budget_pkgs[@]}"   # 7000 chars > the listing budget
 
 # Misplaced reference content: a .md under assets/ instead of references/.
 n_misplaced="$(mk_pkg n-misplaced 'name: n-misplaced' 'description: misplaced reference.')"

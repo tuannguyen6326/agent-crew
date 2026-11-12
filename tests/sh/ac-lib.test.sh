@@ -14,13 +14,12 @@
 
 make_home
 sd="$AC_HOME/state"
-RBIN="$(make_retired_bin)"
 
 lib() {
-  # lib <script> - run a body with ac-lib.sh + its wake/qa sub-libs sourced
-  # (audit-f3: ac_wake_*/ac_room_*/ac_roomchief_live/ac_qa_* now live in
-  # ac-wake-lib.sh/ac-qa-lib.sh, not ac-lib.sh).
-  bash -c "set -euo pipefail; . '$BIN/ac-lib.sh'; . '$BIN/ac-wake-lib.sh'; . '$RBIN/ac-qa-lib.sh'; $1"
+  # lib <script> - run a body with ac-lib.sh + its wake sub-lib sourced
+  # (audit-f3: ac_wake_*/ac_room_*/ac_roomchief_live now live in
+  # ac-wake-lib.sh, not ac-lib.sh).
+  bash -c "set -euo pipefail; . '$BIN/ac-lib.sh'; . '$BIN/ac-wake-lib.sh'; $1"
 }
 
 # --- ac_wake_spool_path: scope -> spool dir ---------------------------------
@@ -693,387 +692,6 @@ rm -f "$pc_old"
 assert_fails pcf "$pcrepo"
 assert_eq "$(pcf "$pcrepo" 2>&1)" "" "none: unconfigured project is silent"
 
-# The merge gate inherits the refusal: a legacy copy fails ac_qa_required CLOSED
-# (its ac_die propagates through the direct guard), so no merge proceeds.
-qreq() { bash -c "set -euo pipefail; . '$BIN/ac-lib.sh'; . '$RBIN/ac-qa-lib.sh'; ac_qa_required '$1'"; }
-printf 'qa:\n  require_for_ship: true\n' >"$pc_new"
-printf 'qa:\n  require_for_ship: true\n' >"$pc_old"
-# The named ac_die must SURFACE (not just any non-zero): a fail-open that merely
-# returned "not required" would carry no "RETIRED", so this discriminates the
-# fail-closed guard from a swallowed one - removing the direct guard reds here.
-assert_contains "$(qreq "$pcrepo" 2>&1 || true)" "RETIRED" "legacy copy: ac_qa_required fails CLOSED with the named error"
-rm -f "$pc_old"
-qreq "$pcrepo" || fail "canonical-only: require_for_ship reads from the canonical path"
-
-# The policy grammar: the value past the key's own colon, its comment cut,
-# quotes deleted and its ends trimmed, ENFORCES unless it is an explicit false
-# spelling; a key absent from the qa block does not.
-qreq_on() { printf -- "$1" >"$pc_new"; if qreq "$pcrepo" >/dev/null 2>&1; then printf on; else printf off; fi; }
-for v in true True 'true # c' 'true\t' 'true\t# c' yes 1 maybe '' 'x: false' 'false:x' 'fal se' 'false#x'; do
-  assert_eq "$(qreq_on "qa:\n  require_for_ship: $v\n")" on "require_for_ship: '$v' enforces"
-done
-for v in false False FALSE no No NO off Off OFF '"false"' "'off'" '  NO  ' 'false # c' 'false\t# c' 'false\t'; do
-  assert_eq "$(qreq_on "qa:\n  require_for_ship: $v\n")" off "require_for_ship: '$v' does not"
-done
-assert_eq "$(qreq_on 'qa:\r\n  require_for_ship: true\r\n')" on "a CRLF yaml enforces"
-assert_eq "$(qreq_on 'qa: # c\n  require_for_ship: true\n')" on "a commented qa: header opens the block"
-assert_eq "$(qreq_on 'qa:\n  other: 1\n')" off "a key absent from the qa block is not enforced"
-# EVERY key in the block counts - quoted, a space before its colon, in a flow
-# mapping on the header or nested in one - and ANY value that is no false
-# spelling enforces; a quoted ` #` hides no key past it.
-assert_eq "$(qreq_on 'qa:\n  require_for_ship :true\n')" on "a space before the key's colon enforces"
-assert_eq "$(qreq_on "qa:\n  'require_for_ship': true\n")" on "a single-quoted key enforces"
-assert_eq "$(qreq_on 'qa:\n  "require_for_ship" : yes\n')" on "a double-quoted key enforces"
-assert_eq "$(qreq_on 'qa:\n  scopes:\n    x:\n      require_for_ship: false\n  require_for_ship: true\n')" on "a nested false before a top-level true enforces"
-assert_eq "$(qreq_on 'qa:\n  require_for_ship: false\n  scopes:\n    x:\n      require_for_ship: off\n')" off "every key false is not enforced"
-assert_eq "$(qreq_on 'qa: {require_for_ship: true}\n')" on "a flow mapping on the qa: header enforces"
-assert_eq "$(qreq_on 'qa: {scopes: {x: {require_for_ship: false}}, require_for_ship: on}\n')" on "a nested flow false before a true enforces"
-assert_eq "$(qreq_on 'qa: {require_for_ship: off, serve: x}\n')" off "a flow value ends at its comma"
-assert_eq "$(qreq_on 'qa: {serve: "make dev # x", require_for_ship: true}\n')" on "a quoted # hides no flow key"
-# The awk reads in the C locale: a byte that is no UTF-8 before the policy
-# line no longer aborts it into "not enforced" under the operator's locale.
-printf 'name: caf\351\nqa:\n  require_for_ship: true\n' >"$pc_new"
-LC_ALL=en_US.UTF-8 qreq "$pcrepo" 2>/dev/null || fail "a byte that is no UTF-8 before the policy line still enforces under UTF-8"
-
-# A policy that cannot be READ refuses the run (exit 1, a named ERROR) rather
-# than reading "not enforced": a regular file it cannot read, and a git that
-# cannot run, so no repo resolves to its policy.
-printf 'qa:\n  require_for_ship: false\n' >"$pc_new"
-if [ "$(id -u)" != 0 ]; then
-  chmod 000 "$pc_new"
-  rc=0; out="$(qreq "$pcrepo" 2>&1)" || rc=$?
-  chmod 644 "$pc_new"
-  assert_eq "$rc" 1 "an unreadable policy ends the run with 1"
-  assert_eq "$out" "ERROR: qa.require_for_ship: the project policy $pc_new cannot be read - refusing the merge rather than reading it as not enforced" "an unreadable policy: the named refusal alone"
-fi
-nogit="$TMP/qreq-nogit"; mkdir -p "$nogit"
-for d in /usr/bin /bin; do
-  for f in "$d"/*; do t="${f##*/}"; [ "$t" != git ] && [ ! -e "$nogit/$t" ] && ln -s "$f" "$nogit/$t"; done
-done
-rc=0; out="$(PATH="$nogit" qreq "$pcrepo" 2>&1)" || rc=$?
-assert_eq "$rc" 1 "no git: the run ends with 1"
-assert_eq "$out" "ERROR: qa.require_for_ship: git did not run (is it on PATH?), so the project policy for '$pcrepo' cannot be resolved - refusing the merge rather than reading it as not enforced" "no git: the named refusal alone"
-# A dir holding .git that git refuses (here a .git file whose gitdir is gone)
-# refuses too, while a dir with no .git that git says is no repo stays NOT
-# enforced, silently.
-mkdir -p "$TMP/qreq-gone"; printf 'gitdir: %s/qreq-nowhere\n' "$TMP" >"$TMP/qreq-gone/.git"
-rc=0; out="$(qreq "$TMP/qreq-gone" 2>&1)" || rc=$?
-assert_eq "$rc" 1 "a .git git refuses: the run ends with 1"
-assert_eq "$out" "ERROR: qa.require_for_ship: git could not read the repo at '$TMP/qreq-gone' (it holds .git, but git rev-parse failed there - a corrupt repo, or one safe.directory refuses), so its project policy cannot be resolved - refusing the merge rather than reading it as not enforced" "a .git git refuses: the named refusal alone"
-mkdir -p "$TMP/qreq-plain"
-rc=0; out="$(qreq "$TMP/qreq-plain" 2>&1)" || rc=$?
-assert_eq "$rc:$out" "1:" "a dir that is no repo: not enforced, silent"
-rm -f "$pc_new"
-
-# --- ac_qa_gate_ok: the two-sided, fail-closed merge gate --------------------
-# The mode is read from BOTH sides (the repo-knowledge scope map and the
-# project yaml), because a map-only reading is fail-OPEN under partial
-# migration: with qa.scopes in the yaml and the map absent, it classifies the
-# project FLAT and accepts a legacy bare marker - at the last gate.
-# These are UNIT tests and they source ac-pipeline-lib.sh themselves, so they
-# would pass even with the merge helpers' source line missing. That bug is
-# caught one level up, in ac-merge-local.test.sh / ac-pr-merge.test.sh, which
-# drive the SCRIPTS. This is the one test whose LOCATION is load-bearing.
-gate() {
-  # gate <repo> <sha> - ac_qa_gate_ok with both libs loaded, output merged.
-  bash -c "set -euo pipefail; . '$BIN/ac-lib.sh'; . '$RBIN/ac-pipeline-lib.sh'; . '$RBIN/ac-qa-lib.sh'; ac_qa_gate_ok '$1' '$2'" 2>&1
-}
-gate_ok() { gate "$@" >/dev/null; }
-
-grepo="$(make_repo graterepo)"
-gsha="$(git -C "$grepo" rev-parse HEAD)"
-gcfg="$AC_HOME/projects/graterepo.yaml"
-grecdir="$AC_HOME/records/repo-knowledge"
-gpassed="$grepo/.crew/qa/passed"
-mkdir -p "$AC_HOME/projects" "$grecdir" "$gpassed"
-
-flat_cfg() { printf 'qa:\n  require_for_ship: true\n  serve: "true"\n' >"$gcfg"; }
-scoped_cfg() {
-  printf 'qa:\n  require_for_ship: true\n  serve: "true"\n  scopes:\n    orchid:\n      seed: "true"\n' >"$gcfg"
-}
-declare_map() {
-  { printf '# Repo knowledge: graterepo\n\n'
-    printf '%s\n' "$@"
-    printf '\n## Superseded\n\n'; } >"$grecdir/graterepo.md"
-}
-orchid_line='- scope orchid = orchid-service, orchid-worker | src: cmd:true | at: deadbeef 2026-07-21 | by: fam'
-v2_marker() {
-  # v2_marker <path> <sha> <scope> <app> <profile-sha> [<e2e-sha>]
-  {
-    printf 'schema=agentcrew.qa-attestation/v2\noutcome=passed\n'
-    printf 'run=test-run\ntask=test-task\ncompleted_at=2026-07-24T00:00:00Z\n'
-    printf 'source_sha=%s\n' "$2"
-    printf 'profile_key=graterepo%s\n' "$([ -n "$3" ] && printf '/%s/%s' "$3" "$4")"
-    printf 'profile_sha256=%s\nconfig_sha256=config-hash\n' "$5"
-    printf 'cases_passed=1\ncases_total=1\n'
-    [ -z "$3" ] || { printf 'scope=%s\n' "$3"; printf 'app=%s\n' "$4"; }
-    [ -z "${6:-}" ] || { printf 'e2e_repo=test-e2e\n'; printf 'e2e_sha=%s\n' "$6"; }
-  } >"$1"
-}
-marker_parse() {
-  bash -c "set -euo pipefail; . '$BIN/ac-lib.sh'; . '$RBIN/ac-qa-lib.sh'; ac_qa_attestation_parse '$1' '$2' '${3:-}' '${4:-}'"
-}
-
-# AC30 + AC31(flat): a FLAT project's bare marker is accepted exactly as
-# before, and its absence refuses exactly as before.
-flat_cfg
-rm -f "$grecdir/graterepo.md"
-assert_fails bash -c ". '$BIN/ac-lib.sh'; . '$RBIN/ac-pipeline-lib.sh'; . '$RBIN/ac-qa-lib.sh'; ac_qa_gate_ok '$grepo' '$gsha'"
-: >"$gpassed/$gsha"
-assert_fails gate "$grepo" "$gsha"
-v2_marker "$gpassed/$gsha" "$gsha" "" "" flat-profile
-gate_ok "$grepo" "$gsha" || fail "AC30: a flat project's valid bare v2 marker opens the gate"
-
-# Optional marker keys are validated by PRESENCE, not only by a non-empty
-# parsed value. Empty optional fields must not masquerade as absence.
-bad_marker="$TMP/qa-marker-empty-optional"
-v2_marker "$bad_marker" "$gsha" "" "" flat-profile
-printf 'qa_rule=\n' >>"$bad_marker"
-assert_fails marker_parse "$bad_marker" "$gsha"
-v2_marker "$bad_marker" "$gsha" "" "" flat-profile
-printf 'e2e_repo=\ne2e_sha=\n' >>"$bad_marker"
-assert_fails marker_parse "$bad_marker" "$gsha"
-
-# Unequal or zero case counts refuse: a marker claiming 0/0 or 1/2 proved
-# nothing the gate may honour.
-bad_counts="$TMP/qa-marker-bad-counts"
-v2_marker "$bad_counts" "$gsha" "" "" flat-profile
-sed 's/^cases_passed=1$/cases_passed=0/; s/^cases_total=1$/cases_total=0/' \
-  "$bad_counts" >"$bad_counts.t" && mv "$bad_counts.t" "$bad_counts"
-assert_fails marker_parse "$bad_counts" "$gsha"
-v2_marker "$bad_counts" "$gsha" "" "" flat-profile
-sed 's/^cases_total=1$/cases_total=2/' "$bad_counts" >"$bad_counts.t" \
-  && mv "$bad_counts.t" "$bad_counts"
-assert_fails marker_parse "$bad_counts" "$gsha"
-
-# The marker BODY binds scope/app: a body naming another scope/app cannot
-# satisfy the expected pair (a renamed marker), and a flat marker carrying
-# scope/app keys is malformed rather than quietly scoped.
-mismatch="$TMP/qa-marker-scope-mismatch"
-v2_marker "$mismatch" "$gsha" other other-app x-profile
-assert_fails marker_parse "$mismatch" "$gsha" orchid orchid-service
-flat_scoped="$TMP/qa-marker-flat-carrying-scope"
-v2_marker "$flat_scoped" "$gsha" "" "" flat-profile
-printf 'scope=orchid\napp=orchid-service\n' >>"$flat_scoped"
-assert_fails marker_parse "$flat_scoped" "$gsha"
-
-# AC31 + D14: the SAME bare marker on a SCOPED project REFUSES, and the
-# message says the marker names no scope+app. Honouring it "for
-# compatibility" would keep the gate lying for exactly the heads most likely
-# to carry one.
-scoped_cfg
-declare_map "$orchid_line"
-out="$(gate "$grepo" "$gsha")" && fail "AC31: a bare marker must not satisfy a SCOPED project's gate"
-assert_contains "$out" "bare sha-only marker IS on disk" "AC31: the refusal says the marker names no profile"
-assert_contains "$out" "names no scope+app" "AC31: and says why that is not enough"
-
-# The gate CHECKS ITS OWN DEPENDENCY. The yaml side reads ac_yaml_has, which
-# lives in ac-pipeline-lib.sh; in a caller that sourced only ac-lib.sh that is
-# a command-not-found INSIDE an &&-list - which errexit does not catch and
-# which reads exactly like "the yaml declares no scopes". With no scope map
-# either, that steered a SCOPED project into the FLAT arm, where the bare
-# sha-only marker below satisfies the gate: the exact fail-open the two-sided
-# read exists to refuse. Both callers must refuse the SAME head.
-scoped_cfg
-rm -f "$grecdir/graterepo.md"
-v2_marker "$gpassed/$gsha" "$gsha" "" "" flat-profile
-out="$(gate "$grepo" "$gsha")" && fail "fully-loaded: a half-declared project must refuse"
-assert_contains "$out" "MODE MISMATCH" "fully-loaded, the refusal is the mode-mismatch one"
-out="$(bash -c "set -euo pipefail; . '$BIN/ac-lib.sh'; . '$RBIN/ac-qa-lib.sh'; ac_qa_gate_ok '$grepo' '$gsha'" 2>&1)" \
-  && fail "a caller sourcing only ac-lib.sh reached the FLAT arm and accepted a bare marker"
-assert_contains "$out" "ac-pipeline-lib.sh" \
-  "the refusal names the sibling the caller failed to source"
-rm -f "$gpassed/$gsha"
-declare_map "$orchid_line"
-
-# ...and a scope+app-bearing marker for that same head opens it, printing the
-# pairs so a human judges coverage (AC26). Coverage is SURFACED, never
-# adjudicated: refusing for incomplete coverage would need to know which
-# scopes the head changed, which is diff derivation.
-: >"$gpassed/$gsha.orchid.orchid-service"
-out="$(gate "$grepo" "$gsha")" && fail "an empty scoped marker must not open the gate"
-assert_contains "$out" "Malformed markers ignored" "an empty scoped marker is named as invalid"
-v2_marker "$gpassed/$gsha.orchid.orchid-service" "$gsha" orchid orchid-service orchid-profile
-out="$(gate "$grepo" "$gsha")" || fail "AC31: a scoped marker opens the gate for the same head"
-assert_contains "$out" "passed profiles" "AC26: the gate surfaces which profiles passed"
-assert_contains "$out" "orchid/orchid-service" "AC26: naming the pair"
-
-# AC25: two runs at ONE sha for different scopes coexist - neither overwrites
-# the other, and both are surfaced.
-: >"$gpassed/$gsha.orchid.orchid-worker"
-v2_marker "$gpassed/$gsha.orchid.orchid-worker" "$gsha" orchid orchid-worker worker-profile
-out="$(gate "$grepo" "$gsha")"
-assert_contains "$out" "orchid/orchid-service" "AC25: the first run's marker survives"
-assert_contains "$out" "orchid/orchid-worker" "AC25: alongside the second's"
-
-# AC26: a head with NO marker at all still refuses, exactly as today.
-assert_fails bash -c ". '$BIN/ac-lib.sh'; . '$RBIN/ac-pipeline-lib.sh'; . '$RBIN/ac-qa-lib.sh'; ac_qa_gate_ok '$grepo' '0000000000000000000000000000000000000000'"
-
-# The STRICT marker reader. Every candidate clears three tests or it is
-# SKIPPED and NAMED - it can never authorise a merge, and it can never block
-# one that has a genuine pair beside it.
-rm -f "$gpassed/$gsha".*
-mkdir -p "$gpassed/$gsha.dir.x"                      # a directory, not a file
-: >"$gpassed/$gsha.orchid"                              # one component
-: >"$gpassed/$gsha.a.b.c"                            # three components
-: >"$gpassed/$gsha.zl p.svc"                         # outside the name grammar
-out="$(gate "$grepo" "$gsha")" && fail "no malformed marker may satisfy the gate"
-assert_contains "$out" "Malformed markers ignored" "a malformed marker reads as ignored, not as no run at all"
-assert_contains "$out" "$gsha.orchid" "the one-component marker is named as skipped"
-assert_contains "$out" "$gsha.a.b.c" "the three-component marker is named as skipped"
-case "$out" in *"$gsha.dir.x"*) fail "a DIRECTORY must not even be considered a candidate" ;; esac
-# ...and a genuine pair beside them still opens the gate.
-: >"$gpassed/$gsha.orchid.orchid-service"
-v2_marker "$gpassed/$gsha.orchid.orchid-service" "$gsha" orchid orchid-service orchid-profile
-gate_ok "$grepo" "$gsha" || fail "a stray file must not block a merge that has a real pair"
-rm -rf "$gpassed/$gsha.dir.x" "$gpassed/$gsha".*
-
-# MODE MISMATCH refuses, in BOTH directions, and never falls to the FLAT arm.
-# This is the state a migration passes through, and the arm r1 got fail-open.
-: >"$gpassed/$gsha"
-rm -f "$grecdir/graterepo.md"                        # yaml scoped, map absent
-out="$(gate "$grepo" "$gsha")" && fail "scoped yaml + absent map + bare marker must REFUSE"
-assert_contains "$out" "MODE MISMATCH" "the half-migrated state is named"
-assert_contains "$out" "record declares NONE" "and says which side is missing"
-flat_cfg
-declare_map "$orchid_line"                              # map scoped, yaml flat
-out="$(gate "$grepo" "$gsha")" && fail "scoped map + flat yaml must REFUSE"
-assert_contains "$out" "MODE MISMATCH" "the other direction is named too"
-
-# ...and an EMPTY `qa.scopes:` block counts as PRESENT here too. Read as
-# absent, this gate lands in the FLAT arm and accepts the bare marker sitting
-# right there - the half-migrated state the two-sided read exists to refuse.
-printf 'qa:\n  require_for_ship: true\n  serve: "true"\n  scopes:\n' >"$gcfg"
-rm -f "$grecdir/graterepo.md"
-rm -f "$gpassed/$gsha".*
-: >"$gpassed/$gsha"
-out="$(gate "$grepo" "$gsha")" && fail "F2: an empty qa.scopes block must not reach the FLAT arm"
-assert_contains "$out" "MODE MISMATCH" "an empty block is present, so the gate sees exactly one side"
-
-# An AMBIGUOUS map refuses the merge rather than degrading - the same
-# fail-closed answer `start` gives, so the two ends of the system agree.
-scoped_cfg
-declare_map "$orchid_line" '- scope orchid = imposter | src: cmd:true | at: deadbeef 2026-07-21 | by: forger'
-out="$(gate "$grepo" "$gsha")" && fail "an ambiguous map must refuse the merge"
-assert_contains "$out" "AMBIGUOUS" "the ambiguity is named at the gate too"
-
-# AC27, asserted as an ABSENCE and deliberately: NO test here claims the gate
-# refuses for incomplete coverage. Deciding which scopes a head OUGHT to have
-# covered requires knowing which scopes it changed - diff derivation, which
-# this system does not do. One scope's pass opens the gate for a head that
-# spans two, and the chief and captain judge that with the pairs in hand.
-declare_map "$orchid_line" '- scope cedar = cedar-service | src: cmd:true | at: deadbeef 2026-07-21 | by: fam'
-printf 'qa:\n  require_for_ship: true\n  scopes:\n    orchid:\n      seed: "true"\n    cedar:\n      seed: "true"\n' >"$gcfg"
-rm -f "$gpassed/$gsha"
-: >"$gpassed/$gsha.orchid.orchid-service"
-v2_marker "$gpassed/$gsha.orchid.orchid-service" "$gsha" orchid orchid-service orchid-profile
-gate_ok "$grepo" "$gsha" || fail "AC27: one scope's pass opens the gate; coverage is the human's call"
-rm -f "$gcfg" "$grecdir/graterepo.md"
-
-# --- ac_qa_gate_ok: the required-profile MATRIX (Story 4) ---------------------
-# When the task declares an explicit required-profile manifest, the gate
-# adjudicates the whole SET: every required profile must have a PROFILED passing
-# attestation at exactly this head - not merely any one passing scope/app pair.
-# The matrix arm short-circuits BEFORE the two-sided flat/scoped read, so its
-# fixture needs only require_for_ship - the required set comes from the manifest.
-mgate() { bash -c "set -euo pipefail; . '$BIN/ac-lib.sh'; . '$RBIN/ac-pipeline-lib.sh'; . '$RBIN/ac-qa-lib.sh'; ac_qa_gate_ok '$1' '$2' '$3'" 2>&1; }
-mgate_ok() { mgate "$@" >/dev/null; }
-
-printf 'qa:\n  require_for_ship: true\n' >"$gcfg"
-rm -f "$grecdir/graterepo.md" "$gpassed/$gsha" "$gpassed/$gsha".*
-mfam=mtask
-mman="$AC_HOME/data/$mfam/qa/manifest.json"
-mkdir -p "$AC_HOME/data/$mfam/qa"
-oldsha=1111111111111111111111111111111111111111
-reset_markers() { rm -f "$gpassed/$gsha" "$gpassed/$gsha".* "$gpassed/$oldsha" "$gpassed/$oldsha".*; }
-mk_marker() {
-  # mk_marker <sha> <scope>.<app> <profile_sha256> [<e2e_sha>] - a PROFILED
-  # attestation: filename keys the source sha + scope/app, body binds them.
-  local scope="${2%%.*}" app="${2#*.}"
-  v2_marker "$gpassed/$1.$2" "$1" "$scope" "$app" "$3" "${4:-}"
-}
-manifest() { printf '{"task":"%s","source_ref":"","required_profiles":%s}\n' "$mfam" "$1" >"$mman"; }
-
-# M1: three required profiles, only one passing marker -> REFUSE.
-reset_markers
-manifest '[{"profile_key":"graterepo/orchid/orchid-service"},{"profile_key":"graterepo/cedar/cedar-service"},{"profile_key":"graterepo/maple/maple-core"}]'
-mk_marker "$gsha" orchid.orchid-service aaaa
-out="$(mgate "$grepo" "$gsha" "$mfam")" && fail "M1: three required profiles cannot merge after only one passes"
-assert_contains "$out" "cedar/cedar-service" "M1: the refusal names an unmet required profile"
-assert_contains "$out" "no passing crew-qa attestation" "M1: and says it lacks an attestation at this head"
-
-# M2: every required profile has a profiled marker at this head -> OPEN.
-mk_marker "$gsha" cedar.cedar-service bbbb
-mk_marker "$gsha" maple.maple-core cccc
-out="$(mgate "$grepo" "$gsha" "$mfam")" || fail "M2: all required profiles present opens the gate"
-assert_contains "$out" "required profile" "M2: the passing arm names the satisfied set"
-assert_contains "$out" "graterepo/orchid/orchid-service" "M2: naming each satisfied profile"
-
-# M3: a PASS for an OLDER source SHA does not satisfy the current head.
-reset_markers
-manifest '[{"profile_key":"graterepo/orchid/orchid-service"}]'
-mk_marker "$oldsha" orchid.orchid-service aaaa
-out="$(mgate "$grepo" "$gsha" "$mfam")" && fail "M3: a marker for a different sha does not satisfy this head"
-assert_contains "$out" "no passing crew-qa attestation" "M3: the head under merge has no attestation"
-# ...and an attestation at the head FILENAME whose BODY binds a different
-# source sha is rejected (doc: every attestation matches the merge-head SHA).
-v2_marker "$gpassed/$gsha.orchid.orchid-service" "$oldsha" orchid orchid-service aaaa
-out="$(mgate "$grepo" "$gsha" "$mfam")" && fail "M3b: an attestation whose body binds a different source sha is rejected"
-assert_contains "$out" "source_sha mismatch" "M3b: the refusal says the body sha is not the head"
-
-# M4: a different PROFILE REVISION does not satisfy. Manifest pins the hash.
-reset_markers
-manifest '[{"profile_key":"graterepo/orchid/orchid-service","profile_sha256":"EXPECTED-REV"}]'
-mk_marker "$gsha" orchid.orchid-service GOT-DIFFERENT-REV
-out="$(mgate "$grepo" "$gsha" "$mfam")" && fail "M4: a pass for a different profile revision does not satisfy"
-assert_contains "$out" "profile hash mismatch" "M4: the refusal names the revision mismatch"
-mk_marker "$gsha" orchid.orchid-service EXPECTED-REV
-mgate_ok "$grepo" "$gsha" "$mfam" || fail "M4: the matching profile revision satisfies"
-
-# M5: a different explicitly requested E2E ref does not satisfy. Manifest pins it.
-reset_markers
-manifest '[{"profile_key":"graterepo/orchid/orchid-service","profile_sha256":"EXPECTED-REV","e2e_sha":"E2E-WANT"}]'
-mk_marker "$gsha" orchid.orchid-service EXPECTED-REV E2E-GOT
-out="$(mgate "$grepo" "$gsha" "$mfam")" && fail "M5: a pass for a different E2E ref does not satisfy"
-assert_contains "$out" "E2E hash mismatch" "M5: the refusal names the E2E mismatch"
-mk_marker "$gsha" orchid.orchid-service EXPECTED-REV E2E-WANT
-mgate_ok "$grepo" "$gsha" "$mfam" || fail "M5: the matching E2E ref satisfies"
-
-# M6: a LEGACY marker (no profile hash) cannot satisfy a required manifest,
-# even at the exact head; nor can a bare sha-only marker.
-reset_markers
-manifest '[{"profile_key":"graterepo/orchid/orchid-service"}]'
-{ printf 'source_sha=%s\n' "$gsha"; printf 'cases=1/1\n'; } >"$gpassed/$gsha.orchid.orchid-service"
-out="$(mgate "$grepo" "$gsha" "$mfam")" && fail "M6: a legacy marker with no profile hash cannot satisfy a required manifest"
-assert_contains "$out" "invalid" "M6: the refusal says the marker is legacy/unprofiled"
-reset_markers
-: >"$gpassed/$gsha"
-out="$(mgate "$grepo" "$gsha" "$mfam")" && fail "M6: a bare sha-only marker matches no required profile"
-assert_contains "$out" "no passing crew-qa attestation" "M6: a bare marker is not a profiled attestation for the key"
-
-# M7: NO manifest -> the matrix arm is skipped and the FLAT arm is byte-for-byte
-# the no-task behavior (criterion: a flat single-profile project is unchanged).
-reset_markers
-rm -f "$mman"
-: >"$gpassed/$gsha"
-v2_marker "$gpassed/$gsha" "$gsha" "" "" flat-profile
-mgate_ok "$grepo" "$gsha" "$mfam" || fail "M7: with no manifest, a flat project's valid v2 marker opens the gate"
-
-# M8: a present-but-empty or malformed manifest fails CLOSED - never falls
-# through to the any-pair arm against an undefined required set.
-reset_markers
-: >"$gpassed/$gsha"
-manifest '[]'
-out="$(mgate "$grepo" "$gsha" "$mfam")" && fail "M8: an empty required set must refuse, not merge against nothing"
-assert_contains "$out" "empty or unreadable" "M8: the refusal names the undefined required set"
-printf 'not json' >"$mman"
-out="$(mgate "$grepo" "$gsha" "$mfam")" && fail "M8: a malformed manifest must refuse"
-assert_contains "$out" "empty or unreadable" "M8: a malformed manifest fails closed"
-
-reset_markers
-rm -rf "$AC_HOME/data/$mfam"
-rm -f "$gcfg"
-
 # (the ac_record_launch_opts cases moved to tests/sh/ac-harness.test.sh with the
 # function - audit-f5; run-suite's name mapping keeps test and owner together.)
 
@@ -1218,6 +836,74 @@ assert_eq "$(lib "ac_task_dir 'wire-zz'")" "$AC_HOME/data/wire-zz" \
   "a free-slug id with no nested brief keeps resolving flat"
 rm -rf "$AC_HOME/data/wire" "$AC_HOME/data/wire-e34" "$AC_HOME/data/wire-c"
 
+# --- ac_fam_dir: a story of an epic lives at data/<epic>/<story>/ --------------
+# The read side finds a family by what EXISTS: its flat dir, else the ONE
+# data/<epic>/<story>/ one level down that carries the .family marker (a
+# crewmate's own work/ or verify/ subdir never passes for a story); the same
+# story marked under two epics dies; a family nowhere on disk keeps the flat
+# path, so creation lands there. Every resolver reads through it.
+mkdir -p "$AC_HOME/data/ep/story/spec" "$AC_HOME/data/ep/story/tasks/sub" "$AC_HOME/data/ep/work" "$AC_HOME/data/flatfam"
+: >"$AC_HOME/data/ep/story/.family"
+: >"$AC_HOME/data/ep/story/room.md"
+: >"$AC_HOME/data/ep/story/spec/brief.md"
+: >"$AC_HOME/data/ep/story/tasks/sub/brief.md"
+assert_eq "$(lib "ac_fam_dir 'story'")" "$AC_HOME/data/ep/story" \
+  "a marked story dir resolves under its epic"
+assert_eq "$(lib "ac_fam_dir 'work'")" "$AC_HOME/data/work" \
+  "an unmarked subdir of a family is never a story"
+assert_eq "$(lib "ac_fam_dir 'flatfam'")" "$AC_HOME/data/flatfam" "a flat family stays flat"
+assert_eq "$(lib "ac_fam_dir 'ghost'")" "$AC_HOME/data/ghost" "a family nowhere on disk resolves flat"
+assert_eq "$(lib "ac_fam_dir '*'")" "$AC_HOME/data/*" "an unsafe name never reaches the probe"
+mkdir -p "$AC_HOME/data/ep2/story"
+: >"$AC_HOME/data/ep2/story/.family"
+out="$(lib "ac_fam_dir 'story' 2>&1" || true)"
+assert_contains "$out" "ambiguous family data for story: dirs at both $AC_HOME/data/ep/story and $AC_HOME/data/ep2/story" \
+  "one story marked under two epics dies, the dirs named in byte order"
+rm -rf "$AC_HOME/data/ep2"
+assert_eq "$(lib "ac_task_dir 'story'")" "$AC_HOME/data/ep/story" "the story's own task dir is the nested dir"
+assert_eq "$(lib "ac_task_dir 'story-spec'")" "$AC_HOME/data/ep/story/spec" "a story's stage dir nests under the nested story"
+assert_eq "$(lib "ac_task_dir 'story-chief'")" "$AC_HOME/data/ep/story/chief" "a story's roomchief dir too"
+assert_eq "$(lib "ac_task_dir 'story-sub'")" "$AC_HOME/data/ep/story/tasks/sub" "and its fan-out sub-task"
+assert_eq "$(lib "ac_room_file 'story'")" "$AC_HOME/data/ep/story/room.md" "the story's live room resolves under its epic"
+assert_eq "$(lib "ac_room_file 'story-sub'")" "$AC_HOME/data/ep/story/room.md" "a sub-task id of a nested story resolves to the story's room"
+assert_eq "$(lib "ac_family_of_id 'story-spec'")" "story" "a stage id of a nested story resolves to the story"
+mkdir -p "$AC_HOME/data/archive/2026/oldep/oldstory"
+: >"$AC_HOME/data/archive/2026/oldep/oldstory/.family"
+printf '# Room: oldstory\n' >"$AC_HOME/data/archive/2026/oldep/oldstory/room.md"
+assert_eq "$(lib "ac_room_file 'oldstory'")" "$AC_HOME/data/archive/2026/oldep/oldstory/room.md" \
+  "a story archived with its epic resolves one level down in the archive"
+rm -rf "$AC_HOME/data/ep" "$AC_HOME/data/flatfam" "$AC_HOME/data/archive/2026/oldep"
+
+# --- ac_fam_dir: a family nowhere on disk is placed by the ledger --------------
+# A row carrying epic:<e> whose epic has its own [EPIC] row names a story: it
+# is born at data/<e>/<family>/, and ac_fam_dir_mint creates that dir with its
+# marker. An epic: token with no [EPIC] row, or naming the row itself, is no
+# story; a story whose flat dir predates nesting stays flat forever. The look
+# at the ledger mints nothing: a home with no records/ still has none after.
+rm -rf "$AC_HOME/records"
+assert_eq "$(lib "ac_fam_dir ghost")" "$AC_HOME/data/ghost" "a family with no ledger at all is flat"
+[ ! -e "$AC_HOME/records" ] || fail "resolving a family dir must not mint records/"
+mkdir -p "$AC_HOME/records" "$AC_HOME/data/oldflat"
+cat >>"$AC_HOME/records/backlog.md" <<'PINEOF'
+- [ ] ep3 [EPIC] - the epic (repo: proj)
+- [ ] newstory - a story; epic:ep3 (repo: proj)
+- [ ] orphan - no epic row; epic:nope (repo: proj)
+- [ ] selfref - itself; epic:selfref (repo: proj)
+- [ ] oldflat - a story whose flat dir predates nesting; epic:ep3 (repo: proj)
+PINEOF
+assert_eq "$(lib "ac_fam_dir newstory")" "$AC_HOME/data/ep3/newstory" \
+  "a story not yet on disk is placed under its epic by its ledger row"
+assert_eq "$(lib "ac_room_file newstory")" "$AC_HOME/data/ep3/newstory/room.md" "and so does the room a creator writes"
+assert_eq "$(lib "ac_fam_dir orphan")" "$AC_HOME/data/orphan" "an epic: token with no [EPIC] row stays flat"
+assert_eq "$(lib "ac_fam_dir selfref")" "$AC_HOME/data/selfref" "a self-referencing token stays flat"
+assert_eq "$(lib "ac_fam_dir oldflat")" "$AC_HOME/data/oldflat" "a story whose flat dir already exists stays flat"
+assert_eq "$(lib "ac_fam_dir_mint newstory")" "$AC_HOME/data/ep3/newstory" "mint prints the story's dir"
+assert_file "$AC_HOME/data/ep3/newstory/.family" "and marks it a family of its own"
+assert_eq "$(lib "ac_fam_dir_mint flatnew")" "$AC_HOME/data/flatnew" "a flat family mints flat"
+[ -d "$AC_HOME/data/flatnew" ] || fail "mint creates the flat dir"
+assert_no_file "$AC_HOME/data/flatnew/.family" "with no marker"
+rm -rf "$AC_HOME/data/ep3" "$AC_HOME/data/oldflat" "$AC_HOME/data/flatnew" "$AC_HOME/records/backlog.md"
+
 # --- ac_meta_get: "empty if absent" must hold at BOTH instants ----------------
 # Contract and reasoning: ac_meta_get's own comment block (bin/ac-lib.sh). What
 # these cases pin: a VANISH mid-read is empty+0, a present-but-unreadable file
@@ -1321,9 +1007,10 @@ assert_eq "$(ls -A "$ms")" "$(printf 'bin\nsleeps\nt1.meta')" "...and leave no l
 rm -rf "$ms"
 
 # --- QA coverage manifest parser -----------------------------------------------
-# The parser is shared by the QA recorder and the independent verifier. Keep
-# its closed grammar and exact-tree UT reference checks locked here without
-# invoking a QA runtime or any project test command.
+# src/qa-lib.ts's qaTestplanManifestRender/Validate, shared by the QA recorder
+# and the independent verifier. Keep its closed grammar and exact-tree UT
+# reference checks locked here without invoking a QA runtime or any project
+# test command.
 qmr="$(make_repo qa-manifest)"
 mkdir -p "$qmr/tests"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$qmr/tests/example.test.sh"
@@ -1335,16 +1022,30 @@ qsha="$(git -C "$qmr" rev-parse HEAD)"
 qplan="$TMP/testplan.md"
 qmanifest="$TMP/testplan-manifest.json"
 
-qrender() {
-  bash -c '
-    set -euo pipefail
-    . "$1"
-    . "$2"
-    if ! ac_qa_testplan_manifest_render "$3" "$4" "$5"; then
-      printf "%s\n" "$AC_QA_MANIFEST_ERROR" >&2
-      exit 1
-    fi
-  ' _ "$BIN/ac-lib.sh" "$RBIN/ac-qa-lib.sh" "$qmr" "$qsha" "$1"
+cat >"$TMP/qa-manifest.ts" <<'TS'
+const Q = await import(`${process.env.ROOT}/src/qa-lib.ts`);
+const [verb, ...a] = process.argv.slice(2) as string[];
+if (verb === "render") {
+  const r = Q.qaTestplanManifestRender(a[0]!, a[1]!, a[2]!);
+  if (r.status !== 0) {
+    process.stderr.write(`${r.error}\n`);
+    process.exit(1);
+  }
+  process.stdout.write(r.out);
+} else {
+  const e = Q.qaTestplanManifestValidate(a[0]!, a[1]!, a[2]!, a[3]!, a[4]!);
+  if (e !== null) {
+    process.stderr.write(`${e}\n`);
+    process.exit(1);
+  }
+}
+TS
+qrender() { ROOT="$ROOT" bun --no-env-file "$TMP/qa-manifest.ts" render "$qmr" "$qsha" "$1"; }
+# qrefusal <plan> -> <rc>:<the refusal's first line>
+qrefusal() {
+  local err rc=0
+  err="$(qrender "$1" 2>&1 >/dev/null)" || rc=$?
+  printf '%s:%s' "$rc" "${err%%$'\n'*}"
 }
 
 cat >"$qplan" <<'EOF'
@@ -1381,25 +1082,18 @@ qrender "$qplan" >"$TMP/testplan-manifest.second.json"
 cmp -s "$qmanifest" "$TMP/testplan-manifest.second.json" \
   || fail "re-rendering the same test plan must produce identical manifest bytes"
 qmanifest_sha="$(shasum -a 256 <"$qmanifest" | awk '{print $1}')"
-bash -c '
-  set -euo pipefail
-  . "$1"
-  . "$2"
-  ac_qa_testplan_manifest_validate "$3" "$4" "$5" "$6" "$7"
-' _ "$BIN/ac-lib.sh" "$RBIN/ac-qa-lib.sh" "$qmr" "$qsha" "$qplan" "$qmanifest" "$qmanifest_sha" \
-  || fail "the frozen manifest and recorded hash must revalidate"
-assert_fails bash -c '
-  set -euo pipefail
-  . "$1"
-  . "$2"
-  ac_qa_testplan_manifest_validate "$3" "$4" "$5" "$6" WRONG
-' _ "$BIN/ac-lib.sh" "$RBIN/ac-qa-lib.sh" "$qmr" "$qsha" "$qplan" "$qmanifest"
+qvalidate() { ROOT="$ROOT" bun --no-env-file "$TMP/qa-manifest.ts" validate "$qmr" "$qsha" "$qplan" "$qmanifest" "$1" 2>&1; }
+assert_eq "$(qvalidate "$qmanifest_sha"; printf ':%s' "$?")" ":0" \
+  "the frozen manifest and recorded hash must revalidate"
+assert_eq "$(qvalidate WRONG; printf ':%s' "$?")" "$(printf 'frozen manifest hash mismatch\n:1')" \
+  "another recorded hash refuses"
 
 cat >"$qplan" <<'EOF'
 ## Coverage
 coverage: AC-1 | it | - | C-1
 EOF
-assert_fails qrender "$qplan"
+assert_eq "$(qrefusal "$qplan")" "1:test plan needs exactly one ## Full Flow section" \
+  "a plan with no full-flow section refuses"
 
 cat >"$qplan" <<'EOF'
 ## Coverage
@@ -1409,7 +1103,8 @@ coverage: AC-1 | it | - | C-1
 ## Full Flow
 full-flow: C-1
 EOF
-assert_fails qrender "$qplan"
+assert_eq "$(qrefusal "$qplan")" "1:duplicate coverage declaration at line 3" \
+  "a duplicate coverage declaration refuses"
 
 cat >"$qplan" <<'EOF'
 ## Coverage
@@ -1419,7 +1114,8 @@ coverage: assembled | it | - | C-1
 ## Full Flow
 full-flow: C-1
 EOF
-assert_fails qrender "$qplan"
+assert_eq "$(qrefusal "$qplan")" "1:UT coverage AC-1 does not name a regular tracked blob at $qsha: tests/link.test.sh" \
+  "a UT reference to a tracked symlink refuses"
 
 cat >"$qplan" <<'EOF'
 ## Coverage
@@ -1429,87 +1125,8 @@ coverage: assembled | it | - | C-1
 ## Full Flow
 full-flow: C-1
 EOF
-assert_fails qrender "$qplan"
-
-# --- QA boundary policy receipt validators --------------------------------------
-# The closed tier/boundary table and the receipt validators are shared by three
-# actors (ac-qa records and gates, ac-verify reconciles, the merge gate reads),
-# so they are tested where they live rather than through each caller.
-coh() { lib "ac_qa_boundary_coherent '$1' '$2'"; }
-coh api http    || fail "api accepts an http stimulus"
-coh api e2e     || fail "api accepts the approved e2e boundary"
-coh db workflow || fail "db accepts a workflow-stimulated durable assertion"
-coh workflow queue || fail "workflow accepts a queue message"
-coh web web     || fail "web accepts a real browser"
-! coh api web      || fail "api must not be satisfied by a browser transcript"
-! coh web http     || fail "web must not be satisfied by a plain request"
-! coh workflow http || fail "workflow must not be satisfied by a plain request"
-! coh api bogus    || fail "an unknown boundary is never coherent"
-! coh api unit     || fail "unit is not a QA execution boundary"
-
-rt="$TMP/runtime-receipt.env"
-{
-  printf 'schema=agentcrew.qa-runtime-receipt/v1\n'
-  printf 'source_sha=SRC\nprofile_sha256=PROF\n'
-  printf 'serve_command_sha256=SERVE\nhealth_command_sha256=HEALTH\n'
-  printf 'runtime_descriptor_sha256=DESC\n'
-  printf 'serve_started_at=2026-07-25T00:00:00Z\nhealth_completed_at=2026-07-25T00:00:01Z\n'
-  printf 'process_group=4242\n'
-} >"$rt"
-lib "ac_qa_runtime_receipt_validate '$rt' SRC PROF SERVE HEALTH DESC" \
-  || fail "a complete boot receipt validates"
-! lib "ac_qa_runtime_receipt_validate '$rt' OTHER PROF SERVE HEALTH DESC" \
-  || fail "a boot receipt for another source must refuse"
-! lib "ac_qa_runtime_receipt_validate '$rt' SRC PROF CHANGED HEALTH DESC" \
-  || fail "a changed serve command must refuse"
-! lib "ac_qa_runtime_receipt_validate '$rt' SRC PROF SERVE HEALTH CHANGED" \
-  || fail "a changed runtime descriptor must refuse"
-! lib "ac_qa_runtime_receipt_validate '$TMP/nope.env' SRC PROF SERVE HEALTH DESC" \
-  || fail "an absent boot receipt must refuse"
-# Liveness is deliberately NOT part of the validator: post-teardown
-# reconciliation validates the immutable record, and a normally terminated
-# process must never invalidate an honest run.
-sed -i.bak 's/^process_group=.*/process_group=0/' "$rt"
-! lib "ac_qa_runtime_receipt_validate '$rt' SRC PROF SERVE HEALTH DESC" \
-  || fail "a receipt with no positive process group must refuse"
-sed -i.bak 's/^process_group=.*/process_group=4242/' "$rt"
-
-br="$TMP/boundary-receipt.env"
-{
-  printf 'schema=agentcrew.qa-boundary-receipt/v1\n'
-  printf 'source_sha=SRC\nprofile_sha256=PROF\nruntime_receipt_sha256=RT\n'
-  printf 'case_id=C-1\nboundary=http\ndriver=command\n'
-  printf 'stimulus_sha256=STIM\nevidence_sha256=EV\nupstream_receipt_sha256=-\n'
-  printf 'started_at=2026-07-25T00:00:02Z\ncompleted_at=2026-07-25T00:00:03Z\nexit_code=0\n'
-} >"$br"
-lib "ac_qa_boundary_receipt_validate '$br' C-1 api pass SRC PROF RT" \
-  || fail "a coherent zero-exit boundary receipt validates a passing case"
-! lib "ac_qa_boundary_receipt_validate '$br' C-2 api pass SRC PROF RT" \
-  || fail "a receipt naming another case must refuse"
-! lib "ac_qa_boundary_receipt_validate '$br' C-1 web pass SRC PROF RT" \
-  || fail "an incoherent tier/boundary pair must refuse"
-! lib "ac_qa_boundary_receipt_validate '$br' C-1 api pass SRC PROF OTHER" \
-  || fail "a receipt bound to another runtime must refuse"
-sed -i.bak 's/^exit_code=.*/exit_code=2/' "$br"
-! lib "ac_qa_boundary_receipt_validate '$br' C-1 api pass SRC PROF RT" \
-  || fail "a passing case cannot bind a non-zero execution"
-lib "ac_qa_boundary_receipt_validate '$br' C-1 api fail SRC PROF RT" \
-  || fail "a failing case may bind a non-zero execution"
-
-gt="$TMP/runtime-gate.env"
-{
-  printf 'schema=agentcrew.qa-runtime-gate/v1\n'
-  printf 'source_sha=SRC\nprofile_sha256=PROF\nruntime_receipt_sha256=RT\n'
-  printf 'process_group=4242\nhealth_command_sha256=HEALTH\n'
-  printf 'validated_at=2026-07-25T00:00:04Z\nalive=1\nhealth_exit_code=0\n'
-} >"$gt"
-lib "ac_qa_runtime_gate_validate '$gt' SRC PROF RT HEALTH 4242" \
-  || fail "a complete gate receipt validates"
-! lib "ac_qa_runtime_gate_validate '$gt' SRC PROF OTHER HEALTH 4242" \
-  || fail "a gate bound to another boot receipt must refuse"
-sed -i.bak 's/^health_exit_code=.*/health_exit_code=1/' "$gt"
-! lib "ac_qa_runtime_gate_validate '$gt' SRC PROF RT HEALTH 4242" \
-  || fail "a gate whose final probe failed must refuse"
+assert_eq "$(qrefusal "$qplan")" "1:UT coverage AC-1 has an unsafe repository test path: ../tests/example.test.sh" \
+  "a UT reference climbing out of the repo refuses"
 
 # --- ac_crew_metas: the one crew enumerator and its named skip classes -------
 # (audit-f4) Every "is this crew?" glob loop names its policy as skip-classes
@@ -1538,10 +1155,11 @@ assert_eq "$(lib "ac_crew_metas '$TMP/no-such-state-dir'")" "" "an absent dir pr
 # twice (.change-* orphans live, then .seen-hash-/.report-hash-/.superseded-
 # added with no reaper at all).
 stamps="$(lib "ac_task_stamps /sd tid1")"
-for b in hash change seen seen-hash stale gone ask unobservable report-hash superseded busy busy-stalled; do
+for b in hash change seen seen-hash stale gone ask unobservable report-hash superseded busy busy-stalled ended rewake \
+  stale-count stale-capped deferred-since; do
   assert_contains "$stamps" "/sd/.$b-tid1" "stamp list carries .$b-<id>"
 done
-assert_eq "$(printf '%s\n' "$stamps" | wc -l | tr -d ' ')" "12" "exactly the twelve stamp kinds, no strays"
+assert_eq "$(printf '%s\n' "$stamps" | wc -l | tr -d ' ')" "17" "exactly the seventeen stamp kinds, no strays"
 
 # --- crewdomain routing table: a SECOND registry, disjoint from the deputy one
 # The crewdomain feature is ADDITIVE - records/crewdeputies.md and

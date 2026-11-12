@@ -5,8 +5,7 @@
 // the ship gate's two ledger filters (memberRows, containerContract) against
 // the awk programs they replaced, run through the AC_DONELINE_AWK binding over
 // the same ledger. The CLI contract itself (every verb, stdout, stderr, exit)
-// is tests/sh/ac-feature.test.sh's, whose differential leg runs the frozen
-// bash original beside the shim.
+// is tests/sh/ac-feature.test.sh's.
 import { afterAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -89,11 +88,28 @@ test("roomFile resolves what ac_room_file resolves: live first, the guarded arch
   put(h, "data/nest-kid/tasks/sub/brief.md");
   put(h, "data/archive/2026/nest/room.md");
   put(h, "data/archive/2026/room.md");
+  put(h, "data/ep/story/.family", "");
+  put(h, "data/ep/story/room.md");
+  put(h, "data/ep/story/tasks/sub/brief.md");
+  mkdirSync(join(h, "data", "ep", "work"), { recursive: true });
+  put(h, "data/archive/2026/oldep/oldstory/.family", "");
+  put(h, "data/archive/2026/oldep/oldstory/room.md");
+  put(h, "data/archive/2026/oldep/oldfan/.family", "");
+  put(h, "data/archive/2026/oldep/oldfan/room.md");
+  put(h, "data/ep/oldfan/tasks/kid/brief.md");
+  put(h, "data/ep/oldfan/.family", "");
   for (const fam of [
     "live", "both", "arch", "ord", "hid", "a.b", "dirroom", "linked", "fam", "fam-slug", "fam-two-part", "fam-nope", "old-x", "a-b-c", "nest-kid-sub",
     "nest-kid", "ghost", "ghost-x-y", "bad.name", "../live", "a/b", "é", "", "-", "-x", "x-",
+    "story", "story-sub", "work", "oldstory", "oldfan", "oldfan-kid", "ep",
   ])
     sameRoom(fam);
+  expect(roomFile("story")).toBe(join(h, "data", "ep", "story", "room.md"));
+  expect(roomFile("story-sub")).toBe(join(h, "data", "ep", "story", "room.md"));
+  expect(roomFile("work")).toBe(join(h, "data", "work", "room.md"));
+  expect(roomFile("oldstory")).toBe(join(h, "data", "archive", "2026", "oldep", "oldstory", "room.md"));
+  // A story archived with its epic whose fan-out brief still sits in the live tree walks to the archived room.
+  expect(roomFile("oldfan-kid")).toBe(join(h, "data", "archive", "2026", "oldep", "oldfan", "room.md"));
   expect(roomFile("both")).toBe(join(h, "data", "both", "room.md"));
   expect(roomFile("arch")).toBe(join(h, "data", "archive", "2026", "arch", "room.md"));
   // Byte order: B1 before a1, where a case-folding collation reads a1 first.

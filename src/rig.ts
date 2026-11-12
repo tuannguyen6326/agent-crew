@@ -1,10 +1,8 @@
 // rig.ts - the rig manifest and its drift check. The entry is bin/ac-rig.sh
 // (a shim that starts this file through bin/ac-bun.sh); THIS header is the
-// authoritative spec, and the bash original it replaced stays frozen at
-// tests/fixtures/ac-rig.sh as the oracle the differential leg of
-// tests/sh/ac-rig.test.sh holds this module to. The refusal and verdict texts
-// below still say `the bin/ac-rig.sh header`: they are the original's bytes,
-// and the entry's header points here.
+// authoritative spec, and tests/sh/ac-rig.test.sh is its contract test. The
+// refusal and verdict texts below still say `the bin/ac-rig.sh header`: the
+// entry's header points here.
 //
 // Usage: ac-rig.sh drift
 //
@@ -126,24 +124,21 @@
 //     UNVERIFIABLE: standing_jobs/liveness - <n> declared job(s); CronCreate is session-only, so no on-disk signal says whether any of them is scheduled right now - settle it with: CronList in the harness - no shell on this host can answer it
 //   rig: <ok> ok, <drift> drift, <unver> unverifiable
 //
-// JQ: every read of the manifest is jq, spawned with the original's filters,
-// so what the manifest means is jq's reading - a stream of values is
-// accepted, a lone null or false fails `jq -e .` (refusal 3), `nan` parses,
-// `//` reads false as absent - and a non-string name or value is spelled as
+// JQ: every read of the manifest is jq, so what the manifest means is jq's
+// reading - a stream of values is accepted, a lone null or false fails
+// `jq -e .` (refusal 3), `nan` parses, `//` reads false as absent - and a non-string name or value is spelled as
 // `tostring` spells it: `7`, `1.0` kept, `1e2` as `1E+2`, `-0`, a big integer
 // intact, `true`, `null` (a nameless knob is config/null), an object as
 // compact JSON. The knob rows travel as name, kind, value joined by US (0x1f)
 // and are read line by line as `read -r` read them, so a value holding a
-// newline tears its row (not a contract). Pinned by the differential leg.
+// newline tears its row (not a contract).
 //
 // BYTES AND ORDER: the pointer, the ids and jq's output are bytes written
 // back as the same bytes; a pointer holding only newlines reads as "", and
 // canon("") is the cwd, as `cd ""` was (physicalDir, pinned in
 // tests/ts/rig.test.ts). The liveness count reads a blank as the C locale's
-// [:space:] (ASCII). Direction B walks config/ in byte order, where bash's
-// glob followed libc collation under a UTF-8 locale - named in the leg.
-// `-h` prints this header where the original printed its own - the one
-// deliberate non-identical leg.
+// [:space:] (ASCII). Direction B walks config/ in byte order, whatever the
+// locale. `-h` prints this header.
 //
 // WHAT IS DELIBERATELY NOT DECLARED, so a reader does not add it back:
 // - SERVICE LIVENESS (dashboard, remote poll, brain). Services start and stop

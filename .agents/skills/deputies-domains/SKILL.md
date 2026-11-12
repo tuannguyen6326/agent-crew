@@ -1,6 +1,6 @@
 ---
 name: deputies-domains
-description: Crewdeputies (persistent nested homes with their own clones and session) and crewdomains (knowledge + routed ledger slices inside this fleet): provisioning, the routing table, intake routing by scope, the marked order channel and return channel, recovery, the domain token cycle, domainchiefs, retire, and domain standing rules. Load before routing an order to a deputy or domain, provisioning either, assigning a domain token, or reconciling an ORPHAN-TOKEN.
+description: Crewdeputies (nested homes) and crewdomains (knowledge plus routed ledger slices): provisioning, routing, channels, token cycle, retire. Load before routing to a deputy or domain, provisioning one, or an ORPHAN-TOKEN.
 ---
 
 # deputies-domains

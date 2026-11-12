@@ -1,6 +1,6 @@
 ---
 name: debrief
-description: Route and curate uncaptured session knowledge before a reset, then reconcile rooms and fleet state without discarding work. Use at the end of a work session, before a context reset, or when the captain invokes /debrief. Landing-time debriefs remain the primary task-level mechanism.
+description: Route and curate uncaptured session knowledge before a reset, then reconcile rooms and fleet state. Use at the end of a session, before a context reset, or on /debrief.
 ---
 
 # debrief

@@ -1,15 +1,13 @@
-// learn.test.ts - what src/learn.ts brought into src/lib.ts, held to the bash
-// it twins - learnDue, skillsDir and maintenanceIncomplete to the live readers
-// session start keeps (bin/ac-maintenance-lib.sh, bin/ac-lib.sh), the writers
-// to their originals frozen at tests/fixtures/ac-maintenance-retired.sh: the
-// Learning cadence (learnTick, learnTickKeyed,
-// learnGeneration, learnDue, learnReset and the legacy-key migrate under them),
-// curateTick, skillsDir (ac_skills_dir), maintenanceIncomplete and
-// crewmateLearnedNoLoss; plus src/learn.ts's read-evidence floor, held to the
-// lib's AC_MAINTENANCE_QUOTE_MIN. The CLI contract is tests/sh/ac-learn.test.sh's,
-// whose differential leg runs the frozen original beside the shim.
+// learn.test.ts - what src/learn.ts brought into src/lib-learn.ts: learnDue,
+// skillsDir and maintenanceIncomplete held to the live readers session start
+// keeps (bin/ac-maintenance-lib.sh, bin/ac-lib.sh); the Learning cadence
+// writers (learnTick, learnTickKeyed, learnGeneration, learnReset and the
+// legacy-key migrate under them), curateTick and crewmateLearnedNoLoss held to
+// the expectations the comment above each states; and src/learn.ts's
+// read-evidence floor, held to the lib's AC_MAINTENANCE_QUOTE_MIN. The CLI
+// contract is tests/sh/ac-learn.test.sh's.
 //
-// DISPUTED: the implementation of each helper (its bash - live or frozen - vs src/lib.ts)
+// DISPUTED: the implementation of each live-bash reader (bin/ac-lib.sh and bin/ac-maintenance-lib.sh vs src/lib-learn.ts)
 // HELD-CONSTANT: one side root per side and row seeded alike (a home at <side>/home); argv; env (PATH = a stub dir - date answering one instant, sleep logging to <side>/sleep.log and returning - then the host's bun and jq, then /bin and /usr/bin without herdr, orca, docker, codegraph or jq; LC_ALL=C; HOME and TMPDIR the test root; AC_HOME where a row sets it); cwd (the distro root); stdin (/dev/null); the process started through /bin/sh; stdout, stderr and the status (the side root spelled S, the side's pid PID) and the side root's world after the call - every path with its mode and bytes - compared whole.
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -18,7 +16,7 @@ import { join } from "node:path";
 
 const ROOT = realpathSync(join(import.meta.dir, "..", ".."));
 const BIN = join(ROOT, "bin");
-const LIB = join(ROOT, "src", "lib.ts");
+const LIB = join(ROOT, "src", "lib-learn.ts");
 const LEARN = join(ROOT, "src", "learn.ts");
 const W = realpathSync(mkdtempSync(join(tmpdir(), "ac-learn-ts-")));
 afterAll(() => {
@@ -43,8 +41,8 @@ chmodSync(join(TOOLS, "sleep"), 0o755);
 const PATH = `${TOOLS}:${BASE}`;
 
 type Row = {
-  // the bash call, run after sourcing ac-lib.sh, ac-maintenance-lib.sh, ac-bun.sh and the frozen ac-maintenance-retired.sh, its arguments "$@"
-  bash: string;
+  // the live bash call, run after sourcing ac-lib.sh and ac-maintenance-lib.sh, its arguments "$@"; none for a row only the twin runs
+  bash?: string;
   // the twin's body: L is src/lib.ts, A the arguments
   twin: string;
   args?: string[];
@@ -83,7 +81,7 @@ function side(row: Row, s: string, oracle: boolean): Side {
   for (const [k, v] of Object.entries(row.env ?? {})) env[k] = v.replaceAll("@S", s);
   const args = (row.args ?? []).map((a) => a.replaceAll("@S", s));
   const cmd = oracle
-    ? ["/bin/bash", "-c", `set -uo pipefail; . "$0/ac-lib.sh" || exit $?; . "$0/ac-maintenance-lib.sh" || exit $?; . "$0/ac-bun.sh" || exit $?; . "$0/../tests/fixtures/ac-maintenance-retired.sh" || exit $?; ${row.bash}; printf '|rc=%s' "$?"`, BIN, ...args]
+    ? ["/bin/bash", "-c", `set -uo pipefail; . "$0/ac-lib.sh" || exit $?; . "$0/ac-maintenance-lib.sh" || exit $?; ${row.bash}; printf '|rc=%s' "$?"`, BIN, ...args]
     : [
         process.execPath,
         "-e",
@@ -95,7 +93,7 @@ function side(row: Row, s: string, oracle: boolean): Side {
   return { out: norm(r.stdout.toString("latin1")), err: norm(r.stderr.toString("latin1")), world: norm(world(s)), status: r.exitCode };
 }
 
-function same(label: string, row: Row, ended?: { status: number; code: string; shell: string }): { o: Side; t: Side } {
+function same(label: string, row: Row): { o: Side; t: Side } {
   const root = join(W, `r${rows++}`);
   const sides: Side[] = [];
   for (const name of ["o", "t"]) {
@@ -106,13 +104,24 @@ function same(label: string, row: Row, ended?: { status: number; code: string; s
   }
   const [o, t] = sides as [Side, Side];
   const view = (x: Side) => ({ label, out: x.out, err: x.err, status: x.status, world: x.world });
-  if (ended) {
-    expect([o.out, o.status, o.err.includes(ended.shell), t.out, t.err]).toEqual(["", ended.status, true, `|rc=throw:${ended.code}`, ""]);
-    t.out = o.err = "";
-    t.status = o.status;
-  }
   expect(view(t)).toEqual(view(o));
   return { o, t };
+}
+
+// The twin alone on a fresh side root: its stdout and stderr, and each of
+// <read> (paths under the root) as its bytes, `<dir>` for a directory, null
+// when absent.
+function twin(row: Row, read: string[] = []): Record<string, string | null> {
+  const s = join(W, `r${rows++}`);
+  mkdirSync(join(s, "home"), { recursive: true });
+  row.seed?.(s);
+  const r = side(row, s, false);
+  const got: Record<string, string | null> = { out: r.out, err: r.err };
+  for (const rel of read) {
+    const p = join(s, rel);
+    got[rel] = !existsSync(p) ? null : lstatSync(p).isDirectory() ? "<dir>" : readFileSync(p, "latin1");
+  }
+  return got;
 }
 
 const put = (p: string, b: string | Buffer): void => {
@@ -122,9 +131,11 @@ const put = (p: string, b: string | Buffer): void => {
 const STATE = (s: string, name: string, body: string): void => put(join(s, "home", "state", name), body);
 const HOME = { AC_HOME: "@S/home" };
 
-// learn_cadence_call's reading of a cadence function: its words replayed to
-// stderr, and 2 for a failure that spoke.
-const CADENCE = (call: string): string => `err="$(${call} 2>&1)"; rc=$?; [ -z "$err" ] || printf '%s\\n' "$err" >&2; [ "$rc" -eq 0 ] || [ -z "$err" ] || rc=2; (exit "$rc")`;
+const META = "home/state/.learn.meta";
+const TICKS = "home/state/.learn-ticks";
+const LOCK = "home/state/.learn-cadence.lock";
+const SLEPT = "1\n".repeat(10);
+const STAMPED = "last_run=1767225600\n";
 
 test("the read-evidence floor src/learn.ts passes is the lib's AC_MAINTENANCE_QUOTE_MIN", () => {
   const r = Bun.spawnSync(["/bin/bash", "-c", `. "$0/ac-lib.sh"; . "$0/ac-maintenance-lib.sh"; printf %s "$AC_MAINTENANCE_QUOTE_MIN"`, BIN], { cwd: ROOT, env: { PATH, HOME: W, LC_ALL: "C" }, stdin: "ignore", stdout: "pipe" });
@@ -133,20 +144,20 @@ test("the read-evidence floor src/learn.ts passes is the lib's AC_MAINTENANCE_QU
 
 test("learnDue and learnGeneration: the counter (the legacy key as fallback) and learn-every, 0 and 8 unless digits", () => {
   const DUE: Row = { bash: `ac_learn_due`, twin: `writeSync(1, L.learnDue().join(" ") + "\\n"); return 0;`, env: HOME };
-  const GEN: Row = { bash: `ac_learn_generation`, twin: `writeSync(1, L.learnGeneration() + "\\n"); return 0;`, env: HOME };
-  for (const [label, body] of [
-    ["absent", null],
-    ["set", "generation=3\ndebriefs=7\n"],
-    ["the legacy key", "stows=5\n"],
-    ["both keys - debriefs wins", "stows=5\ndebriefs=2\n"],
-    ["garbage", "generation=3x\ndebriefs=-1\n"],
-    ["the last value wins", "debriefs=1\ndebriefs=4\ngeneration=2\ngeneration=\n"],
-  ] as [string, string | null][]) {
+  const GEN: Row = { twin: `writeSync(1, L.learnGeneration() + "\\n"); return 0;`, env: HOME };
+  for (const [label, body, gen] of [
+    ["absent", null, "0"],
+    ["set", "generation=3\ndebriefs=7\n", "3"],
+    ["the legacy key", "stows=5\n", "0"],
+    ["both keys - debriefs wins", "stows=5\ndebriefs=2\n", "0"],
+    ["garbage", "generation=3x\ndebriefs=-1\n", "0"],
+    ["the last value wins", "debriefs=1\ndebriefs=4\ngeneration=2\ngeneration=\n", "0"],
+  ] as [string, string | null, string][]) {
     const seed = (s: string): void => {
       if (body !== null) STATE(s, ".learn.meta", body);
     };
     same(`due: ${label}`, { ...DUE, seed });
-    same(`generation: ${label}`, { ...GEN, seed });
+    expect([label, twin({ ...GEN, seed }, [META])]).toEqual([label, { out: `${gen}\n|rc=0`, err: "", [META]: body }]);
   }
   for (const [label, every] of [["5", "5\n"], ["spaced", "  12 \r\n"], ["garbage", "eight\n"], ["empty", ""]] as [string, string][])
     same(`due: learn-every ${label}`, { ...DUE, seed: (s) => put(join(s, "home", "config", "learn-every"), every) });
@@ -161,49 +172,78 @@ test("learnDue and learnGeneration: the counter (the legacy key as fallback) and
 }, 60_000);
 
 test("learnTick: under the cadence lock, the migrate, generation kept and debriefs+1 as bash arithmetic", () => {
-  const TICK: Row = { bash: `ac_learn_tick`, twin: `return L.learnTick() ? 0 : 1;`, env: HOME };
-  same("no meta", TICK);
-  same("a meta", { ...TICK, seed: (s) => STATE(s, ".learn.meta", "last_run=1\ngeneration=3\ndebriefs=4\nother=x\n") });
-  same("the legacy key migrates", { ...TICK, seed: (s) => STATE(s, ".learn.meta", "generation=1\nstows=6\nlast_run=2\n") });
-  same("a half-migrated meta keeps debriefs", { ...TICK, seed: (s) => STATE(s, ".learn.meta", "stows=6\ndebriefs=2\n") });
-  same("an octal count", { ...TICK, seed: (s) => STATE(s, ".learn.meta", "debriefs=010\n") });
-  same("a count too great for its base ends the shell, the lock still held", { ...TICK, seed: (s) => STATE(s, ".learn.meta", "debriefs=08\n") }, { status: 1, code: "EARITH", shell: "08: value too great for base" });
-  same("a busy cadence lock: 10 waits, then the warning", { ...TICK, seed: (s) => STATE(s, ".learn-cadence.lock/pid", `${process.pid}\n`) });
-  same("a dead holder's lock is taken", { ...TICK, seed: (s) => STATE(s, ".learn-cadence.lock/pid", "999999\n") });
+  const TICK: Row = { twin: `return L.learnTick() ? 0 : 1;`, env: HOME };
+  const tick = (seed?: (s: string) => void) => twin({ ...TICK, seed }, [META, LOCK, "sleep.log"]);
+  const counted = (meta: string) => ({ out: "|rc=0", err: "", [META]: meta, [LOCK]: null, "sleep.log": null });
+  expect(tick()).toEqual(counted("generation=0\ndebriefs=1\n"));
+  expect(tick((s) => STATE(s, ".learn.meta", "last_run=1\ngeneration=3\ndebriefs=4\nother=x\n"))).toEqual(counted("last_run=1\nother=x\ngeneration=3\ndebriefs=5\n"));
+  expect(tick((s) => STATE(s, ".learn.meta", "generation=1\nstows=6\nlast_run=2\n"))).toEqual(counted("last_run=2\ngeneration=1\ndebriefs=7\n"));
+  expect(tick((s) => STATE(s, ".learn.meta", "stows=6\ndebriefs=2\n"))).toEqual(counted("generation=0\ndebriefs=3\n"));
+  expect(tick((s) => STATE(s, ".learn.meta", "debriefs=010\n"))).toEqual(counted("generation=0\ndebriefs=9\n"));
+  expect(tick((s) => STATE(s, ".learn.meta", "debriefs=08\n"))).toEqual({ out: "|rc=throw:EARITH", err: "", [META]: "debriefs=08\ngeneration=0\n", [LOCK]: "<dir>", "sleep.log": null });
+  expect(tick((s) => STATE(s, ".learn-cadence.lock/pid", `${process.pid}\n`))).toEqual({
+    out: "|rc=1",
+    err: "WARN: learning tick: cadence lock S/home/state/.learn-cadence.lock could not be acquired within 10s - the debrief counter was NOT advanced. Missing a tick only delays the next distill (the LEVEL trigger still fires); it never loses a landing outright, but a caller that assumes success will believe the counter moved when it did not.\n",
+    [META]: null,
+    [LOCK]: "<dir>",
+    "sleep.log": SLEPT,
+  });
+  expect(tick((s) => STATE(s, ".learn-cadence.lock/pid", "999999\n"))).toEqual(counted("generation=0\ndebriefs=1\n"));
 }, 60_000);
 
 test("learnTickKeyed: one count per key inside 24 h, the stamp written before the count", () => {
-  const KEYED = (key: string): Row => ({ bash: CADENCE(`ac_learn_tick_keyed "$1"`), twin: `return L.learnTickKeyed(A[0]);`, args: [key], env: HOME });
-  same("a fresh key", KEYED("fam-a"));
-  same("a key stamped inside the window", { ...KEYED("fam-a"), seed: (s) => STATE(s, ".learn-ticks", "1767225000\tfam-a\n") });
-  same("a stamp past the window is pruned and the key counts again", { ...KEYED("fam-a"), seed: (s) => STATE(s, ".learn-ticks", "1767000000\tfam-a\n1767225000\tother\n") });
-  same("a numeric-looking key is matched with `in`, never ==", { ...KEYED("7"), seed: (s) => STATE(s, ".learn-ticks", "1767225000\t07\n") });
-  same("a stamp file with a byte no locale decodes", { ...KEYED("fam-a"), seed: (s) => STATE(s, ".learn-ticks", "1767225000\tcaf\xe9\n") });
-  same("a busy cadence lock claims nothing and speaks", { ...KEYED("fam-a"), seed: (s) => STATE(s, ".learn-cadence.lock/pid", `${process.pid}\n`) });
+  const keyed = (key: string, seed?: (s: string) => void) => twin({ twin: `return L.learnTickKeyed(A[0]);`, args: [key], env: HOME, seed }, [TICKS, META]);
+  const ONE = "generation=0\ndebriefs=1\n";
+  expect(keyed("fam-a")).toEqual({ out: "|rc=0", err: "", [TICKS]: "1767225600\tfam-a\n", [META]: ONE });
+  expect(keyed("fam-a", (s) => STATE(s, ".learn-ticks", "1767225000\tfam-a\n"))).toEqual({ out: "|rc=1", err: "", [TICKS]: "1767225000\tfam-a\n", [META]: null });
+  expect(keyed("fam-a", (s) => STATE(s, ".learn-ticks", "1767000000\tfam-a\n1767225000\tother\n"))).toEqual({ out: "|rc=0", err: "", [TICKS]: "1767225000\tother\n1767225600\tfam-a\n", [META]: ONE });
+  expect(keyed("7", (s) => STATE(s, ".learn-ticks", "1767225000\t07\n"))).toEqual({ out: "|rc=0", err: "", [TICKS]: "1767225000\t07\n1767225600\t7\n", [META]: ONE });
+  expect(keyed("fam-a", (s) => put(join(s, "home", "state", ".learn-ticks"), Buffer.from("1767225000\tcaf\xe9\n", "latin1")))).toEqual({ out: "|rc=0", err: "", [TICKS]: "1767225000\tcaf\xe9\n1767225600\tfam-a\n", [META]: ONE });
+  const busy = twin({ twin: `return L.learnTickKeyed(A[0]);`, args: ["fam-a"], env: HOME, seed: (s) => STATE(s, ".learn-cadence.lock/pid", `${process.pid}\n`) }, [TICKS, META, "sleep.log"]);
+  expect(busy).toEqual({
+    out: "|rc=2",
+    err: "WARN: learning tick: cadence lock S/home/state/.learn-cadence.lock could not be acquired within 10s - landing 'fam-a' was NOT claimed. Missing a tick only delays the next distill (the LEVEL trigger still fires); counting one twice consumes a retro window and cannot be undone.\n",
+    [TICKS]: null,
+    [META]: null,
+    "sleep.log": SLEPT,
+  });
 }, 60_000);
 
 test("learnReset: the generation guard, the migrate and the reset under the cadence lock", () => {
-  const RESET = (expected = ""): Row => ({
-    bash: CADENCE(`ac_learn_reset ${expected === "" ? "" : '"$1"'}`),
-    twin: `return L.learnReset(${expected === "" ? "" : "A[0]"});`,
-    args: expected === "" ? [] : [expected],
-    env: HOME,
+  const reset = (expected: string, seed?: (s: string) => void) =>
+    twin({ twin: `return L.learnReset(${expected === "" ? "" : "A[0]"});`, args: expected === "" ? [] : [expected], env: HOME, seed }, [META, TICKS, LOCK, "sleep.log"]);
+  const done = (meta: string, ticks: string | null = null) => ({ out: "|rc=0", err: "", [META]: meta, [TICKS]: ticks, [LOCK]: null, "sleep.log": null });
+  expect(reset("")).toEqual(done(`generation=1\ndebriefs=0\n${STAMPED}`));
+  expect(reset("", (s) => STATE(s, ".learn.meta", "last_run=1\ngeneration=3\ndebriefs=9\n"))).toEqual(done(`generation=4\ndebriefs=0\n${STAMPED}`));
+  expect(reset("3", (s) => STATE(s, ".learn.meta", "generation=3\ndebriefs=9\n"))).toEqual(done(`generation=4\ndebriefs=0\n${STAMPED}`));
+  expect(reset("2", (s) => STATE(s, ".learn.meta", "generation=3\ndebriefs=9\n"))).toEqual({ ...done("generation=3\ndebriefs=9\n"), out: "|rc=1" });
+  expect(reset("", (s) => STATE(s, ".learn.meta", "stows=4\n"))).toEqual(done(`generation=1\ndebriefs=0\n${STAMPED}`));
+  expect(reset("", (s) => STATE(s, ".learn-cadence.lock/pid", `${process.pid}\n`))).toEqual({
+    out: "|rc=2",
+    err: "WARN: learning reset: cadence lock S/home/state/.learn-cadence.lock could not be acquired within 10s - the debrief counter was NOT reset and its generation did NOT advance, so a due DISTILL cycle stays due. This is a lock failure, not a newer cadence generation.\n",
+    [META]: null,
+    [TICKS]: null,
+    [LOCK]: "<dir>",
+    "sleep.log": SLEPT,
   });
-  same("no meta", RESET());
-  same("a meta", { ...RESET(), seed: (s) => STATE(s, ".learn.meta", "last_run=1\ngeneration=3\ndebriefs=9\n") });
-  same("the expected generation", { ...RESET("3"), seed: (s) => STATE(s, ".learn.meta", "generation=3\ndebriefs=9\n") });
-  same("a newer generation is silent", { ...RESET("2"), seed: (s) => STATE(s, ".learn.meta", "generation=3\ndebriefs=9\n") });
-  same("the legacy key migrates first", { ...RESET(), seed: (s) => STATE(s, ".learn.meta", "stows=4\n") });
-  same("a busy cadence lock speaks", { ...RESET(), seed: (s) => STATE(s, ".learn-cadence.lock/pid", `${process.pid}\n`) });
-  same("the landing stamps are left alone", { ...RESET(), seed: (s) => STATE(s, ".learn-ticks", "1767225000\tfam-a\n") });
+  expect(reset("", (s) => STATE(s, ".learn-ticks", "1767225000\tfam-a\n"))).toEqual(done(`generation=1\ndebriefs=0\n${STAMPED}`, "1767225000\tfam-a\n"));
 }, 60_000);
 
 test("curateTick: under the Curate cadence lock, generation kept and runs_since+1", () => {
-  const TICK: Row = { bash: `ac_curate_tick`, twin: `return L.curateTick() ? 0 : 1;`, env: HOME };
-  same("no meta", TICK);
-  same("a meta", { ...TICK, seed: (s) => STATE(s, ".curate.meta", "generation=3\nruns_since=4\nlast_run=1\n") });
-  same("garbage", { ...TICK, seed: (s) => STATE(s, ".curate.meta", "generation=x\nruns_since=-2\n") });
-  same("a busy lock", { ...TICK, seed: (s) => STATE(s, ".curate-cadence.lock/pid", `${process.pid}\n`) });
+  const CMETA = "home/state/.curate.meta";
+  const CLOCK = "home/state/.curate-cadence.lock";
+  const tick = (seed?: (s: string) => void) => twin({ twin: `return L.curateTick() ? 0 : 1;`, env: HOME, seed }, [CMETA, CLOCK, "sleep.log"]);
+  const counted = (meta: string) => ({ out: "|rc=0", err: "", [CMETA]: meta, [CLOCK]: null, "sleep.log": null });
+  expect(tick()).toEqual(counted("generation=0\nruns_since=1\n"));
+  expect(tick((s) => STATE(s, ".curate.meta", "generation=3\nruns_since=4\nlast_run=1\n"))).toEqual(counted("last_run=1\ngeneration=3\nruns_since=5\n"));
+  expect(tick((s) => STATE(s, ".curate.meta", "generation=x\nruns_since=-2\n"))).toEqual(counted("generation=0\nruns_since=1\n"));
+  expect(tick((s) => STATE(s, ".curate-cadence.lock/pid", `${process.pid}\n`))).toEqual({
+    out: "|rc=1",
+    err: "WARN: curate tick: cadence lock S/home/state/.curate-cadence.lock could not be acquired within 10s - the learning-run counter was NOT advanced. Missing a tick only delays the next Curate pass, but a caller that assumes success will believe the counter moved when it did not.\n",
+    [CMETA]: null,
+    [CLOCK]: "<dir>",
+    "sleep.log": SLEPT,
+  });
 }, 60_000);
 
 test("skillsDir: <home>/skills, minted", () => {
@@ -234,7 +274,6 @@ test("maintenanceIncomplete: one row per unsettled transaction, in byte order", 
 
 test("crewmateLearnedNoLoss: every live `## ` head kept or retired", () => {
   const NL = (retired = ""): Row => ({
-    bash: `ac_crewmate_learned_no_loss "$1" "$2" "$3"`,
     twin: `return L.crewmateLearnedNoLoss(A[0], A[1], A[2]) ? 0 : 1;`,
     args: ["@S/live", "@S/staged", retired === "" ? "" : "@S/retired"],
   });
@@ -243,11 +282,14 @@ test("crewmateLearnedNoLoss: every live `## ` head kept or retired", () => {
     if (staged !== null) put(join(s, "staged"), staged);
     if (retired !== null) put(join(s, "retired"), retired);
   };
-  same("no live file", { ...NL(), seed: seed(null, "## a\n", null) });
-  same("no staged file", { ...NL(), seed: seed("## a\n", null, null) });
-  same("every head kept", { ...NL(), seed: seed("## a\nx\n## b\n", "## b\n## a\n## c\n", null) });
-  same("a head dropped", { ...NL(), seed: seed("## a\n## b\n", "## a\n", null) });
-  same("a head dropped and retired", { ...NL("r"), seed: seed("## a\n## b\n", "## a\n", "retired: b\n") });
-  same("a head kept only as a substring", { ...NL(), seed: seed("## a\n", "## ab\n", null) });
-  same("a live file with no heads", { ...NL(), seed: seed("text\n", "", null) });
+  const rows: [string, Row, string][] = [
+    ["no live file", { ...NL(), seed: seed(null, "## a\n", null) }, "|rc=0"],
+    ["no staged file", { ...NL(), seed: seed("## a\n", null, null) }, "|rc=1"],
+    ["every head kept", { ...NL(), seed: seed("## a\nx\n## b\n", "## b\n## a\n## c\n", null) }, "|rc=0"],
+    ["a head dropped", { ...NL(), seed: seed("## a\n## b\n", "## a\n", null) }, "|rc=1"],
+    ["a head dropped and retired", { ...NL("r"), seed: seed("## a\n## b\n", "## a\n", "retired: b\n") }, "|rc=0"],
+    ["a head kept only as a substring", { ...NL(), seed: seed("## a\n", "## ab\n", null) }, "|rc=1"],
+    ["a live file with no heads", { ...NL(), seed: seed("text\n", "", null) }, "|rc=0"],
+  ];
+  for (const [label, row, out] of rows) expect([label, twin(row)]).toEqual([label, { out, err: "" }]);
 }, 60_000);

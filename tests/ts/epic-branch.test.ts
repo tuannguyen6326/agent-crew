@@ -5,8 +5,7 @@
 // field rejoin and its numeric ==), defaultBranch / freshestRef against their
 // arms over real repos, and pushControlPlane against ac_git_push_control_plane
 // through a refusing pre-push hook. The CLI contract itself (every verb,
-// stdout, stderr, exit) is tests/sh/ac-epic-branch.test.sh's, whose
-// differential leg runs the frozen bash original beside the shim.
+// stdout, stderr, exit) is tests/sh/ac-epic-branch.test.sh's.
 import { afterAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

@@ -1,8 +1,7 @@
 // tree.ts - pooled git worktrees INSIDE the target repo, the herdr fleets'
 // lease mechanism. The entry is bin/ac-tree.sh (a shim that starts this file
-// through bin/ac-bun.sh); THIS header is the authoritative spec, and the bash
-// original it replaced stays frozen at tests/fixtures/ac-tree.sh as the oracle
-// the differential leg of tests/sh/ac-tree.test.sh holds this module to.
+// through bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-tree.test.sh is its contract test.
 // Worktrees live at <repo>/.crew/worktrees/<n>, and /.crew/ is auto-ignored
 // via .git/info/exclude. On the first lease, `get` also installs two shared
 // guard hooks into the default git-common-dir/hooks: a pre-commit that refuses
@@ -29,16 +28,8 @@
 // exits 1. A value flag given as the LAST word exits 1 with nothing said;
 // flags repeat last-wins and an empty value reads as absent.
 //
-// ESCAPE HATCH. This module is the solo session's write
-// path and every spawn's, verifier's and teardown's lease. If a landed change
-// breaks it, run the frozen original from a scratch bin/:
-//   o=$(mktemp -d); mkdir "$o/bin"; cp bin/*.sh "$o/bin/"
-//   ln -s "$PWD/src" "$o/src"; ln -s "$PWD/dashboard" "$o/dashboard"
-//   cp tests/fixtures/ac-tree.sh "$o/bin/ac-tree.sh"
-// then "$o/bin/ac-self-task.sh" start ... (self-task, spawn and teardown
-// resolve $bin_dir/ac-tree.sh from their own dir) and "$o/bin/ac-tree.sh"
-// return <wt> for the leases it took. The captain's revert of the land is the
-// last resort.
+// This module is the solo session's write path and every spawn's, verifier's
+// and teardown's lease.
 //
 // get --prefer <path-or-slot-n>: slot affinity for session resumes (claude
 // keys sessions by cwd). When the preferred slot - given as a pool worktree
@@ -383,9 +374,9 @@
 // clobbering it (<path>)`, else `WARN: chained existing <hook> hook aside to
 // <hook>.ac-crew-prev`. Then the rename (`WARN: could not install <label>
 // (<path>)`) and `WARN: installed <label> at <path>`. The two bodies are
-// BASH, byte-identical to the frozen original's heredocs (a changed byte
-// would upgrade every onboarded repo and leave a stale sidecar there) - the
-// git-hook ruling (CONTRIBUTING.md) keeps them shell, never bun.
+// BASH, pinned byte for byte (a changed byte would upgrade every onboarded
+// repo and leave a stale sidecar there) - the git-hook ruling
+// (CONTRIBUTING.md) keeps them shell, never bun.
 //
 // LOCK SCOPE. Under the pool lock: the hook install, acquire, lease, list,
 // return's claim and release, prune, remove. Not under it: the exclude and
@@ -401,50 +392,48 @@
 // knob (the lock is left as it is, and the sync knob
 // bounds them), past the 30 seconds a waiter gives it at the default 60.
 //
-// AT PARITY: W9-W13, W15 (get --id mints the
-// home's records/ and state/), W16, W18 (`--prefer ''` is ignored; `--prefer
-// 1x-y` passes as an id).
+// AT PARITY with the bash original, and deliberately left unasserted by the
+// contract test: W9-W13, W15 (get --id mints the home's records/ and
+// state/), W16, W18 (`--prefer ''` is ignored; `--prefer 1x-y` passes as an
+// id).
 //
-// DIVERGENCES from the original, named in the differential leg:
-// - USAGE HEADER: the usage is this header; the original printed its own.
-// - FAIL-PATH ARTIFACTS: a refusal under the pool lock releases it - the
-//   original's die left .crew/lock/ holding a dead pid (W7); and the
-//   install never reads our own guard as foreign for want of grep (W14 is
-//   unreachable in-process).
-// - THE NETWORK IS BOUNDED (W3):
-//   get's fetch and prune's fetch and ls-remote end at the sync knob's
-//   deadline with the texts above, where the original waited a stalled
-//   origin out; and an ls-remote that fails after a fetch that worked cannot
-//   verify, where the original's `| awk` hid its status and pruned on the
-//   fetched ref.
-// - POOL METAS FAIL CLOSED:
-//   a slot meta that cannot be read is a lease in list,
-//   prune, remove and the workspace, where the original read it as unleased
-//   (W5) or ended the verb after its mutation (W4); a stamp, release or
-//   crew-meta append that cannot be written dies, where the original went on
-//   (W6) or dropped a concurrent writer's append (W2); a workspace that
-//   cannot be written is a WARN, where the original ended the verb. The texts
-//   are the verbs' above.
+// ALSO:
+// - USAGE HEADER: the usage is this header.
+// - FAIL-PATH ARTIFACTS: a refusal under the pool lock releases it (W7); and
+//   the install never reads our own guard as foreign for want of grep (W14).
+// - THE NETWORK IS BOUNDED (W3): get's fetch and prune's fetch and ls-remote
+//   end at the sync knob's deadline with the texts above; and an ls-remote
+//   that fails after a fetch that worked cannot verify.
+// - POOL METAS FAIL CLOSED: a slot meta that cannot be read is a lease in
+//   list, prune, remove and the workspace (W5), and never ends the verb after
+//   its mutation (W4); a stamp, release or crew-meta append that cannot be
+//   written dies (W6), and a concurrent writer's append is never dropped
+//   (W2); a workspace that cannot be written is a WARN. The texts are the
+//   verbs' above.
 // - EXCLUSIVE TEMPS: the slot meta's, the hook's, the workspace's, the
 //   .gitignore's and every meta rewrite's <file>.<tag>.<pid> is created
-//   exclusively (the next .<n> past a name already taken); the original
-//   wrote through whatever sat at the predictable name, and reused it, where
-//   a rewrite whose rename failed leaves its own temp each time.
-// - SHELL-OWN STDERR is not reproduced: `$2: unbound variable`, `[: <v>:
-//   integer expression expected`, a failed redirection's `Permission denied`,
-//   an arithmetic expansion's error, `mv:`'s line after a meta rewrite whose
-//   temp could not be written, `cd:`'s own line - the exit statuses are kept.
+//   exclusively (the next .<n> past a name already taken), never written
+//   through; a rewrite whose rename failed leaves its own temp each time.
+// - No shell-own stderr: no `$2: unbound variable`, `[: <v>: integer
+//   expression expected`, failed redirection's `Permission denied`,
+//   arithmetic expansion's error, `mv:`'s line after a meta rewrite whose
+//   temp could not be written, nor `cd:`'s own line - the exit statuses stand.
+// - NESTED REPOS: a reset's clean removes an untracked nested repository
+//   (`-ffdq`), so the slot does not stay dirty.
+// - BROKEN SLOT REASON: heal's WARN on a slot git cannot read carries git's
+//   own exit status and last stderr line (or the toplevel it answered for)
+//   before naming the destructive remove.
+// - LEFTOVER SLOT DIR: get heals a meta-less dir at the slot it mints only
+//   while the dir is empty; one holding files (or one it cannot list) is named
+//   with the refusal above and left alone.
 // - HOME RESOLUTION: an AC_HOME cd cannot enter is named
-//   (`ERROR: AC_HOME is not a readable directory: <h>`) wherever the original
-//   printed cd's own line.
-// - The fence reads the ledger in-process, so the original's bun-missing arm
-//   (the backlog parser failing, rc 2) is unreachable - without bun the shim
-//   never starts - and an unreadable ledger is the refusal alone, without
-//   awk's `can't open file` pair before it.
+//   (`ERROR: AC_HOME is not a readable directory: <h>`).
+// - The fence reads the ledger in-process - without bun the shim never
+//   starts - and an unreadable ledger is the refusal alone.
 // - The caller's cwd arrives physical: a `return <name>` with no --repo from a
 //   symlinked cwd names the physical path in a refusal, a relative path is
 //   resolved against it, and a caller whose cwd has no name resolves no
-//   relative path at all (the original's stale $PWD).
+//   relative path at all.
 // - Bytes: argv arrives decoded (U+FFFD for a byte that is not UTF-8), and a
 //   path read back from git reaches a git argv the same way.
 //
@@ -487,9 +476,9 @@ import {
   worktreeStatus,
 } from "./lib.ts";
 
-// The original's two heredocs, line for line (tests/ts/tree.test.ts holds the
-// installed bytes to the frozen fixture's). Not template literals: the bodies
-// carry `${...}` and backquotes.
+// The original's two heredocs, line for line (tests/ts/tree.test.ts pins the
+// installed bytes by digest). Not template literals: the bodies carry `${...}`
+// and backquotes.
 const PRE_COMMIT_GUARD = [
   "#!/usr/bin/env bash",
   "# ac-crew-primary-commit-guard - REFUSE a git commit made in the PRIMARY",
@@ -843,6 +832,18 @@ function slotGitOk(wt: string): boolean {
   return (physicalDir(u8(subst(r.out))) ?? "") === (physicalDir(u8(wt)) ?? "");
 }
 
+// Why git refused the slot, for the WARN that tells the operator to run a
+// destructive remove: git's exit status and the last line it wrote (<=200
+// bytes), or the toplevel it answered for when that is not the slot.
+function slotGitReason(wt: string): string {
+  const r = spawnShellSync(["git", "-C", u8(wt), "rev-parse", "--show-toplevel"], { stdout: "pipe", stderr: "pipe" });
+  if ((r.exitCode ?? 1) !== 0) {
+    const lines = r.stderr.toString("latin1").replace(/\n+$/, "").split("\n");
+    return `exit ${r.exitCode ?? "signal"}: ${(lines[lines.length - 1] ?? "").slice(0, 200)}`;
+  }
+  return `answers for ${subst(r.stdout.toString("latin1"))}, not the slot`;
+}
+
 const isDirty = (wt: string): boolean => subst(fsPath(worktreeStatus(u8(wt)).out)) !== "";
 
 // The tree state a destructive gate verifies, as one comparable blob: the
@@ -859,7 +860,9 @@ function verifiedState(wt: string): string {
 }
 
 // Detach onto <ref> (the freshest default ref when none), drop local changes
-// and untracked files (ignored files survive: caches). qa run state is swept
+// and untracked files (ignored files survive: caches). clean takes -f twice
+// because git-clean(1) keeps an untracked nested repository under one, and a
+// survivor reads dirty to every later get, so the slot leaves the pool. qa run state is swept
 // explicitly - it is ignored, so clean keeps it, and a stale ports.env or
 // serve.pid must never leak to the next lessee - and an interrupted rebase,
 // cherry-pick or bisect survives checkout and reset, so each is quit first.
@@ -871,7 +874,7 @@ function resetWorktree(repo: string, wt: string, ref = ""): boolean {
   return (
     git(wt, ["checkout", "--detach", "--force", "--quiet", ref]).status === 0 &&
     git(wt, ["reset", "--hard", "--quiet", ref]).status === 0 &&
-    git(wt, ["clean", "-fdq"]).status === 0
+    git(wt, ["clean", "-ffdq"]).status === 0
   );
 }
 
@@ -988,7 +991,7 @@ function healSlots(repo: string): void {
       dropSlot(repo, n);
     } else if (!slotGitOk(wt)) {
       const flags = (metaRead(meta, "leased") ?? "1") === "1" ? "--force --include-leased" : "--force";
-      say(`slot ${n}: worktree broken (gitdir unreadable) - NOT healed, its files may be unlanded work git can no longer report; reclaim it deliberately with: bin/ac-tree.sh remove ${flags} ${wt}`);
+      say(`slot ${n}: worktree broken (gitdir unreadable - git: ${slotGitReason(wt)}) - NOT healed, its files may be unlanded work git can no longer report; reclaim it deliberately with: bin/ac-tree.sh remove ${flags} ${wt}`);
     }
   }
 }
@@ -1289,8 +1292,13 @@ function acquireSlot(repo: string, id: string, holder: string, owner: string, pr
     }
     n = `${next}-${basename(repo)}`;
     wt = slotPath(repo, n);
-    // An orphan dir with no meta (a partial create) wedges the number.
+    // An orphan dir with no meta (a partial create) wedges the number; one
+    // holding files may be somebody's work, so only an empty one is healed.
     if (exists(wt)) {
+      let entries: string[] | null = null;
+      try { entries = readdirSync(wt); } catch {}
+      if (entries === null || entries.length > 0)
+        fail(`slot ${n} dir ${wt} exists with no meta and is not empty - inspect it; move or delete it by hand, then get again`);
       say(`cleaning orphan worktree dir at slot ${n}`);
       git(repo, ["worktree", "remove", "--force", wt], quiet);
       run(["rm", "-rf", u8(wt)]);

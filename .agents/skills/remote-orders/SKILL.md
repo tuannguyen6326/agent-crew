@@ -1,6 +1,6 @@
 ---
 name: remote-orders
-description: How the crewchief handles a `remote-order <rid>` wake - read the order from disk, run the standard captain-word attribution ladder on it, receipt every decision to the room AND back into the remote thread, refuse destructive confirmations remotely, link spawned tasks so landings follow up. Crewchief-facing; not captain-invocable.
+description: How the chief handles a remote-order <rid> wake: read the order from disk, run the attribution ladder, receipt decisions to the room and the remote thread, refuse destructive confirmations remotely. Not captain-invocable.
 ---
 
 # remote-orders
@@ -25,7 +25,10 @@ Rooms stay the record; the remote thread is only another chat stream.
    Reply exactly that: the action is noted but needs the word given in the terminal ("answer in the terminal").
    Everything else - approvals, gate answers, re-routes, NEW orders - is fair game.
 5. A remote message that is a NEW order goes through normal intake (flow/mode/promote triage, backlog line, TRIAGE receipt to the room), exactly as if it arrived in chat.
-6. Link every task the order spawns: `bin/ac-remote.sh link <task-id> <rid>`.
+6. Link only after the id it names already exists, never before the spawn that creates it - `bin/ac-remote.sh link` mints a meta for ANY id, so a pre-spawn link leaves a window-less meta the watcher reports `gone:<id>` and `ac-spawn.sh` then refuses.
+   - a PROMOTED family: promote FIRST (`bin/ac-spawn.sh --roomchief`), THEN `bin/ac-remote.sh link <family>-chief <rid>`; the roomchief links its own crewmates after it spawns them.
+   - a task the chief spawns itself: link only after the spawn.
+   - an order whose row is left Queued: link nothing until it is promoted or spawned.
    The link is what makes the landing report back - at teardown/landing, `ac-remote.sh followup <task-id>` posts the outcome into the thread that asked and clears the link.
    An order you handle INLINE (answered with `reply`, no task spawned) has neither edge: mark it yourself - `bin/ac-remote.sh ack <rid> working` when you start, `ack <rid> done` right after the delivered answer - or the captain's emoji parks at :eyes: forever.
 7. Every reply follows the captain's recorded language/style preferences (`records/captain.md` standing rules; the `rooms-threads` skill's STYLE owns the split between captain preference and distro constraints); grammar verbs (GATE:, ASK:, DECIDED:, ...) stay English - machine-parsed.

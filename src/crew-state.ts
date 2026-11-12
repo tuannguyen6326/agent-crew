@@ -1,8 +1,7 @@
 // crew-state.ts - one deterministic current-state line for a crewmate. The
 // entry is bin/ac-crew-state.sh (a shim that starts this file through
-// bin/ac-bun.sh); THIS header is the authoritative spec, and the bash original
-// it replaced stays frozen at tests/fixtures/ac-crew-state.sh as the oracle the
-// differential leg of tests/sh/ac-crew-state.test.sh holds this module to.
+// bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-crew-state.test.sh is its contract test.
 //
 // Usage: ac-crew-state.sh <id>
 // Precedence: crew-ship run step > window gone/unobservable > pane busy > last
@@ -39,7 +38,7 @@
 //    locale tr stops at a byte that is not UTF-8 (`tr: Illegal byte
 //    sequence`), so the row is printed cut there.
 // 6. LIVENESS: backendCall("window_alive", [<id>]) (src/lib.ts, the twin of
-//    bin/ac-backend.sh's drivers) at the original's top level - its stdin the
+//    bin/ac-backend.sh's drivers) at top level - its stdin the
 //    caller's, stdout and stderr passed through. A refused meta backend
 //    (backend=tmux) is the route's ERROR line above, exit 1. 0 goes on; 1 is
 //      detached     when the meta's kind= is exactly `self` (metaIsSelf) - a
@@ -90,25 +89,18 @@
 // and cut (tail's output on stdin) for the status line; and awk, herdr or
 // orca, jq and tail per backendCall verb.
 //
-// NAMED DIVERGENCES from the frozen original, each in the leg:
-// - A DRIVER THAT FAILED TO LOAD: the original's window_alive returned bash's
-//   127, read as unobservable; the port's backend verbs are native and have
-//   no driver to lose.
-// - The HOME RESOLUTION ruling: an AC_HOME that cannot be entered names the
-//   variable (`ERROR: AC_HOME is not a readable directory: <h>`) where the
-//   shell printed cd's own lines; exit and stdout alike.
-// - Bytes: argv and the environment arrive decoded, so an <id> or AC_BUSY_RE
-//   byte that is not UTF-8 is U+FFFD - the refusal names U+FFFD, the ERE no
-//   longer matches the byte - and a worktree= path holding one reaches awk's
-//   argv as U+FFFD (no such path can exist on APFS, which refuses the name).
-//   So is such a byte of the meta's backend= in AC_BACKEND, and so in the
-//   route's refusal.
+// An AC_HOME that cannot be entered is `ERROR: AC_HOME is not a readable
+// directory: <h>`, exit 1. BYTES: argv and the environment arrive decoded, so
+// an <id> or AC_BUSY_RE byte that is not UTF-8 is U+FFFD - the refusal names
+// U+FFFD, the ERE does not match the byte - and a worktree= path holding one
+// reaches awk's argv as U+FFFD (no such path can exist on APFS, which refuses
+// the name). So is such a byte of the meta's backend= in AC_BACKEND, and so
+// in the route's refusal.
 //
 // CALLERS: src/lib.ts crewState (src/fleet-view.ts, src/dash.ts: the stdout,
 // `unknown` appended on a failure) and src/session.ts (`--talk` refuses on a
 // busy, validate: or unobservable line) spawn this entry BY PATH, which is
-// the seam their legs stub; the frozen oracles of those three entries do the
-// same; the skills run it by hand.
+// the seam their legs stub; the skills run it by hand.
 import { statSync, writeSync } from "node:fs";
 import { backendCall, backendName, BUSY_RE, die, enterCaller, metaGet, metaIsSelf, shellStatus, spawnShellSync, taskBackend, taskMeta, taskStatus } from "./lib.ts";
 

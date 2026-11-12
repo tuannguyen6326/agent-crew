@@ -4,8 +4,7 @@
 // ac_window_family and herdr_ws_family_label (bin/ac-lib.sh,
 // bin/ac-backend.sh), and herdrResolveWorkspace, herdrTabCreate and
 // herdrCloseDefaultTabs to their herdr helpers in bin/ac-backend.sh, each run
-// where bin/ac-relocate.sh's frozen original ran it - inside `$( )`, or at top
-// level under errexit. Every row compares stdout, stderr, the status, the stub
+// where the bash entry ran it - inside `$( )`, or at top level under errexit. Every row compares stdout, stderr, the status, the stub
 // log and the home's tree.
 //
 // DISPUTED: the implementation of relocate's helpers (bin/ac-lib.sh + bin/ac-backend.sh vs src/lib.ts's relocate twins)

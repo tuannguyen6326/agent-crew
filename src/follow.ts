@@ -1,10 +1,8 @@
 // follow.ts - realtime, full-fidelity stream of a crewmate's claude session
 // (the captain's x-ray: full tool inputs and results, not the 40-line pane
 // tail ac-peek gives). The entry is bin/ac-follow.sh (a shim that starts this
-// file through bin/ac-bun.sh); THIS header is the authoritative spec, and the
-// bash original it replaced stays frozen at tests/fixtures/ac-follow.sh as the
-// oracle the differential leg of tests/sh/ac-follow.test.sh holds this module
-// to (beside tests/fixtures/follow.ts, the renderer that original started).
+// file through bin/ac-bun.sh); THIS header is the authoritative spec, and
+// tests/sh/ac-follow.test.sh its contract test.
 //
 // Usage:
 //   ac-follow.sh <id>              follow the crewmate's transcript live
@@ -74,46 +72,29 @@
 // U+001C-U+001E, U+0085, U+2028 and U+2029 - so it dropped a record holding
 // one. <dir> is a literal path, never a glob pattern.
 //
-// ESCAPE HATCH. No script runs this entry, so a broken one costs only the
-// x-ray. The frozen original started the renderer as `follow.ts file|dir
-// <path>`, so it runs beside that renderer, frozen too, from a scratch copy:
-//   o=$(cd "$(mktemp -d)" && pwd -P); mkdir "$o/bin" "$o/src"; cp bin/*.sh "$o/bin/"
-//   cp src/*.ts "$o/src/"
-//   cp tests/fixtures/follow.ts "$o/src/follow.ts"
-//   cp tests/fixtures/ac-follow.sh "$o/bin/ac-follow.sh"
-// then "$o/bin/ac-follow.sh" <id> by hand.
-//
-// AT PARITY (each pinned in the leg):
+// AT PARITY with the bash original (each until its own fix lands):
 // - Homeless, the refusal is printed twice (the meta read, then the archive
-//   read that ends the run).
+//   read that ends the run); so is `ERROR: AC_HOME is not a readable
+//   directory: <AC_HOME>` for an AC_HOME that cannot be entered.
 // - The id is a path component as given: `../x` reads <home>/x.meta.
-// - The transcript root loses its trailing LFs, as the original's `$(...)`
-//   cut them: AC_CLAUDE_TRANSCRIPT_ROOT=/tmp/tr<LF> follows /tmp/tr/<slug>.
-// - The followed directory is handed on as bun decoded the original's argv:
-//   a worktree byte that is no UTF-8 is U+FFFD there (in `waiting for` and in
-//   every read), where the two stderr lines carry the byte - a directory no
-//   claude session can have, since APFS refuses a name that is no UTF-8.
+// - The transcript root loses its trailing LFs:
+//   AC_CLAUDE_TRANSCRIPT_ROOT=/tmp/tr<LF> follows /tmp/tr/<slug>.
+// - The followed directory is handed on decoded: a worktree byte that is no
+//   UTF-8 is U+FFFD there (in `waiting for` and in every read), where the two
+//   stderr lines carry the byte - a directory no claude session can have,
+//   since APFS refuses a name that is no UTF-8.
 //
-// DIVERGENCES from the frozen original (the leg names each one a row can show):
-// - FAIL-PATH: under a UTF-8 locale the original's `sed` aborted the slug on a
-//   worktree byte that is no UTF-8 (`sed: RE error: illegal byte sequence`,
-//   exit 1); here the slug is made from bytes and the stream follows.
-// - SHELL-OWN STDERR is not reproduced, the status kept: `${2:?}`'s line for a
-//   missing --render path is the usage line above, and `HOME: unbound
-//   variable` the HOME line (exit 1 both); a state/ that mkdir cannot make is
-//   silent here (the run goes on alike); from a cwd that has no name the
-//   shell's own getcwd lines (`shell-init:`, `chdir:`) are the shim's, fewer
-//   than the original's cds printed.
-// - HOME RESOLUTION: an AC_HOME cd cannot enter is `ERROR: AC_HOME is not a
-//   readable directory: <AC_HOME>`, twice, where the shell printed its own
-//   `cd:` line twice (exit 1 both); a relative AC_HOME from a caller cwd that
-//   has no name is `ERROR: the current directory cannot be resolved, so a
-//   relative AC_HOME cannot be either`, once, never resolved in the distro
-//   root (the original's cd failed twice in the deleted directory).
-// - BUN: without bun the shim's `ERROR: required tool not found: bun`, exit 1,
-//   comes before any argument is read, where the original refused a bad
-//   argument, a meta and a non-claude crewmate first.
-// - BYTES: argv and the environment arrive decoded, so an <id>, a <jsonl> or a
+// ALSO:
+// - The slug is made from bytes under every locale.
+// - A state/ that mkdir cannot make is silent (the run goes on); from a cwd
+//   that has no name the shell's own getcwd lines (`shell-init:`, `chdir:`)
+//   are the shim's.
+// - A relative AC_HOME from a caller cwd that has no name is `ERROR: the
+//   current directory cannot be resolved, so a relative AC_HOME cannot be
+//   either`, once, never resolved in the distro root.
+// - Without bun the shim's `ERROR: required tool not found: bun`, exit 1,
+//   comes before any argument is read.
+// - argv and the environment arrive decoded, so an <id>, a <jsonl> or a
 //   transcript root that is no UTF-8 is U+FFFD.
 //
 // CALLERS: operators and chiefs by hand (the task-lifecycle,
