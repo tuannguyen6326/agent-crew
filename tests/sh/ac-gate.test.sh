@@ -3074,4 +3074,14 @@ assert_no_file "$XWD/.gate-lock" "the family lock is released though a dead hold
 assert_file "$XW/home/state/.chief-busy-holder.widget.1" "... the dead holder keeps its mark"
 chmod -R u+w "$XW"
 
+# A malformed AC_GATE_TIMEOUT (an identifier) used to end the run 0 before
+# the turn ever ran, silently; a `0x..` form read bash's hex. Both now fall
+# back to the documented default (600), matching an explicit 600's bound.
+XPLUS='rm -f "$XW/home/state/.chief-busy-until.widget"' XE=AC_GATE_TIMEOUT=abc xok widget spec
+assert_contains "$(xfile log/agent.log)" "-- busy
+1767226260" "a malformed AC_GATE_TIMEOUT (abc) falls back to 600 - the turn still runs"
+XPLUS='rm -f "$XW/home/state/.chief-busy-until.widget"' XE=AC_GATE_TIMEOUT=0x10 xok widget spec
+assert_contains "$(xfile log/agent.log)" "-- busy
+1767226260" "AC_GATE_TIMEOUT=0x10 is refused (never bash's hex 16), falling back to 600"
+
 pass
