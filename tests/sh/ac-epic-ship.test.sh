@@ -124,6 +124,12 @@ assert_eq "$(shim_err)" "ERROR: required tool not found: git" "1: git first"
 cp -R "$TMP/nojq" "$TMP/nxjq"; printf 'exit 0\n' >"$TMP/nxjq/jq"; chmod 644 "$TMP/nxjq/jq"
 ES_PATH="$ESTUBS:$TMP/nxjq"; run e1 proj; ES_PATH=""
 assert_eq "$(shim_err)" "ERROR: required tool not found: jq" "1: a non-executable jq is refused as missing"
+# W18: --dry-run is read anywhere past <epic> <repo>; an unknown extra
+# argument refuses instead of letting the real exit run under it
+run e1 proj x --dry-run
+assert_eq "$rc" 1 "1: an unknown extra argument before --dry-run refuses (W18)"
+assert_eq "$(shim_err)" "$USAGE" "1: no real exit runs under a stray argument"
+run e1 proj --dry-run x; assert_eq "$(shim_err)" "$USAGE" "1: a stray argument after --dry-run refuses too"
 
 # 2. homeless: one refusal, exit 1, nothing on stdout - for an epic outside
 #    [a-zA-Z0-9_-] too; an AC_HOME cd cannot enter is named once
@@ -238,6 +244,14 @@ led '- [x] s6-b - landed; epic:s6\n> caf\351 reviewed\n'
 ES_ENV=(LC_ALL=en_US.UTF-8); run s6 proj --dry-run; ES_ENV=()
 assert_contains "$(shim_out)" "DRY-RUN: gh pr create" "6: a byte that is not UTF-8 does not stop the walk under UTF-8"
 led ''
+# W1-W3 receipt half: a partial id's `.` must match literally, never as a
+# BRE's "any byte" - a receipt for the WRONG byte must not satisfy it
+ready wre proj epic/wre 'proj epic/wre\n'
+led '- [x] fa.s9 [failed] - dotted id; epic:wre\n'
+room wre '# Room: wre\n\n- [2026-01-01T00:00:00Z] crewchief> DECIDED: epic-ship partial - faXs9 keep (captain word)\n'
+run wre proj --dry-run
+assert_eq "$(shim_err)" "$PARTIAL fa.s9$PTAIL" "6: a BRE '.' in the partial id must not match an unrelated byte (W1-W3)"
+led ''
 
 # 7. the ledger: missing or unreadable ends the run with exit 2 and nothing
 #    printed
@@ -254,6 +268,12 @@ if [ "$(id -u)" != 0 ]; then
   chmod 000 "$H/home/records/backlog.md"
   w7 unreadable
 fi
+# W10: a ledger that is a DIRECTORY must refuse like missing/unreadable, not
+# read as an empty, every-gate-passes ledger
+rm -f "$H/home/records/backlog.md"
+mkdir -p "$H/home/records/backlog.md"
+w7 directory
+rmdir "$H/home/records/backlog.md"
 led ''
 
 # 8. the tip, origin's first: a fetch that fails (a PATH git refusing fetch
@@ -263,7 +283,7 @@ led ''
 seed8() {
   rec t8 'proj epic/t8\n'; on_origin proj epic/t8
   rec t8b 'proj epic/t8b\n'; on_origin proj epic/t8b 1; git -C "$H/home/projects/proj" branch -q epic/t8b main
-  mkdir -p "$H/home/data/t8b/gate"; printf '{"reviewed_ref":"%s"}\n' "$(git -C "$H/home/projects/proj" rev-parse main)" >"$H/home/data/t8b/gate/review.json"
+  mkdir -p "$H/home/data/t8b/gate"; printf '{"reviewed_ref":"%s","findings":[]}\n' "$(git -C "$H/home/projects/proj" rev-parse main)" >"$H/home/data/t8b/gate/review.json"
 }
 seed8
 NOFETCH="$TMP/nofetch"; mkdir -p "$NOFETCH"
@@ -291,9 +311,28 @@ rmdir "$H/home/data/r9/gate/review.json"
 review r9 proj epic/r9 '{"reviewed_ref":"deadbeef"}'
 run r9 proj --dry-run
 assert_eq "$(shim_err)" "ERROR: the recorded review round is for ref deadbeef, not the current tip $RTIP - the tip moved, run a fresh round: $RCMD" "9: a stale ref"
+# W6: a non-string reviewed_ref already refuses, by plain string mismatch
+# against a real git sha - jq's own rendering of it never equals the tip
+review r9 proj epic/r9 '{"reviewed_ref":12}'
+run r9 proj --dry-run
+assert_eq "$(shim_err)" "ERROR: the recorded review round is for ref 12, not the current tip $RTIP - the tip moved, run a fresh round: $RCMD" "9: a numeric reviewed_ref already refuses (W6, pinned)"
+review r9 proj epic/r9 '{"reviewed_ref":["a","b"]}'
+run r9 proj --dry-run
+assert_eq "$(shim_err)" "ERROR: the recorded review round is for ref [
+  \"a\",
+  \"b\"
+], not the current tip $RTIP - the tip moved, run a fresh round: $RCMD" "9: an array reviewed_ref already refuses (W6, pinned)"
 review r9 proj epic/r9 'not json'
 run r9 proj --dry-run
 assert_eq "$rc:$(shim_out)" "1:" "9: an unparseable record ships nothing"
+# W7: findings absent, null or a non-array value must refuse, never count 0
+# and let the ship go on
+review r9 proj epic/r9 '{"reviewed_ref":"TIP"}'
+run r9 proj --dry-run; assert_eq "$rc:$(shim_out)" "1:" "9: absent findings refuses rather than counting 0"
+review r9 proj epic/r9 '{"reviewed_ref":"TIP","findings":null}'
+run r9 proj --dry-run; assert_eq "$rc:$(shim_out)" "1:" "9: null findings refuses"
+review r9 proj epic/r9 '{"reviewed_ref":"TIP","findings":"nope"}'
+run r9 proj --dry-run; assert_eq "$rc:$(shim_out)" "1:" "9: a non-array findings value refuses"
 review r9 proj epic/r9 '{"reviewed_ref":"TIP","findings":[{"action":"fix"},{"action":"ask-user"},{"action":"fix"}]}'
 run r9 proj --dry-run
 assert_eq "$(shim_err)" "ERROR: the epic review round left 2 open fix finding(s) - fix on the epic branch (the ref change invalidates the round) and run a fresh round: $RCMD" "9: two fixes beside an ask-user"
@@ -316,6 +355,7 @@ qa_row "$RTIP" pass
 qa_row "$RTIP.scope.app" pass
 qa_row "${RTIP%?}" refuse
 qa_row ".$RTIP.tmp" refuse
+qa_row "${RTIP}junk" refuse
 led '- [ ] r9 [EPIC] [src:cap flow:direct mode:direct-pr rev:no\tqa:yes] - the epic (repo: proj)\n'
 run r9 proj --dry-run; assert_eq "$(shim_err)" "$QAREF" "10: a TAB-joined pin"
 seed10() {
@@ -378,6 +418,25 @@ slot_row 'pr2_url=https://example.test/pr/2\n' "production PR already recorded: 
 slot_row 'pr2_url=https://a\npr2_url=https://b\n' "production PR already recorded: https://b"
 slot_row 'pr1_url=https://one\npr2_url_x=https://x\n' "$N11OPEN"
 slot_row 'pr2_url=https://a\0junk\n' "production PR already recorded: https://a"
+rm -f "$H/home/data/n11/gate/ships.env"
+# W13: a ships.env that EXISTS but is empty, unreadable or a directory might
+# already record an opened PR - it must refuse (fail closed), never read as
+# "nothing recorded yet" and open the PR again
+ships n11 ''
+run n11 proj --dry-run
+assert_eq "$rc" 1 "11: an empty ships.env refuses rather than reopening (W13)"
+assert_contains "$(shim_err)" "ships.env" "11: names ships.env"
+rm -f "$H/home/data/n11/gate/ships.env"; mkdir -p "$H/home/data/n11/gate/ships.env"
+run n11 proj --dry-run
+assert_eq "$rc" 1 "11: a directory ships.env refuses"
+rmdir "$H/home/data/n11/gate/ships.env"
+if [ "$(id -u)" != 0 ]; then
+  ships n11 'pr2_url=https://example.test/pr/1\n'
+  chmod 000 "$H/home/data/n11/gate/ships.env"
+  run n11 proj --dry-run
+  chmod 644 "$H/home/data/n11/gate/ships.env"
+  assert_eq "$rc" 1 "11: an unreadable ships.env refuses"
+fi
 rm -f "$H/home/data/n11/gate/ships.env"
 
 # 12. a symlinked AC_HOME: the home is bound physically, so the DRY-RUN lines
@@ -505,5 +564,25 @@ run p13i proj
 ES_PATH=""; ES_ENV=(); unset ES_STDIN
 assert_eq "$(cat "$H/push-stdin.log")" "line one for the push" "14: the push read the caller's stdin"
 assert_contains "$(cat "$H/gh.log")" "stdin: line two for gh" "14: gh read the rest of it"
+
+# 15. W11: push=yes must refuse rather than publish a local commit the review
+#     round never saw - the gate judged the tip at fetch time, but a push
+#     always sent whatever currently sits on the LOCAL branch
+ready w11 proj epic/w11 'proj epic/w11 push=yes\n'
+git -C "$H/home/projects/proj" fetch -q origin
+git -C "$H/home/projects/proj" branch -q epic/w11 origin/epic/w11
+W11TIP="$(git -C "$H/remotes/proj.git" rev-parse epic/w11)"
+git -C "$H/home/projects/proj" checkout -q epic/w11
+printf 'local extra, unreviewed\n' >>"$H/home/projects/proj/f.txt"
+git -C "$H/home/projects/proj" add -A
+gitc -C "$H/home/projects/proj" commit -qm 'local extra, unreviewed'
+git -C "$H/home/projects/proj" checkout -q main
+run w11 proj --dry-run
+assert_eq "$rc" 1 "15: a dry run refuses too - every earlier gate already does"
+assert_contains "$(shim_err)" "not the reviewed tip $W11TIP" "15: dry-run names the reviewed tip"
+run w11 proj
+assert_eq "$rc" 1 "15: a local commit past the reviewed tip refuses the push (W11)"
+assert_contains "$(shim_err)" "not the reviewed tip $W11TIP" "15: names the reviewed tip"
+assert_eq "$(git -C "$H/remotes/proj.git" rev-parse epic/w11)" "$W11TIP" "15: the unreviewed commit never reached origin"
 
 pass

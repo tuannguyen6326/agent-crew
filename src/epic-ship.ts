@@ -15,9 +15,10 @@
 //    answers every argv, usage included): `required tool not found: <tool>`.
 //    gh is never required. Then <epic> = $1, <repo> = $2, either empty:
 //      usage: ac-epic-ship.sh <epic> <repo> [--dry-run]
-//    --dry-run counts only as the THIRD argument and further arguments are
-//    ignored (W18: `<epic> <repo> x --dry-run` runs the REAL exit; as the
-//    second it is a repo name). Then CHIEF-ONLY, before the home is read (a
+//    --dry-run is read anywhere past <epic> <repo> (as the second it is a
+//    repo name); any other extra argument refuses with the usage line, dry
+//    run or real alike (W18: `<epic> <repo> x --dry-run` never runs the real
+//    exit under the stray `x`). Then CHIEF-ONLY, before the home is read (a
 //    PreToolUse hook cannot see a bash verb, so the guard lives here) -
 //    AC_SCOPE non-empty:
 //      epic-ship is the CREWCHIEF's verb and this session is scoped (AC_SCOPE=<v>) - the exit of an epic is the fleet chief's act on the captain's word
@@ -47,10 +48,8 @@
 //    open (W1: `- [X]`, `- [~]`, `- [ ]id` parse with the id `-`); a checked
 //    story whose terminal is failed|abandoned is partial:
 //      epic <epic> has non-terminal stories: <id> <id> - every story lands (or is failed/abandoned by the captain) before the epic exits
-//    A ledger that cannot be read (missing, unreadable) ends the run with
-//    exit 2 and nothing printed; one that is a directory holds no record, as
-//    awk read it, so no story and no epic row (W10: every gate below passes
-//    on it).
+//    A ledger that cannot be read (missing, unreadable, OR A DIRECTORY, W10)
+//    ends the run with exit 2 and nothing printed.
 // 3. PARTIAL EPIC IS A CAPTAIN CALL (red-team M8): an abandoned story that
 //    LANDED before dying leaves its commits on the branch, and nothing else
 //    decides revert-vs-keep. The partial ids, joined by spaces, are expanded
@@ -60,9 +59,11 @@
 //    holding any of `*?[\` by the PATH's bash itself, the shell this entry's
 //    shebang names; a caller cwd with no name globs nothing. Each word needs
 //    a line in roomFile(<epic>)'s room (live, else archived) that a spawned
-//    `grep -q` finds for the BRE `DECIDED: epic-ship partial - <word> ` (W3:
-//    the trailing space is grammar - a receipt ending at the id is none; the
-//    id is a pattern, its `.` any byte, a lone `*` any receipt at all):
+//    `grep -qF` finds for the LITERAL text `DECIDED: epic-ship partial - <word> `
+//    (the trailing space is grammar - a receipt ending at the id is none;
+//    W1-W3's receipt half - the word is matched byte for byte, never as a
+//    BRE where its `.` would be any byte and a lone `*` any receipt at
+//    all):
 //      partial epic: [failed]/[abandoned] stories need a captain revert-or-keep receipt in the room - <word> <word> - post the GATE:, record the captain's answer as 'DECIDED: epic-ship partial - <story> revert|keep <words>', then re-run
 // 4. REVIEW ROUND AT THE TIP (captain ruling R1), judged on ORIGIN's tip:
 //    `git fetch origin --quiet`, its stderr and failure dropped (a push does
@@ -81,19 +82,22 @@
 //    unreadable all read as none; a number prints as jq spells it; two JSON
 //    values print two lines):
 //      the recorded review round is for ref <ref, or <none>>, not the current tip <tip> - the tip moved, run a fresh round: <cmd>
-//    `jq -r '[.findings[]? | select(.action == "fix")] | length'` must print
-//    exactly `0` - its stdout with `ERR` appended when jq fails (W7: an
-//    element jq cannot index is `ERR`, a clean value before a broken one
-//    `0<LF>ERR`; findings absent or no array count 0 and pass; an object of
-//    findings counts its values):
+//    `findings` must be an array - absent, null or any other type is a jq
+//    error (W7: never counted as 0 to let the ship go on) folded into the
+//    same `ERR` fallback as an element jq cannot index; the length of its
+//    `action == "fix"` elements must then print exactly `0` - its stdout
+//    with `ERR` appended when jq fails (a clean value before a broken one
+//    is `0<LF>ERR`):
 //      the epic review round left <n> open fix finding(s) - fix on the epic branch (the ref change invalidates the round) and run a fresh round: <cmd>
 // 5. QA WHEN PINNED: the ledger read again; the contract of the FIRST `- [`
 //    row whose id equals <epic> as `awk -v` reads it (string equality: `07`
 //    is not `7`), holding `qa:yes` as a space- or TAB-joined token, needs a
-//    crew-qa pass attestation: some name under <clone>/.crew/qa/passed/
-//    STARTING with the tip (W9, a prefix: `<tip>junk` counts, the in-flight
-//    dot-prefixed temp never does), every match handed to a spawned `ls`
-//    whose success is the answer (an unreadable directory is none):
+//    crew-qa pass attestation: some name under <clone>/.crew/qa/passed/ that
+//    IS the tip, or STARTS with the tip followed by a literal `.` (the flat
+//    marker or a scoped `<tip>.<scope>.<app>` one - W9: `<tip>junk` with no
+//    separating dot never counts, nor does the in-flight dot-prefixed
+//    temp), every match handed to a spawned `ls` whose
+//    success is the answer (an unreadable directory is none):
 //      the epic row pins qa:yes and no crew-qa pass attestation exists for the tip <tip> - run one behavioral round against the BUILT epic branch (crew-qa skill / bin/ac-qa.sh agent --target <tip> ...). Note: a ut coverage row qualifies only against a ship TEST RECEIPT minted at this tip - no story run's SHA can stand in (epic-branch-mech M7)
 //
 // THE 2-PR EXIT (merged-proof corrected per red-team B1: this fleet's own
@@ -108,14 +112,24 @@
 //   the project's pre-push hook (a delivery push), its failure ending the run
 //   with git's status and lines; --dry-run prints instead
 //     DRY-RUN: git -C <clone> push origin refs/heads/<b>:refs/heads/<b>
-//   It pushes the LOCAL branch while every gate judged origin's tip (W11: a
-//   local commit no review saw is published under a PR body naming the
-//   reviewed tip clean), and it runs on every invocation, a recorded PR's
-//   included.
+//   Every gate judged the tip above (origin's, or the local branch when
+//   origin has none yet); push=yes REFUSES first, dry run included, when a
+//   resolvable local branch has moved past that tip (W11: a local commit no
+//   review saw must never publish under a PR body naming the reviewed tip
+//   clean) - an absent local branch is git push's own failure to report:
+//     the local branch <b> is at <local>, not the reviewed tip <tip> - a push here must publish exactly the reviewed commit; bring the branch to <tip> if it fell behind, or publish <tip> to origin first (the merge-local retry line) and run a fresh review round at its new tip if it moved ahead, then re-run
+//   Once verified, the SHA itself - never the branch name - is the push's
+//   source, closing the gap a landing could otherwise move the ref through
+//   between the check and the push. It runs on every invocation, a recorded
+//   PR's included.
 // - data/<epic>/gate/ships.env as `ac_meta_get ... 2>/dev/null || printf ''`
 //   read pr1_url and pr2_url (shipsUrl: the LAST `<key>=` line wins, an empty
-//   last value or a file that cannot be read is none - W13, the PR is opened
-//   again - and a NUL ends awk's record).
+//   last value is none, and a NUL ends awk's record). Only a genuinely
+//   absent path (ENOENT - never written yet) is none; anything else that
+//   exists but is empty, unreadable or not a regular file might already
+//   record an opened PR, so it REFUSES rather than reading as none and
+//   opening again (W13):
+//     <ships.env path> exists but is empty, unreadable or not a regular file - it may already record an opened PR; restore or remove it by hand, then re-run
 // - OPEN <base> <slot>, --dry-run, prints
 //     DRY-RUN: gh pr create --base <base> --head <b> --title "epic(<epic>): integration -> <base>" (in <clone>)
 //   else, in the clone, its stderr passing through, its stdout the url
@@ -169,9 +183,9 @@
 //   holds a pattern character comes back from bash so); a url gh printed
 //   that is not UTF-8 is recorded and printed as its bytes and reaches the
 //   room as its U+FFFD spelling - the room entry decodes its argv too.
-// W2's glob is reproduced (the WIRE QUIRKS rule), where src/feature.ts's W16
-// names the same glob in its member gate a divergence - the sibling, not this
-// module, is out of step.
+// W2's glob is reproduced on purpose (the WIRE QUIRKS rule) - this module's
+// reproduction is deliberate; src/feature.ts's member gate matches partial
+// ids literally instead (its own W16).
 //
 // CALLERS: no bin/, src/, dashboard/ or hook runs this entry - the
 // intake-triage skill, docs/scripts.md and docs/architecture.md name it in
@@ -258,12 +272,13 @@ export function epicContract(text: string, want: string): string {
   return "";
 }
 
-// awk's reading: a directory operand is input with no record in it.
+// A directory ledger would read as awk's "no record in it" - but no story
+// and no epic row also means every gate below passes on it (W10), so it is
+// refused like missing or unreadable instead.
 function readLedger(file: string): string {
   try {
     return readFileSync(file, "latin1");
-  } catch (e) {
-    if ((e as { code?: string }).code === "EISDIR") return "";
+  } catch {
     process.exit(2);
   }
 }
@@ -286,12 +301,30 @@ function isDir(p: string): boolean {
 
 // `ac_meta_get <ships> <key> 2>/dev/null || printf ''`. The records are
 // awk's, so a NUL ends one: `<key><NUL>junk` is the bare key, read as none,
-// where metaGet would read on past the NUL.
+// where metaGet would read on past the NUL. A path that genuinely does not
+// exist (ENOENT) is none (no PR opened so far); anything else that keeps
+// this from reading as a normal non-empty file - a directory, a permission
+// refusal, a symlink loop, an empty file - might already record an opened
+// PR, so this refuses rather than guessing "none" and opening a duplicate
+// (W13).
 function shipsUrl(file: string, key: string): string {
-  let text = "";
+  const broken = (): never =>
+    die(b(`${bytes(file)} exists but is empty, unreadable or not a regular file - it may already record an opened PR; restore or remove it by hand, then re-run`));
+  let st;
   try {
-    if (statSync(file).isFile()) text = readFileSync(file, "latin1");
-  } catch {}
+    st = statSync(file);
+  } catch (e) {
+    if ((e as { code?: string }).code === "ENOENT") return "";
+    return broken();
+  }
+  if (!st.isFile()) return broken();
+  let text: string;
+  try {
+    text = readFileSync(file, "latin1");
+  } catch {
+    return broken();
+  }
+  if (text === "") return broken();
   let v = "";
   for (const r of records(text)) if (r.split("=")[0] === key) v = r.slice(key.length + 1);
   return v;
@@ -304,14 +337,17 @@ function jq(filter: string, file: string, fallback: string): string {
 }
 
 // `ls "<passed>/<tip>"* >/dev/null 2>&1`: the glob's matches handed to ls,
-// whose status is the answer; no match left the pattern, which names nothing.
+// whose status is the answer; no match left the pattern, which names
+// nothing. The flat marker is the bare tip, a scoped one `<tip>.<scope>.
+// <app>` - a name with an unrelated suffix glued straight onto the tip (no
+// separating dot) is off that grammar and must not count (W9).
 function attested(dir: string, tip: string): boolean {
   const passed = `${dir}/.crew/qa/passed`;
   let names: string[] = [];
   try {
     names = readdirSync(passed);
   } catch {}
-  const hits = names.filter((n) => n.startsWith(tip)).map((n) => `${passed}/${n}`);
+  const hits = names.filter((n) => n === tip || n.startsWith(`${tip}.`)).map((n) => `${passed}/${n}`);
   return hits.length > 0 && run(["ls", ...hits], "ignore", "ignore").status === 0;
 }
 
@@ -370,7 +406,7 @@ function ship(epic: string, repo: string, dry: boolean, atCaller: boolean): void
     const room = roomFile(epic);
     let missing = "";
     for (const p of partialWords(partials, atCaller))
-      if (run(["grep", "-q", native(`DECIDED: epic-ship partial - ${p} `), room], "ignore", "ignore").status !== 0) missing += ` ${p}`;
+      if (run(["grep", "-qF", native(`DECIDED: epic-ship partial - ${p} `), room], "ignore", "ignore").status !== 0) missing += ` ${p}`;
     if (missing !== "")
       die(
         b(
@@ -393,7 +429,11 @@ function ship(epic: string, repo: string, dry: boolean, atCaller: boolean): void
   if (!isFile(review)) die(b(`no epic review round on record - run ONE independent round over the whole integration diff first: ${reviewCmd}`));
   const rRef = jq('.reviewed_ref // ""', review, "");
   if (rRef !== tip) die(b(`the recorded review round is for ref ${rRef || "<none>"}, not the current tip ${tip} - the tip moved, run a fresh round: ${reviewCmd}`));
-  const nFix = jq('[.findings[]? | select(.action == "fix")] | length', review, "ERR");
+  const nFix = jq(
+    'if (.findings | type) == "array" then [.findings[] | select(.action == "fix")] | length else error("findings must be an array") end',
+    review,
+    "ERR",
+  );
   if (nFix !== "0")
     die(b(`the epic review round left ${nFix} open fix finding(s) - fix on the epic branch (the ref change invalidates the round) and run a fresh round: ${reviewCmd}`));
 
@@ -412,9 +452,22 @@ function ship(epic: string, repo: string, dry: boolean, atCaller: boolean): void
     die(b(`epic-ship needs an origin remote on ${bytes(repo)} - a local-only repo has no PR to open (land it by captain merge instead)`));
   if (push) {
     const ref = `refs/heads/${nb}`;
+    // The verified SHA, not the branch name, is pushed - a ref a landing
+    // moves after this check cannot publish an unreviewed commit.
+    let source = ref;
+    if (git(dir, ["rev-parse", "--verify", "--quiet", ref], "ignore", "ignore") === 0) {
+      const local = gitValue(dir, ["rev-parse", ref]);
+      if (local !== tip)
+        die(
+          b(
+            `the local branch ${branch} is at ${local}, not the reviewed tip ${tip} - a push here must publish exactly the reviewed commit; bring the branch to ${tip} if it fell behind, or publish ${tip} to origin first (the merge-local retry line) and run a fresh review round at its new tip if it moved ahead, then re-run`,
+          ),
+        );
+      source = tip;
+    }
     if (dry) out(`DRY-RUN: git -C ${bytes(dir)} push origin refs/heads/${branch}:refs/heads/${branch}\n`);
     else {
-      const pushed = git(dir, ["push", "origin", `${ref}:${ref}`], "inherit", "inherit");
+      const pushed = git(dir, ["push", "origin", `${source}:${ref}`], "inherit", "inherit");
       if (pushed !== 0) process.exit(pushed);
     }
   }
@@ -475,12 +528,12 @@ function ship(epic: string, repo: string, dry: boolean, atCaller: boolean): void
 if (import.meta.main) {
   const { args, atCaller } = enterCaller(process.argv.slice(2));
   require("git", "jq");
-  const [epic = "", repo = ""] = args;
-  if (epic === "" || repo === "") die("usage: ac-epic-ship.sh <epic> <repo> [--dry-run]");
+  const [epic = "", repo = "", ...rest] = args;
+  if (epic === "" || repo === "" || rest.some((a) => a !== "--dry-run")) die("usage: ac-epic-ship.sh <epic> <repo> [--dry-run]");
   const scope = process.env.AC_SCOPE;
   if (scope)
     die(
       `epic-ship is the CREWCHIEF's verb and this session is scoped (AC_SCOPE=${scope}) - the exit of an epic is the fleet chief's act on the captain's word`,
     );
-  ship(epic, repo, args[2] === "--dry-run", atCaller);
+  ship(epic, repo, rest.includes("--dry-run"), atCaller);
 }

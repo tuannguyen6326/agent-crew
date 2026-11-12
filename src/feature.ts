@@ -102,20 +102,22 @@
 //      the parser reads that row's id as `-`); a checked member whose
 //      terminal is failed|abandoned is partial. Open members:
 //        ERROR: feature <feature> has non-terminal members: <id> <id> - every member lands (or is failed/abandoned by the captain) before the feature ships
-//      The partial ids are the words of the original's unquoted `for p in
-//      $partials`: an id holding a glob character is expanded by bash itself
-//      against the caller's cwd (W16, kept: `fa*` is the cwd's `fab fac`;
-//      a cwd with no name expands nothing), and a bash that cannot do it
-//      ends the run with its status. Each partial member needs a line in
-//      roomFile(<feature>)'s room (the
-//      live room, else the archived one) that a spawned `grep -q` finds for
-//      the BRE `DECIDED: feature-ship partial - <id> ` - the trailing space is
-//      grammar (W8: a receipt ending at the id is none) and the id a pattern
-//      (W15: its `.` matches any byte), both kept:
+//      The partial ids are the words of the list split on spaces, each kept
+//      LITERAL - never expanded as a shell pathname pattern against the
+//      caller's cwd (W16: `fa*` is always the literal three bytes, never
+//      the cwd's `fab fac`; epic-ship.ts's own W2 glob is a deliberate WIRE
+//      QUIRKS reproduction this verb never shared the justification for).
+//      Each partial member needs a line in roomFile(<feature>)'s room (the
+//      live room, else the archived one) that a spawned `grep -qF` finds
+//      for the LITERAL text `DECIDED: feature-ship partial - <id> ` - the
+//      trailing space is grammar (W8: a receipt ending at the id is none),
+//      matched byte for byte (W15 - the id is never read as a BRE, so its
+//      `.` matches only itself):
 //        ERROR: partial feature: [failed]/[abandoned] members need a captain revert-or-keep receipt in the room - <id> <id> - post the GATE:/ASK:, record the captain's answer as 'DECIDED: feature-ship partial - <id> revert|keep <words>', then re-run
-//      A ledger that cannot be read (missing, unreadable) ends the run with
-//      exit 2 and nothing printed (W1); one that is a directory holds no
-//      record, as awk read it, and the ship goes on.
+//      A ledger that cannot be read - missing, unreadable, or a directory -
+//      ends the run with exit 2 and nothing printed (W1); a directory holds
+//      no record, same as the other two, never an empty every-gate-passes
+//      ledger.
 //   3. NO TARGET DRIFT: `git fetch origin --quiet`, its stderr and failure
 //      dropped; tip = `rev-parse refs/heads/<branch>`, target tip =
 //      `rev-parse <freshestRef(target)>`, either failing ending the run with
@@ -133,10 +135,12 @@
 //      unparseable and unreadable all read as none - W3; a number prints as
 //      jq spells it; two JSON values print two lines):
 //        ERROR: the recorded review round is for ref <ref, or <none>>, not the current tip <tip> - the tip moved, run a fresh round: <cmd>
-//      `jq -r '[.findings[]? | select(.action == "fix")] | length'` must print
-//      exactly `0` - its stdout with `ERR` appended when jq fails (W2: an
-//      element jq cannot index is `ERR`, a clean value before a broken one
-//      `0<LF>ERR`; findings that are no array count 0):
+//      `findings` must be an array - absent, null or any other type is a jq
+//      error (never counted as 0 to let the ship go on) folded into the
+//      same `ERR` fallback as an element jq cannot index; the length of its
+//      `action == "fix"` elements must then print exactly `0` - its stdout
+//      with `ERR` appended when jq fails (W2: a clean value before a broken
+//      one is `0<LF>ERR`):
 //        ERROR: the feature review round left <n> open fix finding(s) - fix on the feature branch (the ref change invalidates the round) and run a fresh round: <cmd>
 //      A fix lands as its own member onto the branch, then ship re-runs at
 //      the new tip.
@@ -144,9 +148,11 @@
 //      row whose id equals the feature as `awk -v` reads it (string equality:
 //      `07` is not `7`), holding `qa:yes` as a space- or TAB-joined token,
 //      needs a crew-qa pass attestation: some name under
-//      <clone>/.crew/qa/passed/ STARTING with the tip (W10, a prefix:
-//      `<tip>junk` counts), every match handed to a spawned `ls` whose success
-//      is the answer (an unreadable directory is none):
+//      <clone>/.crew/qa/passed/ that IS the tip, or STARTS with the tip
+//      followed by a literal `.` (the flat marker or a scoped
+//      `<tip>.<scope>.<app>` one - W10: `<tip>junk` with no separating dot
+//      never counts), every match handed to a spawned `ls` whose success is
+//      the answer (an unreadable directory is none):
 //        ERROR: the container row pins qa:yes and no crew-qa pass attestation exists for the tip <tip> - run one behavioral round against the BUILT feature branch (crew-qa skill / bin/ac-qa.sh agent --target <tip> ...)
 // Then THE EXIT, in order:
 // - no origin:
@@ -301,12 +307,13 @@ export function containerContract(text: string, want: string): string {
   return "";
 }
 
-// awk's reading: a directory operand is input with no record in it.
+// A directory ledger would read as awk's "no record in it" - but no member
+// also means the member gate passes on it, so it is refused like missing or
+// unreadable instead (W1).
 function readLedger(file: string): string {
   try {
     return readFileSync(file, "latin1");
-  } catch (e) {
-    if ((e as { code?: string }).code === "EISDIR") return "";
+  } catch {
     process.exit(2);
   }
 }
@@ -423,42 +430,31 @@ function jq(filter: string, file: string, fallback: string): string {
 }
 
 // `ls "<passed>/<tip>"* >/dev/null 2>&1`: the glob's matches handed to ls,
-// whose status is the answer; no match left the pattern, which names nothing.
+// whose status is the answer; no match left the pattern, which names
+// nothing. The flat marker is the bare tip, a scoped one `<tip>.<scope>.
+// <app>` - a name with an unrelated suffix glued straight onto the tip (no
+// separating dot) is off that grammar and must not count (W10).
 function attested(dir: string, tip: string): boolean {
   const passed = `${dir}/.crew/qa/passed`;
   let names: string[] = [];
   try {
     names = readdirSync(passed);
   } catch {}
-  const hits = names.filter((n) => n.startsWith(tip)).map((n) => `${passed}/${n}`);
+  const hits = names.filter((n) => n === tip || n.startsWith(`${tip}.`)).map((n) => `${passed}/${n}`);
   return hits.length > 0 && run(["ls", ...hits], "ignore", "ignore").status === 0;
 }
 
 const fold = (s: string): string => s.replace(/[^a-zA-Z0-9]/g, "_");
 
-// `for p in $partials`: no id holds a blank, so the words are the ids, and an
-// id with no pattern character is itself. The pathname expansion of the rest
-// is bash's own (glob syntax, locale and match order included), so bash
-// performs it. `set -f` where enterCaller could not return to the caller's
-// cwd: the bash globbed a directory with no name, which held nothing, where
-// this process sits in the distro root. The expansion was the shell's own
-// step, with no status to fail; a bash that cannot do it here ends the run.
-function partialWords(list: string, atCaller: boolean): string[] {
-  const script = `${atCaller ? "" : "set -f; "}for p in $1; do printf '%s\\0' "$p"; done`;
-  return list
-    .split(" ")
-    .filter((w) => w !== "")
-    .flatMap((w) => {
-      if (!/[*?[\\]/.test(w)) return [w];
-      const r = run(["bash", "-c", script, "ac-feature.sh", native(w)], "pipe", "inherit");
-      if (r.status !== 0) process.exit(r.status);
-      const words = r.out.toString("latin1").split("\0");
-      words.pop();
-      return words;
-    });
+// No id holds a blank, so splitting the list on spaces is its ids - each
+// kept LITERAL, never expanded as a shell pathname pattern against the
+// caller's cwd (W16) - epic-ship.ts's own W2 glob is a deliberate WIRE
+// QUIRKS reproduction this verb does not share.
+function partialWords(list: string): string[] {
+  return list.split(" ").filter((w) => w !== "");
 }
 
-function cmdShip(feature: string, repo: string, dry: boolean, atCaller: boolean): void {
+function cmdShip(feature: string, repo: string, dry: boolean): void {
   chiefOnly("ship");
   require("jq");
   const entry = entryOrDie("ship", feature, repo);
@@ -487,7 +483,7 @@ function cmdShip(feature: string, repo: string, dry: boolean, atCaller: boolean)
   if (partials.length > 0) {
     const room = roomFile(feature);
     let missing = "";
-    for (const p of partialWords(partials.join(" "), atCaller)) if (run(["grep", "-q", native(`DECIDED: feature-ship partial - ${p} `), room], "ignore", "ignore").status !== 0) missing += ` ${p}`;
+    for (const p of partialWords(partials.join(" "))) if (run(["grep", "-qF", native(`DECIDED: feature-ship partial - ${p} `), room], "ignore", "ignore").status !== 0) missing += ` ${p}`;
     if (missing !== "")
       die(
         b(
@@ -513,7 +509,11 @@ function cmdShip(feature: string, repo: string, dry: boolean, atCaller: boolean)
   if (!isFile(review)) die(b(`no feature review round on record - run ONE independent round over the whole integration diff first: ${reviewCmd}`));
   const rRef = jq('.reviewed_ref // ""', review, "");
   if (rRef !== tip) die(b(`the recorded review round is for ref ${rRef || "<none>"}, not the current tip ${tip} - the tip moved, run a fresh round: ${reviewCmd}`));
-  const nFix = jq('[.findings[]? | select(.action == "fix")] | length', review, "ERR");
+  const nFix = jq(
+    'if (.findings | type) == "array" then [.findings[] | select(.action == "fix")] | length else error("findings must be an array") end',
+    review,
+    "ERR",
+  );
   if (nFix !== "0")
     die(b(`the feature review round left ${nFix} open fix finding(s) - fix on the feature branch (the ref change invalidates the round) and run a fresh round: ${reviewCmd}`));
 
@@ -579,7 +579,7 @@ function cmdShip(feature: string, repo: string, dry: boolean, atCaller: boolean)
 }
 
 if (import.meta.main) {
-  const { args, atCaller } = enterCaller(process.argv.slice(2));
+  const { args } = enterCaller(process.argv.slice(2));
   const n = args.length;
   const verb = args[0] ?? "";
   switch (verb) {
@@ -599,7 +599,7 @@ if (import.meta.main) {
     }
     case "ship":
       if (n !== 3 && !(n === 4 && args[3] === "--dry-run")) die("usage: ac-feature.sh ship <feature> <repo> [--dry-run]");
-      cmdShip(args[1]!, args[2]!, n === 4, atCaller);
+      cmdShip(args[1]!, args[2]!, n === 4);
       break;
     default:
       die("usage: ac-feature.sh create|verify <feature> <repo> | show|retire <feature> | ship <feature> <repo> [--dry-run]");

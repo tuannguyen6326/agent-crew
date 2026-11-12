@@ -628,6 +628,14 @@ if [ "$(id -u)" != 0 ]; then
   chmod 644 "$NH/home/records/backlog.md"
   assert_eq "$(shim_out):$(shim_err)" ":" "9: an unreadable ledger - exit 2, nothing printed"
 fi
+# W1 (feature twin of epic-ship's W10): a ledger that is a DIRECTORY must
+# refuse like missing/unreadable, not read as empty (no member, member gate
+# passes)
+rm -f "$NH/home/records/backlog.md"
+mkdir -p "$NH/home/records/backlog.md"
+go 2 ship fa p --dry-run
+assert_eq "$(shim_out):$(shim_err)" ":" "9: a ledger that is a DIRECTORY - exit 2, nothing printed"
+rmdir "$NH/home/records/backlog.md"
 led '- [ ] fa - container\n- [ ] fa-s1 - open; feature:fa\n- [x] fa-s0 - landed; feature:fa\n'
 go 1 ship fa p --dry-run
 assert_eq "$(shim_err)" "ERROR: feature fa has non-terminal members: fa-s1 - every member lands (or is failed/abandoned by the captain) before the feature ships" "9: open members"
@@ -640,6 +648,19 @@ assert_eq "$(shim_err)" "ERROR: partial feature: [failed]/[abandoned] members ne
 room fa '# Room: fa\n\n- [2026-01-01T00:00:00Z] crewchief> DECIDED: feature-ship partial - fa-s4 keep (captain word)\n'
 go 1 ship fa p --dry-run
 assert_contains "$(shim_err)" "in the room - fa-s5 - post" "9: the member with no receipt is still named"
+# W15: a partial id's `.` must match literally, never as a BRE's "any byte".
+# W16: a partial id holding a glob character must never be expanded against
+# the caller's cwd (feature.ts's W16; epic-ship.ts reproduces the same glob
+# on purpose - feature.ts does not)
+touch "$NH/zglobtestX"
+led '## Done\n- [x] fa-s4 [failed] - x; feature:fa\n- [x] fa.s9 [failed] - dotted; feature:fa\n- [x] zglobtest? [abandoned] - glob-named; feature:fa\n'
+room fa '# Room: fa\n\n- [2026-01-01T00:00:00Z] crewchief> DECIDED: feature-ship partial - fa-s4 keep (captain word)\n- [2026-01-01T00:00:00Z] crewchief> DECIDED: feature-ship partial - faXs9 keep (captain word)\n- [2026-01-01T00:00:00Z] crewchief> DECIDED: feature-ship partial - zglobtestX keep (captain word)\n'
+go 1 ship fa p --dry-run
+assert_contains "$(shim_err)" "fa.s9" "9: a BRE '.' in the partial id must not match an unrelated byte (W15)"
+assert_contains "$(shim_err)" "zglobtest?" "9: a glob-charactered id is named literally, never expanded against the cwd (W16)"
+rm -f "$NH/zglobtestX"
+led '## Done\n- [x] fa-s4 [failed] - x; feature:fa\n- [x] fa-s5 [abandoned] - y; feature:fa\n- [ ] fa-s7 - case; feature:FA\n- [ ] fa-s8 - prose\0 feature:fa\n- [ ] fa [src:cap] - the container is no member\n'
+room fa '# Room: fa\n\n- [2026-01-01T00:00:00Z] crewchief> DECIDED: feature-ship partial - fa-s4 keep (captain word)\n'
 arch_room() { mkdir -p "$H/home/data/archive/2026/fa"; printf -- '- [x] crewchief> DECIDED: feature-ship partial - fa-s4 keep\n- [x] crewchief> DECIDED: feature-ship partial - fa-s5 revert\n' >"$H/home/data/archive/2026/fa/room.md"; rm "$H/home/data/fa/room.md"; }
 arch_room
 go 1 ship fa p --dry-run
@@ -713,6 +734,16 @@ fix_row '{"reviewed_ref":"TIP","findings":[{"action":"fix"},{"action":"keep"},{"
 fix_row '{"reviewed_ref":"TIP","findings":["x"]}' ERR
 fix_row '{"reviewed_ref":"TIP","findings":[]} garbage' "0
 ERR"
+# findings absent, null or a non-array value must refuse, never count 0 and
+# let the ship go on
+malformed_row() {  # malformed_row <json>
+  review fa p "$1"
+  go 1 ship fa p --dry-run
+  assert_contains "$(shim_err)" "open fix finding" "11: malformed findings refuses: $1"
+}
+malformed_row '{"reviewed_ref":"TIP"}'
+malformed_row '{"reviewed_ref":"TIP","findings":null}'
+malformed_row '{"reviewed_ref":"TIP","findings":"nope"}'
 review fa p
 
 # 12. qa, when the container's OWN row pins qa:yes: the attestation is a
@@ -736,6 +767,7 @@ qa_row() {  # qa_row <name under passed/> <file|dir|dir000> <want: pass|refuse>
 qa_row "$FTIP" file pass
 qa_row "$FTIP.scope.app" file pass
 qa_row "${FTIP%?}" file refuse
+qa_row "${FTIP}junk" file refuse
 qa_row "$FTIP.d" dir pass
 [ "$(id -u)" = 0 ] || qa_row "$FTIP.d" dir000 refuse
 seed12() {
