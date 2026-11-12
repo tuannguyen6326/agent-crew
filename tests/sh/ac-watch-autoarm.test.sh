@@ -714,6 +714,10 @@ aa_fresh; aa_meta t1 'kind=ship\n'; aa_lines 'heartbeat' 'report:t1'
 aa_go 2; aa_armed 2; aa_said "ac-watch-autoarm: report:t1"
 # The stub's clock moves 1000 s per arm, and an arm starts only while
 # elapsed + heartbeat (600) is within the budget (3000): <env word>|<arms>|<stderr>.
+# A refusal (whitespace, a sign, hex, a base#digits form) now falls back to
+# the documented default (600, 3000) rather than being read as that value -
+# AC_AUTOARM_BUDGET=" 600 " and "-1" used to read as literally 600 and -1;
+# both now fall back to 3000, which clears the budget in two arms instead.
 while IFS='|' read -r env n said <&3; do
   aa_go 2 "$env"; aa_armed "$n"; aa_said "$said"
 done 3<<'ROWS'
@@ -721,8 +725,8 @@ AC_AUTOARM_BUDGET=0|0|auto-arm budget spent with crew still in flight
 AC_AUTOARM_BUDGET=599|0|auto-arm budget spent with crew still in flight
 AC_AUTOARM_BUDGET=600|1|auto-arm budget spent with crew still in flight
 AC_AUTOARM_BUDGET=|2|ac-watch-autoarm: report:t1
-AC_AUTOARM_BUDGET= 600 |1|auto-arm budget spent with crew still in flight
-AC_AUTOARM_BUDGET=-1|0|auto-arm budget spent with crew still in flight
+AC_AUTOARM_BUDGET= 600 |2|ac-watch-autoarm: report:t1
+AC_AUTOARM_BUDGET=-1|2|ac-watch-autoarm: report:t1
 AC_HEARTBEAT=3001|0|auto-arm budget spent with crew still in flight
 AC_HEARTBEAT=3000|1|auto-arm budget spent with crew still in flight
 AC_HEARTBEAT=-9999|2|ac-watch-autoarm: report:t1
@@ -807,6 +811,11 @@ aa_go 2 AC_STOPHOOK_LOG_KEEP=2; aa_traced 3
 aa_go 2 AC_STOPHOOK_LOG_KEEP=3; aa_traced 5
 aa_go 2 AC_STOPHOOK_LOG_KEEP=0; aa_traced 0
 aa_go 2 AC_STOPHOOK_LOG_KEEP=; aa_traced 2
+# A malformed AC_STOPHOOK_LOG_KEEP (an identifier here) used to throw
+# EUNBOUND out of the very first trace call, ending the run 0 right there -
+# an armed firing that never arms, the wake lost. It now falls back to the
+# documented default (200) and arms normally.
+aa_go 2 AC_STOPHOOK_LOG_KEEP=abc; aa_armed 1; aa_said "ac-watch-autoarm: report:t1"; aa_traced 4
 aa_each 'mkdir SIDE/home/state/.stop-hooks.log.d; rm SIDE/home/state/.stop-hooks.log; mv SIDE/home/state/.stop-hooks.log.d SIDE/home/state/.stop-hooks.log'
 aa_go 2
 aa_each 'rmdir SIDE/home/state/.stop-hooks.log'

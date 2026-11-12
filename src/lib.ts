@@ -4732,14 +4732,12 @@ export function hookJq(filter: string, payload: string): string {
 // the state dir minted as ac_state_dir minted it - never a byte on stdout or
 // stderr but date's own, and a date that cannot start stamps the line empty as
 // `$(ac_iso)` did; no AC_HOME, or one cd cannot enter, writes nothing.
-// <detail> is bytes (latin1). Past AC_STOPHOOK_LOG_KEEP*2 lines (unset or
-// empty: 200) the log keeps its last AC_STOPHOOK_LOG_KEEP through tail(1),
-// spawned into an exclusive temp (exclusiveTemp) that mv(1) puts in place; a
-// tail that fails leaves its temp, as the original's did. The knob enters
-// `$(( keep * 2 ))` only after the line is written, and arithValue's
-// EUNBOUND (set -u ended the caller with the line count's status, 0) or
-// EARITH (the caller's top-level command discarded) is thrown for the caller
-// to act on.
+// <detail> is bytes (latin1). Past AC_STOPHOOK_LOG_KEEP*2 lines (unset,
+// empty or a refusal: 200) the log keeps its last AC_STOPHOOK_LOG_KEEP
+// through tail(1), spawned into an exclusive temp (exclusiveTemp) that
+// mv(1) puts in place; a tail that fails leaves its temp, as the original's
+// did. The knob is strictDecimal, falling back to 200 on a refusal rather
+// than discarding the trace call and losing the caller's wake.
 export function hookTrace(hook: string, detail: string): void {
   const h = process.env.AC_HOME;
   const home = h ? physicalDir(h) : null;
@@ -4749,7 +4747,7 @@ export function hookTrace(hook: string, detail: string): void {
     mkdirSync(sd, { recursive: true });
   } catch {}
   const f = `${sd}/.stop-hooks.log`;
-  const keep = process.env.AC_STOPHOOK_LOG_KEEP || "200";
+  const keep = strictDecimal(process.env.AC_STOPHOOK_LOG_KEEP || "200") ?? 200;
   let ts = "";
   try {
     ts = iso();
@@ -4761,7 +4759,7 @@ export function hookTrace(hook: string, detail: string): void {
   try {
     for (const c of readFileSync(f)) if (c === 10) lines++;
   } catch {}
-  if (lines <= BigInt.asIntN(64, arithValue(keep) * 2n)) return;
+  if (lines <= BigInt(keep) * 2n) return;
   let tmp: { path: string; fd: number };
   try {
     tmp = exclusiveTemp(`${f}.tmp`);
@@ -4770,7 +4768,7 @@ export function hookTrace(hook: string, detail: string): void {
   }
   let r: ReturnType<typeof spawnShellSync> | null = null;
   try {
-    r = spawnShellSync(["tail", "-n", keep, f], { stdin: "ignore", stdout: tmp.fd, stderr: "ignore" });
+    r = spawnShellSync(["tail", "-n", String(keep), f], { stdin: "ignore", stdout: tmp.fd, stderr: "ignore" });
   } catch {}
   closeSync(tmp.fd);
   if (shellStatus(r) !== 0) return;

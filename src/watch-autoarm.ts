@@ -190,26 +190,13 @@
 // is for.
 //
 // THE CLOCK. `started` and every pass's now are `date -u +%s`, spawned, so a
-// PATH stub binds both sides; an arm starts only while `$(( <now> - started +
-// ${AC_HEARTBEAT:-600} ))` is `[ -le ]` ${AC_AUTOARM_BUDGET:-3000}, the
-// heartbeat spliced into the sum as text - each operand read by arithValue
-// (src/lib.ts) in that order - and a budget that is no integer arming nothing.
+// PATH stub binds both sides; an arm starts only while `<now> - started +
+// AC_HEARTBEAT` (default 600) is `<=` AC_AUTOARM_BUDGET (default 3000). The
+// clock text itself is still bash 3.2's arithValue (src/lib.ts); the
+// heartbeat and the budget are strictDecimal, falling back to their
+// documented default on a refusal rather than arming nothing.
 //
 // AT PARITY with the bash this module replaced (each until its own fix lands):
-// - W1 MALFORMED TRACE KEEP: AC_STOPHOOK_LOG_KEEP enters `$(( keep * 2 ))`
-//   after each trace line is written. A malformed number there discards the
-//   top-level command the trace stood in: a stand-aside's exit 0 and a
-//   handback's exit 2 are skipped and the run falls through - an actionable
-//   close goes on to the budget-spent arm (its line again on stderr, its
-//   nudge, its trace), then the work-finished trace, and ends 0: the wake is
-//   lost. An identifier there ends the run 0 at the first trace line - an
-//   armed firing then never arms.
-// - W2 MALFORMED HEARTBEAT: a malformed AC_HEARTBEAT (or clock text)
-//   discards the owed-loop, so the firing hands back budget-spent at once,
-//   every turn end; an identifier ends the run after the armed line with the
-//   clock date's status (0 when date succeeded): no arm, no handback, no
-//   closing trace. An AC_AUTOARM_BUDGET that is no integer arms nothing and
-//   hands back at once too.
 // - W3 BAD BACKEND: a scoped handback whose fleet backend name is refused
 //   (AC_BACKEND, config/backend or the fleet-state config naming no herdr or
 //   orca) ends the run 1 at the nudge, silently, before its trace and its
@@ -237,10 +224,12 @@
 //   started in (STARTED_BIN, physical).
 // - NUDGE DRIVER: the backend driver is src/lib.ts's (backendCall), so the
 //   nudge needs no ac-backend.sh beside the hook.
-// - EXPRESSIONS: an AC_HEARTBEAT, AC_STOPHOOK_LOG_KEEP or clock text that is
-//   an arithmetic expression (60*10) rather than one operand reads as
-//   malformed, and an identifier naming a SET variable (HOME) reads as
-//   unbound.
+// - EXPRESSIONS: clock text that is an arithmetic expression (60*10) rather
+//   than one operand reads as malformed (discarding the command it stood
+//   in), and an identifier naming a SET variable (HOME) reads as unbound.
+//   AC_HEARTBEAT, AC_STOPHOOK_LOG_KEEP and AC_AUTOARM_BUDGET no longer share
+//   this: strictDecimal only ever refuses (falling back to the documented
+//   default) or accepts a plain decimal.
 // - No line of a shell's own is printed for an unbound or malformed operand,
 //   a missing command or a failed redirection.
 // - ORDER: the metas are walked in byte order under every locale - the order
@@ -276,6 +265,7 @@ import {
   shellStatus,
   spawnShellSync,
   STARTED_BIN,
+  strictDecimal,
   testInt,
   wakePending,
 } from "./lib.ts";
@@ -328,9 +318,9 @@ try {
 const scope = process.env.AC_SCOPE ?? "";
 const where = scope === "" ? "fleet" : latin1(scope);
 
-// The original's top-level commands: a malformed number in a `$(( ))` it ran
-// discarded the one it stood in, and the script went on with the next (W1,
-// W2); every block below is one of them.
+// The original's top-level commands: a malformed clock reading in a
+// `$(( ))` it ran discarded the one it stood in, and the script went on
+// with the next; every block below is one of them.
 class Discard {}
 function block(run: () => void): void {
   try {
@@ -540,7 +530,7 @@ block(() => {
   process.exit(0);
 });
 
-const budget = process.env.AC_AUTOARM_BUDGET || "3000";
+const budget = BigInt(strictDecimal(process.env.AC_AUTOARM_BUDGET || "3000") ?? 3000);
 const started = clock().text;
 process.env.AC_AUTOARM = "1";
 block(() => trace(`verdict=armed reason=loop-start scope=${where} owed=yes`));
@@ -559,9 +549,9 @@ block(() => {
     }
     firstPass = false;
     const now = clock();
-    const end = BigInt.asIntN(64, BigInt.asIntN(64, arith(now.text, now.status) - arith(started, now.status)) + arith(process.env.AC_HEARTBEAT || "600", now.status));
-    const limit = testInt(budget);
-    if (limit === null || end > limit) break;
+    const heartbeat = BigInt(strictDecimal(process.env.AC_HEARTBEAT || "600") ?? 600);
+    const end = BigInt.asIntN(64, BigInt.asIntN(64, arith(now.text, now.status) - arith(started, now.status)) + heartbeat);
+    if (end > budget) break;
     if (scope !== "") {
       let only: string | null = null;
       try {

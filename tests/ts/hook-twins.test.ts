@@ -105,13 +105,13 @@ test("hookCapture keeps the child's stdout whatever its status, and nothing of a
   }
 });
 
-// hookTrace against ac_hook_trace itself (bin/ac-lib.sh) under a `set -uo
-// pipefail` bash, as the Stop hooks source it: each side its own home and the
-// same date stub, the line count's arithmetic followed past the call - an
-// identifier ends the bash 0 there, a malformed number discards the command
-// the call stood in. The bash side is a script FILE with the call on a line of
-// its own, as in both hooks: under `bash -c` bash 3.2 dies 127 from that
-// identifier instead, and a discard drops the whole -c line.
+// hookTrace against ac_hook_trace itself (bin/ac-lib.sh, frozen - no live
+// caller past it) under a `set -uo pipefail` bash, as the Stop hooks used to
+// source it: each side its own home and the same date stub, for a clean
+// decimal AC_STOPHOOK_LOG_KEEP. The keep is now strictDecimal (never bash's
+// `$(( keep * 2 ))`), asserted explicitly below rather than differentially
+// for every value the two readings diverge on. The bash side is a script
+// FILE with the call on a line of its own, as in both hooks.
 const TRACE = join(W, "trace.ts");
 writeFileSync(
   TRACE,
@@ -176,24 +176,24 @@ test("hookTrace appends the line ac_hook_trace appends, minting state/", () => {
 });
 
 test("hookTrace trims past keep*2 lines as the bash did", () => {
-  for (const keep of ["2", "3", "0", "", "010", "0x1", " 2 "]) {
+  for (const keep of ["2", "3", "0", ""]) {
     const r = traceBoth("x", { AC_STOPHOOK_LOG_KEEP: keep }, oldLog(5));
     expect(r.twin).toEqual(r.bash);
   }
-  // A keep tail(1) refuses leaves the temp on both sides, the log untrimmed.
-  const r = traceBoth("x", { AC_STOPHOOK_LOG_KEEP: "2#1" }, oldLog(5));
-  expect(r.twin).toEqual(r.bash);
-  expect(r.twin.state).toEqual([".stop-hooks.log", ".stop-hooks.log.tmp.PID"]);
 });
 
-test("hookTrace's keep arithmetic throws what ended or discarded the bash caller", () => {
-  for (const keep of ["abc", "1 2", "09", "2#9"]) {
-    const r = traceBoth("x", { AC_STOPHOOK_LOG_KEEP: keep }, oldLog(1));
-    expect(r.twin).toEqual(r.bash);
-    expect(r.twin.log).toBe("old 0\n2026-10-10T00:00:00Z hook=watch-autoarm x\n");
+// Asserted explicitly, not against the bash original (frozen - no live
+// caller past bin/ac-lib.sh): the knob is now strictDecimal, so `010` is
+// ten (never bash's octal eight) and a refusal (hex, a sign, surrounding
+// whitespace, a base#digits form) falls back to the documented default
+// (200) instead of throwing EARITH/EUNBOUND and discarding the trace call
+// - the bash twin threw or read these as a different number entirely.
+test("hookTrace's keep is strictDecimal: 010 is ten, a refusal falls back to 200, never throws", () => {
+  const expectedLog = `${Array.from({ length: 5 }, (_, i) => `old ${i}\n`).join("")}2026-10-10T00:00:00Z hook=watch-autoarm x\n`;
+  for (const keep of ["010", "0x1", " 2 ", "2#1", "abc", "1 2", "09", "2#9"]) {
+    const r = traceBoth("x", { AC_STOPHOOK_LOG_KEEP: keep }, oldLog(5));
+    expect({ keep, out: r.twin.out, log: r.twin.log }).toEqual({ keep, out: "went on\nnext\n", log: expectedLog });
   }
-  expect(traceBoth("x", { AC_STOPHOOK_LOG_KEEP: "abc" }).twin.out).toBe("");
-  expect(traceBoth("x", { AC_STOPHOOK_LOG_KEEP: "1 2" }).twin.out).toBe("next\n");
 });
 
 test("hookTrace writes nothing without a home cd can enter", () => {
