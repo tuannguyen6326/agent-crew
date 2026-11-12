@@ -72,15 +72,19 @@
 // ac-teardown.sh <id> [--force] [--pr-ready '<the captain acceptance>']
 // [--ci-override '<why CI need not be green>'] [--no-lesson '<why>']
 // [--no-fact '<why>']` (one line, exit 1; `-h` is an id). Then --force;
-// --pr-ready/--ci-override/--no-lesson/--no-fact take the next word,
-// whatever it is (W2), and refuse an absent or empty one: `ERROR: --pr-ready
-// carries the captain's acceptance words - they are the proof, so an empty
-// value is refused`, `ERROR: --ci-override carries the captain's
-// acknowledgement that CI did not verify this PR - it is the record, so an
-// empty value is refused`, `ERROR: --no-lesson carries why the slice learned
-// nothing new - it is the record, so an empty value is refused`, `ERROR:
-// --no-fact carries why the slice verified no repo fact - it is the record,
-// so an empty value is refused`; repeats last-wins; any other word is
+// --pr-ready/--ci-override/--no-lesson/--no-fact take the next word and
+// refuse an absent or empty one, or one that is itself one of these five
+// flag words (--force/--pr-ready/--ci-override/--no-lesson/--no-fact - any
+// of the four value flags, against any of the five, including itself):
+// `ERROR: --pr-ready carries the captain's acceptance words - they are the
+// proof, so an empty value is refused` (a flag-word value: `... so a value
+// that is itself a flag (<word>) is refused`),
+// `ERROR: --ci-override carries the captain's acknowledgement that CI did
+// not verify this PR - it is the record, so an empty value is refused`,
+// `ERROR: --no-lesson carries why the slice learned nothing new - it is the
+// record, so an empty value is refused`, `ERROR: --no-fact carries why the
+// slice verified no repo fact - it is the record, so an empty value is
+// refused`; repeats last-wins; any other word is
 // `ERROR: unknown argument: <a>`. Every argument refusal precedes any home
 // read. No AC_HOME is the NO_HOME refusal (src/lib.ts), exit 1; the home is
 // entered physically and state/ minted. No regular file state/<id>.meta is
@@ -372,8 +376,8 @@
 // already gone (<f>)`; then removed. Every step of the sweep is best-effort -
 // none of them changes the exit status or the gate.
 //
-// KNOWN WARTS, kept as they are: W1 (the id is always the first word), W2
-// (a value flag swallows the next word), W3 (--force --pr-ready records
+// KNOWN WARTS, kept as they are: W1 (the id is always the first word),
+// W3 (--force --pr-ready records
 // both), W6 (the task backend validated only at the pane kill, after the
 // archive), W16 (the named member is the first in byte order), W18 (an
 // unreachable herdr reads as a stale handle), W19 (the orca close never
@@ -742,6 +746,12 @@ async function main(): Promise<void> {
   let ciOverride = "";
   let noLesson = "";
   let noFact = "";
+  // A flag word as a value flag's value means the caller forgot the value -
+  // silently swallowing it would drop that flag.
+  const FLAG_WORDS = new Set(["--force", "--pr-ready", "--ci-override", "--no-lesson", "--no-fact"]);
+  const refuseFlagValue = (prefix: string, v: string): void => {
+    if (FLAG_WORDS.has(v)) fail(`${prefix} so a value that is itself a flag (${v}) is refused`);
+  };
   for (let i = 1; i < argv.length; ) {
     const a = argv[i]!;
     if (a === "--force") {
@@ -750,18 +760,22 @@ async function main(): Promise<void> {
     } else if (a === "--pr-ready") {
       prReady = argv[i + 1] ?? "";
       if (prReady === "") fail("--pr-ready carries the captain's acceptance words - they are the proof, so an empty value is refused");
+      refuseFlagValue("--pr-ready carries the captain's acceptance words - they are the proof,", prReady);
       i += 2;
     } else if (a === "--ci-override") {
       ciOverride = argv[i + 1] ?? "";
       if (ciOverride === "") fail("--ci-override carries the captain's acknowledgement that CI did not verify this PR - it is the record, so an empty value is refused");
+      refuseFlagValue("--ci-override carries the captain's acknowledgement that CI did not verify this PR - it is the record,", ciOverride);
       i += 2;
     } else if (a === "--no-lesson") {
       noLesson = argv[i + 1] ?? "";
       if (noLesson === "") fail("--no-lesson carries why the slice learned nothing new - it is the record, so an empty value is refused");
+      refuseFlagValue("--no-lesson carries why the slice learned nothing new - it is the record,", noLesson);
       i += 2;
     } else if (a === "--no-fact") {
       noFact = argv[i + 1] ?? "";
       if (noFact === "") fail("--no-fact carries why the slice verified no repo fact - it is the record, so an empty value is refused");
+      refuseFlagValue("--no-fact carries why the slice verified no repo fact - it is the record,", noFact);
       i += 2;
     } else fail(`unknown argument: ${a}`);
   }

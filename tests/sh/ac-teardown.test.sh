@@ -196,6 +196,13 @@ xrefuse "ERROR: no crewmate meta for x" x --force --force --pr-ready a --pr-read
 xrefuse "ERROR: unknown argument: b" x --pr-ready a b --force
 xrefuse "ERROR: --ci-override carries the captain's acknowledgement that CI did not verify this PR - it is the record, so an empty value is refused" x --ci-override
 xrefuse "ERROR: unknown argument: b" x --ci-override why b
+
+# A value flag's value that is itself a flag word must refuse, one per
+# value flag, the word recognised either way round.
+xrefuse "ERROR: --pr-ready carries the captain's acceptance words - they are the proof, so a value that is itself a flag (--force) is refused" x --pr-ready --force
+xrefuse "ERROR: --ci-override carries the captain's acknowledgement that CI did not verify this PR - it is the record, so a value that is itself a flag (--no-lesson) is refused" x --ci-override --no-lesson
+xrefuse "ERROR: --no-lesson carries why the slice learned nothing new - it is the record, so a value that is itself a flag (--pr-ready) is refused" x --no-lesson --pr-ready
+xrefuse "ERROR: --no-fact carries why the slice verified no repo fact - it is the record, so a value that is itself a flag (--force) is refused" x --no-fact --force
 xdo mkdir -p @H/home/state/d.meta
 xrefuse "ERROR: no crewmate meta for d" d
 XHOMELESS=1
