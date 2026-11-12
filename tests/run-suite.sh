@@ -24,6 +24,13 @@
 # test already runs as its own process group under set -m, so the runner's
 # own wait loop is the watchdog. The bound is per BATCH start, so in parallel
 # mode every test of a batch shares one deadline.
+# Before the kill, the test's log - printed with its FAIL - gets what was
+# still running: a ps row for every process in the group and for every
+# process whose parent chain reaches the test, then a sample(1) of each where
+# the host has one (1 s each, cut at 5 s, at most 10 processes). One that left
+# the group (setsid: a Bun `detached` spawn, python's pty.fork; setpgid: a
+# `set -m` job) is NOT killed and outlives the run; once its parent is gone it
+# is re-parented to init and is not even listed.
 #
 # Usage: run-suite.sh [--jobs N] [--changed] [<tests-dir>]
 #
@@ -950,21 +957,73 @@ spawn_test() {
   # this runner sits in (the Learning gate runs it in a pane), so a suite
   # that reads stdin from that terminal is stopped by SIGTTIN and the wait
   # below never returns; no suite needs a terminal, so stdin is /dev/null.
+  #
+  # The log is opened to APPEND: capture_hung adds to it while the test still
+  # holds it, and a plain `>` would write the test's dying lines at its own
+  # offset, over the capture.
   set -m
   (
     set +e
     if [ "$name" = src.test.sh ] && [ -n "$bun_selection" ]; then export AC_SRC_TESTS="$bun_selection"; fi
-    bash "$f" </dev/null >"$outdir/$name.log" 2>&1; printf '%s\n' "$?" >"$outdir/$name.rc"
+    bash "$f" </dev/null >>"$outdir/$name.log" 2>&1; printf '%s\n' "$?" >"$outdir/$name.rc"
   ) &
   spawned_pid=$!
   set +m
 }
 
+capture_hung() {
+  # capture_hung <pid> <name> <log> - appends to <log> what the test <pid>
+  # still runs at its bound (header: PER-TEST BOUND). The kill that follows
+  # erases this evidence, so it is taken first; each sample is cut at 5 s,
+  # because a capture that could hang would wedge the runner it serves.
+  local p="$1" name="$2" log="$3" table sampler q s w n=0
+  table="$(ps -A -o pid=,ppid=,pgid=,stat=,etime=,command= 2>/dev/null | awk -v p="$p" '
+    { pid[NR] = $1; ppid[NR] = $2; pgid[NR] = $3; row[NR] = $0 }
+    END {
+      keep[p] = 1
+      for (i = 1; i <= NR; i++) if (pgid[i] == p) keep[pid[i]] = 1
+      do {
+        grown = 0
+        for (i = 1; i <= NR; i++) if (!(pid[i] in keep) && (ppid[i] in keep)) { keep[pid[i]] = 1; grown = 1 }
+      } while (grown)
+      for (i = 1; i <= NR; i++) if (pid[i] in keep) print row[i]
+    }')" || true
+  printf -- '----- run-suite: %s reached its %ss bound - what was running before the kill (pid ppid pgid stat elapsed command) -----\n%s\n' \
+    "$name" "$test_timeout" "$table" >>"$log"
+  if ! sampler="$(command -v sample 2>/dev/null)"; then
+    printf 'run-suite: no sample(1) on this host - the table is the whole capture\n' >>"$log"
+    return 0
+  fi
+  # shellcheck disable=SC2046 # one pid per word, split on purpose
+  set -- $(printf '%s\n' "$table" | awk '{ print $1 }')
+  for q in "$@"; do
+    n=$((n + 1))
+    if [ "$n" -gt 10 ]; then
+      printf 'run-suite: %s more process(es) not sampled (at most 10)\n' "$(( $# - 10 ))" >>"$log"
+      break
+    fi
+    printf -- '----- run-suite: sample %s -----\n' "$q" >>"$log"
+    "$sampler" "$q" 1 -file "$log.sample" >>"$log" 2>&1 &
+    s=$!
+    w=0
+    while kill -0 "$s" 2>/dev/null && [ "$w" -lt 50 ]; do sleep 0.1; w=$((w + 1)); done
+    if kill -0 "$s" 2>/dev/null; then
+      kill -KILL "$s" 2>/dev/null || true
+      printf 'run-suite: sample %s did not finish within 5s - killed\n' "$q" >>"$log"
+    fi
+    wait "$s" 2>/dev/null || true
+    cat "$log.sample" >>"$log" 2>/dev/null || true
+    rm -f "$log.sample"
+  done
+}
+
 await_tests() {
   # await_tests <outdir> <pid:name>... - waits for each spawned test. The
   # subshell is a process group of its own (set -m), so a bound that fires
-  # kills the test and every child it left running. No external `timeout` is
-  # involved: macOS ships none, and the group is already here.
+  # kills the test and every child still in that group; one that left it
+  # (setsid, set -m) survives, and capture_hung lists it only while its
+  # parents still lead back to the test. No external `timeout` is involved:
+  # macOS ships none, and the group is already here.
   local outdir="$1" entry p name deadline
   shift
   deadline=$(( $(date +%s) + test_timeout ))
@@ -972,6 +1031,9 @@ await_tests() {
     p="${entry%%:*}"; name="${entry#*:}"
     while kill -0 "$p" 2>/dev/null; do
       if [ "$test_timeout" -gt 0 ] && [ "$(date +%s)" -ge "$deadline" ]; then
+        # The kill must follow even when the capture fails (a full disk), and
+        # under `||` the whole capture runs without errexit.
+        capture_hung "$p" "$name" "$outdir/$name.log" || true
         kill -TERM -- "-$p" 2>/dev/null || true
         sleep 1
         kill -KILL -- "-$p" 2>/dev/null || true
