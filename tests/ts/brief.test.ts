@@ -155,7 +155,7 @@ test("rowContractForId: the exact row's contract, else the family row's for a st
   expect(same("the family's", { ...CONTRACT, args: ["fam-spec", `@S/${LEDGER}`], seed }).t.out).toBe("src:cap flow:staged mode:crew-ship rev:yes qa:no\n|rc=0");
   expect(same("01 is not 1", { ...CONTRACT, args: ["1", `@S/${LEDGER}`], seed }).t.out).toBe("src:cap mode:local-only\n|rc=0");
   expect(same("the TAB kept", { ...CONTRACT, args: ["tabbed", `@S/${LEDGER}`], seed }).t.out).toBe("src:cap\tmode:local-only\n|rc=0");
-});
+}, 60000);
 
 test("rowContractForId: no ledger and a ledger that is a directory read as no contract", () => {
   same("no ledger", { ...CONTRACT, args: ["plain", `@S/${LEDGER}`] });

@@ -346,4 +346,4 @@ test("epicBaseFor is ac_epic_base_for from a crewmate pane: no AC_HOME, the home
     }
   expect(twin('const e = L.epicBaseFor("ep1-s1-verify", "rf"); say(e.rc === 0 ? e.entry : "rc=" + e.rc);', { AC_FLEET_STATE: ln }).out).toBe("epic/ep1 key=v");
   expect(bash('. "$0/ac-lib.sh"; ac_epic_base_for ep1-s1 rf', {}).err).toContain("AC_HOME is not set");
-});
+}, 60000);

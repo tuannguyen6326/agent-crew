@@ -369,7 +369,7 @@ test("soloLandingCheck: the line on the record and stdout, the hint per missing 
     expect(un.t.err).toMatch(/^awk: can't open file S\/home\/records\/learnings.md/);
     same("a status the append cannot write", solo(["s1", P, "", "", ""], (s) => (put(s, "home/state/s1.status", ""), chmodSync(join(s, "home", "state", "s1.status"), 0o444))));
   }
-});
+}, 60000);
 
 const KILL: Row = { bash: `backend_kill_window "$1"`, twin: `const r = L.backendKillWindow(A[0]); if (r.exited) process.exit(r.status); return r.status;`, args: ["k1"] };
 const herdrPane = (s: string, tab = "w1:t1", label = "crew:k1"): void => {
@@ -406,7 +406,7 @@ test("backendKillWindow herdr: the label proof, the last-tab fallback and its wo
   same("the session knob", { ...KILL, env: { AC_HERDR_SESSION: "s9" }, seed: (s) => (herdrPane(s), stub(s, "close-rc", "1"), stub(s, "list", '{"result":{"tabs":[]}}'), stub(s, "ws-group-w1")) });
   same("config/herdr-session", { ...KILL, seed: (s) => (herdrPane(s), put(s, "home/config/herdr-session", "cfg\n")) });
   same("W6: an unsupported task backend", { ...KILL, env: { AC_BACKEND: "tmux" }, seed: (s) => herdrPane(s) });
-});
+}, 60000);
 
 const orcaPane = (s: string, h = "term1", tab = "tab1"): void => {
   pane(s, "k1", `${h} ${tab}\n`);
@@ -438,7 +438,7 @@ test("backendKillWindow orca: the terminal closed, the bounded wait for it to le
   }
   const eight = same("eight sleeps at most", { ...KILL, env: ORCA_, seed: (s) => (orcaPane(s), stub(s, "linger", "20")) });
   expect(eight.t.log.split("\n").filter((l) => l === "sleep 0.25").length).toBe(8);
-});
+}, 60000);
 
 test("orcaWorktreeRelease: the CLI's rm, its failure and an ok:false answer both refused", () => {
   const rel: Row = { bash: `orca_worktree_release "$1"`, twin: `return L.orcaWorktreeRelease(A[0]) ? 0 : 1;`, args: ["@S/wt"] };

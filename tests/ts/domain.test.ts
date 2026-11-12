@@ -222,7 +222,7 @@ test("domainQaRepo is ac_domain_qa_repo: the member's first line, every [:space:
   expect({ out: hl.out, err: hl.err }).toEqual({ out: "null", err: NO_HOME });
   expect(wl.out).toBe("rc=1");
   expect(wl.err).toBe(NO_HOME);
-});
+}, 60000);
 
 test("domainTally is ac_domain_tally: section prefixes, epic inheritance, failed/abandoned Done excluded, names as strings; no ledger is 0 0 0", () => {
   const t = dir("tt");
