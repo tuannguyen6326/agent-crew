@@ -118,9 +118,10 @@
 // instead of accepting it - posting `HANDBACK-REFUSED:` to the room, which
 // settles the obligation while the family stays open and the roomchief stays
 // alive to work the remedy. stop_hook_active already bounds repeated blocks.
-// The rooms are every live family dir's room.md (familyDirs) in BYTE order, judged in ONE pass by
-// src/room.ts's rowsOf (the room grammar's one copy; a room set that cannot be
-// read whole owes nothing), so the cost of the one hook that always runs grows
+// The rooms are every live family dir's room.md (familyDirs) in BYTE order,
+// a DIRECTORY of that name skipped (WARN on stderr, `rooms()` below) before
+// the rest are judged in ONE pass by src/room.ts's rowsOf (the room
+// grammar's one copy), so the cost of the one hook that always runs grows
 // with no per-room process; it runs at most once per turn end, its answer
 // shared by the line and the trace.
 //
@@ -170,8 +171,6 @@
 //   answers relative - so the guard is inert there;
 // - stop_hook_active is the payload TEXT `"stop_hook_active":true` (a spaced
 //   `"stop_hook_active": true` is judged like any payload);
-// - one room.md that cannot be read (a directory of that name) empties the
-//   whole HANDBACK set and silences the PARKED reminder;
 // - a lock `pid=` of `0`, `-1` or `+<pid>` reads live (kill -0's own
 //   grammar) and the session stands aside as read-only;
 // - an unreadable crew meta counts in flight, its `cannot read meta file`
@@ -183,8 +182,9 @@
 // line; a module that cannot load or crashes allows too, with one stderr line
 // - never a held stop. An AC_STOPHOOK_LOG_KEEP the arithmetic cannot read
 // (`2x`) only skips the trim: the fleet is judged as with any keep. An
-// AC_GUARD_GRACE that is no integer reads every beacon fresh, nothing on
-// stderr. The rooms are judged and named in byte order. An AC_HOME whose name
+// AC_GUARD_GRACE that is no integer falls back to the documented default
+// (300) instead - it never disables the hold - nothing on stderr. The rooms
+// are judged and named in byte order. An AC_HOME whose name
 // ends in LF is the directory it names, and a relative one is entered without
 // CDPATH; a caller whose cwd Bun cannot enter resolves no relative AC_HOME
 // (inert). The trace trim and the landing baseline write through
@@ -221,6 +221,7 @@ import {
   testInt,
   wakeOrphanPending,
   wakePending,
+  warn,
   watcherBeatRead,
   writeAll,
 } from "./lib.ts";
@@ -379,12 +380,16 @@ try {
 } catch (e) {
   if ((e as { code?: string }).code === "EUNBOUND") process.exit(1);
 }
-const grace = (): bigint | null => testInt(process.env.AC_GUARD_GRACE || "300");
+// A grace the arithmetic cannot read (not `[ a -ge b ]`'s integer) must never
+// disable the hold by reading every beacon fresh - it falls back to the
+// documented default instead (AC_STOPHOOK_LOG_KEEP's malformed value only
+// skips the trim step below; this knob's malformed value must not skip the
+// hold itself, so it gets a default instead).
+const grace = (): bigint => testInt(process.env.AC_GUARD_GRACE || "300") ?? 300n;
 // `[ "$age" -gt <grace> ]`: an age the arithmetic left unset is set -u's death.
 const stale = (): boolean => {
   if (age === null) process.exit(1);
-  const g = grace();
-  return g !== null && age > g;
+  return age > grace();
 };
 
 let hbSeen: string | undefined;
@@ -397,22 +402,37 @@ const trace = (verdict: string, reason: string, queued: string, inflightField: s
 // Every family dir's room.md in byte order - data/*/ as the original globbed
 // it, plus a story's marked dir inside its epic's (familyDirs); [] when there
 // is no data dir or the first match is no regular file (the original tested
-// `[ -f "$1" ]` alone).
+// `[ -f "$1" ]` alone). A room.md that IS a directory is skipped here (WARN)
+// instead of letting rowsOf's one error empty the whole set; any OTHER read
+// failure (permission denied, a dangling symlink) still reaches rowsOf and
+// still empties the whole set - that half of the original gap is unfixed.
+// Memoized: both handbackCheck and parkedReminder call this in the same
+// process, and the WARN above must print once per turn end, not twice.
+let roomsCached: string[] | null | undefined;
 function rooms(): string[] | null {
+  if (roomsCached !== undefined) return roomsCached;
   let data: string;
   try {
     data = dataDir();
   } catch {
-    return null;
+    return (roomsCached = null);
   }
   const out: string[] = [];
   for (const dir of familyDirs(data)) {
+    const f = `${dir}/room.md`;
+    let st;
     try {
-      lstatSync(`${dir}/room.md`);
-      out.push(`${dir}/room.md`);
-    } catch {}
+      st = lstatSync(f);
+    } catch {
+      continue;
+    }
+    if (st.isDirectory()) {
+      warn(`${f} is a directory, not a room file - skipping it`);
+      continue;
+    }
+    out.push(f);
   }
-  return out;
+  return (roomsCached = out);
 }
 
 type Row = { open: number; hb: boolean; family: string };

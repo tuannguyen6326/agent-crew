@@ -290,6 +290,32 @@ empty_before="$(cat "$records/backlog.md")"
 assert_eq "$(cat "$records/backlog.md")" "$empty_before" "an empty Done section archives nothing (byte-identical)"
 assert_no_file "$records/backlog-archive.md" "no archive created for an empty backlog"
 
+# --- backlog: the ledger lock -------------------------------------------------
+# W5: backlog --apply takes records/.backlog.md.lock, the same lock every
+# other backlog writer takes (ac-task.sh/ac-domain.sh/deputy.ts) - a live
+# holder refuses the move with nothing written, never a silent race -
+# bug-shaped-rows.md:516, src/curate.ts's curateBacklog.
+rm -f "$records/backlog-archive.md"
+{
+  printf '## In flight\n\n## Queued\n\n## Done\n'
+  for i in $(seq 22); do
+    printf -- '- [x] k%02d - receipt - local main (merged 2026-03-%02d)\n' "$i" "$i"
+  done
+} >"$records/backlog.md"
+lockbefore="$(cat "$records/backlog.md")"
+mkdir "$records/.backlog.md.lock"; printf '%s\n' "$$" >"$records/.backlog.md.lock/pid"
+rc=0
+AC_TASK_LOCK_TIMEOUT=1 "$BIN/ac-curate.sh" backlog --apply >"$TMP/bl.out" 2>"$TMP/bl.err" || rc=$?
+assert_eq "$rc" "1" "a live lock holder refuses backlog --apply, exit 1"
+assert_eq "$(cat "$TMP/bl.err")" "ERROR: records/backlog.md is locked by another writer - nothing written" \
+  "the same lock message every other backlog writer gives"
+assert_eq "$(cat "$records/backlog.md")" "$lockbefore" "...and nothing is written while the lock is held"
+assert_no_file "$records/backlog-archive.md" "...no archive move either"
+assert_eq "$(cat "$records/.backlog.md.lock/pid")" "$$" "the holder's own lock is left as it was"
+rm -rf "$records/.backlog.md.lock"
+"$BIN/ac-curate.sh" backlog --apply >/dev/null
+grep -qF -- '- [x] k21 - ' "$records/backlog-archive.md" || fail "the unlocked retry moves the ledger normally"
+
 # --- projects: correctness-audit (PROPOSE ONLY, even with --apply) -----------
 
 mkdir -p "$AC_HOME/projects"

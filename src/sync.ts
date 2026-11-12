@@ -63,10 +63,9 @@
 //     kept <name>: branch <b> (upstream gone, still in use)     <b> is checked out in some worktree of the repo (`worktree list --porcelain`), or is `crew/<task>` for a slot meta <repo>/.crew/slots/*.meta whose LAST `leased=` line is `1` and whose `task=` is non-empty, each value cut at its first NUL as awk handed it over (read-only; the pool owns the records)
 //     pruned <name>: branch <b> (upstream gone)                 after `git branch -D <b>`
 //     kept <name>: branch <b> (upstream gone, delete refused)   `branch -D` failed
-//   An unreadable slot meta prints `WARN: cannot read meta file <path>` on
-//   stderr and its lease is IGNORED - the branch prunes (kept - fail-open,
-//   a wart of the original). The slot scan runs only when some branch is
-//   gone, so the WARN appears only then.
+//     kept <name>: branch <b> (upstream gone, lease unreadable) a slot meta in the repo exists but cannot be read (`WARN: cannot read meta file <path>`) - fail closed: every gone branch in the repo is kept rather than guess which one it leased
+//   The slot scan runs only when some branch is gone, so the WARN appears
+//   only then.
 //
 // EXIT: 0 when every project is synced or fresh; 1 when any project was
 // STUCK or FAILED (the sweep still visits every project); 2 usage.
@@ -145,8 +144,9 @@ const captured = (s: string): string => s.replace(/\n+$/, "");
 // awk's default field split: runs of blanks, the ends trimmed.
 const awkFields = (line: string): string[] => line.replace(/^[ \t]+|[ \t]+$/g, "").split(/[ \t]+/);
 
-function neededBranches(repo: string): string[] {
+function neededBranches(repo: string): { needed: string[]; unreadable: boolean } {
   const needed: string[] = [];
+  let unreadable = false;
   for (const line of git(repo, ["worktree", "list", "--porcelain"], "pipe", "ignore").out.split("\n")) {
     if (line.startsWith("branch ")) needed.push((awkFields(line)[1] ?? "").replace("refs/heads/", ""));
   }
@@ -163,21 +163,28 @@ function neededBranches(repo: string): string[] {
     } catch {
       continue;
     }
-    // `[ "$(ac_meta_get ...)" = 1 ]`: the WARN of an unreadable meta has been
-    // printed and its substitution read as "" - the lease is ignored; a value
-    // is awk's C string, cut at its first NUL.
+    // The WARN of an unreadable meta has been printed (metaGet's own); which
+    // branch it leased is now unknowable, so `unreadable` fails the WHOLE
+    // repo's prune pass closed rather than guess. A value is awk's C
+    // string, cut at its first NUL.
     let leased = "";
     try {
       leased = metaGet(f, "leased").replace(/\0[\s\S]*$/, "");
-    } catch {}
+    } catch {
+      unreadable = true;
+      continue;
+    }
     if (leased !== "1") continue;
     let task = "";
     try {
       task = metaGet(f, "task").replace(/\0[\s\S]*$/, "");
-    } catch {}
+    } catch {
+      unreadable = true;
+      continue;
+    }
     if (task !== "") needed.push(`crew/${task}`);
   }
-  return needed;
+  return { needed, unreadable };
 }
 
 function pruneGoneBranches(repo: string, name: string): void {
@@ -187,11 +194,15 @@ function pruneGoneBranches(repo: string, name: string): void {
     if (f[1] === "[gone]") gone.push(f[0]!);
   }
   if (gone.length === 0) return;
-  const needed = neededBranches(repo);
+  const { needed, unreadable } = neededBranches(repo);
   for (const b of gone) {
     if (b === "") continue;
     if (needed.includes(b)) {
       say(`kept ${name}: branch ${b} (upstream gone, still in use)`);
+      continue;
+    }
+    if (unreadable) {
+      say(`kept ${name}: branch ${b} (upstream gone, lease unreadable)`);
       continue;
     }
     if (git(repo, ["branch", "-D", b], "ignore", "ignore").rc === 0) say(`pruned ${name}: branch ${b} (upstream gone)`);

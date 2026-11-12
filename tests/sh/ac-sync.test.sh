@@ -407,6 +407,21 @@ assert_eq "$(shim_out)" "STUCK ps: dirty tree (1 commits behind)
 pruned ps: branch crew/z (upstream gone)" "the prune pass follows a STUCK line"
 assert_eq "$rc" "1" "a STUCK project exits 1 after its prune pass"
 
+# ...an unreadable slot meta WARNs and its lease is unknowable - fail closed:
+# the gone branch it might have leased is KEPT, never pruned - row
+# bug-shaped-rows.md:151, src/sync.ts's neededBranches W2.
+project pu
+gone pu crew/u1
+meta pu 1 'created_at=now\nleased=1\ntask=u1\nholder=crew:u1\nowner_pid=\n'
+chmod 000 "$H/home/projects/pu/.crew/slots/1.meta"
+run pu
+chmod 644 "$H/home/projects/pu/.crew/slots/1.meta"
+assert_contains "$(shim_err)" "cannot read meta file" "the WARN still fires for the unreadable meta"
+assert_eq "$(shim_out)" "fresh pu
+kept pu: branch crew/u1 (upstream gone, lease unreadable)" "an unreadable lease protects its branch rather than guessing it is safe to prune"
+git -C "$H/home/projects/pu" show-ref --verify --quiet refs/heads/crew/u1 \
+  || fail "an unreadable-lease branch must survive pruning"
+
 # 8. AC_SYNC_TIMEOUT=0 against a local bare: the deadline fires on the first
 #    poll - FAILED, exit 1, and no prune pass although a branch is gone
 project t0

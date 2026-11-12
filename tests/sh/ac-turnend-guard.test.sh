@@ -398,6 +398,10 @@ printf '1799999000\n' >"$h/state/.last-watcher-beat"
 te_verdict 0 "$h" '{}' AC_GUARD_GRACE=5000
 te_verdict 2 "$h" '{}' AC_GUARD_GRACE=10
 te_verdict 2 "$h" '{}' AC_GUARD_GRACE=
+# a non-integer grace must never disable the hold: it falls back to the
+# documented default (300) instead of reading every beacon fresh - row
+# bug-shaped-rows.md:96, src/turnend-guard.ts's stale().
+te_verdict 2 "$h" '{}' AC_GUARD_GRACE=abc
 rm -f "$h/state/c1.meta" "$h/state/.last-watcher-beat"
 for kind in self crewdeputy verify-codereview; do
   printf 'kind=%s\n' "$kind" >"$h/state/k1.meta"
@@ -571,5 +575,26 @@ mkdir -p "$h/data/ep/story"
 printf '# Room: story\n\n- [2027-01-15T07:00:00Z] story-chief> HANDBACK: landed\n' >"$h/data/ep/story/room.md"
 te_verdict 2 "$h" '{}'
 assert_contains "$te_err" "$(te_handback story)" "12: a nested story room holds the stop under its own name"
+
+# 13. a room.md that is a DIRECTORY is skipped (WARN), not fatal to the whole
+# HANDBACK set - row bug-shaped-rows.md:98, src/turnend-guard.ts's rooms().
+h="$(te_world baddir)"
+te_room "$h" famok 'famok-chief> HANDBACK: landed'
+mkdir -p "$h/data/fambad/room.md"
+te_verdict 2 "$h" '{}'
+assert_contains "$te_err" "$(te_handback famok)" "13: the good room's HANDBACK still counts past the bad one"
+assert_contains "$te_err" "fambad/room.md" "13: the WARN names the bad room"
+case "$te_err" in *WARN*) : ;; *) fail "13: a skipped directory room must warn, not vanish silently: $te_err" ;; esac
+
+# 14. rooms() is memoized per invocation: handbackCheck and parkedReminder
+# both call it on the otherwise-clean path, and the bad-room WARN must print
+# once per turn end, never once per caller.
+h="$(te_world warntwice)"
+te_room "$h" famok 'crewchief> DECIDED: a'
+mkdir -p "$h/data/fambad/room.md"
+te_verdict 0 "$h" '{}'
+assert_contains "$te_out" "PARKED" "14: sanity: still the parked reminder (no HANDBACK, nothing in flight)"
+warncount="$(printf '%s\n' "$te_err" | grep -c 'is a directory, not a room file')"
+assert_eq "$warncount" "1" "14: the bad-room WARN prints exactly once, not once per rooms() caller"
 
 pass

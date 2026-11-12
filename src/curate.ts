@@ -107,7 +107,8 @@
 // retired); Curate never reads the legacy container skill store.
 //
 // Individual `captain --apply` and `backlog --apply` remain compatibility
-// surfaces and take their own backup. `skills-consolidate --apply` is
+// surfaces and take their own backup; `backlog --apply` also takes
+// records/.backlog.md.lock before mutating. `skills-consolidate --apply` is
 // deliberately refused (exit 2) because it cannot bypass semantic review or
 // pointer integrity. Individual verbs do not reset cadence.
 //
@@ -126,7 +127,12 @@
 //   file under records/ or skills/ the tar cannot read HOLDS the claim.
 // - W4: a compatibility apply whose backup fails prints an empty
 //   `pre-run backup:` and moves anyway.
-// - W5: neither path takes the ledger lock records/.backlog.md.lock.
+// - W5 (`backlog --apply`'s own write FIXED): curateBacklog takes the ledger
+//   lock records/.backlog.md.lock, same as ac-task.sh/ac-domain.sh/deputy.ts,
+//   before mutating - a busy lock refuses with nothing written. The
+//   automatic `run` pass still commits backlog.md through maintenanceApply's
+//   state/.maintenance.lock (src/lib-curate.ts), which does not take
+//   records/.backlog.md.lock - that half is still open.
 // - W6: survivors are rewritten line by line cut at their first NUL (awk's
 //   reading) while moved lines keep every byte (sed's).
 // - W7: a moved line that was the ledger's unterminated last line is appended
@@ -198,6 +204,7 @@ import {
   exclusiveTemp,
   fileMtime,
   iso,
+  ledgerLock,
   metaGet,
   nowRaw,
   physicalDir,
@@ -724,6 +731,19 @@ function curateBacklog(h: string, apply: boolean, preBacked: boolean): void {
   if (!isFile(backlog)) {
     out("  (no backlog.md - nothing to archive)\n");
     return;
+  }
+  // Only the `backlog --apply` compatibility verb mutates the LIVE ledger
+  // (apply && !preBacked); the automatic run pass hands this function a
+  // private shadow copy nobody else writes, so locking it would only arm
+  // this process's signal handlers for no protection. The lock is taken
+  // BEFORE the first read: taking it after computing `plan` would still let
+  // another writer's concurrent edit (landed while this call waited on the
+  // lock) make `picks`'s line numbers stale against the file this then
+  // archives/rewrites by line number.
+  const live = apply && !preBacked;
+  if (live) {
+    const locked = ledgerLock(`${rec}/.backlog.md.lock`, "records/backlog.md");
+    if (locked !== null) die(locked);
   }
   const text = read(backlog) ?? fatal(2);
   const plan = backlogPlan(text, keep);
