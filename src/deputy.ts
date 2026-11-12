@@ -108,11 +108,12 @@
 // `ERROR: --doc must be an absolute path (the parent resolves it from its
 // own home): <doc>`. <body> is the text, plus ` doc: <doc>` with a doc. The
 // parent's registry is looked up - deputyParse(<parent>/records/
-// crewdeputies.md) piped to `awk -F'\t' -v i=<id> '$1 != "INVALID" && $2 ==
-// i { found = 1 } END { exit !found }'` under the caller's locale, so `==` is
-// numeric when both sides look numeric (W5: a home named 07 finds registry
-// id 7) - and a failing pipeline is only `WARN: no registry entry for <id> in
-// the parent's routing table - delivering the return anyway`: a stranded
+// crewdeputies.md) piped to `awk -F'\t' -v i=<id> '$1 != "INVALID" && $2 ""
+// == i "" { found = 1 } END { exit !found }'` - the concatenation forces a
+// plain STRING ==, never awk's numeric one (id 07 finds only its own
+// registry entry, never 7's, W5 fixed) - and a failing pipeline is only
+// `WARN: no registry entry for <id> in the parent's routing table -
+// delivering the return anyway`: a stranded
 // ANSWER is pure loss, where the send side fails closed. Then, in order:
 //   1. `<iso> report: <body>` appended to <parent>/state/<id>.status, the
 //      body RAW (W6: a TAB or LF in the text stays, the line can be two); a
@@ -140,8 +141,9 @@
 //      <deputy-id> <backlog-id>...`; run inside a deputy home: `ERROR:
 //      handoff runs in the PARENT fleet home, not inside a crewdeputy home`.
 //   2. <dhome>: deputyParse() piped to `awk -F'\t' -v i=<dep> '$1 !=
-//      "INVALID" && $2 == i { print $3; exit }'` - numeric `==` (W5: 07
-//      resolves 7's home, while the status below is 07's); the early exit
+//      "INVALID" && $2 "" == i "" { print $3; exit }'` - the concatenation
+//      forces a plain STRING ==, never awk's numeric one (07's row never
+//      resolves 7's home, W5 fixed); the early exit
 //      ends a parse still writing with SIGPIPE, so a registry past the pipe's
 //      capacity with the deputy early ends handoff 141, silently (W19); the
 //      two run at once on one pipe for that reason. Empty: `ERROR: no
@@ -289,8 +291,8 @@ const REGISTRY_LABEL = "records/crewdeputies.md";
 const US = "\x1f";
 
 // The spawned programs, byte for byte as the bash original spawned them.
-const REPORT_LOOKUP_AWK = `$1 != "INVALID" && $2 == i { found = 1 } END { exit !found }`;
-const HANDOFF_LOOKUP_AWK = `$1 != "INVALID" && $2 == i { print $3; exit }`;
+const REPORT_LOOKUP_AWK = `$1 != "INVALID" && $2 "" == i "" { found = 1 } END { exit !found }`;
+const HANDOFF_LOOKUP_AWK = `$1 != "INVALID" && $2 "" == i "" { print $3; exit }`;
 const FOUND_AWK = String.raw`
       /^## / { sec = substr($0, 4); next }
       $0 ~ "^- \\[[ x]\\] " id "( \\[[^]]*\\])* - " { n++; s = sec; l = $0 }

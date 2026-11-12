@@ -331,6 +331,15 @@ dreg '- ok - c - home: /h/ok - scope: s - projects: none (added x)' $'- b\351d -
 drun validate
 assert_eq "$DN_RC:$(dout)" "1:INVALID - b$(printf '\351')d - c - home: /h/b$(printf '\351')d - scope: s - projects: none (added x): bad id charset" "5: a 0xE9 byte under C"
 
+# 5b. report's registry lookup is exact string equality, not awk's numeric
+#     == - deputy id "7" never matches a registered "07" (W5).
+dseed
+ddep 7
+dreg '- 07 - c - home: @H/home/crewdeputies/07 - scope: s - projects: none (added x)'
+DHOME=home/crewdeputies/7
+drun report 'done: numeric id'
+assert_eq "$DN_RC:$(derr)" "0:WARN: no registry entry for 7 in the parent's routing table - delivering the return anyway" "5b: id 7 never matches registered 07"
+
 # 6. report from a deputy home: the parent's status line and ONE spool
 #    record; --doc; % and backslashes raw; an unregistered deputy and an
 #    absent registry WARN and still deliver; a failing date.
@@ -523,6 +532,18 @@ assert_contains "$(cat "$H/home/crewdeputies/pay/records/backlog.md")" "- [ ] he
 assert_contains "$(cat "$H/home/crewdeputies/pay/records/backlog.md")" "- [ ] qmove [mode:direct-pr] - move me (repo: alpha)" "9: ... and the moved row lands after the release"
 [ ! -e "$H/home/records/.backlog.md.lock" ] && [ ! -e "$H/home/crewdeputies/pay/records/.backlog.md.lock" ] || fail "9: handoff releases both locks"
 assert_contains "$(for xf in "$H"/home/state/backups/*; do tar -tzf "$xf"; done)" "records/.backlog.md.lock/pid" "9: the backup, taken under the parent's lock, carries the lock dir"
+
+# 9b. handoff's registry lookup is exact string equality, not awk's numeric
+#     == - deputy id "7" uses its own home, never a registered "07"'s (W5).
+dseed
+ddep 7
+dreg '- 07 - c - home: @H/home/crewdeputies/07 - scope: s - projects: none (added x)' \
+     '- 7 - c - home: @H/home/crewdeputies/7 - scope: s - projects: none (added x)'
+printf '# Backlog\n\n## In flight\n\n## Queued\n- [ ] qnum [mode:direct-pr] - numeric id test (repo: alpha)\n\n## Done\n' >"$H/home/records/backlog.md"
+drun handoff 7 qnum
+assert_eq "$DN_RC:$(dout)" "0:backup: @H/home/state/backups/deputy-handoff-1767225600.tar.gz
+- [ ] qnum [mode:direct-pr] - numeric id test (repo: alpha)
+handed qnum to 7" "9b: id 7 uses its own home, never 07's"
 
 # 10. handoff refusals, the parent ledger byte-unchanged: usage x3, inside a
 #     deputy home, its home gone, no deputy backlog, no Queued section, a row
