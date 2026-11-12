@@ -406,20 +406,23 @@ cp "$BIN/ac-room.sh" "$lab/bin/ac-room.sh"
 DASH_BIN="$BIN"
 
 # 16. --watch ends with exit 0 on ctrl-c, after the first frame. ctrl-c is
-#     SIGINT to the whole foreground group - the dash AND its sleep -
-#     delivered here as INT to the pid and to its child. A job a
-#     non-interactive shell backgrounds starts with INT IGNORED (POSIX), so
-#     the run is exec'd with INT at its default first. Bounded: the sleep stub
-#     refuses its third call, so a run that ignores the INT ends with 1, never
-#     hangs.
+#     SIGINT to the whole foreground group - the dash AND its sleep; here it
+#     reaches the dash alone. $wpid is the subshell running sigint_default: a
+#     job a non-interactive shell backgrounds starts with INT IGNORED (POSIX),
+#     so the INT goes to its child, the run exec'd with INT at its default.
+#     It is sent once frame 1's trailer is out, never after a fixed delay:
+#     frame 1's length follows the host's load, and the slow clear stub makes
+#     it outlast a sub-second guess. Bounded: the sleep stub refuses its third
+#     call, so a run that ignores the INT ends with 1, never hangs.
 fresh_home h16
 printf '#!/bin/sh\nn=$(cat "%s/sleeps16" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"%s/sleeps16"\n[ "$n" -lt 3 ] || exit 1\nexec /bin/sleep "$@"\n' "$TMP" "$TMP" >"$wbin/sleep"
+printf '#!/bin/sh\n/bin/sleep 1\nprintf "<clear>\\n"\n' >"$wbin/clear"
 sigint_default() { python3 -c 'import os, signal, sys; signal.signal(signal.SIGINT, signal.SIG_DFL); os.execvp(sys.argv[1], sys.argv[1:])' "$@"; }
 rm -f "$TMP/sleeps16"
 sigint_default env PATH="$wbin:$PATH" "$BIN/ac-dash.sh" --watch 1 >"$TMP/w.out" 2>"$TMP/w.err" </dev/null &
 wpid=$!
-sleep 0.5
-kill -INT "$wpid"; pkill -INT -P "$wpid" || true
+n=0; until grep -q '(refreshing every' "$TMP/w.out" 2>/dev/null || [ "$n" -ge 300 ]; do sleep 0.1; n=$((n + 1)); done
+pkill -INT -P "$wpid" || true
 w_rc=0; wait "$wpid" || w_rc=$?
 assert_eq "$w_rc" "0" "--watch exits 0 on SIGINT"
 assert_eq "$(grep -c '<clear>' "$TMP/w.out")" "1" "one frame before the interrupt"
