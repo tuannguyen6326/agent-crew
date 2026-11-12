@@ -726,6 +726,15 @@ printf 'project_dir=%s\nworktree=x\n' "$H/home/projects/gone" >"$H/home/state/go
 mland gone
 assert_eq "$M_RC:$(m_out):$(m_err)" "1::ERROR: primary checkout is on 'DETACHED', not 'main'" "2: a project_dir that is gone"
 
+# W1: an EMPTY project_dir must refuse before any git call - `git -C ""` reads
+# as no -C at all, so an unbound empty project_dir would judge against, and
+# land into, the repo of the CALLER's cwd instead of this task's project.
+printf 'project_dir=\nworktree=x\n' >"$H/home/state/noproj.meta"
+mland noproj
+assert_eq "$M_RC:$(m_out):$(m_err)" \
+  "1::ERROR: empty project_dir in meta for noproj - refusing before any git call (a blank -C reads as the caller's own cwd, not this task's project)" \
+  "2: an empty project_dir must refuse before any git call"
+
 # 3. lands: a clean ff with its status line, timeline mirror and ledger
 #    record; a staged id whose stage dir does not exist is its own family
 mrepo r3; mcrew r3 c3; mmeta c3 r3

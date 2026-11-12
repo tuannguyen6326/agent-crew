@@ -68,11 +68,13 @@
 //    unreadable is metaGet's `WARN: cannot read meta file <meta>` alone, exit
 //    1 (W2, the bash's bare assignment). Its LAST project_dir= and worktree=
 //    values are read as bytes, cut at a NUL as awk handed them over.
-// 5. branch = crew/<familyOfId(id)> (crewBranch), default = defaultBranch of
-//    project_dir. An EMPTY project_dir is passed to every git as `-C ""`,
-//    which git reads as no -C at all: the land is judged against, and lands
-//    into, the repo of the CALLER's cwd (W1, reproduced - a defect of the
-//    original, routed).
+// 5. An EMPTY project_dir refuses outright - `empty project_dir in meta for
+//    <id> - refusing before any git call (a blank -C reads as the caller's
+//    own cwd, not this task's project)` - before any git call (W1: the
+//    original passed it to every git as `-C ""`, which git reads as no -C at
+//    all, judging the land against, and landing it into, the repo of the
+//    CALLER's cwd). branch = crew/<familyOfId(id)> (crewBranch), default =
+//    defaultBranch of project_dir.
 // 6. The epic fence: epicBaseFor(id, basename of project_dir): rc 2 is
 //    `cannot read the ledger to resolve the epic-branch fence for <id>`; rc 0
 //    makes the entry's first token the TARGET (epic mode), ` push=yes ` among
@@ -320,6 +322,7 @@ const metaValue = (key: string): string => {
 };
 const projectDir = metaValue("project_dir");
 const worktree = metaValue("worktree");
+if (projectDir === "") die(`empty project_dir in meta for ${id} - refusing before any git call (a blank -C reads as the caller's own cwd, not this task's project)`);
 const dir = native(projectDir);
 const branchB = bytes(crewBranch(id));
 const branchN = native(branchB);
