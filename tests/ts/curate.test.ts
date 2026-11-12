@@ -211,7 +211,13 @@ test("fileMtime: a path's own mtime in epoch seconds, a link's own, nothing for 
       Bun.spawnSync(["touch", "-h", "-t", "201901010000", join(s, "f")]);
     },
   });
-  same("a dangling link", { ...MTIME, seed: (s) => symlinkSync(join(s, "nowhere"), join(s, "f")) });
+  same("a dangling link", {
+    ...MTIME,
+    seed: (s) => {
+      symlinkSync(join(s, "nowhere"), join(s, "f"));
+      Bun.spawnSync(["touch", "-h", "-t", "201901010000", join(s, "f")]);
+    },
+  });
 }, 60_000); // dozens of bash and bun probes per test - past bun's 5 s default under load
 
 test("homeless, skills-audit and run refuse at their first home read and never reach the host root (W14, named)", () => {
