@@ -105,13 +105,16 @@
 //   <f>]`; options; the guard; `no stashed remote order: <rid>`; the thread is
 //   `jq -r '.thread // empty' <stash>` (jq's stderr passes; a stash jq cannot
 //   parse ends the run with jq's status - W26). A thread of exactly `local`
-//   (an order's, or a polled one's whose thread is the string "local" - W22)
-//   has no transport: `## <iso>\n`, the text (the file through `cat`, else our
+//   on a rid that itself starts with `local-` - order()'s own namespace, the
+//   only thing this process ever mints that way - has no transport: `##
+//   <iso>\n`, the text (the file through `cat`, else our
 //   stdin through `cat`), `\n` are appended to <inbox>/<rid>.replies.md (a
 //   missing file is `text file not found: <f>`; empty stdin still appends; a
 //   cat that fails leaves the header and ends the run with cat's status -
 //   W23) and stdout says `replied <rid> (local thread: <path>)`, the path
-//   physical. Any other thread needs config/remote-reply: absent is `reply
+//   physical. Any other thread - including a polled order whose own
+//   transport-assigned thread happens to BE the text "local" (W22; its rid
+//   never starts with `local-`) - needs config/remote-reply: absent is `reply
 //   needs a config/remote-reply hook (transport not configured)`, not
 //   executable `config/remote-reply is not executable (chmod +x it)`, a
 //   missing file `text file not found: <f>`; the hook gets AC_REMOTE_RID and
@@ -156,8 +159,9 @@
 //   nothing went out. config/remote-mirror gates only the AUTO-mirror callers
 //   (ac-room.sh, ac-spawn.sh), never this verb.
 // done-stamp <family> - `usage: ac-remote.sh done-stamp <family>`; the guard;
-//   <family>=<NOW> set in state/.landing-receipt-stamp (META SET - its key a
-//   BRE, so `a.b` also drops an `aXb=` stamp - W28); `done-stamped <family>`.
+//   <family>=<NOW> set in state/.landing-receipt-stamp (META SET - a dotted
+//   family like `a.b` never drops an unrelated `aXb=` stamp, W28);
+//   `done-stamped <family>`.
 //   The turn-end guard's landing-receipt check reads that file; no hook needed.
 // push-pending - silent exit 0 without an executable config/remote-reply.
 //   Each data/<family>/room.md that is a regular file, families in BYTE order
@@ -166,11 +170,12 @@
 //   (roomPendingLines, src/lib.ts: the unanswered GATE/ASK lines oldest first,
 //   each DECIDED settling the oldest open one, a room that cannot be read
 //   skipped) - none skips; <count> is their number and <hash> the sha256 of
-//   them LF-joined; the family's stamp in state/.remote-push-stamp is read as
-//   ac_meta_get read it - awk's `$1==k`, numeric when both sides look like
-//   numbers (`07` reads a `7=` line, `nan` every line), the value from byte
-//   length(k)+2 of whichever line matched, the last match winning (W37) - a
-//   stamp that cannot be read is metaGet's WARN, exit 1 (W33); an equal stamp
+//   them LF-joined; the family's stamp in state/.remote-push-stamp is read by
+//   a LITERAL `$1==k` - never awk's numeric coercion, so families "07" and
+//   "7" each keep their own stamp and never dedupe against the other's (W37)
+//   - the value from byte length(k)+2 of whichever line matched, the last
+//   match winning; a stamp that cannot be read is metaGet's WARN, exit 1
+//   (W33); an equal stamp
 //   skips. The message `⏳ *[<vn stamp>] [ĐANG CHỜ captain] [<family>]*
 //   (<count> mục)\n<lines through spawned sed -E 's/^- \[[^]]*\] /• /' under
 //   the caller's locale>\n` (vn stamp: `TZ=Asia/Ho_Chi_Minh date '+%Y-%m-%d
@@ -202,27 +207,39 @@
 //      has("author") and has("thread")'` over the line + LF (output dropped)
 //      failing is `WARN: <label>: skipped a malformed line (need JSON
 //      {rid,text,author,thread})`. jq decides: two objects on a line are two
-//      values, the last one judged (W5); a number, an array, a missing thread
-//      are malformed; NaN text and a duplicate key pass.
+//      values, the last one judged; a number, an array, a missing thread are
+//      malformed; NaN text and a duplicate key pass.
 //   2. rid = `jq -r '.rid'`'s capture (its stderr ours; a non-zero status ends
 //      the run with it): `1 {valid}` is ingested with jq's own error line.
+//      Several full values sharing the line with no separator between them
+//      can each have a usable rid, printing one per line: rather than refuse
+//      that fused multi-line "rid" as a single value and lose every one of
+//      them (W5), the line is re-split (`jq -c .`) and each value ingested on
+//      its own.
 //   3. the rid guard failing is `WARN: <label>: refused rid (must be
-//      [A-Za-z0-9._-]+): <rid>` - raw, so two values make it two lines (W5).
+//      [A-Za-z0-9._-]+): <rid>` - raw.
 //   4. <inbox>/<rid>.json existing (a symlink followed) skips silently: the
 //      rid is the idempotency key - a re-poll, a re-delivery through the other
 //      entrance, a duplicate inside the batch. A DANGLING symlink there is no
-//      stash, yet blocks the link below, so that rid is skipped for ever (W7).
+//      stash, yet still blocks link(2) below as if it were one: that rid is
+//      refused and reported every time - `WARN: <label>: <rid> not ingested -
+//      a broken entry blocks <stash>: remove it, then re-send` (W7) - never
+//      skipped forever in silence.
 //   5. the line + LF is written to a temp `<inbox>/.stash.<rid>.<pid>`, created
-//      exclusively (the next name `.<n>` on EEXIST); a temp that cannot be
-//      written - an unwritable inbox, a rid too long for the name (W8) - is
-//      `cannot write <temp>: <errno>`, exit 1, every later line unread.
+//      exclusively (the next name `.<n>` on EEXIST); an unwritable inbox is
+//      `cannot write <temp>: <errno>`, exit 1, every later line unread; a rid
+//      too long for the name is instead `WARN: <label>: refused rid (too long
+//      for a file name): <rid>` and only that one order is skipped - the rest
+//      of the batch still ingests (W8).
 //   6. UNINTERRUPTIBLE FROM THE STASH LINK TO THE WAKE'S LINK, and no wider:
 //      the stash is also the dedup sign, so an INT between the two commits
 //      burns the rid - permanently for a LOCAL rid, minted once and re-offered
 //      by nothing. A death BETWEEN the two is not covered and cannot be from
 //      here. SIGINT is ignored there by this process and by every child started
 //      there (MECHANICS 2). link(2) of the temp to <inbox>/<rid>.json failing
-//      (it exists) is a silent skip; else the temp goes and wakePublish
+//      (it exists) is a silent skip when the stash is now genuinely there (a
+//      real duplicate), the step 4 report above when it still is not (W7);
+//      else the temp goes and wakePublish
 //      (src/lib.ts) publishes `<ts10>\tremote\tcaptain\tremote-order <rid>\n` as
 //      `state/.wake-spool/<date +%s%N>.<pid>.<seq6>` - the FLEET spool whatever
 //      AC_SCOPE says (a remote order addresses the crewchief). A publish that
@@ -281,10 +298,10 @@
 // with no thread_ts) is never registered (W31). The send swallows its own
 // write failures.
 //
-// META SET, every key=value file this writes: the lines `grep -v "^<key>="`
-// keeps - a BRE whose `.` is any one character (a byte under C, a valid UTF-8
-// sequence under a UTF-8 locale, never an invalid byte) and whose other key
-// bytes are themselves - in order, an unterminated tail terminated, then
+// META SET, every key=value file this writes: the lines a LITERAL `<key>=`
+// prefix match keeps - never a BRE, whose `.` wildcard would let a dotted
+// key like `a.b` also open an unrelated `aXb=` line and drop it (W28) - in
+// order, an unterminated tail terminated, then
 // `<key>=<value>\n` when setting (none when unsetting; unsetting an absent file
 // is a no-op). Through a sibling temp `<file>.tmp.<pid>` created exclusively
 // and a spawned `mv` over the file (a symlinked meta becomes a regular file);
@@ -397,7 +414,6 @@ import { accessSync, chmodSync, closeSync, constants, existsSync, linkSync, open
 import { createHash } from "node:crypto";
 import {
   NO_HOME,
-  awkNumber,
   childrenIgnoreInt,
   die,
   enterCaller,
@@ -610,25 +626,12 @@ function rmF(p: string): number {
   return shellStatus(run(["rm", "-f", p], "inherit", "inherit", "inherit"));
 }
 
-// `grep -v "^<key>="` as the shell ran it, a BRE whose `.` is any one
-// character - one byte under C, one valid UTF-8 character under a UTF-8 locale
-// (never a byte that starts none) - and whose other key bytes, from the
-// [A-Za-z0-9._-] alphabet, are themselves.
-export function keyOpens(line: Buffer, key: string, utf8: boolean): boolean {
-  let i = 0;
-  for (const ch of key) {
-    if (i >= line.length) return false;
-    if (ch === ".") {
-      if (!utf8) i++;
-      else {
-        const n = charLen(line, i);
-        if (n === 1 && line[i]! >= 0x80) return false;
-        i += n;
-      }
-    } else if (line[i] === ch.charCodeAt(0)) i++;
-    else return false;
-  }
-  return line[i] === 0x3d;
+// A LITERAL `<key>=` prefix match, byte for byte - never a BRE, whose `.`
+// wildcard would let a done-stamp key like `a.b` also open an unrelated
+// `aXb=` line and drop another family's stamp on every write (W28).
+export function keyOpens(line: Buffer, key: string): boolean {
+  const prefix = Buffer.from(`${key}=`, "latin1");
+  return line.length >= prefix.length && line.subarray(0, prefix.length).equals(prefix);
 }
 
 // ac_meta_set (add = the value) and meta_unset (add = null) over one file:
@@ -652,14 +655,13 @@ function metaRewrite(file: string, key: string, add: string | null): void {
     if ((e as { code?: string }).code !== "ENOENT") throw e;
   }
   if (data === null && add === null) return;
-  const utf8 = utf8Locale();
   const parts: Buffer[] = [];
   if (data !== null) {
     for (let start = 0; start < data.length; ) {
       const nl = data.indexOf(10, start);
       const end = nl === -1 ? data.length : nl;
       const line = data.subarray(start, end);
-      if (!keyOpens(line, key, utf8)) parts.push(line, Buffer.from("\n"));
+      if (!keyOpens(line, key)) parts.push(line, Buffer.from("\n"));
       start = end + 1;
     }
   }
@@ -700,9 +702,12 @@ function metaRewriteOrExit(file: string, key: string, add: string | null): void 
 // was; an unreadable file is metaGet's WARN and a throw.
 const metaValue = (file: string, key: string): string => metaGet(file, key).replace(/\0[\s\S]*$/, "");
 
-// ac_meta_get over a family-keyed stamp: awk's `$1==k` compares as numbers
-// when both sides look like one (`07` reads the `7=` line, `nan` every line),
-// and the value is the line past `length(k)+1` bytes, whichever line matched.
+// A family-keyed stamp read: a literal `$1==k` over each line (cut at its
+// first NUL), the value the line past `length(k)+1` bytes, the LAST match
+// winning. STRING equality, never awk's numeric coercion - families "07"
+// and "7" are different keys, each with its own stamp, never reading or
+// deduping against the other's (W37; strict numeric parsing for a knob
+// value, not a key, belongs to bug-rows-numeric-knob-parsing).
 export function metaValueAwk(file: string, key: string): string {
   if (!isFile(file)) return "";
   let text: string;
@@ -713,15 +718,12 @@ export function metaValueAwk(file: string, key: string): string {
     warnB(`cannot read meta file ${b8(file)}`);
     throw e;
   }
-  const kn = awkNumber(key);
   let v = "";
   for (const raw of text.split("\n")) {
     const line = raw.split("\0", 1)[0]!;
     const eq = line.indexOf("=");
     const f1 = eq === -1 ? line : line.slice(0, eq);
-    const fn = kn === null ? null : awkNumber(f1);
-    const hit = fn !== null && kn !== null ? !(fn < kn) && !(fn > kn) : f1 === key;
-    if (hit) v = line.slice(key.length + 1);
+    if (f1 === key) v = line.slice(key.length + 1);
   }
   return v;
 }
@@ -830,6 +832,19 @@ async function ingestLine(label: string, line: string): Promise<void> {
   const r = run(["jq", "-r", ".rid"], input, "pipe", "inherit");
   exitWith(r);
   const rid = captured(r!.stdout);
+  if (rid.includes("\n")) {
+    // Nothing requires a separator between top-level JSON texts, so a line
+    // can hold several full values; when more than one has a usable .rid,
+    // step 2 reports one per line and the fused multi-line "rid" refuses as a
+    // whole - losing every value on the line, not just the stray one (W5).
+    // Re-split the line into its own values and ingest each on its own.
+    const c = run(["jq", "-c", "."], input, "pipe", "inherit");
+    exitWith(c);
+    for (const piece of captured(c!.stdout).split("\n")) {
+      if (piece !== "") await ingestLine(label, piece);
+    }
+    return;
+  }
   if (!ridOk(rid)) {
     warnB(`${label}: refused rid (must be [A-Za-z0-9._-]+): ${rid}`);
     return;
@@ -843,6 +858,13 @@ async function ingestLine(label: string, line: string): Promise<void> {
       break;
     } catch (e) {
       const code = (e as { code?: string }).code;
+      if (code === "ENAMETOOLONG") {
+        // The rid itself, not the inbox, is what can't be written: refuse
+        // this one order and keep reading the batch (W8), rather than dying
+        // and leaving every later line unread.
+        warnB(`${label}: refused rid (too long for a file name): ${rid}`);
+        return;
+      }
       if (code !== "EEXIST") dieB(`cannot write ${b8(tmp)}: ${code ?? "error"}`);
       tmp = `${inbox()}/.stash.${rid}.${process.pid}.${i}`;
     }
@@ -860,6 +882,13 @@ async function ingestLine(label: string, line: string): Promise<void> {
   try {
     unlinkSync(tmp);
   } catch {}
+  if (!linked && !existsSync(stash)) {
+    // link(2) refused because an entry already sits at the path, yet
+    // existsSync - which follows a symlink - says there is no live stash
+    // there: a DANGLING symlink, not a genuine duplicate. Left silent, it
+    // would block this rid forever with nothing ever reported (W7).
+    warnB(`${label}: ${rid} not ingested - a broken entry blocks ${b8(stash)}: remove it, then re-send`);
+  }
   if (linked && !wakePublish(stateDir, "", "remote", "captain", `remote-order ${rid}`)) {
     if (rmF(stash) !== 0) dieB(`${label}: no wake for ${rid} and its stash survived - ${b8(stash)} now blocks every re-delivery of this rid: remove it, then re-send`);
     dieB(`${label}: no wake could be published for ${rid} - NOT ingested. Re-send it AND anything after it in the same batch: this exits before reading the rest`);
@@ -1032,7 +1061,12 @@ function reply(argv: string[], out: "inherit" | "ignore"): void {
   const tell = (s: string): void => {
     if (out === "inherit") say(1, s);
   };
-  if (thread === "local") {
+  // "local" is order()'s own sentinel for "no transport" - its rid is always
+  // `local-<...>`, a namespace only this process mints. A polled order whose
+  // transport-assigned thread happens to BE the text "local" is still a real
+  // thread (W22): gating on the rid too keeps that coincidence from reaching
+  // this branch and silently never reaching the hook below.
+  if (thread === "local" && rid.startsWith("local-")) {
     const replies = `${inbox()}/${rid}.replies.md`;
     if (textfile !== "" && !isFile(at(textfile))) die(`text file not found: ${textfile}`);
     let fd: number;

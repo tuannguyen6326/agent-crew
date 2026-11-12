@@ -1,9 +1,11 @@
 // remote.test.ts - the lib.ts twins src/remote.ts introduced (nowRaw, vnTs,
-// roomPendingLines, childrenIgnoreInt) and its own byte-level readers (the
-// META SET key match, the family-keyed stamp read, the ack arithmetic), each
-// held to the bash it replaced, quoteOffender to its spec; and the four process
-// mechanics its header names, each pinned against a direct bash probe of the
-// same shape. The CLI contract itself is tests/sh/ac-remote.test.sh's.
+// roomPendingLines, childrenIgnoreInt), its own byte-level readers (the ack
+// arithmetic held to the bash it replaced; the META SET key match and the
+// family-keyed stamp read deliberately NOT held to it - the original's BRE
+// and numeric-coercion key matching dropped orders, W28/W37), quoteOffender
+// to its spec, and the four process mechanics its header names, each pinned
+// against a direct bash probe of the same shape. The CLI contract itself is
+// tests/sh/ac-remote.test.sh's.
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -121,23 +123,30 @@ test("the ack arithmetic is the shell's: `[ -ge ]` decimal, `$(( ))` octal on a 
   }
 });
 
-test("the META SET key match is `grep -v \"^<key>=\"`: `.` one byte under C, one valid character under UTF-8", () => {
+test("the META SET key match is a literal `<key>=` prefix, byte for byte - never grep's BRE, so `a.b` never opens an unrelated `aXb=` line (W28)", () => {
   const lines = ["a.b=1", "aXb=2", "a\xc3\xa9b=3", "a\xe9b=4", "ab=5", "a.bc=6", "a.b", "remote_request_ts=7", "remote_request=8"];
-  for (const loc of ["C", "en_US.UTF-8"]) {
-    for (const key of ["a.b", "remote_request"]) {
-      for (const line of lines) {
-        const kept = bash(`grep -v "^$2=" "$1"`, [file(L(`${line}\n`)), key], { LC_ALL: loc }).out !== "";
-        expect(keyOpens(L(line), key, loc !== "C")).toBe(!kept);
-      }
+  for (const key of ["a.b", "remote_request"]) {
+    for (const line of lines) {
+      expect(keyOpens(L(line), key)).toBe(line.startsWith(`${key}=`));
     }
   }
 });
 
-test("the family-keyed stamp read is ac_meta_get: awk's `$1==k`, numeric when both sides look like numbers", () => {
-  const stamp = file("7=seven\n1.0=onedot\nfam=f\nnan=x\n");
-  for (const key of ["07", "7", "1", "1.0", "1e0", "0x7", "fam", "nan", "inf", "absent"]) {
-    const sh = bash(`. "$1/ac-lib.sh"; ac_meta_get "$2" "$3"`, [BIN, stamp, key]);
-    expect(metaValueAwk(stamp, key)).toBe(sh.out.replace(/\n$/, ""));
+test("the family-keyed stamp read is a literal, last-match-wins key compare - never awk's numeric coercion, so families \"07\" and \"7\" each keep their own stamp (W37)", () => {
+  const stamp = file("7=seven\n07=ohseven\n1.0=onedot\nfam=f\nnan=x\n");
+  for (const [key, want] of [
+    ["07", "ohseven"],
+    ["7", "seven"],
+    ["1", ""],
+    ["1.0", "onedot"],
+    ["1e0", ""],
+    ["0x7", ""],
+    ["fam", "f"],
+    ["nan", "x"],
+    ["inf", ""],
+    ["absent", ""],
+  ] as const) {
+    expect(metaValueAwk(stamp, key)).toBe(want);
   }
 });
 

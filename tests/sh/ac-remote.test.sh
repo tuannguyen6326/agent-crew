@@ -965,6 +965,15 @@ rrun done-stamp famz
 refused "ERROR: cannot rewrite HOME/home/state/.landing-receipt-stamp: EACCES" "row 20: an unreadable stamp is refused"
 rm -f "$H/home/state/.landing-receipt-stamp"
 
+# W28: the META SET key match is a LITERAL "<key>=" prefix, never a BRE - a
+# dotted family's own stamp must never drop an unrelated "aXb=" line.
+printf 'aXb=999\n' >"$H/home/state/.landing-receipt-stamp"
+rrun done-stamp 'a.b'
+assert_eq "$RC|$(shim_out)" "0|done-stamped a.b" "row 20: W28 a dotted family stamps"
+assert_eq "$(cat "$H/home/state/.landing-receipt-stamp")" "aXb=999
+a.b=$((1700000000 + ROW))" "row 20: W28 an unrelated aXb= stamp survives a.b's own write"
+rm -f "$H/home/state/.landing-receipt-stamp"
+
 # 22. gc: --days missing / not digits / an unknown option (its first line
 #     quoted); ages either side of the 14-day default (find's -mtime +N is
 #     floor(age/86400) > N); links in a live meta and an archive meta protect;
@@ -1111,7 +1120,10 @@ refused "ERROR: ack state must be working|done: bogus" "row 17: the state is che
 #     and the text on stdin, its stdout ahead of ours; a failing hook, and a
 #     --text-file that cannot be opened, are `reply NOT delivered`
 seed_side
-stash loc '"local"'
+# "local-t" (not the generic "loc") so the stash's rid itself carries
+# order()'s own local-<...> namespace (W22: a THREAD of "local" alone is no
+# longer enough to pick the local-write path below).
+stash local-t '"local"'
 stash r2 '"999.111"'
 put t.txt 'answer\n'
 put t2.txt 'no final LF'
@@ -1122,18 +1134,18 @@ refused "ERROR: --text-file needs a path" "row 16: --text-file with no value"
 rrun reply r2 "$(printf 'x%.0s' $(seq 1 70))"
 refused "ERROR: unknown reply option: $(printf 'x%.0s' $(seq 1 60))..." "row 16: a long option is capped"
 R_STDIN="$TMP/rstdin"; printf 'line one\nline two\n' >"$R_STDIN"
-rrun reply loc
-assert_eq "$RC|$(shim_out)" "0|replied loc (local thread: HOME/home/state/remote-inbox/loc.replies.md)" "row 16: the local thread"
+rrun reply local-t
+assert_eq "$RC|$(shim_out)" "0|replied local-t (local thread: HOME/home/state/remote-inbox/local-t.replies.md)" "row 16: the local thread"
 R_STDIN=/dev/null
-rrun reply loc --text-file HOME/t2.txt
+rrun reply local-t --text-file HOME/t2.txt
 assert_eq "$RC" "0" "row 16: a local reply from a file"
-assert_eq "$(cat "$H/home/state/remote-inbox/loc.replies.md")" "## 2023-11-14T22:13:$(printf '%02d' $(((ROW - 1) % 60)))Z
+assert_eq "$(cat "$H/home/state/remote-inbox/local-t.replies.md")" "## 2023-11-14T22:13:$(printf '%02d' $(((ROW - 1) % 60)))Z
 line one
 line two
 
 ## 2023-11-14T22:13:$(printf '%02d' $((ROW % 60)))Z
 no final LF" "row 16: one header, the text and an LF per reply"
-rrun reply loc --text-file HOME/missing.txt
+rrun reply local-t --text-file HOME/missing.txt
 refused "ERROR: text file not found: HOME/missing.txt" "row 16: a missing text file"
 rrun reply r2
 refused "ERROR: reply needs a config/remote-reply hook (transport not configured)" "row 16: no reply hook"
@@ -1158,6 +1170,16 @@ hook remote-reply 'hlog reply $#; exit 3'
 rrun reply r2 --text-file HOME/t.txt
 refused "ERROR: remote-reply hook failed for r2 (reply NOT delivered)" "row 16: a failing hook"
 
+# W22: a POLLED order's own transport-assigned thread can legitimately BE the
+# text "local" - that is real data, not order()'s sentinel (whose rid always
+# starts with local-), so reply must still reach the hook with it, never
+# silently take the local-write path and never deliver the reply at all.
+hook remote-reply 'hlog reply $#'
+stash w22 '"local"'
+rrun reply w22
+assert_eq "$RC|$(shim_out)" "0|replied w22" "row 16: W22 a polled thread of exactly \"local\" still reaches the hook"
+assert_contains "$(shim_tree)" "reply argc=0 rid=[w22] thread=[local]" "row 16: W22 the hook gets the real thread value"
+
 # 18. followup: the LAST remote_request= wins; the live meta first, else the
 #     archive meta; none is a WARN, exit 0; an unreadable live meta is
 #     metaGet's WARN and exit 1; a stored rid the guard refuses; a failing
@@ -1165,7 +1187,7 @@ refused "ERROR: remote-reply hook failed for r2 (reply NOT delivered)" "row 16: 
 #     appends
 seed_side
 stash r1 '"1712.42"'
-stash loc '"local"'
+stash local-t '"local"'
 hook remote-reply 'hlog reply $#'
 hook remote-ack 'hlog ack $#'
 put t.txt 'landed\n'
@@ -1202,9 +1224,9 @@ hook remote-reply 'exit 4'
 rrun followup t4 --text-file HOME/t.txt
 assert_contains "$(shim_tree)" "== ./t4.meta -rw-r--r--
 remote_request=r1" "row 18: a failed reply keeps the link"
-put home/state/t5.meta 'remote_request=loc\n'
+put home/state/t5.meta 'remote_request=local-t\n'
 rrun followup t5 --text-file HOME/t.txt
-assert_contains "$(shim_tree)" "== ./remote-inbox/loc.replies.md" "row 18: a local-thread followup appends"
+assert_contains "$(shim_tree)" "== ./remote-inbox/local-t.replies.md" "row 18: a local-thread followup appends"
 
 # 19. thread-post through the family send: usage, unknown options (capped),
 #     the rid guard on the family (dots pass); no reply hook drains stdin and
@@ -1321,6 +1343,20 @@ room ep/story '- [t] c> GATE: nested\n'
 rrun push-pending
 assert_eq "$RC" "0" "row 21: NESTED STORY ROOM - exit 0"
 assert_contains "$(shim_out)" "pushed story (1 pending)" "row 21: NESTED STORY ROOM - the story's room is pushed, named by the story"
+
+# W37: the family-keyed stamp read is a literal string compare, never awk's
+# numeric coercion. A stamp line keyed "7" misaligns, under the numeric
+# bug, into something that LOOKS like family "07"'s own hash (the lookup
+# slices at the QUERY key's length, not the matched line's), wrongly
+# deduping - and so silently dropping - "07"'s very first, legitimate push.
+# The hash below is sha256("- [t] c> GATE: w37") - the real pending-lines
+# hash push-pending computes for the room seeded below.
+seed_side
+hook remote-reply 'hlog push $#; [ -n "$AC_REMOTE_THREAD" ] || printf "222.333\n"'
+room 07 '- [t] c> GATE: w37\n'
+printf '7=ze9e4bb2166c83fbafc673b91467b576dea069401c2fc323cc81e615ce4596be7\n' >"$H/home/state/.remote-push-stamp"
+rrun push-pending
+assert_eq "$(shim_out)" "pushed 07 (1 pending)" "row 21: W37 family 07's first push is never deduped by a numeric cross-read of family 7's stamp"
 
 # 3. poll gates: no hook, a hook that is not executable, a DIRECTORY (`-f`
 #    fails) and a symlink to an executable hook (followed)
@@ -1443,6 +1479,17 @@ remote-order g12" "row 5: ingest reads the same lines alike"
 assert_contains "$(shim_err)" "WARN: ingest: skipped a malformed line (need JSON {rid,text,author,thread})" "row 5: ingest's label"
 R_STDIN=/dev/null
 
+# W5: nothing requires a separator between top-level JSON texts, so two full
+# objects can share one line with no internal LF; jq's `.rid` then prints
+# one line per value and the fused multi-line "rid" used to be refused as a
+# single value - losing BOTH orders. Both must ingest on their own instead.
+printf '{"rid":"m1","text":"t","author":"a","thread":"1"}{"rid":"m2","text":"t","author":"a","thread":"2"}\n' >"$FEED"
+R_STDIN="$FEED"
+rrun ingest
+assert_eq "$RC|$(shim_out)" "0|remote-order m1
+remote-order m2" "row 5: W5 two full objects fused on one line both ingest"
+R_STDIN=/dev/null
+
 # 7. the commit's failures: a spool path a file sits on (the stash rolled
 #    back, exit 1); an inbox the stash temp cannot be written in (exit 1, the
 #    shim naming the path and errno); a publish that fails on the 2nd rid of a
@@ -1476,6 +1523,33 @@ assert_eq "$(shim_err)" "ERROR: ingest: no wake could be published for s2 - NOT 
 R_ENV=()
 R_STDIN=/dev/null
 chmod 755 "$H/home/state/.wake-spool"
+
+# W7: a DANGLING stash symlink blocks link(2) exactly like a real stash, but
+# existsSync (which follows it) finds no live stash there - that rid must be
+# reported every time, never skipped forever in silence.
+seed_side
+mkdir -p "$H/home/state/remote-inbox"
+ln -s "$H/home/state/remote-inbox/w7-missing-target.json" "$H/home/state/remote-inbox/w7.json"
+put_feed '{"rid":"w7","text":"t","author":"a","thread":"1"}\n'
+R_STDIN="$FEED"
+rrun ingest
+assert_eq "$RC|$(shim_out)" "0|" "row 7: W7 a dangling stash symlink is not ingested, but not fatal either"
+assert_contains "$(shim_err)" "WARN: ingest: w7 not ingested - a broken entry blocks" "row 7: W7 the broken entry is reported"
+rrun ingest
+assert_contains "$(shim_err)" "WARN: ingest: w7 not ingested - a broken entry blocks" "row 7: W7 reported again on a re-poll, never silently skipped"
+R_STDIN=/dev/null
+
+# W8: a rid too long for a file name must refuse ONLY that order - the rest
+# of the batch still ingests, instead of dying and leaving every later line
+# unread.
+seed_side
+w8rid="$(printf 'a%.0s' $(seq 1 300))"
+put_feed '{"rid":"%s","text":"t","author":"a","thread":"1"}\n{"rid":"w8b","text":"t","author":"a","thread":"2"}\n' "$w8rid"
+R_STDIN="$FEED"
+rrun ingest
+assert_eq "$RC|$(shim_out)" "0|remote-order w8b" "row 7: W8 the overlong rid is skipped, the rest of the batch still ingests"
+assert_contains "$(shim_err)" "WARN: ingest: refused rid (too long for a file name):" "row 7: W8 the overlong rid is reported"
+R_STDIN=/dev/null
 
 # 10b. a batch at AC_REMOTE_ACK_BUDGET=2 against a hung ack hook: ONE call,
 #      reaped at 2s, then ONE budget warning for the rest of the round
@@ -1649,11 +1723,11 @@ remote-order st2" "row 14: line 1 answered before line 2 was sent"
 
 # 23. a symlinked AC_HOME: every path the entry prints is the physical one
 seed_side
-stash loc '"local"'
+stash local-t '"local"'
 ln -s "$H/home" "$H/homelink"
 R_ENV=("AC_HOME=HOME/homelink")
-rrun reply loc
-assert_eq "$(shim_out)" "replied loc (local thread: HOME/home/state/remote-inbox/loc.replies.md)" "row 23: the physical path"
+rrun reply local-t
+assert_eq "$(shim_out)" "replied local-t (local thread: HOME/home/state/remote-inbox/local-t.replies.md)" "row 23: the physical path"
 R_ENV=()
 
 # 24. a planted symlink at a predictable temp name (the EXCLUSIVE TEMP rule):
