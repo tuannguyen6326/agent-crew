@@ -143,13 +143,22 @@ export const shaSoft = (f: string): string => {
 // under state/.maintenance.lock (30 PATH `sleep 1` waits) and refused for a
 // different recorded plan or another unsettled transaction; the journal
 // records plan_sha256, plan, run, actions_total and status=applying before the
-// first write, then the backup (recordsBackup <mode>, once per transaction).
-// Each action is skipped when its target already holds new_sha256, applied
-// when it holds old_sha256 (cp to <target>.maintenance.<pid>.<idx>, rehashed,
-// mv over it - all spawned, so a link planted at the temp is written through
-// as the bash's was), and a move-skill then removes its live source and every
-// directory it empties below skills/. Every failure past the claim HOLDS the
-// transaction with the bash's reason text. False wherever the bash returned 1.
+// first write. A plan that targets records/backlog.md then also takes
+// records/.backlog.md.lock - the same lock ac-task.sh/ac-domain.sh/
+// deputy.ts/`backlog --apply` take, always after state/.maintenance.lock
+// above (no holder of THIS lock ever takes THAT one, so the fixed order
+// cannot deadlock) - held across every action, not just that row, and
+// released by this function itself on every exit, since it returns to a
+// still-running Learning/Curate pass rather than the short CLI process
+// ledgerLock's exit handler assumes. Then the backup (recordsBackup <mode>,
+// once per transaction). Each action is skipped when its target already
+// holds new_sha256, applied when it holds old_sha256 (cp to
+// <target>.maintenance.<pid>.<idx>, rehashed, mv over it - all spawned, so a
+// link planted at the temp is written through as the bash's was), and a
+// move-skill then removes its live source and every directory it empties
+// below skills/. Every failure past the claim HOLDS the transaction with the
+// bash's reason text (releasing the ledger lock first when it was taken).
+// False wherever the bash returned 1.
 export function maintenanceApply(plan: string, run: string): boolean {
   if (!maintenancePlanValidate(plan, run)) return false;
   const home = softHome(true);
@@ -195,17 +204,30 @@ export function maintenanceApply(plan: string, run: string): boolean {
   const lat = (s: string): string => Buffer.from(s, "utf8").toString("latin1");
   const planAbs = `${physicalDir(dirname(plan)) ?? ""}/${basename(plan)}`;
   const runAbs = physicalDir(run) ?? "";
+  const rows = stage(["jq", "-r", ".actions[] | [.op,.target,.old_sha256,.new_sha256,.staged] | @tsv", plan], "inherit", "pipe", "inherit").out.toString("latin1").split("\n").slice(0, -1);
   const total = jqr(".actions | length");
   metaSetSoft(journal, "plan_sha256", planSha);
   metaSetSoft(journal, "plan", lat(planAbs));
   metaSetSoft(journal, "run", lat(runAbs));
   metaSetSoft(journal, "actions_total", total);
   metaSetSoft(journal, "status", "applying");
+
+  const ledgerLockPath = `${softSubdir("records", true)}/.backlog.md.lock`;
+  const touchesBacklog = rows.some((row) => tabFields(row.split("\0", 1)[0]!, 5)[1] === "records/backlog.md");
+  let ledgerLockHeld = false;
   const held = (idx: number, why: string): false => {
     maintenanceHold(journal, txn, idx, total, why);
+    if (ledgerLockHeld) lockRelease(ledgerLockPath);
     lockRelease(lock);
     return false;
   };
+  if (touchesBacklog) {
+    if (!lockAcquire(ledgerLockPath, Number(process.env.AC_TASK_LOCK_TIMEOUT || "10"), sleepOne)) {
+      return held(0, `records/backlog.md writer lock ${ledgerLockPath} could not be acquired - another ledger writer (ac-task.sh/ac-domain.sh/deputy.ts/backlog --apply) holds it, so this transaction was HELD without writing records/backlog.md`);
+    }
+    ledgerLockHeld = true;
+  }
+
   let backup = metaGetSoft(journal, "backup");
   if (backup === "") {
     const b = recordsBackup(mode);
@@ -217,7 +239,6 @@ export function maintenanceApply(plan: string, run: string): boolean {
   }
 
   const run1 = (cmd: string[], stderr: "inherit" | "ignore" = "inherit"): number => stage(cmd, "inherit", "inherit", stderr).status;
-  const rows = stage(["jq", "-r", ".actions[] | [.op,.target,.old_sha256,.new_sha256,.staged] | @tsv", plan], "inherit", "pipe", "inherit").out.toString("latin1").split("\n").slice(0, -1);
   let idx = 0;
   for (const row of rows) {
     const [op, target, oldSha, newSha, staged] = tabFields(row.split("\0", 1)[0]!, 5) as [string, string, string, string, string];
@@ -268,6 +289,7 @@ export function maintenanceApply(plan: string, run: string): boolean {
     idx++;
   }
   metaSetSoft(journal, "status", "complete");
+  if (ledgerLockHeld) lockRelease(ledgerLockPath);
   lockRelease(lock);
   return true;
 }

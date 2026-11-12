@@ -127,12 +127,15 @@
 //   file under records/ or skills/ the tar cannot read HOLDS the claim.
 // - W4: a compatibility apply whose backup fails prints an empty
 //   `pre-run backup:` and moves anyway.
-// - W5 (`backlog --apply`'s own write FIXED): curateBacklog takes the ledger
-//   lock records/.backlog.md.lock, same as ac-task.sh/ac-domain.sh/deputy.ts,
-//   before mutating - a busy lock refuses with nothing written. The
-//   automatic `run` pass still commits backlog.md through maintenanceApply's
-//   state/.maintenance.lock (src/lib-curate.ts), which does not take
-//   records/.backlog.md.lock - that half is still open.
+// - W5 (FIXED, both halves): curateBacklog takes the ledger lock
+//   records/.backlog.md.lock, same as ac-task.sh/ac-domain.sh/deputy.ts,
+//   before mutating `backlog --apply` - a busy lock refuses with nothing
+//   written. The automatic `run` pass commits backlog.md through
+//   maintenanceApply (src/lib-curate.ts), which takes the same
+//   records/.backlog.md.lock - after state/.maintenance.lock, released
+//   itself on every exit from that plan rather than at process exit - when
+//   its plan targets records/backlog.md, so the two writers exclude each
+//   other there too.
 // - W6: survivors are rewritten line by line cut at their first NUL (awk's
 //   reading) while moved lines keep every byte (sed's).
 // - W7: a moved line that was the ledger's unterminated last line is appended
