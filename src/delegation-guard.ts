@@ -19,15 +19,16 @@
 //
 // TWO SIDES, TWO MECHANISMS, because the two directions fail at different
 // prices. CREATE side: classified by SHAPE, never a fixed list - a non-MCP
-// tool whose name is exactly `Task`, or contains `Agent` or `Workflow`,
-// creates delegated work. A deny list would be fail-open against a
-// create-tool that ships later: miss one and the whole supervision stack goes
-// inert for the rest of the session - a cost this project has actually paid
-// (two workers, 73 minutes). Most observe-or-stop names (TaskList, TaskGet,
-// TaskOutput, TaskStop, TaskUpdate) never reach this classifier at all - they
-// are not exactly `Task` and carry neither `Agent` nor `Workflow`, so the
-// shape simply does not match; that is an accident of spelling, not a rule
-// about observe verbs. The rare observe verb whose name DOES shape-match
+// tool whose name is `Task` case-insensitively, or contains `Agent` or
+// `Workflow` (case-sensitively - a spelling variant of those two is not
+// chased the same way), creates delegated work. A deny list would be
+// fail-open against a create-tool that ships later: miss one and the whole
+// supervision stack goes inert for the rest of the session - a cost this
+// project has actually paid (two workers, 73 minutes). Most observe-or-stop
+// names (TaskList, TaskGet, TaskOutput, TaskStop, TaskUpdate) never reach this
+// classifier at all - they are not `Task` even folded to one case and carry
+// neither `Agent` nor `Workflow`, so the shape simply does not match; that is
+// an accident of spelling, not a rule about observe verbs. The rare observe verb whose name DOES shape-match
 // (ListAgents, only because it contains `Agent`) is carved out by an
 // EXACT-NAME allowlist, checked before the shape test. That allowlist is
 // deliberately never a second shape rule: a `List*` exemption would
@@ -97,23 +98,27 @@
 // stderr. Files: none.
 //
 // THE READS: the payload is stdin to its end with NULs
-// dropped and trailing LFs stripped (empty allows), and the name is jq's
-// `-r '.tool_name // empty'` over it plus one LF, spawned, its stdout taken
-// whatever jq's status, NULs dropped and trailing LFs stripped. `git -C <cwd>
-// rev-parse --path-format=absolute --git-dir` and `--git-common-dir` are
-// spawned the same way, stderr dropped, stdin inherited. The cwd is the
-// physical one bin/ac-bun.sh hands over; AC_HOME is entered as physicalDir
-// enters it, and one that cannot be entered reads as no home path.
+// dropped and trailing LFs stripped (empty allows). The name is jq's
+// `-r 'if .tool_name == null then empty elif (.tool_name|type) == "string"
+// then ("\u0001" + .tool_name + "\u0001") else "\u0001\u0002" end'` over the
+// payload plus one LF: a present non-string name denies on the `\u0001\u0002`
+// sentinel rather than being judged by its JSON text, and wrapping a string
+// name in `\u0001` bytes means jq's own trailing LF is the only one capturedText
+// ever strips - an LF the NAME ITSELF carried (its own trailing newline, or a
+// second top-level JSON value's wrapped name joined after it) stays inside the
+// wrapper and is caught below, never silently dropped. `git -C <cwd> rev-parse
+// --path-format=absolute --git-dir` and `--git-common-dir` are spawned the
+// same way, stderr dropped, stdin inherited. The cwd is the physical one
+// bin/ac-bun.sh hands over; AC_HOME is entered as physicalDir enters it, and
+// one that cannot be entered reads as no home path.
 //
-// AT PARITY with the bash original (each until its own fix lands):
-// - every value jq printed before its first parse error is the name, joined
-//   by LF: `{"tool_name":"Task"} x` refuses, and two values `Read` and `Agent`
-//   refuse naming `Read<LF>Agent`;
-// - a name that is no string is judged by jq's JSON text: an object holding
-//   an `Agent` key refuses, `["Task"]` allows;
-// - a NUL in the name (raw on stdin or `\u0000`) is dropped and a trailing LF
-//   stripped before the shape test: `Ta\u0000sk` refuses, `m\u0000cp__Agent`
-//   is an mcp__ name.
+// A capture that is not exactly one clean `\u0001<name>\u0001` (wrong
+// sentinels, or an LF inside them from either cause above) is not read as a
+// name at all - it is treated as a shape that WOULD match Task/Agent/Workflow,
+// so it is judged by the SAME scope arms below as a real one, never by
+// whatever text happened to survive. A NUL in the name (raw on stdin or
+// `\u0000`) is dropped before the shape test, same as any capture here:
+// `Ta\u0000sk` is `Task`, `m\u0000cp__Agent` is an mcp__ name.
 //
 // ALSO:
 // - With no bun on PATH, or no module file, the shim denies at once with one
@@ -141,10 +146,16 @@ if (!commandV("jq")) process.exit(0);
 const payload = hookPayload();
 if (payload === "") process.exit(0);
 
-const tool = hookJq(".tool_name // empty", payload);
-if (tool === "" || tool.startsWith("mcp__")) process.exit(0);
-if (tool === "ListAgents") process.exit(0);
-if (tool !== "Task" && !tool.includes("Agent") && !tool.includes("Workflow")) process.exit(0);
+const toolFilter = 'if .tool_name == null then empty elif (.tool_name|type) == "string" then ("\\u0001" + .tool_name + "\\u0001") else "\\u0001\\u0002" end';
+const raw = hookJq(toolFilter, payload);
+if (raw === "") process.exit(0);
+const clean = raw.length >= 2 && raw.startsWith("\u0001") && raw.endsWith("\u0001") && !raw.slice(1, -1).includes("\n");
+const tool = clean ? raw.slice(1, -1) : "a malformed tool_name";
+if (clean) {
+  if (tool === "" || tool.startsWith("mcp__")) process.exit(0);
+  if (tool === "ListAgents") process.exit(0);
+  if (tool.toLowerCase() !== "task" && !tool.includes("Agent") && !tool.includes("Workflow")) process.exit(0);
+}
 
 if (here === "") process.exit(0);
 const gitDir = (which: "--git-dir" | "--git-common-dir"): string => hookCapture(["git", "-C", here, "rev-parse", "--path-format=absolute", which]);

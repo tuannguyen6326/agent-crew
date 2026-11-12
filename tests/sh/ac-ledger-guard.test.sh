@@ -150,7 +150,7 @@ mkdir -p "$TMP/guard-no-allow/bin" "$TMP/guard-no-allow/src"
 cp "$BIN/ac-bun.sh" "$guard" "$TMP/guard-no-allow/bin/"
 ln -s "$ROOT"/src/*.ts "$TMP/guard-no-allow/src/"
 rm "$TMP/guard-no-allow/src/ledger-guard.ts"
-awk '/^if \(!canon\.includes\("\.\."\) && EXEMPT\.test\(canon\)\) process\.exit\(0\);$/ { next } { print }' \
+awk '/^  if \(!canon\.includes\("\.\."\) && EXEMPT\.test\(canon\)\) return;$/ { next } { print }' \
   "$ROOT/src/ledger-guard.ts" >"$TMP/guard-no-allow/src/ledger-guard.ts"
 noallow="$TMP/guard-no-allow/bin/ac-ledger-guard.sh"
 rc=0; ( printf '{"tool_name":"Edit","tool_input":{"file_path":"/home/fleet/crewdomains/payments/records/projects.md"}}' \
@@ -211,6 +211,36 @@ edit 2 Edit file_path 'records/bacKlog.md'
 edit 2 Edit file_path 'RÉCORDS/../BACKLOG.MD'
 LG_LC=C
 
+# THE CASE-FOLD GAP: a code point whose Unicode decomposition is an ASCII
+# letter must fold before tr's ASCII-only lowering ever sees it - LONG S
+# (U+017F) decomposes to s in any locale; KELVIN SIGN (U+212A) decomposes to
+# K, closing the gap tr's own case folding left open outside a UTF-8 locale.
+edit 2 Edit file_path 'record'$'ſ''/backlog.md'
+LG_LC=en_US.UTF-8
+edit 2 Edit file_path 'record'$'ſ''/backlog.md'
+LG_LC=C
+edit 2 Edit file_path 'records/bac'$'K''log.md'
+
+# a path holding an embedded LF (not jq's own trailing one) can never be
+# trusted to fence one line at a time - deny instead of canonicalizing per line.
+edit 2 Edit file_path 'records/backlog.md\nfoo'
+edit 2 Edit file_path 'records\n/backlog.md'
+
+# NotebookEdit carrying file_path, Edit carrying notebook_path, MultiEdit, and
+# a case variant of the tool name are the same guarded write under a different
+# field or spelling - not a wider name that slips the fence.
+edit 2 NotebookEdit file_path records/captain.md
+edit 2 Edit notebook_path records/backlog.md
+edit 2 MultiEdit file_path records/backlog.md
+edit 2 edit file_path records/backlog.md
+
+# a payload carrying BOTH fields: the benign one must never shadow the fenced
+# one, regardless of which field this guard would otherwise prefer.
+pl '{"tool_name":"NotebookEdit","tool_input":{"file_path":"/tmp/x.ipynb","notebook_path":"records/backlog.md"}}'
+verdict 2 AC_SCOPE=fam1
+pl '{"tool_name":"Edit","tool_input":{"file_path":"records/backlog.md","notebook_path":"/tmp/x"}}'
+verdict 2 AC_SCOPE=fam1
+
 # 3. the payload as jq reads it: a value printed before a parse error counts,
 # NULs are dropped, trailing LFs stripped, and a byte that is no UTF-8 does
 # not hide the path.
@@ -218,6 +248,18 @@ for p in '{"tool_name":"Edit","tool_input":{"file_path":"records/backlog.md"}} j
          '{"tool_name":"Ed\\u0000it","tool_input":{"file_path":"rec\\u0000ords/backlog.md"}}' \
          '{"tool_name":"Edit","tool_input":{"file_path":"records/backlog.md"}}\n\n' \
          '{"tool_name":"Write","tool_input":{"file_path":"r\351/../records/captain.md"}}'; do
+  pl "$p"
+  verdict 2 AC_SCOPE=fam1
+done
+
+# a file_path that is no JSON string is a TYPE, not a path judged by its JSON
+# text; tool_input itself as a string is the same type violation one level up;
+# a second JSON value in the payload is multiple documents, not a wider name.
+for p in '{"tool_name":"Edit","tool_input":{"file_path":["records/backlog.md"]}}' \
+         '{"tool_name":"Edit","tool_input":{"file_path":{"p":"records/backlog.md"}}}' \
+         '{"tool_name":"Edit","tool_input":{"file_path":null}}' \
+         '{"tool_name":"Edit","tool_input":"records/backlog.md"}' \
+         '{"tool_name":"Edit","tool_input":{"file_path":"records/backlog.md"}}{"tool_name":"Edit","tool_input":{"file_path":"x"}}'; do
   pl "$p"
   verdict 2 AC_SCOPE=fam1
 done

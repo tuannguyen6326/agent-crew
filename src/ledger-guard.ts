@@ -67,29 +67,37 @@
 // never wedge the harness. Exit codes: 0 allow, 2 deny; nothing on stdout, the
 // refusal one line on stderr. Files: none.
 //
-// RESIDUAL: this hook covers the `claude` harness's Edit/Write/NotebookEdit
-// tools only. A write performed through the Bash tool (sed, echo >, a
-// heredoc) still gets through - the same fail-open shape
-// src/delegation-guard.ts already accepts, not extended here to close it.
+// RESIDUAL: this hook covers the `claude` harness's Edit/Write/NotebookEdit/
+// MultiEdit tools (and a case variant of any of those names) only. A write
+// performed through the Bash tool (sed, echo >, a heredoc) still gets through
+// - the same fail-open shape src/delegation-guard.ts already accepts, not
+// extended here to close it.
 //
 // THE READS: the payload is stdin to its end with NULs
 // dropped and trailing LFs stripped (empty allows); the name is jq's
-// `-r '.tool_name // empty'` and the path jq's `-r '.tool_input.file_path //
-// empty'` (Edit, Write) or `-r '.tool_input.notebook_path // empty'`
-// (NotebookEdit), each over the payload plus one LF, spawned, its stdout
-// taken whatever jq's status, NULs dropped and trailing LFs stripped.
+// `-r '.tool_name // empty'`, denied outright when it holds an embedded LF (a
+// second top-level JSON value in the payload joined its own line to the
+// first), and matched case-insensitively against edit/write/notebookedit/
+// multiedit - a spelling or case variant of a guarded tool is guarded too. The
+// path is jq's: tool_input itself not an object denies on the `\u0001`
+// sentinel (a string tool_input can no longer be indexed into silence);
+// file_path and notebook_path are each read and judged INDEPENDENTLY when
+// present (a payload can carry both, so the one that happens to be benign
+// must never shadow the one that is fenced), and each denies on the same
+// sentinel when its own field is not a JSON string - a present non-string
+// field is a type, never judged by its JSON text. A path holding an embedded
+// LF (not jq's own trailing one, already stripped) denies too: sed canonicalizes
+// per line, so it could never be trusted to fence one. Each jq call runs over
+// the payload plus one LF, spawned, its stdout taken whatever jq's status,
+// NULs dropped and trailing LFs stripped.
 //
-// AT PARITY with the bash original (each until its own fix lands):
-// - THE CASE-FOLD GAP: the canonical shape LOWERCASES while APFS FOLDS case,
-//   so a code point whose fold is an ASCII letter opens a fenced ledger
-//   unjudged: `record<U+017F>/backlog.md` (LATIN SMALL LETTER LONG S folds to
-//   s; tr leaves it, being lowercase) under any locale, and
-//   `records/bac<U+212A>log.md` (KELVIN SIGN folds to k) under the C locale,
-//   where tr lowercases ASCII only.
-// - the path is jq's text: a file_path that is no string is judged by its
-//   JSON text, and a payload holding a second value judges the name and path
-//   jq printed for both, joined by LF (an `Edit<LF>Edit` name is no tool);
-// - sed reads lines: a path holding an LF has each line canonicalized alone.
+// THE CASE-FOLD GAP (fixed, not AT PARITY with the bash original): the shape
+// below LOWERCASES with `tr`, which only knows ASCII - canonical AND
+// compatibility Unicode decomposition run first (`String.prototype.normalize`
+// NFKC) so a code point whose fold is an ASCII letter is judged as ASCII
+// before tr ever sees it: LATIN SMALL LETTER LONG S (U+017F) decomposes to s
+// and KELVIN SIGN (U+212A) decomposes to K, matching what APFS folds in any
+// locale, not only the UTF-8 one tr itself needs for its own folding.
 //
 // ALSO:
 // - With no bun on PATH, or no module file, the shim denies at once with one
@@ -114,22 +122,15 @@ if (!commandV("jq")) process.exit(0);
 const payload = hookPayload();
 if (payload === "") process.exit(0);
 
-const tool = hookJq(".tool_name // empty", payload);
-if (tool === "" || tool.startsWith("mcp__")) process.exit(0);
-const filter = tool === "Edit" || tool === "Write" ? ".tool_input.file_path // empty" : tool === "NotebookEdit" ? ".tool_input.notebook_path // empty" : null;
-if (filter === null) process.exit(0);
-const path = hookJq(filter, payload);
-if (path === "") process.exit(0);
-
-let shaped = Buffer.from(path, "latin1");
-for (const argv of [["tr", "[:upper:]", "[:lower:]"], ["tr", "-s", "/"], ["sed", "-e", ":a", "-e", "s#/\\./#/#", "-e", "ta", "-e", "s#^\\./##"]]) {
-  try {
-    shaped = Buffer.from(spawnShellSync(argv, { stdin: shaped, stdout: "pipe", stderr: "inherit" }).stdout);
-  } catch {
-    shaped = Buffer.alloc(0);
-  }
+function refuseShape(why: string): never {
+  writeSync(2, Buffer.from(`ac-ledger-guard: REFUSED - ${why}.\n`, "latin1"));
+  process.exit(2);
 }
-const canon = shaped.toString("latin1").replace(/\0/g, "").replace(/\n+$/, "");
+
+const tool = hookJq(".tool_name // empty", payload);
+if (tool.includes("\n")) refuseShape("the payload holds more than one JSON value");
+if (tool === "" || tool.startsWith("mcp__")) process.exit(0);
+if (!["edit", "write", "notebookedit", "multiedit"].includes(tool.toLowerCase())) process.exit(0);
 
 const literal = (s: string): string => s.replace(/[.\\+?^${}()|[\]]/g, "\\$&");
 const glob = (...pats: string[]): RegExp => new RegExp(`^(?:${pats.map((p) => p.split("*").map(literal).join("[\\s\\S]*")).join("|")})$`);
@@ -140,9 +141,44 @@ const FENCED = glob(
   "records/captain.md", "*/records/captain.md",
   "*..*/backlog.md", "*..*/projects.md", "*..*/captain.md",
 );
-if (!canon.includes("..") && EXEMPT.test(canon)) process.exit(0);
-if (!FENCED.test(canon)) process.exit(0);
 
-const scopeBytes = Buffer.from(scope, "utf8").toString("latin1");
-writeSync(2, Buffer.from(`ac-ledger-guard: ${tool} on ${path} is refused in a scoped session (AC_SCOPE=${scopeBytes}) - the crewchief owns records/backlog.md, records/projects.md and records/captain.md; a scoped chief (roomchief or domainchief) reads them but never edits them. Report the change instead (hand it back to the crewchief, or note it in your report.md) rather than editing the ledger yourself. A crewdomain detail file at crewdomains/<name>/records/projects.md is YOURS to edit and is not fenced.\n`, "latin1"));
-process.exit(2);
+// A payload can carry both fields (a shape-confused caller's, or a crafted
+// one meant to hide the real target behind whichever field this guard reads
+// first) - each present field is judged on its OWN, independently, so the
+// field that happens to be benign can never shadow the one that is fenced.
+function judgeField(field: string): void {
+  const filter =
+    'if .tool_input == null then empty elif (.tool_input|type) != "object" then "\\u0001" ' +
+    `elif (.tool_input|has("${field}")) then (if (.tool_input.${field}|type) == "string" then .tool_input.${field} else "\\u0001" end) ` +
+    "else empty end";
+  const path = hookJq(filter, payload);
+  if (path === "\u0001") refuseShape(`${tool}'s path is not a JSON string`);
+  if (path.includes("\n")) refuseShape("the path holds an embedded LF");
+  if (path === "") return;
+
+  // NFKC resolves both the canonical (KELVIN SIGN -> K) and compatibility
+  // (LONG S -> s) decompositions APFS folds, before tr's ASCII-only lowering
+  // runs - tr alone leaves either one unjudged (LONG S in every locale,
+  // KELVIN SIGN outside a UTF-8 one).
+  const foldedPath = Buffer.from(Buffer.from(path, "latin1").toString("utf8").normalize("NFKC"), "utf8").toString("latin1");
+  let shaped = Buffer.from(foldedPath, "latin1");
+  for (const argv of [["tr", "[:upper:]", "[:lower:]"], ["tr", "-s", "/"], ["sed", "-e", ":a", "-e", "s#/\\./#/#", "-e", "ta", "-e", "s#^\\./##"]]) {
+    try {
+      shaped = Buffer.from(spawnShellSync(argv, { stdin: shaped, stdout: "pipe", stderr: "inherit" }).stdout);
+    } catch {
+      shaped = Buffer.alloc(0);
+    }
+  }
+  const canon = shaped.toString("latin1").replace(/\0/g, "").replace(/\n+$/, "");
+
+  if (!canon.includes("..") && EXEMPT.test(canon)) return;
+  if (!FENCED.test(canon)) return;
+
+  const scopeBytes = Buffer.from(scope, "utf8").toString("latin1");
+  writeSync(2, Buffer.from(`ac-ledger-guard: ${tool} on ${path} is refused in a scoped session (AC_SCOPE=${scopeBytes}) - the crewchief owns records/backlog.md, records/projects.md and records/captain.md; a scoped chief (roomchief or domainchief) reads them but never edits them. Report the change instead (hand it back to the crewchief, or note it in your report.md) rather than editing the ledger yourself. A crewdomain detail file at crewdomains/<name>/records/projects.md is YOURS to edit and is not fenced.\n`, "latin1"));
+  process.exit(2);
+}
+
+judgeField("file_path");
+judgeField("notebook_path");
+process.exit(0);

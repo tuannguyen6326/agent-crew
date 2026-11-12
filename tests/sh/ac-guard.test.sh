@@ -734,6 +734,21 @@ for p in '{"tool_input":{"command":"pkill -f ac-watch"}}' \
   wp_verdict 2
 done
 wp_cmd 2 "$(printf 'ls\npkill -f ac-watch')"
+# a command that is no JSON string denies on its TYPE, never judged by jq's
+# text of it; a second JSON value in the payload is multiple documents, not a
+# wider Bash name; a watch-naming argument past a line continuation is still
+# one logical command, not a line of its own.
+for p in '{"tool_name":"Bash","tool_input":{"command":["pkill","-f","ac-watch"]}}' \
+         '{"tool_name":"Bash","tool_input":{"command":"pkill -f ac-watch"}}{"tool_name":"Bash","tool_input":{"command":"ls"}}'; do
+  wp_pl "$p"
+  wp_verdict 2
+done
+wp_cmd 2 "$(printf 'pkill -f \\\nac-watch')"
+# a BARE LF is a statement separator, same as `;` - two unrelated lines must
+# stay apart, or an everyday multi-line script (a plain kill on one line, an
+# unrelated --watch dev command on another) would be denied for sharing a word
+# across lines that were never one command.
+wp_cmd 0 "$(printf 'kill 1234\necho $watchdir')"
 # a missing jq allows.
 wp_pl '{"tool_name":"Bash","tool_input":{"command":"pkill -f ac-watch"}}'
 wp_path "$TMP/wp-nojq" bash env cat dirname tr grep bun

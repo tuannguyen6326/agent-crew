@@ -53,8 +53,9 @@
 // exist, or a rev-parse that errors - all exit 0 (a module that cannot load
 // is the shim's, and no bun the shim's refusal). A broken guard must never
 // wedge the harness.
-// Exit codes: 0 allow, 2 deny; nothing on stdout, the refusal three lines on
-// stderr. Files: none.
+// Exit codes: 0 allow, 2 deny; nothing on stdout. The refusal is three lines
+// on stderr for the geometry deny, one line for a malformed-payload deny.
+// Files: none.
 //
 // RESIDUAL: like its two siblings, this covers the claude harness's
 // Edit/Write/NotebookEdit tools only. A write performed through the Bash tool
@@ -66,19 +67,21 @@
 //
 // THE READS: the payload is stdin to its end with NULs
 // dropped and trailing LFs stripped (empty allows); the name is jq's
-// `-r '.tool_name // empty'` and the path jq's `-r '.tool_input.file_path //
-// empty'` (Edit, Write) or `-r '.tool_input.notebook_path // empty'`
-// (NotebookEdit), each over the payload plus one LF, spawned, its stdout
-// taken whatever jq's status, NULs dropped and trailing LFs stripped. The own
-// tree is `git -C <cwd> rev-parse --show-toplevel` and the common dir
+// `-r '.tool_name // empty'`, denied outright when it holds an embedded LF (a
+// second top-level JSON value in the payload joined its own line to the
+// first); the path is jq's `-r 'if .tool_input.file_path == null then empty
+// elif (.tool_input.file_path|type) == "string" then .tool_input.file_path
+// else "\u0001" end'` (Edit, Write; `notebook_path` for NotebookEdit) - a
+// present non-string field denies when the `\u0001` sentinel appears anywhere
+// in what jq printed (not only an exact match: a second top-level document
+// with no tool_name of its own never shows up in the name above, yet still
+// joins its own line to the sentinel here) rather than being judged by its
+// JSON text - each over the payload plus one LF, spawned, its stdout taken
+// whatever jq's status, NULs dropped and trailing LFs stripped.
+// The own tree is `git -C <cwd> rev-parse --show-toplevel` and the common dir
 // `git -C <cwd> rev-parse --path-format=absolute --git-common-dir`, spawned
 // the same way, stderr dropped, stdin inherited; the primary is the common
 // dir less its last `/<component>`.
-//
-// AT PARITY with the bash original (until its own fix lands):
-// - the path is jq's text: a file_path that is no string is judged by its JSON
-//   text, and a payload holding a second value joins the name jq printed for
-//   both with LF (an `Edit<LF>Edit` name is no tool).
 //
 // BUN: with no bun on PATH, or no module file, the shim denies at once with
 // one stderr line naming it; a module that cannot load or crashes allows, with
@@ -99,16 +102,33 @@ import { commandV, enterCaller, hookCapture, hookJq, hookPayload, physicalDir } 
 const { atCaller } = enterCaller(process.argv.slice(2));
 const here = process.argv[2] ?? "";
 
+function refuseShape(why: string): never {
+  writeSync(2, Buffer.from(`ac-primary-guard: REFUSED - ${why}.\n`, "latin1"));
+  process.exit(2);
+}
+
 if (!process.env.AC_CREW_ID && !process.env.AC_SCOPE) process.exit(0);
 if (!commandV("jq")) process.exit(0);
 const payload = hookPayload();
 if (payload === "") process.exit(0);
 
 const tool = hookJq(".tool_name // empty", payload);
+if (tool.includes("\n")) refuseShape("the payload holds more than one JSON value");
 if (tool === "" || tool.startsWith("mcp__")) process.exit(0);
-const filter = tool === "Edit" || tool === "Write" ? ".tool_input.file_path // empty" : tool === "NotebookEdit" ? ".tool_input.notebook_path // empty" : null;
+// A present non-string field denies on its TYPE, not on jq's `-r` text of it -
+// `//` alone treats `false` as missing too, so the null check is explicit.
+const typedField = (field: string) =>
+  `if .tool_input.${field} == null then empty elif (.tool_input.${field}|type) == "string" then .tool_input.${field} else "\\u0001" end`;
+const filter = tool === "Edit" || tool === "Write" ? typedField("file_path") : tool === "NotebookEdit" ? typedField("notebook_path") : null;
 if (filter === null) process.exit(0);
 const path = hookJq(filter, payload);
+// `includes`, not an exact match: a second top-level JSON value with no
+// tool_name of its own never shows up in `tool` (empty output for that
+// document), yet still joins the sentinel to whatever it contributed here. A
+// bare embedded LF alone is NOT this signal - a legitimate single-value path
+// can carry a real newline byte (a directory name ending in one, resolved
+// below), so only the sentinel's presence denies, never the LF on its own.
+if (path.includes("\u0001")) refuseShape(`${tool}'s path is not a JSON string`);
 if (path === "") process.exit(0);
 
 // The path is bytes (latin1) and so are git's answers; a name handed to the

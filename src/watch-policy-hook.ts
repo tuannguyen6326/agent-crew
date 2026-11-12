@@ -43,17 +43,25 @@
 //
 // THE READS, the original's: jq is looked for before stdin is read; the
 // payload is stdin to its end with NULs dropped and trailing LFs stripped;
-// the name is jq's `-r '.tool_name // empty'` and the command jq's `-r
-// '.tool_input.command // empty'`, each over the payload plus one LF,
-// spawned, its stdout taken whatever jq's status, NULs dropped and trailing
-// LFs stripped; tr's output is read the same way.
+// the name is jq's `-r '.tool_name // empty'`. The command is jq's `-r 'if
+// .tool_input.command == null then empty elif (.tool_input.command|type) ==
+// "string" then .tool_input.command else "\u0001" end'` - a present non-string
+// command denies on the sentinel rather than being judged by its JSON text.
+// Each runs over the payload plus one LF, spawned, its stdout taken whatever
+// jq's status, NULs dropped and trailing LFs stripped; tr's output is read
+// the same way.
 //
-// AT PARITY with the bash this module replaced (each until its own fix lands):
-// - the command is jq's text: a command that is no string is judged by its
-//   JSON text, and a payload holding a second value prints a name joined by
-//   LF (`Bash<LF>Bash` is no Bash, so it is allowed);
-// - grep reads lines: tests 1 and 3 match within one line of the command,
-//   so a pkill whose watch-naming argument sits past an LF is allowed.
+// A name holding an embedded LF (a second top-level JSON value in the payload
+// joined its own line to the first) denies outright, before the shape test:
+// `Bash<LF>Bash` is two documents, never a wider tool name. A present command
+// that is no JSON string denies when the `\u0001` sentinel appears anywhere in
+// what jq printed, rather than being judged by its JSON text. A shell
+// line-continuation (backslash+LF) the command carries is folded to a space
+// before the line-sensitive tests run - it is the SAME logical line, and grep
+// reads lines, so a pkill whose watch-naming argument sits past one would
+// otherwise be judged a line at a time; a BARE LF stays a line of its own, a
+// statement separator exactly like `;`, so an unrelated later command sharing
+// a word with an earlier pkill/kill is never judged together with it.
 //
 // ALSO:
 // - BUN: with no bun on PATH, or no module file, the shim denies at once with
@@ -77,14 +85,27 @@ if (!commandV("jq")) process.exit(0);
 const payload = hookPayload();
 if (payload === "") process.exit(0);
 
+const deny = (why: string): never => {
+  writeSync(2, `ac-watch-policy: ${why}. Kill a watcher by its OWN pid (kill <pid>), never by pattern - a broad match can take down another session's watcher.\n`);
+  process.exit(2);
+};
+
 const tool = hookJq(".tool_name // empty", payload);
+if (tool.includes("\n")) deny("denied: the payload holds more than one JSON value");
 if (tool !== "" && tool !== "Bash") process.exit(0);
-const cmd = hookJq(".tool_input.command // empty", payload);
+const cmdFilter = 'if .tool_input.command == null then empty elif (.tool_input.command|type) == "string" then .tool_input.command else "\\u0001" end';
+const cmd = hookJq(cmdFilter, payload);
+if (cmd.includes("\u0001")) deny("denied: command is not a JSON string");
 if (cmd === "") process.exit(0);
 
+// A shell line-continuation (backslash+LF) is the SAME logical line and is
+// folded to a space before tr/grep ever see it; a bare LF is a statement
+// separator (same as `;`) and must stay a line of its own, or an unrelated
+// later command sharing a word with an earlier pkill/kill would deny it.
+const continued = cmd.replace(/\\\n/g, " ");
 let folded = Buffer.alloc(0);
 try {
-  folded = Buffer.from(spawnShellSync(["tr", "[:upper:]", "[:lower:]"], { stdin: Buffer.from(cmd, "latin1"), stdout: "pipe", stderr: "inherit" }).stdout);
+  folded = Buffer.from(spawnShellSync(["tr", "[:upper:]", "[:lower:]"], { stdin: Buffer.from(continued, "latin1"), stdout: "pipe", stderr: "inherit" }).stdout);
 } catch {}
 const lc = Buffer.from(`${folded.toString("latin1").replace(/\0/g, "").replace(/\n+$/, "")}\n`, "latin1");
 
@@ -94,11 +115,6 @@ const grep = (...argv: string[]): boolean => {
   } catch {
     return false;
   }
-};
-
-const deny = (why: string): never => {
-  writeSync(2, `ac-watch-policy: ${why}. Kill a watcher by its OWN pid (kill <pid>), never by pattern - a broad match can take down another session's watcher.\n`);
-  process.exit(2);
 };
 
 if (grep("-qE", "(^|[^[:alnum:]_-])(pkill|killall)[^|;&]*watch")) deny("denied: pkill/killall pattern targets a watcher");

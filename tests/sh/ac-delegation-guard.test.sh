@@ -26,6 +26,8 @@ primary="$(make_repo delegation)"
 for t in Task Agent Workflow AgentTool WorkflowRunner SubAgent; do
   assert_eq "$(hook "$primary" "$t")" "2" "$t must be refused in a primary checkout"
 done
+# A case variant of the exact name is the same shape, not a wider name.
+assert_eq "$(hook "$primary" "task")" "2" "a lowercase spelling of Task must be refused too"
 
 # Ordinary tools are untouched. So are the Task-prefixed observe-or-stop
 # verbs, but not by exemption - TaskList/TaskGet/TaskOutput/TaskStop/
@@ -241,6 +243,19 @@ verdict 2 "$primary"
 DG_LC=C
 { printf '{"pad":"'; head -c 70000 /dev/zero | tr '\0' x; printf '","tool_name":"Task"}'; } >"$TMP/dg.pl"
 verdict 2 "$primary"
+
+# the shape test must not be dodged by TYPE games: a non-string tool_name
+# denies on its TYPE, never judged by jq's text of it; two top-level JSON
+# values is multiple documents, not a wider name (neither "Read" nor "Bash"
+# shape-matches alone, so the old text-luck mechanism missed this one); a
+# trailing LF the name ITSELF carries is not jq's own framing LF and must not
+# be silently stripped into an allowlisted name.
+for p in '{"tool_name":["Task"]}' '{"tool_name":true}' \
+         '{"tool_name":"Read"}{"tool_name":"Bash"}' \
+         '{"tool_name":"ListAgents\\n\\n"}'; do
+  pl "$p"
+  verdict 2 "$primary"
+done
 
 # 4. a missing dependency allows: jq anywhere, git at a checkout it would have
 # read (bun stays on PATH - without it the shim's own refusal comes first).

@@ -185,6 +185,25 @@ for p in "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$repo/AGENTS.m
   verdict 2 "$wt" AC_CREW_ID=pg1
 done
 
+# a file_path that is no JSON string is a TYPE, not a path judged by its JSON
+# text - and a payload holding a second JSON value is multiple documents, not
+# a wider tool name. Both deny, regardless of the own-tree cwd.
+for p in "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":[\"$repo/AGENTS.md\"]}}" \
+         '{"tool_name":"Edit","tool_input":{"file_path":{"a":1}}}' \
+         '{"tool_name":"Edit","tool_input":{"file_path":5}}' \
+         '{"tool_name":"Edit","tool_input":{"file_path":true}}' \
+         '{"tool_name":"Edit","tool_input":{"file_path":false}}'; do
+  pl "$p"
+  verdict 2 "$wt" AC_CREW_ID=pg1
+done
+pl "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$repo/AGENTS.md\"}}{\"tool_name\":\"Edit\"}"
+verdict 2 "$wt" AC_CREW_ID=pg1
+# a second document with no tool_name of its own never shows up in the name
+# check above (zero output for it), yet still joins the sentinel of a bad
+# first value - caught on an exact match alone, it would slip through.
+pl "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":[\"$repo/AGENTS.md\"]}}{\"tool_input\":{\"file_path\":\"$TMP/x\"}}"
+verdict 2 "$wt" AC_CREW_ID=pg1
+
 # 4. a dependency that is missing, or a cwd with no name: allowed.
 pl "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$repo/AGENTS.md\"}}"
 pgpath "$TMP/pg-nojq" bash env cat dirname git bun
