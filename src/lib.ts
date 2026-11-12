@@ -367,18 +367,24 @@ export function defaultBranch(repo: string, loud = false): string {
   return gitOut(repo, ["symbolic-ref", "--short", "HEAD"]) ?? "main";
 }
 
-// ac_freshest_ref's twin: whichever of local and origin is AHEAD on the
-// default (or the named) branch, origin winning a true divergence.
-export function freshestRef(repo: string, branch = ""): string {
+// ac_freshest_ref's twin when preferLocalOnDivergence is left false (the
+// bash twin has no local-only preference): whichever of local and origin is
+// AHEAD on the default (or the named) branch, origin winning a true
+// divergence. preferLocalOnDivergence (a local-only lease) wins that
+// divergence for local instead, so a squash-published origin never leases a
+// crewmate past the local landings it is meant to carry forward. A plain
+// fast-forward (local strictly behind) still prefers origin either way -
+// only a divergence has two legitimate answers.
+export function freshestRef(repo: string, branch = "", preferLocalOnDivergence = false): string {
   if (!branch) branch = defaultBranch(repo);
   const local = gitRef(repo, `refs/heads/${branch}`);
   const origin = gitRef(repo, `refs/remotes/origin/${branch}`);
   if (local && origin) {
-    const r = spawnShellSync(["git", "-C", repo, "merge-base", "--is-ancestor", `refs/remotes/origin/${branch}`, `refs/heads/${branch}`], {
-      stdout: "ignore",
-      stderr: "ignore",
-    });
-    return r.exitCode === 0 ? branch : `origin/${branch}`;
+    const isAncestor = (ancestor: string, descendant: string): boolean =>
+      spawnShellSync(["git", "-C", repo, "merge-base", "--is-ancestor", ancestor, descendant], { stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+    if (isAncestor(`refs/remotes/origin/${branch}`, `refs/heads/${branch}`)) return branch;
+    if (preferLocalOnDivergence && !isAncestor(`refs/heads/${branch}`, `refs/remotes/origin/${branch}`)) return branch;
+    return `origin/${branch}`;
   }
   return origin ? `origin/${branch}` : branch;
 }

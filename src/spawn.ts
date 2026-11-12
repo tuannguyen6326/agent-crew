@@ -1958,7 +1958,7 @@ then spawn again`);
     worktree = ls.out;
     if (resumeWt !== "" && worktree !== resumeWt) warn(`resume may not find the old session (cwd changed: ${resumeWt} -> ${worktree})`);
   } else {
-    const get = run([`${binDir}/ac-tree.sh`, "get", "--repo", projectDirC, "--id", id, "--holder", `crew:${id}`, ...(resumeWt !== "" ? ["--prefer", resumeWt] : [])]);
+    const get = run([`${binDir}/ac-tree.sh`, "get", "--repo", projectDirC, "--id", id, "--holder", `crew:${id}`, ...(mode !== "" ? ["--mode", mode] : []), ...(resumeWt !== "" ? ["--prefer", resumeWt] : [])]);
     await turn();
     ee(get.status);
     worktree = cap(get.out);

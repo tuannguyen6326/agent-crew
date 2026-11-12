@@ -2026,4 +2026,46 @@ assert_eq "$XRC:$(xout)" "0:skip slot 1-r: origin unreachable (cannot verify)" "
 XENV=()
 xat rm -rf @H/r @H/r.git @H/ext.sh @H/ext.sh.count @H/ext.sh.fail
 
+# 17. get --mode local-only: a TRUE divergence (neither ref an ancestor of the
+#     other) bases the lease on LOCAL <default>, new slot and reused slot
+#     alike; a plain fast-forward (local strictly behind origin) still
+#     prefers origin even under local-only; every other --mode (or none)
+#     keeps origin-wins on a divergence exactly as before; an unknown --mode
+#     is a loud refusal, never a silent origin lease.
+x17diverge() {  # x17diverge <repo> - origin and local diverge from the same base
+  xrepo "$1"; xorigin "$1"
+  git clone -q "$H/$1.git" "$H/$1-clone"
+  git -C "$H/$1-clone" commit -q --allow-empty -m "origin tip"
+  git -C "$H/$1-clone" push -q origin main
+  git -C "$H/$1" commit -q --allow-empty -m "local tip"
+  git -C "$H/$1" fetch -q origin
+}
+xat x17diverge dv
+xrun get --repo @H/dv --id s17-1 --mode local-only
+assert_eq "$XRC:$(git -C "$XH/dv/.crew/worktrees/1-dv" log -1 --format=%s)" "0:local tip" "17: local-only bases a NEW slot on local <default> when truly diverged"
+xsetup return @H/dv/.crew/worktrees/1-dv
+xrun get --repo @H/dv --id s17-2 --mode local-only
+assert_eq "$XRC:$(git -C "$XH/dv/.crew/worktrees/1-dv" log -1 --format=%s)" "0:local tip" "17: local-only bases a REUSED slot (resetWorktree) on local <default> too"
+xsetup return @H/dv/.crew/worktrees/1-dv
+xrun get --repo @H/dv --id s17-3
+assert_eq "$XRC:$(git -C "$XH/dv/.crew/worktrees/1-dv" log -1 --format=%s)" "0:origin tip" "17: no --mode still bases a divergence on origin, unchanged"
+xsetup return @H/dv/.crew/worktrees/1-dv
+xrun get --repo @H/dv --id s17-4 --mode direct-pr
+assert_eq "$XRC:$(git -C "$XH/dv/.crew/worktrees/1-dv" log -1 --format=%s)" "0:origin tip" "17: any mode other than local-only keeps origin-wins on a divergence"
+xat rm -rf @H/dv @H/dv-clone @H/dv.git
+x17behind() {  # x17behind <repo> - local strictly behind origin, no local commit of its own
+  xrepo "$1"; xorigin "$1"
+  git clone -q "$H/$1.git" "$H/$1-clone"
+  git -C "$H/$1-clone" commit -q --allow-empty -m "origin ahead"
+  git -C "$H/$1-clone" push -q origin main
+  git -C "$H/$1" fetch -q origin
+}
+xat x17behind bh
+xrun get --repo @H/bh --id s17-5 --mode local-only
+assert_eq "$XRC:$(git -C "$XH/bh/.crew/worktrees/1-bh" log -1 --format=%s)" "0:origin ahead" "17: local-only never pins a stale local when origin is simply ahead (fast-forwardable)"
+xat rm -rf @H/bh @H/bh-clone @H/bh.git
+xat xrepo iv
+xrefuse "ERROR: get: invalid --mode: bogus (want crew-ship|direct-pr|local-only|feature-pr)" get --repo @H/iv --id s17-6 --mode bogus
+xat rm -rf @H/iv
+
 pass

@@ -31,19 +31,19 @@ The pool cap is `AC_MAX_TREES`, else `max_trees=` in `.crew/config`, else 8.
 
 | Command | Effect |
 |---|---|
-| `get --repo <p> [--id <task>] [--holder <l>] [--owner <pid>] [--prefer <path-or-slot-n>]` | Lease a slot (reuse an available one or grow up to the cap), reset it to the freshest base ref, and print only its path. |
+| `get --repo <p> [--id <task>] [--holder <l>] [--owner <pid>] [--prefer <path-or-slot-n>] [--mode <crew-ship\|direct-pr\|local-only\|feature-pr>]` | Lease a slot (reuse an available one or grow up to the cap), reset it to the freshest base ref, and print only its path. |
 | `lease <slot-or-path> --repo <p> [--id <task>] [--holder <l>]` | Durably lease an EXISTING slot, state only: no fetch, reset, clean or checkout. |
 | `list --repo <p>` | One row per slot: state (`leased`/`available`/`broken`, plus ` dirty`), task, path, lease age data. |
 | `return <path-or-slot-name> [--repo <p>] [--force] [--if-lease-id <id>]` | Kill processes in the tree, reset it, release the lease. |
 | `prune --repo <p> [--yes]` | Remove idle, clean, merged, process-free slots; a dry run without `--yes`. |
 | `remove <path> [--force] [--include-leased]` | Deliberately remove one slot. |
 
-`ac-spawn.sh` leases with `get --id <id> --holder crew:<id>`, `ac-self-task.sh` with `--holder self:<id>`, and a herdr verifier round with `--holder verify`.
+`ac-spawn.sh` leases with `get --id <id> --holder crew:<id> --mode <mode>`, `ac-self-task.sh` with `--holder self:<id> --mode <mode>`, and a herdr verifier round with `--holder verify`.
 A spawn that resumes an earlier session passes `--prefer` with the old slot, because claude keys sessions by working directory; if that slot is not available, `get` leases another one and prints one `prefer:` warning line.
 
 ### What `get` does
 
-- Resets the slot to the FRESHEST default-branch ref: whichever of the local branch and `origin/<branch>` is ahead, origin winning on true divergence.
+- Resets the slot to the FRESHEST default-branch ref: whichever of the local branch and `origin/<branch>` is ahead, origin winning on true divergence - unless `--mode local-only`, which wins a true divergence for the local branch instead (a plain fast-forward, local strictly behind, still prefers origin either way).
 - Cuts the slot from a recorded integration branch instead when the task id belongs to an epic or feature that records one for this repo, and refuses outright when that branch is missing or the ledger cannot be read - never a silent fall back to the default branch.
 - On the first lease, installs two shared guard hooks into the default git-common-dir `hooks/` directory, so one install covers the primary checkout and every linked worktree:
   - a `pre-commit` that refuses a commit in the PRIMARY checkout when `AC_CREW_ID` or `AC_SCOPE` is set (a crewmate or roomchief; the captain carries neither);

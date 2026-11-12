@@ -11,11 +11,17 @@
 //
 // Worktrees are detached-HEAD, reset to the freshest default-branch ref on
 // acquire, and REUSED - returning a worktree never deletes it, so dependency
-// and build caches survive between crewmates.
+// and build caches survive between crewmates. A TRUE divergence (neither
+// local nor origin an ancestor of the other) bases on origin, UNLESS `get
+// --mode local-only` - that mode alone bases a diverged default on LOCAL
+// instead, so a local-only lease never starts past the local landings a
+// squash-published origin dropped; a plain fast-forward (local strictly
+// behind) still prefers origin under local-only too.
 //
 // Usage:
 //   ac-tree.sh get    --repo <path> [--id <task>] [--holder <label>]
 //                     [--owner <pid>] [--prefer <path-or-slot-n>]
+//                     [--mode crew-ship|direct-pr|local-only|feature-pr]
 //   ac-tree.sh lease  <slot-name | worktree-path> --repo <path>
 //                     [--id <task>] [--holder <label>]
 //   ac-tree.sh list   --repo <path>
@@ -238,7 +244,10 @@
 // orphan worktree dir at slot <n>`), `WARN: creating worktree slot <n>`, `git
 // worktree add --force --detach --quiet <wt> <base>` (else the slot dropped
 // and `ERROR: git worktree add failed for slot <n>`). A reset or a new slot
-// bases on the fence's ref, else freshestRef. `WARN: prefer: slot <p>
+// bases on the fence's ref, else freshestRef - `--mode local-only` passed to
+// freshestRef, so a diverged default bases on LOCAL instead of origin; `ERROR:
+// get: invalid --mode: <m> (want crew-ship|direct-pr|local-only|feature-pr)`
+// for anything else named. `WARN: prefer: slot <p>
 // unavailable (<why>) - leased slot <n> instead`; the STAMP. Unlocked: the
 // WORKTREE INCLUDE seeding, the workspace, then stdout `<wt>\n` - the one line.
 // The STAMP (get and lease) records a lease in full or not at all: the slot
@@ -866,11 +875,11 @@ function verifiedState(wt: string): string {
 // explicitly - it is ignored, so clean keeps it, and a stale ports.env or
 // serve.pid must never leak to the next lessee - and an interrupted rebase,
 // cherry-pick or bisect survives checkout and reset, so each is quit first.
-function resetWorktree(repo: string, wt: string, ref = ""): boolean {
+function resetWorktree(repo: string, wt: string, ref = "", preferLocal = false): boolean {
   if (!slotGitOk(wt)) return false;
   run(["rm", "-rf", u8(`${wt}/.crew/qa`)], { err: "ignore" });
   for (const a of [["rebase", "--quit"], ["cherry-pick", "--quit"], ["bisect", "reset"]]) git(wt, a, quiet);
-  if (ref === "") ref = b8(freshestRef(u8(repo)));
+  if (ref === "") ref = b8(freshestRef(u8(repo), "", preferLocal));
   return (
     git(wt, ["checkout", "--detach", "--force", "--quiet", ref]).status === 0 &&
     git(wt, ["reset", "--hard", "--quiet", ref]).status === 0 &&
@@ -885,9 +894,9 @@ function resetWorktree(repo: string, wt: string, ref = ""): boolean {
 // slot. Widening a lock over either window is no alternative: the pool lock
 // is not re-entrant. Refusing costs a wedged slot the pool can report;
 // resetting live work is unrecoverable.
-function resetIfUnchanged(repo: string, wt: string, ref: string, verified: string): number {
+function resetIfUnchanged(repo: string, wt: string, ref: string, verified: string, preferLocal = false): number {
   if (verifiedState(wt) !== verified) return 2;
-  return resetWorktree(repo, wt, ref) ? 0 : 1;
+  return resetWorktree(repo, wt, ref, preferLocal) ? 0 : 1;
 }
 
 // This process and every ancestor up to pid 1, or null when the walk could
@@ -1194,7 +1203,7 @@ function stampLease(repo: string, n: string, id: string, holder: string, owner: 
   fail(`cannot record the lease of ${wt} in ${sm}, nor release the slot - return it with: bin/ac-tree.sh return ${wt}`);
 }
 
-function acquireSlot(repo: string, id: string, holder: string, owner: string, prefer: string, baseRef: string): number {
+function acquireSlot(repo: string, id: string, holder: string, owner: string, prefer: string, baseRef: string, preferLocal = false): number {
   git(repo, ["worktree", "prune"], quiet);
   healSlots(repo);
   let free = "";
@@ -1220,7 +1229,7 @@ function acquireSlot(repo: string, id: string, holder: string, owner: string, pr
         const verified = verifiedState(wt);
         if (isDirty(wt)) why = "dirty (unlanded work)";
         else {
-          const rc = resetIfUnchanged(repo, wt, baseRef, verified);
+          const rc = resetIfUnchanged(repo, wt, baseRef, verified, preferLocal);
           if (rc === 0) free = prefer;
           else why = rc === 2 ? "changed under the check (a process still alive in the slot?)" : "reset failed";
         }
@@ -1245,7 +1254,7 @@ function acquireSlot(repo: string, id: string, holder: string, owner: string, pr
         say(`skip slot ${n}: dirty (unlanded work; inspect or remove --force)`);
         continue;
       }
-      const rc = resetIfUnchanged(repo, wt, baseRef, verified);
+      const rc = resetIfUnchanged(repo, wt, baseRef, verified, preferLocal);
       if (rc !== 0) {
         say(rc === 2 ? `skip slot ${n}: changed under the check (a process still alive in the slot?)` : `skip slot ${n}: reset failed`);
         continue;
@@ -1305,7 +1314,7 @@ function acquireSlot(repo: string, id: string, holder: string, owner: string, pr
       git(repo, ["worktree", "prune"], quiet);
     }
     say(`creating worktree slot ${n}`);
-    if (git(repo, ["worktree", "add", "--force", "--detach", "--quiet", wt, baseRef || b8(freshestRef(u8(repo)))]).status !== 0) {
+    if (git(repo, ["worktree", "add", "--force", "--detach", "--quiet", wt, baseRef || b8(freshestRef(u8(repo), "", preferLocal))]).status !== 0) {
       dropSlot(repo, n);
       fail(`git worktree add failed for slot ${n}`);
     }
@@ -1381,12 +1390,15 @@ function value(a: string[], i: number): string {
   return b8(a[i + 1]!);
 }
 
+const MODES = ["crew-ship", "direct-pr", "local-only", "feature-pr"];
+
 async function cmdGet(a: string[]): Promise<void> {
   let repo = "";
   let id = "";
   let holder = "";
   let owner = "";
   let prefer = "";
+  let mode = "";
   for (let i = 0; i < a.length; i += 2) {
     const w = a[i]!;
     if (w === "--repo") repo = value(a, i);
@@ -1394,8 +1406,14 @@ async function cmdGet(a: string[]): Promise<void> {
     else if (w === "--holder") holder = value(a, i);
     else if (w === "--owner") owner = value(a, i);
     else if (w === "--prefer") prefer = value(a, i);
+    else if (w === "--mode") mode = value(a, i);
     else fail(`get: unknown argument ${b8(w)}`);
   }
+  // Only local-only changes anything here (a diverged default bases on LOCAL
+  // instead of origin); every other named mode leaves the default unchanged,
+  // so a typo is validated against the full set rather than silently landing
+  // on the no-preference default.
+  if (mode !== "" && !MODES.includes(mode)) fail(`get: invalid --mode: ${mode} (want ${MODES.join("|")})`);
   if (repo === "") fail("get: --repo is required");
   repo = resolveRepo(repo);
   if (prefer !== "") {
@@ -1448,7 +1466,7 @@ async function cmdGet(a: string[]): Promise<void> {
       fail(`get: base ref ${baseRef} (named by the integration-branch record for ${id} on ${rname}) does not resolve to a commit - nothing was leased; fix the ref before retrying`);
   }
   capture = [];
-  locked(repo, () => acquireSlot(repo, id, holder, owner, prefer, baseRef));
+  locked(repo, () => acquireSlot(repo, id, holder, owner, prefer, baseRef, mode === "local-only"));
   const wt = subst(Buffer.concat(capture));
   capture = null;
   // Outside the lock: a manifest can name a tree that takes longer to copy

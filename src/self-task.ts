@@ -447,7 +447,7 @@ then start again`);
     S.worktree = lease.out;
     if (lease.status !== 0) die(`could not lease an Orca worktree for ${id}`);
   } else {
-    const get = run([`${binDir}/ac-tree.sh`, "get", "--repo", projectDirC, "--id", id, "--holder", `self:${id}`]);
+    const get = run([`${binDir}/ac-tree.sh`, "get", "--repo", projectDirC, "--id", id, "--holder", `self:${id}`, "--mode", mode]);
     await turn();
     S.worktree = cap(get.out);
     ee(get.status);
