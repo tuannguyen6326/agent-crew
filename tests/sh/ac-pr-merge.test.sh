@@ -189,6 +189,20 @@ assert_eq "$(argv)" "$(printf '[pr]\n[merge]\n[%s]\n[--merge]\n[--match-head-com
 merge t1 "$url" -- --subject "release: two words" >/dev/null
 assert_eq "$(argv)" "$(printf '[pr]\n[merge]\n[%s]\n[--squash]\n[--subject]\n[release: two words]\n[--match-head-commit]\n[abc111]\n' "$url")" "spaced flag stays one arg"
 
+# --- W2: a tail not introduced by a literal `--` must REFUSE, not be dropped
+# silently - the dropped words used to let `<id> <url> --merge --admin` merge
+# with the default --squash instead of the merge it actually asked for.
+: >"$GHLOG"
+assert_fails_with "unrecognised tail" -- merge t1 "$url" --merge --admin
+assert_eq "$(argv)" "" "an unrecognised tail never reaches the merge call"
+
+# --- W3: a flag's VALUE must never be read as a merge-method flag - here
+# `--subject` takes the literal text "--merge" as its VALUE, which must not
+# be mistaken for a request to merge with --merge instead of --squash.
+merge t1 "$url" -- --subject --merge >/dev/null
+assert_eq "$(argv)" "$(printf '[pr]\n[merge]\n[%s]\n[--squash]\n[--subject]\n[--merge]\n[--match-head-commit]\n[abc111]\n' "$url")" \
+  "a --subject value spelled --merge must not drop --squash"
+
 # --repo/-R overrides are still rejected.
 assert_fails merge t1 "$url" -- --repo acme/other
 assert_fails merge t1 "$url" -- -R acme/other

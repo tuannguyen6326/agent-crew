@@ -21,12 +21,15 @@
 //    pattern `https://github.com/*/*/pull/[0-9]*` - `*` spans `/` and may be
 //    empty, anything may follow the digit, case and scheme are exact.
 // 5. THE TAIL: only when the third argument is exactly `--` are the rest gh
-//    flags; any other tail is DROPPED silently (W2: `<id> <url> --merge`
-//    merges with --squash). Every flag word, a VALUE too (W3), is scanned in
-//    order: `--repo`, `--repo=*` or `-R*` refuses `--repo/-R overrides are not
-//    allowed; the PR URL decides` before any gh call; `--merge`, `--rebase` or
-//    `--squash` drops the default --squash (`-- --subject --merge` merges with
-//    no method flag of ours).
+//    flags; any other non-empty tail refuses `unrecognised tail: <words> - gh
+//    merge flags must follow a literal --` before any gh call. Every flag
+//    word is then scanned in order, skipping the word right after a
+//    value-taking gh flag (`--author-email`/`-A`, `--body`/`-b`,
+//    `--body-file`/`-F`, `--match-head-commit`, `--subject`/`-t`) so a flag's
+//    own VALUE is never misread as one of ours: `--repo`, `--repo=*` or `-R*`
+//    refuses `--repo/-R overrides are not allowed; the PR URL decides`;
+//    `--merge`, `--rebase` or `--squash` (unskipped) drops the default
+//    --squash.
 // 6. THE QA GATE. project_dir is the meta's last project_dir= (cut at a NUL as
 //    awk handed it over); a meta that is there and unreadable is metaGet's
 //    `WARN: cannot read meta file <meta>` alone, exit 1 (W8 - the bash's bare
@@ -197,11 +200,22 @@ const meta = taskMeta(id);
 if (!stat(meta)?.isFile()) die(b(`no crewmate meta for ${I}`));
 if (!/^https:\/\/github\.com\/[\s\S]*\/[\s\S]*\/pull\/[0-9]/.test(url)) die(b(`not a full GitHub PR URL: ${U}`));
 
+if (args.length > 2 && args[2] !== "--") die(b(`unrecognised tail: ${bytes(args.slice(2).join(" "))} - gh merge flags must follow a literal --`));
 const extra = args[2] === "--" ? args.slice(3) : [];
+// gh pr merge's own value-taking flags - the word right after one is never
+// scanned as a flag of ours (W3: --subject's value spelled --merge must not
+// read as a method override).
+const VALUE_FLAGS = new Set(["-A", "--author-email", "-b", "--body", "-F", "--body-file", "--match-head-commit", "-t", "--subject"]);
 let method = "--squash";
+let skipValue = false;
 for (const f of extra) {
+  if (skipValue) {
+    skipValue = false;
+    continue;
+  }
   if (f === "--repo" || f.startsWith("--repo=") || f.startsWith("-R")) die("--repo/-R overrides are not allowed; the PR URL decides");
   if (f === "--merge" || f === "--rebase" || f === "--squash") method = "";
+  if (VALUE_FLAGS.has(f)) skipValue = true;
 }
 
 // `x="$(ac_meta_get ...)"` bare under errexit: an unreadable meta ends the run
