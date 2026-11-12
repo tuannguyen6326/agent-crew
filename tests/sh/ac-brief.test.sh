@@ -1111,6 +1111,14 @@ xmade home/data/sc2/brief.md sc2 proj --scout --review yes --captain-requested '
 xmade home/data/sc3/brief.md sc3 proj --scout --review yes --captain-requested 'a scout review' --reason 'kept nowhere'
 xrefuse "ERROR: --captain-requested with nothing to authorize: this call uses no time-expensive mode (staged/crew-ship/qa/review) - drop the flag" sc4 proj --scout --captain-requested 'c'
 xrefuse "ERROR: --captain-requested with nothing to authorize: this call uses no time-expensive mode (staged/crew-ship/qa/review) - drop the flag" n1 proj --mode local-only --captain-requested 'c' --reason r
+
+# W9: an empty or multi-line --captain-requested must never authorize the
+# ESCALATION GATE (crew-ship/staged/qa) either - the REVIEW-path check at
+# ref=="" covered only the narrow --review yes/local-only combo; a blank or
+# multi-line ref must refuse here too, before it is read as authorization.
+xrefuse "ERROR: --captain-requested needs a non-empty ref: name the captain words or order this review carries out" w9-empty proj --mode crew-ship --captain-requested '' --reason r
+xrefuse "ERROR: --captain-requested needs a single-line ref: name the captain words or order this review carries out" w9-multi proj --mode crew-ship --captain-requested $'two\nlines' --reason r
+
 xrefuse "$(XUNAUTH ' flow:staged mode:crew-ship qa:yes')" u1 proj --stage implement --mode crew-ship --qa-required-profile a/b/c
 xrefuse "$(XUNAUTH ' mode:crew-ship')" u2 proj --mode crew-ship
 xrefuse "$(XUNAUTH ' qa:yes')" u3 proj --mode local-only --qa-required-profile a/b/c

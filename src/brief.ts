@@ -111,8 +111,13 @@
 // ARGUMENTS, every refusal before any home read. Fewer than two words is
 // `ERROR: usage: ac-brief.sh <id> <project-name> [--scout | --stage <s>]` (one
 // line, `-h` included). The rest, last wins: --scout (stage scout, unstaged),
-// --stage <s> (staged), --mode, --review, --captain-requested (declared even
-// with ''), --reason, --qa-required-profile (repeatable, appended). A value
+// --stage <s> (staged), --mode, --review, --captain-requested (an empty or
+// multi-line ref refuses immediately - `ERROR: --captain-requested needs a
+// non-empty ref: name the captain words or order this review carries out` /
+// `ERROR: --captain-requested needs a single-line ref: name the captain
+// words or order this review carries out` - before id/project validation,
+// let alone the ESCALATION GATE or REVIEW sections below that read it),
+// --reason, --qa-required-profile (repeatable, appended). A value
 // flag takes the next word whatever it is; as the last word it is `ERROR:
 // <flag> needs a value`; any other word is `ERROR: unknown flag: <a>`. Then an
 // empty id or project is the usage line; `ERROR: id must be [a-z0-9-]: <id>`
@@ -179,15 +184,21 @@
 // optional yes when the captain requests independent review'); if they asked
 // for it, PIN rev:yes on the backlog row's contract group or re-run with
 // --captain-requested '<their words, or the order ref>' - if they did not,
-// drop --review yes` (a scout's mode is "", two spaces), an empty ref
-// `ERROR: --captain-requested needs a non-empty ref: name the captain words or
-// order this review carries out`, else `yes (captain-requested: <ref>)`. The
+// drop --review yes` (a scout's mode is "", two spaces), else `yes
+// (captain-requested: <ref>)` (a blank or multi-line ref never reaches here -
+// ARGUMENTS already refused it). The
 // review is the flag or no, the line the review unless set above.
 // ESCALATION GATE (a mode that takes time - staged, crew-ship, qa,
 // code-reviewer - is confirmed with the captain, and the ask gives the reason;
 // either authority satisfies it: the row PINS the
 // token, or --captain-requested declares it for this call - an accident
-// guard, not a security boundary). The row's contract tokens, split on
+// guard, not a security boundary). The flag itself demands a non-empty,
+// single-line ref the moment it is read - `ERROR: --captain-requested needs
+// a non-empty ref: name the captain words or order this review carries out`,
+// `ERROR: --captain-requested needs a single-line ref: name the captain
+// words or order this review carries out` - so neither this gate nor
+// REVIEW's own declaration can be satisfied by a blank or multi-line value.
+// The row's contract tokens, split on
 // blanks, last `flow:`/`mode:`/`rev:`/`qa:` winning; --scout spends nothing.
 // Unauthorized, in order: staged ` flow:staged` (a `flow:sdlc` pin authorizes
 // the same stages - the sdlc flow runs them - and is then what the Escalation
@@ -462,6 +473,8 @@ function main(): void {
     else if (a === "--review") reviewFlag = value();
     else if (a === "--captain-requested") {
       ref = value();
+      if (ref === "") fail("--captain-requested needs a non-empty ref: name the captain words or order this review carries out");
+      if (/[\n\r]/.test(ref)) fail("--captain-requested needs a single-line ref: name the captain words or order this review carries out");
       declared = true;
     } else if (a === "--reason") reason = value();
     else if (a === "--qa-required-profile") profiles.push(value());
@@ -626,7 +639,6 @@ function main(): void {
           fail(
             `review=yes on direct + ${mode} is the CAPTAIN's call, not a chief's (delivery-review skill: 'no by default, optional yes when the captain requests independent review'); if they asked for it, PIN rev:yes on the backlog row's contract group or re-run with --captain-requested '<their words, or the order ref>' - if they did not, drop --review yes`,
           );
-        if (ref === "") fail("--captain-requested needs a non-empty ref: name the captain words or order this review carries out");
         reviewLine = `yes (captain-requested: ${ref})`;
       }
     }
