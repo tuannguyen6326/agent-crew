@@ -2167,11 +2167,10 @@ src=0; out="$(AC_PANE_STALL_MAX=0 PATH="$nosleep:$sstub:$PATH" HOME="$FAKEHOME" 
 assert_contains "$out" '"status":"timeout"' "AC_PANE_STALL_MAX=0 disables the bound"
 # AC_PANE_STALL_MAX's malformed-value fallback (to the documented default,
 # 2700, same strictDecimal(x) ?? default shape as AC_PANE_SETTLE_TRIES
-# below) is deliberately NOT E2E-tested here: proving the bound fires at
+# above) is deliberately NOT E2E-tested here: proving the bound fires at
 # its real default costs a real 2700s wait, and clock-stubbing it safely
 # (every date/sleep call the whole run makes, not just the stall check's)
-# is not a small fix - a first attempt hung a live run for minutes. See
-# report.md.
+# is not a small fix - a first attempt hung a live run for minutes.
 
 # --- the entry end to end against modelled backends, one scenario per row -----
 # ONE world path ($XW) rebuilt by the row's own setup before the row runs - a git
