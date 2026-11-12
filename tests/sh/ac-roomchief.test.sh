@@ -203,6 +203,12 @@ assert_contains "$(cat "$(fake_pane_buf fam1-chief)")" \
   "$AC_HOME/data/fam1/chief/kickoff.md" "the pane receives the kickoff-file pointer"
 assert_contains "$buf" \
   "You are the ROOMCHIEF of family fam1" "kickoff prompt content"
+# An ordinary roomchief (no domain) must read the fleet's own standing rules
+# at intake, not learn of that duty only from the domainchief section below it.
+# Pinned to the new sentence's own wording, not the bare path - "records/captain.md"
+# alone also appears in the slackDuty clause's "style per records/captain.md".
+assert_contains "$buf" \
+  "records/captain.md standing rules at intake" "kickoff prompt points an ordinary roomchief at the fleet standing rules"
 # The Slack narrative duty rides the per-fleet flag (default off): no flag,
 # no thread-post clause in the charter; remote-mirror=chief adds it.
 case "$buf" in *"thread-post fam1"*) fail "the Slack duty must stay out of the charter while the flag is off" ;; esac
