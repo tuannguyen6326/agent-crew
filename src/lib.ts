@@ -2094,14 +2094,15 @@ export function arithValue(text: string): bigint {
   return BigInt.asIntN(64, neg ? -v : v);
 }
 
-// ac_watcher_down's twin (bin/ac-wake-lib.sh), behind the guard's
-// WATCHER-DOWN: supervision is owed when
+// ac_watcher_down's twin (bin/ac-wake-lib.sh, frozen - no live caller past
+// it), behind the guard's WATCHER-DOWN: supervision is owed when
 // crewMetas(sd, "verify", "self") lists a path - a roomchief, a crewdeputy, a
 // kind-less meta and `kind=self\r` count - and the watcher is down when
-// `$(( <nowRaw> - <beat> ))`, beat the scope's beacon (watcherBeatRead), is
-// `[ -gt ]` AC_GUARD_GRACE (unset or empty: 300; testInt's grammar, no number
-// never down). The clock text's EARITH discarded the caller's whole command:
-// not down. EUNBOUND is thrown, the caller's script having ended there.
+// `$(( <nowRaw> - <beat> ))`, beat the scope's beacon (watcherBeatRead),
+// exceeds AC_GUARD_GRACE (strictDecimal; a refusal falls back to the
+// documented default 300 rather than disabling the bound). The clock text's
+// EARITH discarded the caller's whole command: not down. EUNBOUND is thrown,
+// the caller's script having ended there.
 export async function watcherDown(sd: string, scope: string): Promise<boolean> {
   let inflight = 0;
   for await (const _ of crewMetas(sd, "verify", "self")) inflight++;
@@ -2114,8 +2115,8 @@ export async function watcherDown(sd: string, scope: string): Promise<boolean> {
     if ((e as { code?: string }).code === "EARITH") return false;
     throw e;
   }
-  const grace = testInt(process.env.AC_GUARD_GRACE || "300");
-  return grace !== null && age > grace;
+  const grace = BigInt(strictDecimal(process.env.AC_GUARD_GRACE || "300") ?? 300);
+  return age > grace;
 }
 
 // ac_wake_pending's twin: the scope's own spool (wakeSpoolPath - a malformed

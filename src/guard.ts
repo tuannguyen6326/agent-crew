@@ -90,19 +90,19 @@
 //    the run at the write, 141, no stamp - SIGPIPE ended the shell there.
 // EXIT: 0, but 1 at step 0 and 141 at a closed reader.
 //
-// THE NUMBERS are read as bash 3.2 read them (src/lib.ts): the grace and the
-// quiet window by testInt - `[ -gt ]`'s strtoimax grammar: C isspace before,
-// one sign, decimal digits, blanks after, int64 (` 600 `, `+600`, `010` is
-// ten; `0x10`, `600abc`, `1e3`, 2^63 are no number: the test is false - no
-// WATCHER-DOWN, no suppression; W2, W3); the clock's text and the stamp's
-// digits by arithValue - `$(( ))` over one operand: a leading 0 is OCTAL
-// (`at=0012` is ten, `0099` and a clock reading `12abc` are an evaluation
-// error), 0x
-// hex, base#digits, the 64-bit wrap (`at=99999999999999999999` suppresses),
-// empty is 0 (W4). An evaluation error discards the command it stood in, as
-// the shell did: no WATCHER-DOWN, or no suppression. An identifier (a clock
-// reading `garbage`) is set -u's abort: exit 0, nothing printed, no stamp
-// written (W12).
+// THE NUMBERS: the grace (src/lib.ts's watcherDown) and the quiet window are
+// read by strictDecimal - ASCII decimal digits only, no sign or whitespace,
+// `010` ten; a refusal (`0x10`, `600abc`, `1e3`, past the safe-integer bound)
+// falls back to the documented default (300, 60) rather than disabling
+// WATCHER-DOWN or suppression (W2, W3 fixed). The clock's text and the
+// stamp's digits stay bash 3.2's arithValue - `$(( ))` over one operand: a
+// leading 0 is OCTAL (`at=0012` is ten, `0099` and a clock reading `12abc`
+// are an evaluation error), 0x hex, base#digits, the 64-bit wrap
+// (`at=99999999999999999999` suppresses), empty is 0 (W4, kept on purpose -
+// bug-shaped-rows.md:194). An evaluation error discards the command it
+// stood in, as the shell did: no WATCHER-DOWN, or no suppression. An
+// identifier (a clock reading `garbage`) is set -u's abort: exit 0, nothing
+// printed, no stamp written (W12).
 //
 // SPAWNED, with the original's argv: git per call (`-C <d> rev-parse
 // --git-dir`, `rev-parse --path-format=absolute --git-common-dir`,
@@ -177,7 +177,7 @@ import {
   repoRoot,
   shellStatus,
   spawnShellSync,
-  testInt,
+  strictDecimal,
   wakeOrphanPending,
   wakePending,
   wakeScopeOk,
@@ -299,8 +299,8 @@ if (sig === lastSig) {
   } catch (e) {
     if ((e as { code?: string }).code !== "EARITH") aborted(e);
   }
-  const q = testInt(quiet);
-  if (elapsed !== null && q !== null && elapsed < q) process.exit(0);
+  const q = BigInt(strictDecimal(quiet) ?? 60);
+  if (elapsed !== null && elapsed < q) process.exit(0);
 }
 
 const block = Buffer.from(warnings, "latin1");

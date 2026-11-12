@@ -145,13 +145,6 @@ test("watcherDown answers ac_watcher_down: the supervision set, the scope's beac
     [{ "t.meta": "kind=ship\n", ".last-watcher-beat": `${T - 100}\n` }, "", {}],
     [{ "t.meta": "kind=ship\n", ".last-watcher-beat": `${T - 400}\n` }, "", {}],
     [{ "t.meta": "kind=ship\n", ".last-watcher-beat": `${T - 400}\n` }, "", { AC_GUARD_GRACE: "600" }],
-    [{ "t.meta": "kind=ship\n", ".last-watcher-beat": `${T - 400}\n` }, "", { AC_GUARD_GRACE: " 600 " }],
-    [{ "t.meta": "kind=ship\n", ".last-watcher-beat": `${T - 400}\n` }, "", { AC_GUARD_GRACE: "+600" }],
-    [{ "t.meta": "kind=ship\n", ".last-watcher-beat": `${T - 400}\n` }, "", { AC_GUARD_GRACE: "0x10" }],
-    [{ "t.meta": "kind=ship\n", ".last-watcher-beat": `${T - 400}\n` }, "", { AC_GUARD_GRACE: "600abc" }],
-    [{ "t.meta": "kind=ship\n", ".last-watcher-beat": `${T - 400}\n` }, "", { AC_GUARD_GRACE: "99999999999999999999" }],
-    [{ "t.meta": "kind=ship\n", ".last-watcher-beat": `${T - 400}\n` }, "", { AC_GUARD_GRACE: "-5" }],
-    [{ "t.meta": "kind=ship\n", ".last-watcher-beat": `${T - 400}\n` }, "", { AC_GUARD_GRACE: "" }],
     [{ "t.meta": "kind=ship\n", ".last-watcher-beat": `${T - 400}\n` }, "", { AC_GUARD_GRACE: "010" }],
     [{ "t.meta": "kind=ship\n", ".last-watcher-beat": `${T - 400}\n` }, "", { AC_GUARD_GRACE: "400" }],
     [{ "s.meta": "kind=self\n", "v.meta": "kind=verify-qa\n" }, "", {}],
@@ -184,6 +177,26 @@ test("watcherDown answers ac_watcher_down: the supervision set, the scope's beac
   expect(want.err).toContain("awk: i/o error occurred on");
   expect(twinDown(sd, "", { PATH: path })).toEqual(want);
 }, 120000);
+
+// Asserted explicitly, not against the bash original: a refusal (sign,
+// whitespace, hex, a non-integer suffix, past the safe-integer bound) now
+// falls back to the documented default (300) instead of disabling the
+// bound - the bash twin above is frozen and never ran live past
+// ac-wake-lib.sh, so it is not updated to match.
+test("watcherDown's AC_GUARD_GRACE falls back to 300 on a refusal, never disabling the bound", () => {
+  const T = 1000000;
+  const stub = dir("clock");
+  exe(join(stub, "date"), `#!/bin/sh\nprintf '%s\\n' "${T}"\n`);
+  const path = `${stub}:${process.env.PATH}`;
+  const sd = join(dir("wd"), "state");
+  mkdirSync(sd);
+  writeFileSync(join(sd, "t.meta"), "kind=ship\n");
+  writeFileSync(join(sd, ".last-watcher-beat"), `${T - 400}\n`);
+  for (const grace of [" 600 ", "+600", "0x10", "600abc", "99999999999999999999", "-5", ""]) {
+    const got = twinDown(sd, "", { PATH: path, AC_GUARD_GRACE: grace });
+    expect({ grace, ...got }).toEqual({ grace, answer: "down", err: "" });
+  }
+}, 30000);
 
 test("wakePending answers ac_wake_pending: the scope's own spool, a malformed scope the fleet's, a file-spool empty", () => {
   const sd = join(dir("wp"), "state");
