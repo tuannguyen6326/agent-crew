@@ -2045,6 +2045,26 @@ assert_contains "$out" '"event":"done","status":"error"' \
 assert_contains "$out" "no final message" "...naming what the caller will find missing"
 case "$out" in *'"status":"ok"'*) fail "a dead turn must never be reported ok: $out" ;; esac
 
+# A malformed AC_PANE_SETTLE_TRIES (an identifier) used to skip the whole
+# retry loop - zero re-reads instead of the documented default (6), though
+# the one check after the loop still ran. Count the settle sleeps through a
+# logging stub (same transcript-never-settles setup as idle-toolend above).
+settlelog="$TMP/settle.log"
+settlestub="$TMP/settle-bin"; mkdir -p "$settlestub"
+printf '#!/usr/bin/env bash\necho "$*" >>"%s"\nexit 0\n' "$settlelog" >"$settlestub/sleep"
+chmod +x "$settlestub/sleep"
+settlerun() { PATH="$settlestub:$istub:$PATH" HOME="$FAKEHOME" AC_PANE_SETTLE_SLEEP=0.313 "$BIN/ac-pane-agent.sh" run --cwd "$irepo" --prompt-file "$pf" --timeout 20 "$@" 2>&1; }
+: >"$HDLOG.toolend"
+# Count only the settle's OWN sleeps (its distinctive AC_PANE_SETTLE_SLEEP),
+# never the main poll loop's unrelated "2" pauses through the same stub.
+: >"$settlelog"
+out="$(AC_PANE_SETTLE_TRIES=3 settlerun --label settle-valid)" || true
+assert_eq "$(grep -cFx 0.313 "$settlelog")" "3" "AC_PANE_SETTLE_TRIES=3 retries exactly three times"
+: >"$settlelog"
+out="$(AC_PANE_SETTLE_TRIES=abc settlerun --label settle-malformed)" || true
+assert_eq "$(grep -cFx 0.313 "$settlelog")" "6" "a malformed AC_PANE_SETTLE_TRIES falls back to its documented default (6), never zero retries"
+rm -f "$HDLOG.toolend"
+
 # DIRECTION 2 with the declaration SATISFIED: a turn that genuinely finished
 # wrote its deliverable before going quiet, so the fallback still passes it.
 deliv="$TMP/idle-report.md"
@@ -2145,6 +2165,13 @@ case "$out" in *'"status":"timeout"'*) fail "the stall bound must fire before th
 src=0; out="$(AC_PANE_STALL_MAX=0 PATH="$nosleep:$sstub:$PATH" HOME="$FAKEHOME" \
   "$BIN/ac-pane-agent.sh" run --cwd "$srepo" --prompt-file "$pf" --label stall-off --timeout 3 2>&1)" || src=$?
 assert_contains "$out" '"status":"timeout"' "AC_PANE_STALL_MAX=0 disables the bound"
+# AC_PANE_STALL_MAX's malformed-value fallback (to the documented default,
+# 2700, same strictDecimal(x) ?? default shape as AC_PANE_SETTLE_TRIES
+# below) is deliberately NOT E2E-tested here: proving the bound fires at
+# its real default costs a real 2700s wait, and clock-stubbing it safely
+# (every date/sleep call the whole run makes, not just the stall check's)
+# is not a small fix - a first attempt hung a live run for minutes. See
+# report.md.
 
 # --- the entry end to end against modelled backends, one scenario per row -----
 # ONE world path ($XW) rebuilt by the row's own setup before the row runs - a git
@@ -2526,6 +2553,16 @@ xrc 0; xhas '"event":"done","status":"ok"'; xhas '"pane":"h1"'
 xwhas "orca [terminal] [create] [--worktree] [path:$XW/cwd] [--title] [crew:agent-crew/ac-ship] [--command] [cd '$XW/cwd' && CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 claude --permission-mode auto"
 xone 'xs no-marker; printf "%s\n" h1 >"$XW/stub/closed"' 'xrun --timeout 40'
 xrc 1; xhas '"status":"pane_closed"'; xhas '"error":"pane closed while turn in flight"'
+# A leading-zero --timeout (048, 0100) used to read octal in the deadline's
+# own arithmetic and end the run bare exit 1 with no event printed, AFTER
+# the pane was already placed - these must still reach the SAME pane_closed
+# verdict as any other timeout, never a silent bare exit. Comparable to the
+# 40s above, not a tight bound: this races the real poll cycle against
+# wall-clock time, and a short bound flakes under host load.
+for lz in 048 0100; do
+  xone 'xs no-marker; printf "%s\n" h1 >"$XW/stub/closed"' "xrun --timeout $lz"
+  xrc 1; xhas '"status":"pane_closed"'; xhas '"error":"pane closed while turn in flight"'
+done
 xone xnone 'xrun --replace-pane hOld'
 xrc 0; xhas '{"event":"replace-pane","pane":"hOld","closed":true}'; xwhas 'orca [terminal] [close] [--terminal] [hOld] [--json]'
 xone 'xs terminal-create.rc 1' 'xrun'
