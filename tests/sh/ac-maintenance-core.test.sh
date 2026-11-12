@@ -90,4 +90,56 @@ assert_eq "$(ac_meta_get "$txroot/learning-crashed-subject/journal" status)" "ab
 assert_eq "$(ac_maintenance_incomplete "$txroot")" "" "and is no longer named as incomplete"
 assert_contains "$("$BIN/ac-learn.sh" maintenance status)" "no incomplete" \
   "a clean loop SAYS so - silence is indistinguishable from a broken query"
+
+# --- a plan that rewrites records/backlog.md takes the ledger lock too ------
+# bug-shaped-rows.md's W5 remainder (src/curate.ts header): the automatic
+# Learning/Curate run commits records/backlog.md through maintenanceApply,
+# so it must exclude a live records/.backlog.md.lock holder exactly as every
+# other ledger writer does (ac-task.sh/ac-domain.sh/deputy.ts/
+# `backlog --apply`) - never let the hash-checked mv land underneath a
+# concurrent ac-task.sh move.
+bl_run="$AC_HOME/data/learning-backlog"
+mkdir -p "$bl_run/staged/records"
+printf '## In flight\n\n## Queued\n\n## Done\n' >"$AC_HOME/records/backlog.md"
+bl_old="$(ac_sha256_file "$AC_HOME/records/backlog.md")"
+printf '## In flight\n\n## Queued\n\n## Done\n\n- [x] curated-row\n' >"$bl_run/staged/records/backlog.md"
+bl_new="$(ac_sha256_file "$bl_run/staged/records/backlog.md")"
+cat >"$bl_run/plan.json" <<EOF
+{"schema":"agentcrew.maintenance-plan/v1","mode":"curate","run_id":"learning-backlog","subject":"bl","input_manifest_sha256":"$manifest_sha","actions":[{"op":"rewrite-ledger","target":"records/backlog.md","old_sha256":"$bl_old","new_sha256":"$bl_new","staged":"staged/records/backlog.md"}]}
+EOF
+bl_before="$(cat "$AC_HOME/records/backlog.md")"
+mkdir "$AC_HOME/records/.backlog.md.lock"; printf '%s\n' "$$" >"$AC_HOME/records/.backlog.md.lock/pid"
+(cd "$ROOT" && AC_TASK_LOCK_TIMEOUT=1 bun --no-env-file -e "const L = await import('./src/lib-curate.ts'); process.exit(L.maintenanceApply(process.argv[1], process.argv[2]) ? 0 : 1);" "$bl_run/plan.json" "$bl_run") >/dev/null 2>&1 \
+  && fail "a live records/.backlog.md.lock holder must refuse the transaction, not let it write backlog.md"
+assert_eq "$(cat "$AC_HOME/records/backlog.md")" "$bl_before" "backlog.md is untouched while the ledger lock is held"
+bl_journal="$txroot/learning-backlog-bl/journal"
+assert_eq "$(ac_meta_get "$bl_journal" status)" "applying" "...and the transaction is HELD, not completed, so it can be resumed"
+assert_contains "$(ac_meta_get "$bl_journal" held_reason)" ".backlog.md.lock" "...HELD for the ledger lock specifically, not some other cause"
+assert_eq "$(cat "$AC_HOME/records/.backlog.md.lock/pid")" "$$" "...and the ledger lock's own holder is left as it was"
+rm -rf "$AC_HOME/records/.backlog.md.lock"
+(cd "$ROOT" && bun --no-env-file -e "const L = await import('./src/lib-curate.ts'); process.exit(L.maintenanceApply(process.argv[1], process.argv[2]) ? 0 : 1);" "$bl_run/plan.json" "$bl_run") >/dev/null \
+  || fail "the unlocked retry must complete once the ledger lock clears"
+assert_eq "$(cat "$AC_HOME/records/backlog.md")" "$(cat "$bl_run/staged/records/backlog.md")" "...and backlog.md is rewritten once the lock clears"
+assert_eq "$(ac_meta_get "$bl_journal" status)" "complete" "...with the transaction reaching complete"
+[ ! -e "$AC_HOME/records/.backlog.md.lock" ] || fail "maintenanceApply releases records/.backlog.md.lock itself on success too, not leaves it for process exit"
+
+# The lock must come back off on a HOLD too, not only on success - it is
+# released by maintenanceApply itself (never left for process exit, since
+# Learning keeps running after a HELD call returns false).
+blh_run="$AC_HOME/data/learning-backlog-hold"
+mkdir -p "$blh_run/staged/records" "$blh_run/staged/skills/ghost"
+printf '## In flight\n\n## Queued\n\n## Done\n' >"$AC_HOME/records/backlog.md"
+blh_old="$(ac_sha256_file "$AC_HOME/records/backlog.md")"
+printf '## In flight\n\n## Queued\n\n## Done\n\n- [x] another-row\n' >"$blh_run/staged/records/backlog.md"
+blh_new="$(ac_sha256_file "$blh_run/staged/records/backlog.md")"
+printf 'ghost skill\n' >"$blh_run/staged/skills/ghost/SKILL.md"
+ghost_sha="$(ac_sha256_file "$blh_run/staged/skills/ghost/SKILL.md")"
+cat >"$blh_run/plan.json" <<EOF
+{"schema":"agentcrew.maintenance-plan/v1","mode":"curate","run_id":"learning-backlog-hold","subject":"blh","input_manifest_sha256":"$manifest_sha","actions":[{"op":"rewrite-ledger","target":"records/backlog.md","old_sha256":"$blh_old","new_sha256":"$blh_new","staged":"staged/records/backlog.md"},{"op":"write-skill","target":"skills/ghost/SKILL.md","old_sha256":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef","new_sha256":"$ghost_sha","staged":"staged/skills/ghost/SKILL.md"}]}
+EOF
+(cd "$ROOT" && bun --no-env-file -e "const L = await import('./src/lib-curate.ts'); process.exit(L.maintenanceApply(process.argv[1], process.argv[2]) ? 0 : 1);" "$blh_run/plan.json" "$blh_run") >/dev/null 2>&1 \
+  && fail "the second action's stale old_sha256 must hold the transaction"
+assert_eq "$(cat "$AC_HOME/records/backlog.md")" "$(cat "$blh_run/staged/records/backlog.md")" "the first action (backlog.md) still committed before the second held"
+assert_eq "$(ac_meta_get "$txroot/learning-backlog-hold-blh/journal" status)" "applying" "the transaction is HELD on the second action"
+[ ! -e "$AC_HOME/records/.backlog.md.lock" ] || fail "the ledger lock is released on a HOLD too, not left until process exit"
 pass
