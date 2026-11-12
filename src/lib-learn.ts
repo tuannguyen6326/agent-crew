@@ -6,7 +6,6 @@
 
 import { closeSync, readdirSync, readFileSync } from "node:fs";
 import {
-  arithValue,
   capturedText,
   configReadSoft,
   exclusiveTemp,
@@ -22,6 +21,7 @@ import {
   softSubdir,
   spawnShellSync,
   stage,
+  strictDecimal,
   warn,
   writeAll,
 } from "./lib.ts";
@@ -75,9 +75,12 @@ export function learnMigrate(f: string): void {
   });
 }
 
-// `$((n + 1))` over a digits-only count: a leading 0 reads octal, and an 8 or
-// 9 behind it throws EARITH where the shell's arithmetic error ended it.
-const plusOne = (n: string): string => String(BigInt.asIntN(64, arithValue(n) + 1n));
+// A digits-only count (every caller already ran it through digitsOr), read
+// by strictDecimal so a leading 0 stays decimal - never bash's octal, never
+// its throw on an 8 or 9 behind one, which used to leak the caller's lock
+// (learnTick, learnTickKeyed, learnReset, curateTick all call this between
+// lockAcquire and lockRelease with no intervening catch).
+const plusOne = (n: string): string => String((strictDecimal(n) ?? 0) + 1);
 const digitsOr = (v: string, d: string): string => (/^[0-9]+$/.test(v) ? v : d);
 
 // ac_learn_count_one's twin, for a caller already holding the cadence lock:
