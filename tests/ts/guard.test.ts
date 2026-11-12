@@ -86,6 +86,18 @@ test("arithValue evaluates one operand as `$(( ))` does: octal, hex, base#, the 
   expect(got[vals.indexOf("1+1")]).toBe("EARITH");
 }, 60000);
 
+test("strictDecimal reads ASCII decimal digits only, leading zeros decimal, nothing above the default bound", () => {
+  const vals = ["010", "08", "0", "7", "07", "9007199254740991", "9007199254740992", "", " 7", "7 ", "+7", "-7", "0x10", "0X10", "1e3", "1.5", "10m", "abc", "2#101", "99999999999999999999"];
+  const want = ["10", "8", "0", "7", "7", "9007199254740991", "null", "null", "null", "null", "null", "null", "null", "null", "null", "null", "null", "null", "null", "null"];
+  const got = twin(`say(${JSON.stringify(vals)}.map((v) => { const x = L.strictDecimal(v); return x === null ? "null" : String(x); }).join("|"))`, {}).out.split("|");
+  expect(got).toEqual(want);
+}, 60000);
+
+test("strictDecimal's bound is caller-given, never the default", () => {
+  const got = twin(`say(["100", "50", "51"].map((v) => { const x = L.strictDecimal(v, 50); return x === null ? "null" : String(x); }).join("|"))`, {}).out.split("|");
+  expect(got).toEqual(["null", "50", "null"]);
+}, 60000);
+
 function dateStub(out: string): string {
   const d = dir("date");
   exe(join(d, "date"), `#!/bin/sh\nprintf '${out}'\nprintf 'datestub-err\\n' >&2\n`);

@@ -2022,6 +2022,15 @@ export function roomPendingLines(file: string): string | null {
 // interpreter can start.
 export { awkNumber, launchable };
 
+// A numeric knob, counter, id or stamp, read as ASCII decimal only - no
+// octal, no hex, no float, no sign, no wrap: leading zeros are decimal
+// (`010` is ten), and null refuses rather than silently disabling a bound.
+export function strictDecimal(s: string, max: number = Number.MAX_SAFE_INTEGER): number | null {
+  if (!/^[0-9]+$/.test(s)) return null;
+  const n = Number(s);
+  return n <= max ? n : null;
+}
+
 // --- guard twins ---
 
 // An operand of bash 3.2's `[ a -gt b ]` (legal_number, strtoimax in base 10):
