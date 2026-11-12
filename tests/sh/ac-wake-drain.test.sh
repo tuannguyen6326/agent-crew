@@ -1334,7 +1334,9 @@ assert_eq "$(wout | grep '^UNACK')" "UNACKNOWLEDGED COMPLETION: famA-spec has a 
 UNACKNOWLEDGED COMPLETION: self1 has a report at HOME/home/data/self1/report.md (silence it: bin/ac-wake-drain.sh ack self1)" "row 8: the report lines"
 
 # 9. idleness: quiet, busy (ASCII and UTF-8 busy text), a captain marker,
-#    stamps that are no number, a stamp of now; the AC_STALE threshold; the
+#    stamps that are no number, a stamp of now, a stamp past the
+#    safe-integer bound (2^64, which bash's $(( )) wraps to exactly WT - a
+#    believable but bogus "quiet for" number); the AC_STALE threshold; the
 #    clock; the chief suppressions; the orca capture; stdin.
 fresh
 idle i1
@@ -1344,10 +1346,12 @@ idle i4 'done: finished'
 idle i5; chg i5 ''
 idle i6; chg i6 '0009\n'
 idle i8; chg i8 "$WT\n"
+idle i9; chg i9 '18446744073709551616\n'
 wd
 assert_eq "$(wout | grep '^IDLE')" "IDLE-MAY-BE-WAITING-ON-YOU: i1 quiet for 999s with no marker (peek: bin/ac-peek.sh i1; silence it: bin/ac-wake-drain.sh ack i1)" "row 9: only the quiet pane is idle"
-WD_ENV=(AC_STALE=+1000); wd; case "$(wout)" in *IDLE*) fail "row 9: 999s is under an AC_STALE of 1000" ;; esac
+WD_ENV=(AC_STALE=1000); wd; case "$(wout)" in *IDLE*) fail "row 9: 999s is under an AC_STALE of 1000" ;; esac
 WD_ENV=(AC_STALE=0999); wd; assert_contains "$(wout)" "YOU: i1 quiet for 999s" "row 9: AC_STALE is decimal and inclusive"
+WD_ENV=(AC_STALE=abc); wd; assert_contains "$(wout)" "YOU: i1 quiet for 999s" "row 9: a malformed AC_STALE falls back to 240, never disables staleness"
 WD_ENV=(EPOCHSECONDS=1700000500); wd; assert_contains "$(wout)" "YOU: i1 quiet for 1499s" "row 9: EPOCHSECONDS is the clock"
 WD_ENV=(EPOCHSECONDS=1700000000+1); wd; WD_ENV=()
 assert_contains "$(wout)" "IDLE-MAY-BE-WAITING-ON-YOU: i1 quiet for 1000s" "row 9: an expression clock is evaluated"
@@ -1411,9 +1415,11 @@ m t1 'kind=x\n'; m v1 'kind=verify-x\n'; m s1 'kind=self\n'; chief cf; mkdir -p 
 beat "$((WT - 1000))"
 wd
 assert_contains "$(wout)" "WATCHER-DOWN: 3 crewmate(s) in flight but no fresh beat (age 1000s). Arm bin/ac-watch.sh as a background task now." "row 10: the tally and the line"
-WD_ENV=(AC_GUARD_GRACE=+2000); wd; case "$(wout)" in *WATCHER-DOWN*) fail "row 10: an age under AC_GUARD_GRACE is covered" ;; esac
+WD_ENV=(AC_GUARD_GRACE=2000); wd; case "$(wout)" in *WATCHER-DOWN*) fail "row 10: an age under AC_GUARD_GRACE is covered" ;; esac
 WD_ENV=(EPOCHSECONDS=1700000000+1); wd; WD_ENV=()
 assert_contains "$(wout)" "no fresh beat (age 1001s)" "row 10: an expression clock is evaluated"
+WD_ENV=(AC_GUARD_GRACE=abc); wd; WD_ENV=()
+assert_contains "$(wout)" "WATCHER-DOWN: 3 crewmate(s)" "row 10: a malformed AC_GUARD_GRACE falls back to 300, never disables WATCHER-DOWN"
 
 # 11. the scheduler killed (128+n); autoroom failing.
 fresh

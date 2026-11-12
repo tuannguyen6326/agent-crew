@@ -132,9 +132,12 @@
 //      UNACKNOWLEDGED COMPLETION: <id> has a report at <path> (silence it: bin/ac-wake-drain.sh ack <id>)
 //    and the id ends there either way. IDLENESS - <state>/.change-<id> a
 //    regular file `-nt` the ack, holding (NULs dropped, trailing LFs cut)
-//    ASCII digits with no leading 0; <idle> = `$(( <clock> - stamp ))`
-//    (THE CLOCK below; 64-bit wrap - W16) `[ -ge ]` AC_STALE (unset or
-//    empty: 240; testInt's grammar, no number never idle - W15); a <fam>-chief
+//    ASCII digits with no leading 0, strictDecimal-bound (past the
+//    safe-integer bound is the same malformed-record skip, never bash's
+//    64-bit wrap - W16 fixed); <idle> = `$(( <clock> - stamp ))` (THE CLOCK
+//    below) `[ -ge ]` AC_STALE (strictDecimal; a refusal falls back to the
+//    documented default 240 rather than disabling staleness - W15 fixed);
+//    a <fam>-chief
 //    parked at the captain (chiefGateParked: its room holds an open GATE/ASK;
 //    an UNREADABLE room is grep's line and NOT parked - W25) or supervising a
 //    live member (chiefChildLive with this run's stdin and stdout) is
@@ -153,9 +156,10 @@
 //    Neither line matches any AC_CAPTAIN_RE: they land in a watched pane.
 // 8. WATCHER-DOWN: <n> = the metaPaths entries `[ -e ]` finds, minus
 //    verifiers and self tasks (metaIsSelf) - FLEET-wide even for a roomchief;
-//    above 0, the scope's beacon (watcherBeatRead: `<beat> <note>`) and
-//    <age> = `$(( <clock> - beat ))` `[ -gt ]` AC_GUARD_GRACE (unset or
-//    empty: 300; testInt) print
+//    above 0, the scope's beacon (watcherBeatRead: `<beat> <note>`, its beat
+//    strictDecimal-bound the same way as a stamp above - W16) and <age> =
+//    `$(( <clock> - beat ))` `[ -gt ]` AC_GUARD_GRACE (strictDecimal; a
+//    refusal falls back to the documented default 300 - W15) print
 //      WATCHER-DOWN: <n> crewmate(s) in flight but <note | no fresh beat (age <age>s)>. Arm bin/ac-watch.sh as a background task now.
 // 9. THE RIDE-ALONGS, unscoped only, each <started bin>/<entry> (the bin/ of
 //    the root bun was started in - a lab bin/ drives its own siblings):
@@ -253,9 +257,9 @@ import {
   shellStatus,
   spawnShellSync,
   STARTED_BIN,
+  strictDecimal,
   taskBackend,
   taskDir,
-  testInt,
   wakeFamilySpools,
   wakeScopeOk,
   wakeSpoolPath,
@@ -551,10 +555,10 @@ topLevel(() => {
     try {
       stamp = subst(readFileSync(changed));
     } catch {}
-    if (!/^[1-9][0-9]*$/.test(stamp)) continue;
+    if (!/^[1-9][0-9]*$/.test(stamp) || strictDecimal(stamp) === null) continue;
     const idle = clockMinus("stamp", stamp);
-    const stale = testInt(process.env.AC_STALE || "240");
-    if (stale === null || idle < stale) continue;
+    const stale = BigInt(strictDecimal(process.env.AC_STALE || "240") ?? 240);
+    if (idle < stale) continue;
     if (chiefGateParked(id) || chiefChildLive(sd, id, PROBE_IO)) continue;
     // taskBackend answers bytes; AC_BACKEND carries the text they spell, as
     // the shell's export did.
@@ -577,9 +581,11 @@ topLevel(() => {
   if (inflight === 0) return;
   const read = watcherBeatRead(sd, scope);
   const sp = read.indexOf(" ");
-  const age = clockMinus("beat", read.slice(0, sp));
-  const grace = testInt(process.env.AC_GUARD_GRACE || "300");
-  if (grace === null || age <= grace) return;
+  const beatVal = read.slice(0, sp);
+  if (strictDecimal(beatVal) === null) return;
+  const age = clockMinus("beat", beatVal);
+  const grace = BigInt(strictDecimal(process.env.AC_GUARD_GRACE || "300") ?? 300);
+  if (age <= grace) return;
   const note = read.slice(sp + 1) || `no fresh beat (age ${age}s)`;
   out(`WATCHER-DOWN: ${inflight} crewmate(s) in flight but ${note}. Arm bin/ac-watch.sh as a background task now.\n`);
 });
