@@ -3257,13 +3257,12 @@ function reapTree(pid: number, sleepBin: string): void {
 // `$SECONDS`: whole seconds of wall clock.
 const seconds = (): number => Math.floor(Date.now() / 1000);
 
-// hostSleptWindow <root> <start> <end>: no bash twin - this is new. Shells
-// to bin/ac-host-slept.sh, the one sleep-window check tests/run-suite.sh's
-// own timeout path also uses, so the suite verdict and a per-test FAIL line
-// never disagree about what the host did. Read against the LIVE distro
-// root, never the pinned snapshot a run tests: whether the host slept is
-// orthogonal to which tree is under test, and the snapshot may not even
-// carry this script yet.
+// hostSleptWindow <root> <start> <end>: shells to bin/ac-host-slept.sh, the
+// one sleep-window check tests/run-suite.sh's own timeout path also uses,
+// so the suite verdict and a per-test FAIL line never disagree about what
+// the host did. Read against the LIVE distro root, never the pinned
+// snapshot a run tests: whether the host slept is orthogonal to which tree
+// is under test, and the snapshot may not even carry this script yet.
 type HostSlept = { outcome: "slept" | "awake" | "unknown"; seconds: number | null };
 function hostSleptWindow(root: string, start: number, end: number): HostSlept {
   const r = run([`${root}/bin/ac-host-slept.sh`, String(start), String(end)], { stdout: "pipe", stderr: "ignore" });
