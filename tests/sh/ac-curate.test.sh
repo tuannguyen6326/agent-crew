@@ -1271,6 +1271,17 @@ for xk in 0 1; do
 done
 grep -qx -- '- \[x\] d01 - receipt - local main (merged 2026-02-02)' "$H/home/records/backlog.md" || fail "5: ... the newest first"
 XENV=()
+
+# 5b: a malformed AC_CURATE_KEEP (1e1 - a full awk -v number, 10) falls back
+# to the documented default, 20, never awk's own strtod reading - keeping
+# the 20 most recent of 25 and archiving the other 5, not the 10/15 split
+# awk's `-v` coercion would have kept/archived.
+xstd; xbl 25
+XENV=("AC_CURATE_KEEP=1e1")
+xok backlog --apply
+XENV=()
+assert_eq "$(grep -c '^- \[x\]' "$H/home/records/backlog.md"):$(grep -c '^- \[x\]' "$H/home/records/backlog-archive.md")" "20:5" "5b: a malformed AC_CURATE_KEEP=1e1 falls back to the default 20, not awk's 10"
+
 xstd
 xput home/records/backlog.md '## In flight
 - [ ] bigepic [EPIC] - the epic stories: s1 (repo: x, since 2026-02-01)

@@ -2167,10 +2167,33 @@ src=0; out="$(AC_PANE_STALL_MAX=0 PATH="$nosleep:$sstub:$PATH" HOME="$FAKEHOME" 
 assert_contains "$out" '"status":"timeout"' "AC_PANE_STALL_MAX=0 disables the bound"
 # AC_PANE_STALL_MAX's malformed-value fallback (to the documented default,
 # 2700, same strictDecimal(x) ?? default shape as AC_PANE_SETTLE_TRIES
-# above) is deliberately NOT E2E-tested here: proving the bound fires at
-# its real default costs a real 2700s wait, and clock-stubbing it safely
-# (every date/sleep call the whole run makes, not just the stall check's)
-# is not a small fix - a first attempt hung a live run for minutes.
+# above) proven end to end without a real 2700s wait: a `date +%s` stub
+# answers the run's FIRST call (waitStart) far in the future - past any real
+# file mtime, so the stall check's own mtime-floor is deterministic - then
+# jumps once, for good, past the fallback bound; a fixed two-value answer,
+# never an accelerating one, so an extra call can only repeat the jumped
+# value, never spin. `timeout` is still the outer backstop. A FRESH repo
+# (never srepo): newestNew() excludes every name that existed in its
+# transcript dir before this run started, and srepo's dir already holds
+# stall-sid.jsonl from the two legs above - reusing it would leave this
+# leg's own transcript un-announced, spinning on "pane get" forever.
+sfbrepo="$(make_repo stallfb2)"
+sdate="$TMP/stall-date-bin"; mkdir -p "$sdate"
+cat >"$sdate/date" <<EOF
+#!/usr/bin/env bash
+if [ -e "$TMP/stall-date.seen" ]; then
+  echo 10000004999
+else
+  : >"$TMP/stall-date.seen"
+  echo 9999999999
+fi
+EOF
+chmod +x "$sdate/date"
+src=0; out="$(AC_PANE_STALL_MAX=abc PATH="$sdate:$nosleep:$sstub:$PATH" HOME="$FAKEHOME" \
+  timeout 15 "$BIN/ac-pane-agent.sh" run --cwd "$sfbrepo" --prompt-file "$pf" --label stall-fallback --timeout 20000 2>&1)" || src=$?
+assert_contains "$out" "no transcript progress for over 2700s" "a malformed AC_PANE_STALL_MAX falls back to the documented default, 2700 - never a 1s/0 bound"
+assert_contains "$out" "agent_status=busy" "the fallback escalation still carries the busy status for diagnosis"
+assert_eq "$src" "1" "the fallback bound escalates, exiting non-zero"
 
 # --- the entry end to end against modelled backends, one scenario per row -----
 # ONE world path ($XW) rebuilt by the row's own setup before the row runs - a git

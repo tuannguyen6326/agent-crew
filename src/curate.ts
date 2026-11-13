@@ -146,10 +146,11 @@
 //   an LF-named file's two halves fail to copy and the move goes on without it.
 // - W11: a registry line read as `IFS=$'\t' read` loses its trailing TABs, so
 //   its exact-line lookup finds nothing and it asks the captain every run.
-// - W12: AC_CURATE_KEEP is compared as awk compares a -v value (a number when
-//   strtod reads all of it - `1e1`, `0x3`, ` 3`, `-1`, and `nan`, which
-//   equals every count - else as a string, so `abc` keeps every row) and
-//   printed and recorded raw.
+// - W12: AC_CURATE_KEEP is read by strictDecimal, falling back to the
+//   documented 20 on anything else (never `1e1` or `0x3` as a number, never
+//   `nan` equalling every count, never `abc` keeping every row); `0` stays a
+//   valid "keep none". The printed `keep N` line and the jq-recorded
+//   keep_done carry the parsed number.
 // - The epic pass walks the tentative rows in onetrue awk's hash order,
 //   dropping as it goes, so a story whose epic row is itself dropped stays
 //   when awk reached the epic first and goes when it reached the story first.
@@ -183,8 +184,8 @@
 //   (`08: value too great for base`), redirect and test lines, and awk's own
 //   diagnostics; a gate that cannot start is named by /bin/sh.
 // - BYTES: argv and environment arrive decoded, so a byte that is no UTF-8 in
-//   a flag, AC_CURATE_KEEP or a path reaches the output, jq and the room as
-//   U+FFFD; an arithmetic input naming a variable ends the run 1.
+//   a flag or a path reaches the output, jq and the room as U+FFFD; an
+//   arithmetic input naming a variable ends the run 1.
 //
 // CALLERS: src/learn.ts cmdRun (`${AC_CURATE:-<its bin>/ac-curate.sh}
 // run` at the cadence threshold, its failure already the soft `WARN: Curate
@@ -684,9 +685,10 @@ function awkOrder(keys: string[]): string[] {
 }
 
 // _backlog_plan's walk, in process over src/backlog.ts's parser: the Done rows
-// past the first <keep> (awk's comparison of a -v value, W12), minus a Done id
-// a Queued row's blocked-by names, minus a story whose epic row is absent or
-// not itself archived; line numbers ascending.
+// past the first <keep> (awk's comparison of a -v value - every caller now
+// hands it a clean decimal string, W12), minus a Done id a Queued row's
+// blocked-by names, minus a story whose epic row is absent or not itself
+// archived; line numbers ascending.
 function backlogPlan(text: string, keep: string): number[] {
   let sec = "";
   const lineid = new Map<number, string>();
@@ -730,7 +732,7 @@ function backlogPlan(text: string, keep: string): number[] {
 const BACKLOG_ARCHIVE_HEAD = "# Backlog archive - moved Done receipts (byte-identical; ac-ready.sh never reads this)\n\n## Done\n";
 
 function curateBacklog(h: string, apply: boolean, preBacked: boolean): void {
-  const keep = b8(process.env.AC_CURATE_KEEP || "20");
+  const keep = String(strictDecimal(b8(process.env.AC_CURATE_KEEP || "20")) ?? 20);
   const rec = sub(h, "records");
   const backlog = `${rec}/backlog.md`;
   const archive = `${rec}/backlog-archive.md`;
@@ -1181,7 +1183,7 @@ function inputManifest(out_: string): boolean {
     out_,
     "ac-curate-manifest",
     files.map((f) => [`records/${f}`, () => shaOrAbsent(`${rec}/${f}`)]),
-    ["--arg", "keep", b8(process.env.AC_CURATE_KEEP || "20"), '{schema:"agentcrew.curate-input/v1",keep_done:$keep,files:.}'],
+    ["--arg", "keep", String(strictDecimal(b8(process.env.AC_CURATE_KEEP || "20")) ?? 20), '{schema:"agentcrew.curate-input/v1",keep_done:$keep,files:.}'],
   );
 }
 

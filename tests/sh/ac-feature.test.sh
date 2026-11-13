@@ -513,8 +513,9 @@ FT_ENV=()
 # 4. record shapes, through create on the no-origin repo: none; retired on
 #    its FIRST line only; no entry for the repo; no push=deferred (the branch
 #    itself named push=deferred is no key); TAB-separated fields; the first of two entries for one repo; the first
-#    of two target= keys; a numeric repo matching awk's `==` (`07` reads the
-#    `7` entry); an archived record
+#    of two target= keys; a numeric-lookalike repo matched by exact STRING
+#    equality, never awk's numeric `==` (`07` reads only its OWN entry, never
+#    the decoy `7` entry ahead of it); an archived record
 go 1 create nof loc; assert_eq "$(shim_err)" "$(noentry create nof loc)" "4: no record"
 seed4() {
   rec ret '# retired 2026-01-01T00:00:00Z\nloc feat/ret push=deferred\n'
@@ -526,7 +527,7 @@ seed4() {
   rec tab 'loc\tfeat/tab\ttarget=release\t push=deferred\n'
   rec two 'loc feat/two1 push=deferred\nloc feat/two2 target=release push=deferred\n'
   rec tt 'loc feat/tt target=release target=nowhere push=deferred\n'
-  rec num '7 feat/num push=deferred\n'
+  rec num '7 feat/num7 push=deferred\n07 feat/num07 push=deferred\n'
   local_repo 07
   mkdir -p "$H/home/data/archive/2026/arc"; printf 'loc feat/arc push=deferred\n' >"$H/home/data/archive/2026/arc/branches"
 }
@@ -543,7 +544,7 @@ go 1 verify pdname loc; assert_contains "$(shim_err)" "carries no push=deferred 
 go 0 create tab loc; assert_eq "$(shim_out)" "created: feat/tab in loc at the tip of release (LOCAL - deferred push)" "4: TAB-separated fields"
 go 0 create two loc; assert_eq "$(shim_out)" "created: feat/two1 in loc at the tip of main (LOCAL - deferred push)" "4: the first entry wins"
 go 0 create tt loc; assert_eq "$(shim_out)" "created: feat/tt in loc at the tip of release (LOCAL - deferred push)" "4: the first target= wins"
-go 0 create num 07; assert_eq "$(shim_out)" "created: feat/num in 07 at the tip of main (LOCAL - deferred push)" "4: awk's numeric == - repo 07 reads the 7 entry"
+go 0 create num 07; assert_eq "$(shim_out)" "created: feat/num07 in 07 at the tip of main (LOCAL - deferred push)" "4: repo 07 is exact-string distinct from the 7 entry ahead of it - its OWN row, never awk's numeric =="
 go 0 create arc loc; assert_eq "$(shim_out)" "created: feat/arc in loc at the tip of main (LOCAL - deferred push)" "4: an archived record"
 
 # 5. the clone: projects/<repo> needs .git as a directory or a FILE (a linked

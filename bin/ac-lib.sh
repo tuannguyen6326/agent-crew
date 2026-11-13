@@ -2758,7 +2758,9 @@ ac_epic_branch_entry() {
   local epic="$1" repo="$2" f line
   f="$(ac_epic_branches_file "$epic")" || return 1
   grep -q '^# retired' < <(head -1 "$f") && return 2
-  line="$(awk -v r="$repo" '$1==r { $1=""; sub(/^ /, ""); print; exit }' "$f")"
+  # "" forces STRING comparison on both sides (field/`-v` values read as
+  # numeric-looking strnums otherwise) - a repo literally named 07 is never 7.
+  line="$(awk -v r="$repo" '$1 "" == r "" { $1=""; sub(/^ /, ""); print; exit }' "$f")"
   [ -n "$line" ] || return 1
   printf '%s\n' "$line"
 }
