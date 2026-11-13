@@ -437,7 +437,7 @@ assert_contains "$(nout)" "$(printf '  %-20s leased:0 avail:0' lfp)" "row 18: on
 
 # 19. ROOMS is streamed: a list that prints one line, waits for a barrier and
 #     prints a second shows the first BEFORE the barrier falls
-stub_room 'printf "PENDING-CAPTAIN(1) fam\tfirst\n"; while [ ! -e "$DASH_BARRIER" ]; do sleep 0.1; done; printf "second\n"'
+stub_room 'printf "PENDING-CAPTAIN(1) fam\tfirst\n"; while [ ! -e "$DASH_BARRIER" ] && [ -d "${DASH_BARRIER%/*}" ]; do sleep 0.1; done; printf "second\n"'
 fresh_home h19
 rm -f "$TMP/barrier"; : >"$TMP/s19.out"
 DASH_BARRIER="$TMP/barrier" "$lab/bin/ac-dash.sh" >"$TMP/s19.out" 2>/dev/null </dev/null &
@@ -450,6 +450,24 @@ assert_eq "$early" "0" "row 19: the second line cannot show before the barrier"
 wait $pid || fail "row 19: exit 0 after the barrier"
 assert_contains "$(cat "$TMP/s19.out")" "  PENDING-CAPTAIN(1) fam	first
   second" "row 19: both lines, in order"
+
+# 20. the barrier stub above must not outlive the directory holding its
+#     barrier: cleanup's rm -rf "$TMP" can win the race against a still-
+#     polling stub (the give-up branch above touches the barrier right
+#     before fail() enters cleanup), leaving an unbound poll looping
+#     forever as a ppid-1 orphan.
+mkdir -p "$TMP/row20barrier"
+DASH_BARRIER="$TMP/row20barrier/barrier" "$lab/bin/ac-room.sh" >/dev/null 2>&1 &
+pid=$!
+sleep 0.2
+rm -rf "$TMP/row20barrier"
+n=0; while kill -0 "$pid" 2>/dev/null && [ "$n" -lt 20 ]; do sleep 0.1; n=$((n + 1)); done
+if kill -0 "$pid" 2>/dev/null; then
+  kill "$pid" 2>/dev/null
+  fail "row 19's barrier stub survives its barrier directory's removal"
+fi
+wait "$pid" 2>/dev/null || true
+
 cp "$BIN/ac-room.sh" "$lab/bin/ac-room.sh"
 
 pass
