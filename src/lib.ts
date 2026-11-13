@@ -2509,9 +2509,10 @@ function herdrRpcTimeout(): string {
 // reaches what it forked: Bun's timeout TERMs the leader, the group is TERMed
 // and KILLed once it is reaped (the original TERMed the group at the ceiling
 // itself - named), and a call the ceiling reached reads 124 unless it ended
-// 0. spawnSync returns when the leader exits, so a TERM-ignoring grandchild
-// holding stdout cannot hold the caller - and bytes it writes after the
-// leader's exit are not read, where a `$( )` read to EOF (named). sleep(1)
+// 0. spawnSync waits for stdout's pipe to close, not the leader's exit
+// (measured, bun 1.4.4), so a TERM-ignoring grandchild holding stdout CAN
+// hold the caller - bounded here only by the timeout this call always
+// passes, same as the original's `$( )` read to EOF (named). sleep(1)
 // refuses past 2147483647 s, so the original's watchdog fires at once there,
 // as at 0. Bun's timeout wraps past 2^31-1 ms (measured, bun 1.3.13), so a
 // ceiling longer than that, which the original slept in full, is no ceiling
