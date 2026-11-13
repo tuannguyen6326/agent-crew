@@ -1,10 +1,9 @@
 // epic-branch.test.ts - the lib.ts twins src/epic-branch.ts introduced, held to
 // their bash originals differentially: epicBranchesFile against
 // ac_epic_branches_file (live first, the charset guard, the archive glob),
-// epicBranchEntry against ac_epic_branch_entry for the retired marker and
-// field rejoin (its repo field is now exact STRING equality, never the bash
-// original's numeric ==, asserted explicitly rather than differentially),
-// defaultBranch / freshestRef against their
+// epicBranchEntry against ac_epic_branch_entry for the retired marker, field
+// rejoin, and the repo field's exact STRING equality (both sides agree, a
+// numeric lookalike included), defaultBranch / freshestRef against their
 // arms over real repos, and pushControlPlane against ac_git_push_control_plane
 // through a refusing pre-push hook. The CLI contract itself (every verb,
 // stdout, stderr, exit) is tests/sh/ac-epic-branch.test.sh's.
@@ -102,8 +101,9 @@ test("epicBranchEntry reads what ac_epic_branch_entry reads: first match, fields
   record(h, "retired", "# retired 2026-01-01T00:00:00Z\nproj epic/r\n");
   record(h, "later", "# note\n# retired 2026-01-01T00:00:00Z\nproj epic/z\n");
   record(h, "archive/2026/arch", "proj epic/arch\n");
+  record(h, "numeric", "07 epic/a\n7 epic/b\n1e2 epic/c\n+7 epic/d\n.5 epic/g\ninf epic/i\n+inf epic/j\nnan epic/k\n7e epic/n\n0x7 epic/f\n");
   const repos = ["proj", "localonly", "proj2", "proj3", "bare", "bare2", "#", "nosuch", "", "7", "07", "100", "1e2", " 7", "7 ", "7.0", "+7", "0.5", ".5", "0x7", "7.5e-1", "nan", "-nan", "inf", "+inf", "-inf", "Infinity", "7e", "1e", "1_0"];
-  for (const epic of ["plain", "blanks", "comment", "nonl", "retired", "later", "arch", "missing"]) {
+  for (const epic of ["plain", "blanks", "comment", "nonl", "retired", "later", "arch", "missing", "numeric"]) {
     for (const repo of repos) {
       const want = bashLib("ac_epic_branch_entry", [epic, repo]);
       const got = epicBranchEntry(epic, repo);
@@ -119,11 +119,10 @@ test("epicBranchEntry reads what ac_epic_branch_entry reads: first match, fields
   expect(epicBranchEntry("missing", "proj")).toEqual({ rc: 1 });
 }, 30_000); // ~5 s of bash probes under load - past bun's 5 s default
 
-// Asserted explicitly, not against the bash original: its repo field reads
-// exact STRING equality now, so a numeric lookalike (`07`, `0x7`, `+7`, a
-// leading-dot or trailing-e form, `nan`, `inf`) answers only for its own
-// literal spelling, never for another row awk's numeric == would have
-// equated it with.
+// Asserted explicitly too (TS only, same "numeric" record as the loop
+// above): its repo field reads exact STRING equality, so a numeric lookalike
+// (`07`, `0x7`, `+7`, a leading-dot or trailing-e form, `nan`, `inf`)
+// answers only for its own literal spelling, never for another row.
 test("epicBranchEntry's repo field is exact string equality, never awk's numeric ==", () => {
   const h = freshHome();
   record(h, "numeric", "07 epic/a\n7 epic/b\n1e2 epic/c\n+7 epic/d\n.5 epic/g\ninf epic/i\n+inf epic/j\nnan epic/k\n7e epic/n\n0x7 epic/f\n");
