@@ -685,9 +685,10 @@ function awkOrder(keys: string[]): string[] {
 }
 
 // _backlog_plan's walk, in process over src/backlog.ts's parser: the Done rows
-// past the first <keep> (awk's comparison of a -v value, W12), minus a Done id
-// a Queued row's blocked-by names, minus a story whose epic row is absent or
-// not itself archived; line numbers ascending.
+// past the first <keep> (awk's comparison of a -v value - every caller now
+// hands it a clean decimal string, W12), minus a Done id a Queued row's
+// blocked-by names, minus a story whose epic row is absent or not itself
+// archived; line numbers ascending.
 function backlogPlan(text: string, keep: string): number[] {
   let sec = "";
   const lineid = new Map<number, string>();
