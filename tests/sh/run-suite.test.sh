@@ -74,10 +74,13 @@ assert_contains "$out" "2/2 passed" "count must match the fixture file count"
 # --- a test that outlives AC_TEST_TIMEOUT is killed and reported -------------
 # The sleep is a child of the test, so the bound must reach the whole process
 # group: a TERM to the subshell alone leaves the sleep and the wait behind it.
+# The `set -m` job LEAVES the group, so the kill misses it - the case the
+# capture walks descendants for, and the reason this file reaps it by hand.
 hangdir="$TMP/fixture-hang"
 mkdir -p "$hangdir"
 hang_sleep="1234.$$"
-printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\nsleep %s\npass\n' "$ROOT" "$hang_sleep" >"$hangdir/slow.test.sh"
+esc_sleep="300.$$"
+printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\nset -m; sleep %s & set +m\nsleep %s\npass\n' "$ROOT" "$esc_sleep" "$hang_sleep" >"$hangdir/slow.test.sh"
 printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\npass\n' "$ROOT" >"$hangdir/quick.test.sh"
 t0="$(date +%s)"
 set +e
@@ -85,14 +88,46 @@ out="$(AC_TEST_TIMEOUT=2 bash "$RUNNER" "$hangdir" 2>&1)"
 rc=$?
 set -e
 elapsed=$(( $(date +%s) - t0 ))
+pkill -f "sleep $esc_sleep" || true
 assert_eq "$rc" "1" "a timed-out test is a failure"
 assert_contains "$out" "FAIL slow.test.sh (timed out after 2s)" "the timeout names the test and the bound"
 assert_contains "$out" "1/2 passed" "the quick test still passes beside the timed-out one"
-[ "$elapsed" -lt 20 ] || fail "the runner must return once the bound fires, not after the sleep (took ${elapsed}s)"
+[ "$elapsed" -lt 60 ] || fail "the runner must return once the bound fires, not after the sleep (took ${elapsed}s)"
 if pgrep -f "sleep $hang_sleep" >/dev/null 2>&1; then
   pkill -f "sleep $hang_sleep" || true
   fail "the timed-out test's sleep must die with its process group"
 fi
+# What was running is printed before the kill erases it.
+capture="$(printf '%s\n' "$out" | sed -n '/^----- run-suite: slow.test.sh reached its 2s bound/,/^----- end: slow.test.sh/p')"
+assert_contains "$capture" "sleep $hang_sleep" "the hung child is in the process table printed at the bound"
+assert_contains "$capture" "sleep $esc_sleep" "a descendant that left the group is in the table too"
+if command -v sample >/dev/null 2>&1; then
+  assert_contains "$capture" "Call graph:" "a process is really sampled before the kill where sample(1) exists"
+  rows="$(printf '%s\n' "$capture" | sed -n '2,/^----- run-suite: sample /p' | grep -c -v '^-----' || true)"
+  samples="$(printf '%s\n' "$capture" | grep -c '^----- run-suite: sample ' || true)"
+  assert_eq "$samples" "$rows" "every process in the table is sampled"
+fi
+
+# The capture itself is bounded: a sample that never returns is killed and
+# the runner still moves on.
+stuckdir="$TMP/fixture-stuck-sample"
+mkdir -p "$stuckdir/stub" "$stuckdir/tests"
+stuck_sleep="987.$$"
+printf '#!/bin/sh\nexec sleep %s\n' "$stuck_sleep" >"$stuckdir/stub/sample"
+chmod +x "$stuckdir/stub/sample"
+printf '#!/usr/bin/env bash\nexec sleep %s\n' "$hang_sleep" >"$stuckdir/tests/stuck.test.sh"
+t0="$(date +%s)"
+set +e
+out="$(PATH="$stuckdir/stub:$PATH" AC_TEST_TIMEOUT=2 bash "$RUNNER" "$stuckdir/tests" 2>&1)"
+set -e
+elapsed=$(( $(date +%s) - t0 ))
+if pgrep -f "sleep $stuck_sleep" >/dev/null 2>&1; then
+  pkill -f "sleep $stuck_sleep" || true
+  fail "a sample that outlived its bound must be killed"
+fi
+assert_contains "$out" "FAIL stuck.test.sh (timed out after 2s)" "a stuck sample still ends in the timeout verdict"
+assert_contains "$out" "did not finish within" "a sample cut at its bound says so"
+[ "$elapsed" -lt 60 ] || fail "a stuck sample must not hold the runner (took ${elapsed}s)"
 
 # --- same verdict from a different cwd ---------------------------------------
 
