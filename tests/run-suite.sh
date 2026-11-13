@@ -19,11 +19,22 @@
 # PER-TEST BOUND: a test still running AC_TEST_TIMEOUT seconds (default
 # 1200) after its batch started is killed with its whole process group -
 # TERM, then KILL a second later - and reported `FAIL <name> (timed out after
-# Ns)`, counted as a failure like any other red. 0 removes the bound. The
-# runner needs no `timeout`/`gtimeout` for this (macOS ships neither): each
-# test already runs as its own process group under set -m, so the runner's
-# own wait loop is the watchdog. The bound is per BATCH start, so in parallel
-# mode every test of a batch shares one deadline.
+# Ns)`, Ns the MEASURED wall elapsed at the moment the bound fired (never
+# AC_TEST_TIMEOUT itself, which a sleeping host can make wildly wrong),
+# counted as a failure like any other red. bin/ac-host-slept.sh is asked
+# about that same [batch start, fired] window; when it says the host slept,
+# the line becomes `FAIL <name> (timed out after Ns wall; host slept Ns in
+# the window)` (or, sleep confirmed but its amount unreadable, `... host
+# slept in the window)`) - the one case a wall-clock bound cannot tell apart
+# from a genuine hang on its own. No sleep evidence (non-macOS, no pmset, or
+# an unparsable log) keeps the plain shape above, with no claim either way.
+# 0 removes the bound. The runner needs no `timeout`/`gtimeout` for this
+# (macOS ships neither): each test already runs as its own process group
+# under set -m, so the runner's own wait loop is the watchdog. The bound is
+# per BATCH start, so in parallel mode every test of a batch shares one
+# deadline, but each one that actually times out gets its own sleep-window
+# check against the moment IT was found overdue, not one shared check for
+# the whole batch.
 # Before the kill, the test's log - printed with its FAIL - gets what was
 # still running: a ps row for every process in the group and for every
 # process whose parent chain reaches the test, then a sample(1) of each where
@@ -1024,13 +1035,23 @@ await_tests() {
   # (setsid, set -m) survives, and capture_hung lists it only while its
   # parents still lead back to the test. No external `timeout` is involved:
   # macOS ships none, and the group is already here.
-  local outdir="$1" entry p name deadline
+  local outdir="$1" entry p name deadline batch_start now elapsed sleepline
   shift
-  deadline=$(( $(date +%s) + test_timeout ))
+  batch_start="$(date +%s)"
+  deadline=$(( batch_start + test_timeout ))
   for entry in "$@"; do
     p="${entry%%:*}"; name="${entry#*:}"
     while kill -0 "$p" 2>/dev/null; do
       if [ "$test_timeout" -gt 0 ] && [ "$(date +%s)" -ge "$deadline" ]; then
+        # Measured at the moment the bound actually fired, not the bound
+        # itself, and BEFORE capture_hung (up to 5s per sampled process) or
+        # the kill's own TERM-then-KILL grace: [batch_start, now] is the
+        # window this test actually ran unobserved in, and diagnostic time
+        # spent AFTER the bound fired is ours, not the test's or the host's.
+        now="$(date +%s)"
+        elapsed=$(( now - batch_start ))
+        sleepline="$("$ROOT/bin/ac-host-slept.sh" "$batch_start" "$now" 2>/dev/null)" || sleepline="unknown"
+        printf '%s\n%s\n' "$elapsed" "$sleepline" >"$outdir/$name.timeout"
         # The kill must follow even when the capture fails (a full disk), and
         # under `||` the whole capture runs without errexit.
         capture_hung "$p" "$name" "$outdir/$name.log" || true
@@ -1038,7 +1059,6 @@ await_tests() {
         sleep 1
         kill -KILL -- "-$p" 2>/dev/null || true
         printf '124\n' >"$outdir/$name.rc"
-        : >"$outdir/$name.timeout"
         break
       fi
       sleep 0.2
@@ -1073,7 +1093,22 @@ while [ "$i" -lt "$total" ]; do
       fail_count=$((fail_count + 1))
       failed_names="$failed_names $name"
       if [ -e "$scratch/$name.timeout" ]; then
-        printf 'FAIL %s (timed out after %ss)\n' "$name" "$test_timeout"
+        timeout_elapsed="$(sed -n '1p' "$scratch/$name.timeout" 2>/dev/null)"
+        timeout_sleep="$(sed -n '2p' "$scratch/$name.timeout" 2>/dev/null)"
+        case "$timeout_sleep" in
+          slept\ *)
+            printf 'FAIL %s (timed out after %ss wall; host slept %ss in the window)\n' \
+              "$name" "$timeout_elapsed" "${timeout_sleep#slept }" ;;
+          slept)
+            printf 'FAIL %s (timed out after %ss wall; host slept in the window)\n' "$name" "$timeout_elapsed" ;;
+          *)
+            # awake and unknown share this plain shape: neither has a sleep
+            # clause to add here. src/learn.ts's cmdSuite still tells them
+            # apart on its OWN output line (awake: nothing extra; unknown:
+            # "sleep evidence unavailable") - both leave status=red there too,
+            # only "slept" ever becomes void.
+            printf 'FAIL %s (timed out after %ss)\n' "$name" "$timeout_elapsed" ;;
+        esac
       else
         printf 'FAIL %s (exit %s)\n' "$name" "$rc"
       fi
