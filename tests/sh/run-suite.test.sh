@@ -30,6 +30,14 @@ run_runner() {
   printf '%s|%s' "$rc" "$out"
 }
 
+fail_elapsed() {
+  # fail_elapsed <output> <test-name> - the number a FAIL line for
+  # <test-name> prints as "(timed out after <N>s...", or empty if no such
+  # line was found. Read, never asserted to equal AC_TEST_TIMEOUT: it is the
+  # MEASURED wall elapsed, not the configured bound echoed back.
+  printf '%s\n' "$1" | sed -n "s/^FAIL $2 (timed out after \([0-9]*\)s.*/\1/p" | head -1
+}
+
 # --- fixture: one passing, one deliberately-failing test --------------------
 
 fixdir="$TMP/fixture-tests"
@@ -82,15 +90,28 @@ hang_sleep="1234.$$"
 esc_sleep="300.$$"
 printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\nset -m; sleep %s & set +m\nsleep %s\npass\n' "$ROOT" "$esc_sleep" "$hang_sleep" >"$hangdir/slow.test.sh"
 printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\npass\n' "$ROOT" >"$hangdir/quick.test.sh"
+# A pmset stub that always fails, so bin/ac-host-slept.sh reports `unknown`
+# deterministically - these timeout fixtures are not testing sleep
+# detection and must never depend on THIS host's real pmset log.
+nopmsetdir="$TMP/stub-no-pmset"
+mkdir -p "$nopmsetdir"
+printf '#!/usr/bin/env bash\nexit 1\n' >"$nopmsetdir/pmset"
+chmod +x "$nopmsetdir/pmset"
 t0="$(date +%s)"
 set +e
-out="$(AC_TEST_TIMEOUT=2 bash "$RUNNER" "$hangdir" 2>&1)"
+out="$(PATH="$nopmsetdir:$PATH" AC_TEST_TIMEOUT=2 bash "$RUNNER" "$hangdir" 2>&1)"
 rc=$?
 set -e
 elapsed=$(( $(date +%s) - t0 ))
 pkill -f "sleep $esc_sleep" || true
 assert_eq "$rc" "1" "a timed-out test is a failure"
-assert_contains "$out" "FAIL slow.test.sh (timed out after 2s)" "the timeout names the test and the bound"
+elapsed_shown="$(fail_elapsed "$out" "slow.test.sh")"
+[ -n "$elapsed_shown" ] || fail "no FAIL line with the '(timed out after Ns...)' shape for slow.test.sh: $out"
+[ "$elapsed_shown" -ge 2 ] || fail "the measured elapsed can never read BELOW the bound that fired it (got ${elapsed_shown}s)"
+assert_contains "$out" "FAIL slow.test.sh (timed out after ${elapsed_shown}s)" "the timeout names the test with its measured elapsed"
+case "$out" in
+  *"host slept"*) fail "no sleep evidence was staged for this fixture (pmset stub always fails) - the FAIL line must not claim one: $out" ;;
+esac
 assert_contains "$out" "1/2 passed" "the quick test still passes beside the timed-out one"
 [ "$elapsed" -lt 60 ] || fail "the runner must return once the bound fires, not after the sleep (took ${elapsed}s)"
 if pgrep -f "sleep $hang_sleep" >/dev/null 2>&1; then
@@ -118,16 +139,76 @@ chmod +x "$stuckdir/stub/sample"
 printf '#!/usr/bin/env bash\nexec sleep %s\n' "$hang_sleep" >"$stuckdir/tests/stuck.test.sh"
 t0="$(date +%s)"
 set +e
-out="$(PATH="$stuckdir/stub:$PATH" AC_TEST_TIMEOUT=2 bash "$RUNNER" "$stuckdir/tests" 2>&1)"
+out="$(PATH="$stuckdir/stub:$nopmsetdir:$PATH" AC_TEST_TIMEOUT=2 bash "$RUNNER" "$stuckdir/tests" 2>&1)"
 set -e
 elapsed=$(( $(date +%s) - t0 ))
 if pgrep -f "sleep $stuck_sleep" >/dev/null 2>&1; then
   pkill -f "sleep $stuck_sleep" || true
   fail "a sample that outlived its bound must be killed"
 fi
-assert_contains "$out" "FAIL stuck.test.sh (timed out after 2s)" "a stuck sample still ends in the timeout verdict"
+elapsed_shown="$(fail_elapsed "$out" "stuck.test.sh")"
+[ -n "$elapsed_shown" ] || fail "no FAIL line with the '(timed out after Ns...)' shape for stuck.test.sh: $out"
+[ "$elapsed_shown" -ge 2 ] || fail "the measured elapsed can never read BELOW the bound that fired it (got ${elapsed_shown}s)"
+assert_contains "$out" "FAIL stuck.test.sh (timed out after ${elapsed_shown}s)" "a stuck sample still ends in the timeout verdict"
 assert_contains "$out" "did not finish within" "a sample cut at its bound says so"
 [ "$elapsed" -lt 60 ] || fail "a stuck sample must not hold the runner (took ${elapsed}s)"
+
+# --- the elapsed number is genuinely MEASURED, not the bound echoed back ----
+# A single hung test's own elapsed reads at or barely above the bound either
+# way (genuinely measured, or the configured bound printed verbatim) - that
+# alone cannot tell the two apart. Two tests sharing ONE deadline can: in a
+# --jobs 2 batch, await_tests processes them one at a time, so the SECOND
+# test's own measurement is taken only after the FIRST one's capture_hung
+# and TERM-then-KILL grace have already spent real wall time - time the
+# bound itself never counted. A number that still read the bare "2" for
+# test b would mean the bound was echoed back, not measured.
+jobsdir="$TMP/fixture-jobs-elapsed"
+mkdir -p "$jobsdir"
+printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\nsleep %s\npass\n' "$ROOT" "$hang_sleep" >"$jobsdir/a.test.sh"
+printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\nsleep %s\npass\n' "$ROOT" "$hang_sleep" >"$jobsdir/b.test.sh"
+set +e
+out="$(PATH="$nopmsetdir:$PATH" AC_TEST_TIMEOUT=2 bash "$RUNNER" --jobs 2 "$jobsdir" 2>&1)"
+set -e
+pkill -f "sleep $hang_sleep" || true
+elapsed_a="$(fail_elapsed "$out" "a.test.sh")"
+elapsed_b="$(fail_elapsed "$out" "b.test.sh")"
+[ -n "$elapsed_a" ] && [ -n "$elapsed_b" ] || fail "both batch members need a '(timed out after Ns...)' FAIL line: $out"
+[ "$elapsed_b" -gt "$elapsed_a" ] || fail "test b is processed strictly after test a's own capture+kill under the SAME deadline, so its measured elapsed must exceed test a's, never read the same bare bound for both (a=${elapsed_a}s b=${elapsed_b}s)"
+
+# --- a timed-out test whose window overlapped a host sleep says so ----------
+# The stub pmset reports ONE Sleep entry that fully contains any plausible
+# test window (started long before this process existed, lasting long after
+# it could finish), so the overlap bin/ac-host-slept.sh computes is exactly
+# [batch_start, now] - the same figure this FAIL line's elapsed already
+# measures, which makes the expected text exact rather than a timing guess.
+# macOS only: the stub's own timestamp (BSD `date -j -f`) and the detector's
+# pmset read both need Darwin; on any other host the detector fails closed
+# to `unknown` before the stub is even reached, and the plain FAIL shape
+# (asserted above, with no clause) is what the other tests already cover.
+if [ "$(uname -s 2>/dev/null)" = Darwin ]; then
+  sleepdir="$TMP/fixture-sleep"
+  mkdir -p "$sleepdir"
+  printf '#!/usr/bin/env bash\n. "%s/tests/sh/helpers.sh"\nsleep %s\npass\n' "$ROOT" "$hang_sleep" >"$sleepdir/slept.test.sh"
+  pmsetdir="$TMP/stub-slept-pmset"
+  mkdir -p "$pmsetdir"
+  cat >"$pmsetdir/pmset" <<'STUB'
+#!/usr/bin/env bash
+far_past=$(( $(date +%s) - 100000 ))
+ts="$(date -j -f %s "$far_past" '+%Y-%m-%d %H:%M:%S %z')"
+printf '%s Sleep               \tEntering Sleep state due to '"'"'Clamshell Sleep'"'"' 200000 secs\n' "$ts"
+STUB
+  chmod +x "$pmsetdir/pmset"
+  set +e
+  out="$(PATH="$pmsetdir:$PATH" AC_TEST_TIMEOUT=2 bash "$RUNNER" "$sleepdir" 2>&1)"
+  rc=$?
+  set -e
+  pkill -f "sleep $hang_sleep" || true
+  assert_eq "$rc" "1" "a timed-out test under a host sleep is still a failure"
+  elapsed_shown="$(fail_elapsed "$out" "slept.test.sh")"
+  [ -n "$elapsed_shown" ] || fail "no FAIL line with the '(timed out after Ns...)' shape for slept.test.sh: $out"
+  assert_contains "$out" "FAIL slept.test.sh (timed out after ${elapsed_shown}s wall; host slept ${elapsed_shown}s in the window)" \
+    "a sleep spanning the whole window must be named beside the FAIL, with the overlap equal to the measured elapsed"
+fi
 
 # --- same verdict from a different cwd ---------------------------------------
 

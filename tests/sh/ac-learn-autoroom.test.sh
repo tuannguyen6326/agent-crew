@@ -66,6 +66,19 @@ green_suite() {
     "$suite_head" "$(date +%s)" >"$suite_rec"
 }
 
+# Fail-closed pmset BY DEFAULT: cmdSuite now consults bin/ac-host-slept.sh
+# over its own [start, end], and every case in this file EXCEPT the
+# void/sleep-note ones below knows nothing about host-sleep detection - none
+# of them may depend on this host's real pmset log just because the suite
+# task happens to run inside them (test seam, per the brief). The
+# void/sleep-note cases install their own pmset stub ahead of this one on
+# PATH, which wins for their own calls only.
+nopmset="$TMP/nopmset-stub"
+mkdir -p "$nopmset"
+printf '#!/usr/bin/env bash\nexit 1\n' >"$nopmset/pmset"
+chmod +x "$nopmset/pmset"
+export PATH="$nopmset:$PATH"
+
 # -- FLEET OPT-IN: knob absent => the gate never holds -------------------------
 # No config/learn-suite-gate and NO suite verdict at all: a DUE autoroom fires
 # anyway - another fleet's DISTILL must never wait on this repo's suite.
@@ -990,6 +1003,74 @@ set -e
 assert_eq "$suite_rc" "3" "the task exits with the runner's own status - a hand-run caller is told"
 assert_eq "$(awk -F= '$1=="status"{print $2}' "$suite_rec")" "red" "a failing suite records red"
 assert_eq "$(awk -F= '$1=="exit"{print $2}' "$suite_rec")" "3" "and keeps the runner's status, so a runner that could not run (exit 2) is not read as a test failure"
+
+# -- VOID: a non-green run whose [start, end] overlapped a host sleep records
+#    void, not red, and (a) still does not release the DISTILL, (b) lets the
+#    NEXT trigger relaunch - even on this SAME head, where a real red would
+#    have held without a re-run (the regression a literal "red" status would
+#    cause if void were ever matched into that branch). The stub pmset's
+#    Sleep entry starts long before this process existed and lasts long
+#    after it could finish, so it overlaps WHATEVER window cmdSuite actually
+#    measures, deterministically, on any host.
+widesleep="$TMP/stub-wide-sleep"
+mkdir -p "$widesleep"
+cat >"$widesleep/pmset" <<'STUB'
+#!/usr/bin/env bash
+far_past=$(( $(date +%s) - 100000 ))
+ts="$(date -j -f %s "$far_past" '+%Y-%m-%d %H:%M:%S %z')"
+printf '%s Sleep               \tEntering Sleep state due to '"'"'Clamshell Sleep'"'"' 200000 secs\n' "$ts"
+STUB
+chmod +x "$widesleep/pmset"
+# macOS only: the stub's timestamp (BSD `date -j -f`) and the detector's
+# pmset read both need Darwin; on any other host cmdSuite's own call fails
+# closed to `unknown` before the stub is even reached, so status stays red
+# (the UNKNOWN case right below already covers that path).
+if [ "$(uname -s 2>/dev/null)" = Darwin ]; then
+  reset_family
+  suite_task_clear
+  rm -f "$suite_rec"
+  set +e
+  out="$(PATH="$widesleep:$PATH" AC_LEARN_SUITE_BIN="$TMP/suite-red" "$BIN/ac-learn.sh" suite 2>&1)"
+  suite_rc=$?
+  set -e
+  assert_eq "$suite_rc" "3" "a voided run still exits with the runner's own status"
+  assert_eq "$(awk -F= '$1=="status"{print $2}' "$suite_rec")" "void" "a RED run whose window slept must record void, not red"
+  assert_eq "$(awk -F= '$1=="exit"{print $2}' "$suite_rec")" "3" "the exit field still names the runner's status - void changes the VERDICT, not the evidence"
+  assert_contains "$out" "suite void" "the task's own line says void"
+  assert_contains "$out" "host slept" "and names what made it void"
+  out="$("$BIN/ac-learn.sh" autoroom 2>&1)" || fail "a held autoroom must still exit 0: $out"
+  assert_no_file "$meta" "(a) a voided record must not release the DISTILL any more than a red one would"
+  assert_contains "$out" "started the full-suite run" \
+    "(b) a voided record is read as NO verdict for this generation - the next trigger relaunches, never HELD as a fixed red"
+  assert_eq "$(awk -F= '$1=="head"{print $2}' "$AC_HOME/state/.learn-suite-pin.meta")" "$suite_head" \
+    "the relaunch re-pins to live HEAD even though it never moved - void never self-heals on a HEAD comparison the way red does"
+  suite_task_clear
+  rm -f "$AC_HOME/state/.learn-suite-pin.meta"
+fi
+
+# -- UNKNOWN sleep evidence changes nothing: stays red, and the task's own
+#    line says the evidence was unavailable (the file-wide $nopmset stub
+#    already on PATH makes pmset fail -> unknown, exactly this fixture).
+reset_family
+suite_task_clear
+rm -f "$suite_rec"
+set +e
+out="$(AC_LEARN_SUITE_BIN="$TMP/suite-red" "$BIN/ac-learn.sh" suite 2>&1)"
+set -e
+assert_eq "$(awk -F= '$1=="status"{print $2}' "$suite_rec")" "red" "unknown sleep evidence changes nothing - red stays red"
+assert_contains "$out" "sleep evidence unavailable" "and the line says why it could not tell"
+
+# -- a GREEN run stays green even if the host slept ---------------------------
+reset_family
+suite_task_clear
+rm -f "$suite_rec"
+out="$(PATH="$widesleep:$PATH" AC_LEARN_SUITE_BIN="$TMP/suite-green" "$BIN/ac-learn.sh" suite 2>&1)"
+assert_eq "$(awk -F= '$1=="status"{print $2}' "$suite_rec")" "green" "a passing suite stays green regardless of what the host did"
+case "$out" in
+  *"host slept"*) fail "a green verdict must not carry a sleep note - only a non-green run is ever voided: $out" ;;
+esac
+suite_task_clear
+rm -f "$suite_rec"
 
 # -- a run that HANGS ends at its ceiling and records red --------------------
 # A hung run writes no verdict, so it would hold the gate "in flight" until

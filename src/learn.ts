@@ -249,7 +249,7 @@
 //
 // FULL-SUITE GATE (only in a fleet that pins config/learn-suite-gate=on).
 // Its state is one verdict record, state/.learn-suite.meta (generation=,
-// head=, status=green|red, exit= - run-suite's own status, 124 at the
+// head=, status=green|red|void, exit= - run-suite's own status, 124 at the
 // ceiling - and at=), and it releases the DISTILL only for a GREEN record of
 // THIS cadence generation and THIS generation's PINNED tree. The pin
 // (state/.learn-suite-pin.meta) is live HEAD recorded by the first caller of a
@@ -258,15 +258,25 @@
 // verdict. GREEN is sticky for the generation; RED holds without a re-run
 // while live HEAD still equals the pinned tree, and once HEAD has moved (or
 // no verdict was recorded and no run is in flight) the gate re-pins to live
-// HEAD and launches a fresh run - never while a run is in flight. A suite
-// run in flight HOLDS; one whose pane the backend DEFINITELY reports gone is
-// reclaimed (its snapshot, meta, status and handle removed), an unobservable
-// one keeps holding. `suite` runs as its own paned task (kind=verify-suite,
-// supervised, outside crew accounting) from an immutable detached worktree
-// at the pinned sha under <root>/.crew/learn-suite-snapshots/<id>, removed on
-// every exit; AC_LEARN_SUITE_BIN replaces the runner and
-// AC_LEARN_SUITE_TIMEOUT the 10800 s ceiling, past which the runner's whole
-// process tree is ended and the run records red exit 124.
+// HEAD and launches a fresh run - never while a run is in flight. VOID is
+// neither: a non-green run (red, or the ceiling's 124) whose [start, end]
+// bin/ac-host-slept.sh placed a host sleep inside is recorded void, not red
+// - a wall-clock bound measured a sleeping host, not the suite - and the
+// gate below reads it as no verdict for this generation at all (it matches
+// neither the GREEN nor the RED branch, so it falls straight through to the
+// re-pin-and-relaunch tail, even on an UNCHANGED head, where a real red
+// would have held). A GREEN run stays green even if the host slept; an
+// UNKNOWN sleep placement (no evidence source on this host) changes nothing
+// - the run stays red, and only its own output line says evidence was
+// unavailable. A suite run in flight HOLDS; one whose pane the backend
+// DEFINITELY reports gone is reclaimed (its snapshot, meta, status and
+// handle removed), an unobservable one keeps holding. `suite` runs as its
+// own paned task (kind=verify-suite, supervised, outside crew accounting)
+// from an immutable detached worktree at the pinned sha under
+// <root>/.crew/learn-suite-snapshots/<id>, removed on every exit;
+// AC_LEARN_SUITE_BIN replaces the runner and AC_LEARN_SUITE_TIMEOUT the
+// 10800 s ceiling, past which the runner's whole process tree is ended and
+// the run records red exit 124.
 //
 // ROTATE-PENDING. `run` rotates before it snapshots sources/, so the scout's
 // copy is a window a verbatim citation can reach. Past
@@ -3191,6 +3201,11 @@ function suiteGate(n: string, every: string): { ok: boolean; out: string } {
         ok: false,
         out: `learning DUE (${n}/${every}) HELD: the full suite is RED for this cycle (run-suite exit ${metaG(rec, "exit")}, ${rec}) - fix it first; Learning waits, and the fix landing starts a fresh run by itself\n`,
       };
+    // st === "void" matches neither branch above ON PURPOSE: a voided
+    // record never releases (falls out of this if, past both returns) and
+    // never holds as a fixed red either - it falls through to the re-pin
+    // below like no record existed, so the next trigger relaunches even on
+    // this SAME head, where a real red would have held without a re-run.
   }
   const inflight = suiteInflight();
   if (inflight !== null) {
@@ -3242,6 +3257,23 @@ function reapTree(pid: number, sleepBin: string): void {
 // `$SECONDS`: whole seconds of wall clock.
 const seconds = (): number => Math.floor(Date.now() / 1000);
 
+// hostSleptWindow <root> <start> <end>: no bash twin - this is new. Shells
+// to bin/ac-host-slept.sh, the one sleep-window check tests/run-suite.sh's
+// own timeout path also uses, so the suite verdict and a per-test FAIL line
+// never disagree about what the host did. Read against the LIVE distro
+// root, never the pinned snapshot a run tests: whether the host slept is
+// orthogonal to which tree is under test, and the snapshot may not even
+// carry this script yet.
+type HostSlept = { outcome: "slept" | "awake" | "unknown"; seconds: number | null };
+function hostSleptWindow(root: string, start: number, end: number): HostSlept {
+  const r = run([`${root}/bin/ac-host-slept.sh`, String(start), String(end)], { stdout: "pipe", stderr: "ignore" });
+  const line = subst(r.out).trim();
+  const m = /^slept(?: (\d+))?$/.exec(line);
+  if (m) return { outcome: "slept", seconds: m[1] !== undefined ? Number(m[1]) : null };
+  if (line === "awake") return { outcome: "awake", seconds: null };
+  return { outcome: "unknown", seconds: null };
+}
+
 async function cmdSuite(args: string[]): Promise<number> {
   const id = b8(args[0] ?? "");
   if (id !== "" && !id.startsWith("verify-suite-")) dieB(`suite takes its own task id (verify-suite-*), never another task's (got: '${id}')`);
@@ -3287,12 +3319,26 @@ async function cmdSuite(args: string[]): Promise<number> {
     rc = shellStatus(launcher);
   }
   if (timedOut) rc = 124;
-  const status = rc === 0 ? "green" : "red";
+  let status = rc === 0 ? "green" : "red";
+  // A note for cmdSuite's own output line only - the record itself never
+  // carries it, so a reader of status=void always re-derives "why" from
+  // this line's history rather than from a field suiteGate would also have
+  // to parse.
+  let note = "";
+  if (rc !== 0) {
+    const sleep = hostSleptWindow(suiteRoot(), start, seconds());
+    if (sleep.outcome === "slept") {
+      status = "void";
+      note = sleep.seconds !== null ? ` (host slept ${sleep.seconds}s during the run)` : " (host slept during the run)";
+    } else if (sleep.outcome === "unknown") {
+      note = " (sleep evidence unavailable)";
+    }
+  }
   const t = tempFile(rec) ?? fatal(1);
   if (!putFd(t.fd, `generation=${gen}\nhead=${head}\nstatus=${status}\nexit=${rc}\nat=${now()}\n`)) fatal(1);
   must(run(["mv", b8(t.path), rec]).status);
   if (id !== "") rmF(b8(taskMeta(u8(id))), b8(taskStatus(u8(id))), `${stateD()}/.pane-${id}`);
-  out(`suite ${status} (run-suite exit ${rc}) recorded for generation ${gen} at ${head}\n`);
+  out(`suite ${status} (run-suite exit ${rc}) recorded for generation ${gen} at ${head}${note}\n`);
   return rc;
 }
 
