@@ -8,7 +8,8 @@
 // shell's own `line N:` lines), the `|rc=` status and the process's exit, the
 // stub log, the home's tree and, on the hang rows, the elapsed time and the
 // grandchildren left alive; a send_line row also its stub pane's composer and
-// transcript, and logs its sleeps. A drift in the bash drivers turns these red.
+// transcript, and logs its sleeps. A side a signal ended is no answer: its row
+// fails by name. A drift in the bash drivers turns these red.
 //
 // DISPUTED: the implementation of the backend verbs (the bash drivers vs src/lib.ts backendCall)
 // HELD-CONSTANT: one side root per side and row seeded alike (a home at <side>/home, the stubs' sentinels and log at <side>/stub); argv; env (PATH, LC_ALL=C unless a row names UTF-8, HOME, TMPDIR, STUB_DIR, AC_HOME unless homeless, the row's own names); cwd (the side root); stdin (/dev/null, or the row's bytes); PATH = a logging sleep on send_line rows, the herdr and orca stubs (or a variant without one), a dir holding the host's jq (dropped by the jq-absent rows, a noisy wrapper of it on the noisy-jq rows), and /bin plus /usr/bin without jq, herdr or orca - no row can reach a real herdr or orca.
@@ -52,7 +53,8 @@ symlinkSync(Bun.which("jq")!, join(JQ, "jq"));
 // and tight (no composer row) draw a broken frame; ticker heads every screen
 // with the read's number. read-fails-from and read-hangs-from count every pane
 // read from 1. nbsp draws the empty composer as claude 2.1.299 does: ❯, NBSP,
-// CR under --ansi, the bare ❯ in a plain read.
+// CR under --ansi, the bare ❯ in a plain read. kill-caller TERMs the process
+// that ran the stub.
 const RULE = "─".repeat(12);
 const HERDR = `#!/bin/sh
 d="$STUB_DIR"
@@ -64,6 +66,7 @@ elif [ -e "$d/readline" ]; then
 else
   printf 'herdr %s [%s]\\n' "$*" "\${HERDR_SESSION:-}" >>"$d/log"
 fi
+[ ! -e "$d/kill-caller" ] || kill -TERM "$PPID"
 n=0
 if [ "$1 $2" = "pane read" ]; then
   n=$(($(cat "$d/reads" 2>/dev/null || echo 0) + 1))
@@ -245,7 +248,7 @@ type Row = {
   // The call bare under errexit, where ac-send.sh's --key path makes it.
   errexit?: boolean;
 };
-type Side = { out: string; err: string; rc: number | null; log: string; world: string; ms: number; hangers: number[] };
+type Side = { out: string; err: string; rc: number; log: string; world: string; ms: number; hangers: number[] };
 
 let rows = 0;
 const pane = (s: string, id: string, body: string): void => writeFileSync(join(s, "home", "state", `.pane-${id}`), Buffer.from(body, "latin1"));
@@ -284,7 +287,7 @@ function read(f: string): string {
   }
 }
 
-function side(row: Row, s: string, oracle: boolean): Side {
+function side(row: Row, s: string, oracle: boolean, label: string): Side {
   const io: Io = row.io ?? { stdout: "inherit", stderr: "inherit" };
   const env: Record<string, string> = {
     PATH: (row.fn === "send_line" ? `${SLEEPS}:` : "") + PATHS[row.path ?? "both"],
@@ -319,6 +322,13 @@ function side(row: Row, s: string, oracle: boolean): Side {
   if (oracle) err = err.replace(/^.*: line [0-9]+: .*\n/gm, "");
   const hangers = read(join(s, "stub", "hang-children")).split("\n").filter(Boolean).map(Number);
   HANGERS.push(...hangers);
+  // bun cannot interrupt this synchronous body: once the test's timeout passes
+  // it SIGTERMs the spawn in flight and every later one at once, and two killed
+  // sides compare equal.
+  if (r.exitCode === null)
+    throw new Error(
+      `${label}: the ${oracle ? "oracle" : "twin"} side ended by ${r.signalCode} after ${ms} ms - no answer to compare (bun's per-test timeout kills a spawn with SIGTERM, and on macOS time the host spends asleep counts toward it)${err ? `; its stderr: ${err}` : ""}`,
+    );
   return { out: norm(r.stdout.toString("latin1")), err, rc: r.exitCode, log: row.noLog ? "" : norm(read(join(s, "stub", "log"))), world: norm(world(join(s, "home"))), ms, hangers };
 }
 
@@ -333,20 +343,20 @@ function alive(pid: number): boolean {
 
 // Both sides of one row; the twin's answer and the oracle's are returned for a
 // row's own assertions.
-function pair(row: Row): { o: Side; t: Side } {
+function pair(row: Row, label: string = row.fn): { o: Side; t: Side } {
   const r = join(W, `r${rows++}`);
   const out: Side[] = [];
   for (const name of ["o", "t"]) {
     const s = join(r, name);
     for (const sub of ["home/state", "home/config", "stub"]) mkdirSync(join(s, sub), { recursive: true });
     row.seed?.(s);
-    out.push(side(row, s, name === "o"));
+    out.push(side(row, s, name === "o", label));
   }
   return { o: out[0]!, t: out[1]! };
 }
 
 function same(label: string, row: Row): { o: Side; t: Side } {
-  const p = pair(row);
+  const p = pair(row, label);
   const view = (x: Side) => ({ label, out: x.out, err: x.err, rc: x.rc, log: x.log, world: x.world });
   expect(view(p.t)).toEqual(view(p.o));
   return p;
@@ -361,6 +371,12 @@ const fleet = (body: string) => (s: string): void => {
   mkdirSync(join(s, "fleet", "config"));
   writeFileSync(join(s, "fleet", "config", "backend"), body);
 };
+
+test("0. the harness: a side a signal ended fails its row by name - two killed sides are never compared as answers", () => {
+  expect(() => same("killed", { fn: "window_alive", args: ["x"], env: { ...HERDR_, AC_HERDR_RPC_TIMEOUT: "1" }, seed: (s) => (X(s), sent(s, "kill-caller")) })).toThrow(
+    /^killed: the oracle side ended by SIGTERM after [0-9]+ ms/,
+  );
+}, 30000);
 
 test("1. the route: AC_BACKEND verbatim, config/backend trimmed, AC_FLEET_STATE cut at its first space, herdr; any other name refused before anything is read or minted", () => {
   const accepted: [string, Record<string, string>, (s: string) => void, string][] = [
@@ -411,7 +427,7 @@ test("1. the route, named: an unreadable knob prints head's line once per call -
     ["config/backend", {}, knob("home/config")],
     ["the fleet state's config/backend", { AC_FLEET_STATE: "@S/fleet/state" }, knob("fleet/config")],
   ] as const) {
-    const p = pair({ fn: "window_alive", args: ["x"], env, seed: (s) => (X(s), sent(s, "win-px"), seed(s)) });
+    const p = pair({ fn: "window_alive", args: ["x"], env, seed: (s) => (X(s), sent(s, "win-px"), seed(s)) }, label);
     expect({ label, out: p.t.out, log: p.t.log, world: p.t.world }).toEqual({ label, out: p.o.out, log: p.o.log, world: p.o.world });
     expect(p.t.err).toMatch(/^head: .*backend: Permission denied\n$/);
     expect(p.o.err).toBe(p.t.err + p.t.err);
