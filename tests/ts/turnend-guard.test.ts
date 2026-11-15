@@ -1,17 +1,17 @@
 // turnend-guard.test.ts - src/lib.ts's hookTrace as src/turnend-guard.ts calls
-// it (a native detail, EUNBOUND ending the guard, EARITH only skipping the
-// trim), held to the live bin/ac-lib.sh ac_hook_trace, each run in the hooks'
-// own context (`set -uo pipefail`, the lib sourced) over a copy of one home:
-// the log's bytes after the call, the call's stdout and stderr, and its fate
-// under a keep knob that names a variable. The guard's own contract is
-// tests/sh/ac-turnend-guard.test.sh.
+// it (a native detail, no catch - strictDecimal never throws), held to the
+// live bin/ac-lib.sh ac_hook_trace, each run in the hooks' own context
+// (`set -uo pipefail`, the lib sourced) over a copy of one home: the log's
+// bytes after the call, the call's stdout and stderr, and its fate under a
+// keep knob - held to bash where the two readings agree. The guard's own
+// contract is tests/sh/ac-turnend-guard.test.sh.
 //
 // Where the keep knob's two readings diverge the twin is asserted on its own:
 // hookTrace's AC_STOPHOOK_LOG_KEEP is strictDecimal (40e4753e), so `010` is
 // ten, never bash's octal eight, and a refusal falls back to 200 - as
 // tests/ts/hook-twins.test.ts asserts for watch-autoarm's identical call.
 //
-// DISPUTED: the implementation of the trace (ac_hook_trace vs src/lib.ts's hookTrace under the guard's catch)
+// DISPUTED: the implementation of the trace (ac_hook_trace vs src/lib.ts's hookTrace as the guard calls it directly)
 // HELD-CONSTANT: the home's bytes (copied per side), the hook name and detail, AC_STOPHOOK_LOG_KEEP, PATH (a date stub frozen at one instant ahead of the host's), LC_ALL=C, the cwd
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -33,13 +33,7 @@ const TWIN = join(W, "twin.ts");
 writeFileSync(
   TWIN,
   `import { hookTrace } from ${JSON.stringify(LIB)};
-try {
-  hookTrace(process.argv[2]!, Buffer.from(process.argv[3]!, "utf8").toString("latin1"));
-} catch (e) {
-  const code = (e as { code?: string }).code;
-  if (code === "EUNBOUND") process.exit(0);
-  if (code !== "EARITH") throw e;
-}
+hookTrace(process.argv[2]!, Buffer.from(process.argv[3]!, "utf8").toString("latin1"));
 `,
 );
 
@@ -102,14 +96,19 @@ test("the guard's trace keep is strictDecimal: 010 is ten, a refusal falls back 
   expect(refused.twin.status).toBe(0);
 });
 
-test("a keep `$(( ))` cannot read skips the trim; one naming a variable ends the hook", () => {
-  const seed = (home: string) => writeFileSync(join(home, "state", ".stop-hooks.log"), "a\nb\nc\nd\ne\n");
-  const odd = both(seed, "2x");
-  expect(odd.twin.log).toBe(odd.bash.log);
-  const named = both(seed, "nokeep");
-  expect(named.twin.log).toBe(named.bash.log);
-  expect(named.bash.status).toBe(0);
-  expect(named.twin.status).toBe(named.bash.status);
+test("a malformed keep (`2x`, `nokeep`) strictDecimal refuses: the twin falls back to 200, trims and keeps per 200, losing no trace line", () => {
+  // Past keep*2 (fallback 200: 400) lines so the trim actually runs.
+  const n = 401;
+  const seedLines = Array.from({ length: n }, (_, i) => `old ${i}\n`);
+  const seed = (home: string) => writeFileSync(join(home, "state", ".stop-hooks.log"), seedLines.join(""));
+  const traceLine = "2027-01-15T08:00:00Z hook=turnend-guard verdict=blocked reason=queued-wakes\n";
+  // tail -n 200 of the (n+1)-line file: the last 199 old lines plus the
+  // trace line just appended.
+  const expectedLog = `${seedLines.slice(n - 199).join("")}${traceLine}`;
+  for (const keep of ["2x", "nokeep"]) {
+    const r = both(seed, keep);
+    expect([keep, r.twin.status, r.twin.log]).toEqual([keep, 0, expectedLog]);
+  }
 });
 
 test("homeless, or a state dir that refuses the append, writes and prints nothing", () => {

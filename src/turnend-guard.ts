@@ -174,15 +174,15 @@
 // - a lock `pid=` of `0`, `-1` or `+<pid>` reads live (kill -0's own
 //   grammar) and the session stands aside as read-only;
 // - an unreadable crew meta counts in flight, its `cannot read meta file`
-//   WARN on the block-reason stderr;
-// - AC_STOPHOOK_LOG_KEEP naming a variable ends the guard at its first trace
-//   (set -u), so no block ever holds.
+//   WARN on the block-reason stderr.
 //
 // ALSO: with no bun on PATH the shim allows at once, saying so in one stderr
 // line; a module that cannot load or crashes allows too, with one stderr line
-// - never a held stop. An AC_STOPHOOK_LOG_KEEP the arithmetic cannot read
-// (`2x`) only skips the trim: the fleet is judged as with any keep. An
-// AC_GUARD_GRACE that is no integer falls back to the documented default
+// - never a held stop. An AC_STOPHOOK_LOG_KEEP that is no strict decimal
+// (`2x`, `nokeep`) falls back to 200 (strictDecimal, 40e4753e) rather than
+// ending the guard or skipping the trim as the bash original does: the
+// fleet is judged as with any keep. An AC_GUARD_GRACE that is no integer
+// falls back to the documented default
 // (300) instead - it never disables the hold - nothing on stderr. The rooms
 // are judged and named in byte order. An AC_HOME whose name
 // ends in LF is the directory it names, and a relative one is entered without
@@ -256,17 +256,8 @@ const run = (argv: string[], stderr: "inherit" | "ignore", stdin: "inherit" | Bu
   }
 };
 
-// A trace whose keep knob names a variable ended the original 0 under set -u
-// (the line count's status); one `$(( ))` cannot read only skips the trim here
-// (KEEP ARITHMETIC).
 function traceLine(detail: string): void {
-  try {
-    hookTrace("turnend-guard", Buffer.from(detail, "utf8").toString("latin1"));
-  } catch (e) {
-    const code = (e as { code?: string }).code;
-    if (code === "EUNBOUND") process.exit(0);
-    if (code !== "EARITH") throw e;
-  }
+  hookTrace("turnend-guard", Buffer.from(detail, "utf8").toString("latin1"));
 }
 
 // `[ -x <file> ]`: execute (search) permission for this user.
@@ -382,9 +373,8 @@ try {
 }
 // A grace the arithmetic cannot read (not `[ a -ge b ]`'s integer) must never
 // disable the hold by reading every beacon fresh - it falls back to the
-// documented default instead (AC_STOPHOOK_LOG_KEEP's malformed value only
-// skips the trim step below; this knob's malformed value must not skip the
-// hold itself, so it gets a default instead).
+// documented default instead, as AC_STOPHOOK_LOG_KEEP's keep does on a
+// refusal (strictDecimal).
 const grace = (): bigint => testInt(process.env.AC_GUARD_GRACE || "300") ?? 300n;
 // `[ "$age" -gt <grace> ]`: an age the arithmetic left unset is set -u's death.
 const stale = (): boolean => {
