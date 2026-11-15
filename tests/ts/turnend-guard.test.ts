@@ -6,6 +6,11 @@
 // under a keep knob that names a variable. The guard's own contract is
 // tests/sh/ac-turnend-guard.test.sh.
 //
+// Where the keep knob's two readings diverge the twin is asserted on its own:
+// hookTrace's AC_STOPHOOK_LOG_KEEP is strictDecimal (40e4753e), so `010` is
+// ten, never bash's octal eight, and a refusal falls back to 200 - as
+// tests/ts/hook-twins.test.ts asserts for watch-autoarm's identical call.
+//
 // DISPUTED: the implementation of the trace (ac_hook_trace vs src/lib.ts's hookTrace under the guard's catch)
 // HELD-CONSTANT: the home's bytes (copied per side), the hook name and detail, AC_STOPHOOK_LOG_KEEP, PATH (a date stub frozen at one instant ahead of the host's), LC_ALL=C, the cwd
 import { afterAll, expect, test } from "bun:test";
@@ -77,11 +82,24 @@ test("the guard's trace appends the line ac_hook_trace appends, and says nothing
 
 test("the guard's trace trims past twice the keep as ac_hook_trace does", () => {
   const seed = (n: number) => (home: string) => writeFileSync(join(home, "state", ".stop-hooks.log"), Array.from({ length: n }, (_, i) => `old ${i}\n`).join(""));
-  for (const [n, keep] of [[5, "2"], [4, "2"], [3, "2"], [25, "010"], [450, undefined], [3, "0"], [3, "-1"]] as const) {
+  for (const [n, keep] of [[5, "2"], [4, "2"], [3, "2"], [450, undefined], [3, "0"]] as const) {
     const r = both(seed(n), keep);
     expect(r.twin.log).toBe(r.bash.log);
     expect(r.twin.status).toBe(r.bash.status);
   }
+});
+
+test("the guard's trace keep is strictDecimal: 010 is ten, a refusal falls back to 200", () => {
+  const seed = (n: number) => (home: string) => writeFileSync(join(home, "state", ".stop-hooks.log"), Array.from({ length: n }, (_, i) => `old ${i}\n`).join(""));
+  const traceLine = "2027-01-15T08:00:00Z hook=turnend-guard verdict=blocked reason=queued-wakes\n";
+
+  const tenKeep = both(seed(25), "010");
+  expect(tenKeep.twin.log).toBe(`${Array.from({ length: 9 }, (_, i) => `old ${16 + i}\n`).join("")}${traceLine}`);
+  expect(tenKeep.twin.status).toBe(0);
+
+  const refused = both(seed(3), "-1");
+  expect(refused.twin.log).toBe(`${Array.from({ length: 3 }, (_, i) => `old ${i}\n`).join("")}${traceLine}`);
+  expect(refused.twin.status).toBe(0);
 });
 
 test("a keep `$(( ))` cannot read skips the trim; one naming a variable ends the hook", () => {

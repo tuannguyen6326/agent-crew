@@ -1,7 +1,8 @@
-// session.test.ts - the lib.ts twins src/session.ts introduced, held to their
-// bash originals differentially: metaGet against ac_meta_get over the line
-// shapes a meta can carry, and die/warn's byte form. The CLI contract itself
-// (every verb, stdout, stderr, exit) is tests/sh/ac-session.test.sh's.
+// session.test.ts - the lib.ts twins src/session.ts introduced: metaGet held
+// to the values ac_meta_get answered over the line shapes a meta can carry
+// (captured once from bin/ac-lib.sh and fixed here, so the sweep spawns no
+// shell), and its warn/throw against the bash original's. The CLI contract
+// itself (every verb, stdout, stderr, exit) is tests/sh/ac-session.test.sh's.
 import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,55 +11,40 @@ import { metaGet } from "../../src/lib.ts";
 
 const binDir = join(import.meta.dir, "..", "..", "bin");
 
-function bashMetaGet(file: string, key: string): { out: string; rc: number } {
-  const r = Bun.spawnSync(
-    ["bash", "-c", '. "$1/ac-lib.sh"; ac_meta_get "$2" "$3"', "--", binDir, file, key],
-    { stdout: "pipe", stderr: "pipe" },
-  );
-  // The bash side is read in a command substitution by every caller, which
-  // drops the trailing newline; the twin returns the bare value.
-  return { out: r.stdout.toString("latin1").replace(/\n$/, ""), rc: r.exitCode ?? -1 };
-}
-
 test("metaGet reads what ac_meta_get reads, over every line shape a meta carries", () => {
   const dir = mkdtempSync(join(tmpdir(), "ac-session-meta-"));
   try {
-    const cases: Record<string, string> = {
-      plain: "harness=claude\nsession_id=abc\n",
-      lastWins: "worktree=/one\nworktree=/two\n",
-      emptyLastReadsAbsent: "worktree=/one\nworktree=\n",
-      valueKeepsEquals: "window=crew:x=y=z\n",
-      bareKeyLine: "harness\nsession_id=s\n",
-      prefixKeyNoMatch: "harnessx=codex\nharness=claude\n",
-      crlf: "harness=claude\r\nworktree=/wt\r\n",
-      noTrailingNewline: "harness=claude\nsession_id=tail",
-      utf8Path: "worktree=/tmp/đường/dẫn\n",
-      spaces: "worktree= /with space \n",
+    // [body, the keys that read non-empty]; every other key reads "".
+    const cases: Record<string, [string, Record<string, string>]> = {
+      plain: ["harness=claude\nsession_id=abc\n", { harness: "claude", session_id: "abc" }],
+      lastWins: ["worktree=/one\nworktree=/two\n", { worktree: "/two" }],
+      emptyLastReadsAbsent: ["worktree=/one\nworktree=\n", {}],
+      valueKeepsEquals: ["window=crew:x=y=z\n", { window: "crew:x=y=z" }],
+      bareKeyLine: ["harness\nsession_id=s\n", { session_id: "s" }],
+      prefixKeyNoMatch: ["harnessx=codex\nharness=claude\n", { harness: "claude", harnessx: "codex" }],
+      crlf: ["harness=claude\r\nworktree=/wt\r\n", { harness: "claude\r", worktree: "/wt\r" }],
+      noTrailingNewline: ["harness=claude\nsession_id=tail", { harness: "claude", session_id: "tail" }],
+      // The fixture carries real UTF-8 bytes; the twin answers them as latin1.
+      utf8Path: ["worktree=/tmp/đường/dẫn\n", { worktree: Buffer.from("/tmp/đường/dẫn", "utf8").toString("latin1") }],
+      spaces: ["worktree= /with space \n", { worktree: " /with space " }],
     };
-    for (const [name, body] of Object.entries(cases)) {
+    for (const [name, [body, want]] of Object.entries(cases)) {
       const f = join(dir, `${name}.meta`);
-      // utf8: the fixture carries real UTF-8 bytes; the twin reads them as latin1
-      // and must answer the bytes bash answers.
       writeFileSync(f, body, "utf8");
-      for (const key of ["harness", "session_id", "worktree", "window", "harnessx", "missing"]) {
-        const want = bashMetaGet(f, key);
-        expect(want.rc).toBe(0);
-        expect(metaGet(f, key)).toBe(want.out);
-      }
+      for (const key of ["harness", "session_id", "worktree", "window", "harnessx", "missing"])
+        expect([name, key, metaGet(f, key)]).toEqual([name, key, want[key] ?? ""]);
     }
     // Absent at both instants, and a directory where a file was expected:
     // empty, no error - `[ -f ]` fails and the bash returns 0.
     expect(metaGet(join(dir, "gone.meta"), "harness")).toBe("");
     mkdirSync(join(dir, "adir.meta"));
     expect(metaGet(join(dir, "adir.meta"), "harness")).toBe("");
-    expect(bashMetaGet(join(dir, "adir.meta"), "harness")).toEqual({ out: "", rc: 0 });
     // A FIFO with no writer: never opened (a read would wait), empty at once.
     const fifo = join(dir, "fifo.meta");
     expect(Bun.spawnSync(["mkfifo", fifo]).exitCode).toBe(0);
     const t0 = Date.now();
     expect(metaGet(fifo, "harness")).toBe("");
     expect(Date.now() - t0).toBeLessThan(1000);
-    expect(bashMetaGet(fifo, "harness")).toEqual({ out: "", rc: 0 });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

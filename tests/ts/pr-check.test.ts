@@ -466,22 +466,24 @@ test("taskDir resolves every brief layout as ac_task_dir does, and throws its di
     "records/backlog.md": "- [ ] ep3 [EPIC] - the epic (repo: proj)\n- [ ] newstory - a story; epic:ep3 (repo: proj)\n- [ ] orphan - no epic row; epic:nope\n- [ ] selfref - itself; epic:selfref\n- [ ] oldflat - predates nesting; epic:ep3\n",
   });
   process.env.AC_HOME = home;
-  const ids = [
-    "fam-spec", "fam-spec-r2", "fam-r3", "fam-r4", "fam-chief", "fam2-chief", "lonely-chief", "t9", "fam-slug", "wire-e34-fix", "wire-zz", "t1", "nothing",
-    "amb-spec", "amb2", "fam-dup", "fam-spec-arch", "../t1", "a b-spec", "-spec", "fam-tasks-slug",
-    "story", "story-spec", "story-chief", "story-sub", "story-r2", "work", "dup2", "dup2-spec",
-    "newstory", "newstory-spec", "newstory-chief", "orphan", "selfref", "oldflat",
-  ];
-  for (const fam of ["story", "work", "flat", "dup2", "*", "../t1", "", "ep", "newstory", "orphan", "selfref", "oldflat", "ep3"]) {
-    const o = bash('ac_fam_dir "$1"', { AC_HOME: home }, fam);
-    let got: { out: string; err: string; rc: number };
+  // What ac_fam_dir / ac_task_dir answered over this home, captured once from
+  // bin/ac-lib.sh and fixed here so the sweep spawns no shell: the path, or
+  // the die text, with the home spelled <H>.
+  const answer = (f: () => string): string => {
     try {
-      got = { out: `${famDir(fam)}\n`, err: "", rc: 0 };
+      return f().replaceAll(home, "<H>");
     } catch (e) {
-      got = { out: "", err: `ERROR: ${(e as Error).message}\n`, rc: 1 };
+      return `ERROR: ${(e as Error).message.replaceAll(home, "<H>")}`;
     }
-    expect([fam, got]).toEqual([fam, o]);
-  }
+  };
+  const dup2 = "ERROR: ambiguous family data for dup2: dirs at both <H>/data/ep/dup2 and <H>/data/ep2/dup2";
+  const fams: [string, string][] = [
+    ["story", "<H>/data/ep/story"], ["work", "<H>/data/work"], ["flat", "<H>/data/flat"], ["dup2", dup2],
+    ["*", "<H>/data/*"], ["../t1", "<H>/data/../t1"], ["", "<H>/data/"], ["ep", "<H>/data/ep"],
+    ["newstory", "<H>/data/ep3/newstory"], ["orphan", "<H>/data/orphan"], ["selfref", "<H>/data/selfref"],
+    ["oldflat", "<H>/data/oldflat"], ["ep3", "<H>/data/ep3"],
+  ];
+  for (const [fam, want] of fams) expect([fam, answer(() => famDir(fam))]).toEqual([fam, want]);
   expect(famDir("story")).toBe(`${home}/data/ep/story`);
   expect(famDir("work")).toBe(`${home}/data/work`);
   expect(famDir("newstory")).toBe(`${home}/data/ep3/newstory`);
@@ -497,16 +499,23 @@ test("taskDir resolves every brief layout as ac_task_dir does, and throws its di
   expect(taskDir("story-spec")).toBe(`${home}/data/ep/story/spec`);
   expect(taskDir("story-chief")).toBe(`${home}/data/ep/story/chief`);
   expect(taskDir("story-sub")).toBe(`${home}/data/ep/story/tasks/sub`);
-  for (const id of ids) {
-    const o = bash('ac_task_dir "$1"', { AC_HOME: home }, id);
-    let got: { out: string; err: string; rc: number };
-    try {
-      got = { out: `${taskDir(id)}\n`, err: "", rc: 0 };
-    } catch (e) {
-      got = { out: "", err: `ERROR: ${(e as Error).message}\n`, rc: 1 };
-    }
-    expect([id, got]).toEqual([id, o]);
-  }
+  const ids: [string, string][] = [
+    ["fam-spec", "<H>/data/fam/spec"], ["fam-spec-r2", "<H>/data/fam/spec-r2"], ["fam-r3", "<H>/data/fam/implement-r3"],
+    ["fam-r4", "<H>/data/fam-r4"], ["fam-chief", "<H>/data/fam/chief"], ["fam2-chief", "<H>/data/fam2/chief"],
+    ["lonely-chief", "<H>/data/lonely-chief"], ["t9", "<H>/data/t9/implement"], ["fam-slug", "<H>/data/fam/tasks/slug"],
+    ["wire-e34-fix", "<H>/data/wire-e34/tasks/fix"], ["wire-zz", "<H>/data/wire-zz"], ["t1", "<H>/data/t1"], ["nothing", "<H>/data/nothing"],
+    ["amb-spec", "ERROR: ambiguous task data for amb-spec: briefs at both <H>/data/amb/spec and <H>/data/amb-spec"],
+    ["amb2", "ERROR: ambiguous task data for amb2: briefs at both <H>/data/amb2/implement and <H>/data/amb2"],
+    ["fam-dup", "ERROR: ambiguous task data for fam-dup: briefs at both <H>/data/fam/tasks/dup and <H>/data/fam-dup"],
+    ["fam-spec-arch", "<H>/data/fam-spec-arch"], ["../t1", "<H>/data/../t1"], ["a b-spec", "<H>/data/a b-spec"],
+    ["-spec", "<H>/data/-spec"], ["fam-tasks-slug", "<H>/data/fam-tasks-slug"],
+    ["story", "<H>/data/ep/story"], ["story-spec", "<H>/data/ep/story/spec"], ["story-chief", "<H>/data/ep/story/chief"],
+    ["story-sub", "<H>/data/ep/story/tasks/sub"], ["story-r2", "<H>/data/story-r2"], ["work", "<H>/data/work"],
+    ["dup2", dup2], ["dup2-spec", dup2],
+    ["newstory", "<H>/data/ep3/newstory"], ["newstory-spec", "<H>/data/newstory-spec"], ["newstory-chief", "<H>/data/newstory-chief"],
+    ["orphan", "<H>/data/orphan"], ["selfref", "<H>/data/selfref"], ["oldflat", "<H>/data/oldflat"],
+  ];
+  for (const [id, want] of ids) expect([id, answer(() => taskDir(id))]).toEqual([id, want]);
   expect(taskDir("fam-spec")).toBe(`${home}/data/fam/spec`);
   expect(taskDir("fam2-chief")).toBe(`${home}/data/fam2/chief`);
   expect(taskDir("lonely-chief")).toBe(`${home}/data/lonely-chief`);

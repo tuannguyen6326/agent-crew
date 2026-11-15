@@ -1,10 +1,11 @@
 // hook-twins.test.ts - the hook twins of src/lib.ts held to the bash idioms a
 // harness hook reads with, each run by /bin/bash over the same stdin bytes:
 // hookPayload against `payload="$(cat 2>/dev/null || true)"`, hookJq against
-// `$(jq -r <filter> <<<"$payload" 2>/dev/null || true)` and hookCapture
-// against `$(<cmd> 2>/dev/null || true)`, and hookTrace against
-// ac_hook_trace itself. Each ported hook's own contract is its tests/sh
-// suite.
+// `$(jq -r <filter> <<<"$payload" 2>/dev/null || true)` (its payload sweep
+// against that idiom's output captured once and fixed here, so it spawns no
+// shell) and hookCapture against `$(<cmd> 2>/dev/null || true)`, and
+// hookTrace against ac_hook_trace itself. Each ported hook's own contract is
+// its tests/sh suite.
 //
 // DISPUTED: the implementation of each read (the bash idiom vs src/lib.ts's hook twins)
 // HELD-CONSTANT: the stdin bytes, the filter or command, PATH (the host's jq and cat; the no-jq rows drop jq alone; the trace rows a date stub first), LC_ALL=C, HOME, the cwd (a scratch dir), the trace rows' AC_HOME seeded alike per side
@@ -12,6 +13,7 @@ import { afterAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { capturedText, hookJq } from "../../src/lib.ts";
 
 const ROOT = realpathSync(join(import.meta.dir, "..", ".."));
 const LIB = join(ROOT, "src", "lib.ts");
@@ -75,14 +77,17 @@ test("hookPayload reads stdin as the substitution did", () => {
   }
 });
 
+// One answer per PAYLOADS row, in order, as latin1. capturedText is the
+// substitution hookPayload applies to stdin, so the payload reaches hookJq
+// exactly as a hook's read would hand it over.
 test("hookJq answers what jq printed over the here-string, whatever its status", () => {
-  for (const filter of [".tool_name // empty", ".tool_input.file_path // empty", ".tool_input.notebook_path // empty"])
-    for (const p of PAYLOADS) {
-      const r = both("jq", filter, p);
-      expect(r.twin).toEqual(r.bash);
-    }
-  // A partial value before a parse error still counts: the rows are not vacuous.
-  expect(both("jq", ".tool_name // empty", Buffer.from('{"tool_name":"Task"} garbage')).twin.toString()).toBe("Task");
+  const want: Record<string, string[]> = {
+    ".tool_name // empty": ["Task", "Task", "", "", "", "", "Task", "Task", "Task", "Read\nAgent", '{\n  "Agent": 1\n}', "\xef\xbf\xbdAgent", "Edit", "Edit", "Task"],
+    ".tool_input.file_path // empty": ["", "", "", "", "", "", "", "ab", "", "", '[\n  "records/backlog.md"\n]', "r\xef\xbf\xbdcords/x", "records/backlog.md", "", ""],
+    ".tool_input.notebook_path // empty": PAYLOADS.map(() => ""),
+  };
+  for (const [filter, outs] of Object.entries(want))
+    PAYLOADS.forEach((p, i) => expect([filter, i, hookJq(filter, capturedText(p))]).toEqual([filter, i, outs[i]]));
 });
 
 test("hookJq with no jq on PATH reads empty, as the bash did", () => {

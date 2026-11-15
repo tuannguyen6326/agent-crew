@@ -608,24 +608,30 @@ fi
 if command -v lsof >/dev/null 2>&1; then
   repoK="$(make_repo reap)"
   wtK="$("$BIN/ac-tree.sh" get --repo "$repoK" --id rp1 2>/dev/null)"
-  mkfifo "$TMP/reap-gate"
   cat >"$TMP/reap-holder.sh" <<'EOF'
-# $1 worktree, $2 gate fifo. The CHILD keeps its cwd inside the worktree (so
-# the pool's lsof walk finds it) and ignores SIGTERM (so it survives to the
-# SIGKILL leg). The PARENT leaves the tree and execs `sleep`, a process that
+# $1 worktree, $2 ready marker. The CHILD keeps its cwd inside the worktree
+# (so the pool's lsof walk finds it) and ignores SIGTERM - an ignored signal
+# stays ignored across exec, so the `sleep` it becomes survives to the SIGKILL
+# leg. It touches $2 only once that trap is armed: a SIGTERM landing earlier
+# kills it on the first signal, it leaves lsof's walk as a zombie, and the
+# SIGKILL leg never runs. The wait is long because one bash exec has been
+# measured at ~12.8s, intermittently, on a macOS host - holder plus child is
+# two of them, against the flat 0.5s sleep this marker replaced. The PARENT
+# leaves the tree and execs `sleep`, a process that
 # never wait()s - so the SIGKILLed child stays in the process table as an
 # unreaped pid (measured stat=Z, answering kill -0) until the parent is
 # killed. `bash` is no good as that parent: it reaps on SIGCHLD, and the
 # child was gone within 300ms - measured, which is why this exec is here.
 cd "$1" || exit 1
-bash -c 'trap "" TERM; exec 3<>"$1"; read -t 60 _ <&3' _ "$2" &
+bash -c 'trap "" TERM; : >"$1"; exec sleep 60' _ "$2" &
 cd /
 exec sleep 60
 EOF
-  bash "$TMP/reap-holder.sh" "$wtK" "$TMP/reap-gate" >/dev/null 2>&1 &
+  bash "$TMP/reap-holder.sh" "$wtK" "$TMP/reap-ready" >/dev/null 2>&1 &
   parentK=$!
   disown "$parentK"
-  sleep 0.5
+  for _ in $(seq 1 600); do [ -e "$TMP/reap-ready" ] && break; sleep 0.1; done
+  [ -e "$TMP/reap-ready" ] || fail "the reap child never armed its SIGTERM trap"
   outK="$("$BIN/ac-tree.sh" return "$wtK" 2>&1 || true)"
   kill "$parentK" 2>/dev/null || true
   assert_contains "$outK" "still present after SIGKILL" \
