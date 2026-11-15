@@ -270,7 +270,12 @@
 // - the run stays red, and only its own output line says evidence was
 // unavailable. A suite run in flight HOLDS; one whose pane the backend
 // DEFINITELY reports gone is reclaimed (its snapshot, meta, status and
-// handle removed), an unobservable one keeps holding. `suite` runs as its
+// handle removed), as is one whose pane the backend reports ALIVE but whose
+// recorded boot_id (bin/ac-host-boot.sh, a boot-session TOKEN, never a
+// timestamp - its header explains why) differs from the CURRENT one - a
+// reboot restores a pane as a bare shell with no runner inside it, so
+// "alive" alone is not proof the run still goes; an unobservable pane, or
+// either token unreadable, keeps holding. `suite` runs as its
 // own paned task (kind=verify-suite, supervised, outside crew accounting)
 // from an immutable detached worktree at the pinned sha under
 // <root>/.crew/learn-suite-snapshots/<id>, removed on every exit;
@@ -3133,19 +3138,56 @@ const readable = (p: string): boolean => {
   }
 };
 
+// learn_host_boot_token <root>: shells to bin/ac-host-boot.sh, the one
+// boot-SESSION check suiteInflight uses below - null on anything the probe
+// cannot answer for (unrecognised OS, missing/failing source, or its own
+// `unknown` line), never a guess. An opaque token, compared for EQUALITY
+// only - never a timestamp (bin/ac-host-boot.sh's header owns why).
+function hostBootToken(root: string): string | null {
+  const r = run([`${root}/bin/ac-host-boot.sh`], { stdout: "pipe", stderr: "ignore" });
+  const line = subst(r.out).trim();
+  return line === "" || line === "unknown" ? null : line;
+}
+
 // learn_suite_inflight: the id of a suite task still in flight, else null -
-// having reclaimed every one whose pane the backend DEFINITELY reports gone
-// (unobservable keeps holding).
+// having reclaimed every one whose pane the backend DEFINITELY reports gone,
+// and every one whose pane the backend reports ALIVE but whose own recorded
+// boot_id (stamped at suiteLaunch) differs from the CURRENT boot token:
+// herdr restores a pane across a reboot as a bare login shell with no
+// runner inside it, so "alive" alone cannot tell that apart from a run
+// genuinely still going - only a boot-session change can, and only when
+// BOTH tokens are readable (unobservable, or either token unreadable, keeps
+// holding; a run recorded against the CURRENT boot is never reclaimed by
+// this path, whatever its pane answers).
 function suiteInflight(): string | null {
+  let boot: string | null | undefined;
+  const bootToken = (): string | null => {
+    if (boot === undefined) boot = hostBootToken(suiteRoot());
+    return boot;
+  };
   for (const m of glob(stateD(), "verify-suite-", ".meta")) {
     if (!exists(m)) continue;
     const id = basename(m).replace(/\.meta$/, "");
     const b = readable(m) ? metaG(m, "backend") : "";
-    if (windowAliveUnder(b, id) === 1) {
+    const alive = windowAliveUnder(b, id);
+    if (alive === 1) {
       warnB(`the full-suite run ${id} died before recording a verdict (the backend says its pane is gone) - reclaiming it, so the next checkpoint starts a fresh run`);
       snapshotRemove(id);
       rmF(m, b8(taskStatus(u8(id))), `${stateD()}/.pane-${id}`);
       continue;
+    }
+    if (alive === 0) {
+      const recorded = readable(m) ? metaG(m, "boot_id") : "";
+      const current = recorded === "" ? null : bootToken();
+      if (recorded !== "" && current !== null && current !== recorded) {
+        warnB(`the full-suite run ${id} was recorded against an earlier boot session - its pane survived the reboot as a bare shell with no runner inside it, though the backend still reports it alive - reclaiming it, so the next checkpoint starts a fresh run`);
+        try {
+          backendKillWindow(u8(id));
+        } catch {}
+        snapshotRemove(id);
+        rmF(m, b8(taskStatus(u8(id))), `${stateD()}/.pane-${id}`);
+        continue;
+      }
     }
     return id;
   }
@@ -3163,7 +3205,11 @@ function suiteLaunch(): string | null {
   if (made.exited) return null;
   const window = subst(backendCall("target", [u8(id)], { stdin: "inherit", stdout: "pipe", stderr: "inherit" }).out.toString("latin1"));
   const t = tempFile(meta);
-  if (t !== null) putFd(t.fd, `kind=verify-suite\nproject=${basename(root)}\nbackend=${backendName()}\nwindow=${window}\ncwd=${root}\nspawned_at=${isoNow()}\nspawned_epoch=${now()}\n`);
+  if (t !== null)
+    putFd(
+      t.fd,
+      `kind=verify-suite\nproject=${basename(root)}\nbackend=${backendName()}\nwindow=${window}\ncwd=${root}\nspawned_at=${isoNow()}\nspawned_epoch=${now()}\nboot_id=${hostBootToken(root) ?? ""}\n`,
+    );
   statusAppend(u8(id), "started the full-suite gate run");
   if (t !== null) run(["mv", b8(t.path), meta]);
   const saved = process.env.AC_SEND_UNPROVEN;

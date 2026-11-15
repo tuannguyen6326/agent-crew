@@ -793,6 +793,85 @@ assert_no_file "$meta" "a suite still running releases nothing"
 assert_contains "$out" "in flight" "the hold says the run is already going"
 assert_eq "$(suite_tasks | wc -l | tr -d ' ')" "1" "no second suite run while one flies"
 
+# -- a run whose pane survived a REBOOT: ALIVE, but recorded against an
+#    EARLIER boot session - the failure mode a presence check cannot see at
+#    all, because the backend's own answer is "alive". herdr restores a pane
+#    across a reboot as a bare login shell with no runner inside it, so
+#    "alive" stops being proof that the run is still going; only a changed
+#    boot-session token can tell the two cases apart. Both the "earlier"
+#    and the "current" token are synthetic fixtures, never a real host's
+#    boot id.
+boot_stub="$TMP/host-boot-stub"
+mkdir -p "$boot_stub"
+printf '#!/usr/bin/env bash\necho Darwin\n' >"$boot_stub/uname"
+chmod +x "$boot_stub/uname"
+stub_boot_token() { printf '#!/usr/bin/env bash\nprintf "%s\\n"\n' "$1" >"$boot_stub/sysctl"; chmod +x "$boot_stub/sysctl"; }
+save_path="$PATH"
+export PATH="$boot_stub:$PATH"
+
+suite_task_clear
+rm -f "$suite_rec"
+stub_boot_token boot-token-A
+out="$("$BIN/ac-learn.sh" autoroom 2>&1)" || fail "a held autoroom must still exit 0: $out"
+assert_contains "$out" "started the full-suite run" "a fresh run launches, recorded against boot-token-A"
+old_meta="$(suite_tasks)"
+[ -f "$old_meta" ] || fail "the launch under boot-token-A must leave a suite task meta"
+# The relaunch below can mint the SAME second-resolution id (verify-suite-<epoch>)
+# as this one, so "the old meta file is gone" is not a safe assertion;
+# `old_window` (never reused by a fresh launch) is.
+old_window="$(awk -F= '$1=="window"{print $2}' "$old_meta")"
+[ -n "$old_window" ] || fail "the suite task meta must carry its backend window"
+assert_eq "$(awk -F= '$1=="boot_id"{print $2}' "$old_meta")" "boot-token-A" \
+  "the task must stamp the boot session it was launched under"
+
+stub_boot_token boot-token-B
+out="$("$BIN/ac-learn.sh" autoroom 2>&1)" || fail "a held autoroom must still exit 0: $out"
+export PATH="$save_path"
+assert_contains "$out" "recorded against an earlier boot session" \
+  "a pane the backend reports ALIVE, but recorded against boot-token-A while the host now answers boot-token-B, must still be reclaimed - the reclaim names its OWN reason, distinct from the gone-pane reclaim's message"
+assert_contains "$out" "started the full-suite run" "and a fresh run starts after the reboot-survivor is reclaimed"
+assert_eq "$(suite_tasks | wc -l | tr -d ' ')" "1" "exactly one suite task - the fresh one, never the reboot-survivor"
+new_meta="$(suite_tasks)"
+assert_eq "$(awk -F= '$1=="boot_id"{print $2}' "$new_meta")" "boot-token-B" \
+  "the surviving task must be the FRESH launch recorded against the current boot session, not the reclaimed boot-token-A one - true even on a same-second id collision with the reclaimed run"
+new_window="$(awk -F= '$1=="window"{print $2}' "$new_meta")"
+[ "$new_window" != "$old_window" ] || fail "the reboot-survivor's pane must be abandoned for a genuinely new one, never reused by the fresh launch"
+suite_task_clear
+
+# -- the same boot session, no reboot at all: ALIVE and the recorded token
+#    still matches - the gate must keep holding, never reclaim a run that is
+#    genuinely still going. This is the one direction that must never flip.
+rm -f "$suite_rec"
+export PATH="$boot_stub:$PATH"
+stub_boot_token boot-token-C
+out="$("$BIN/ac-learn.sh" autoroom 2>&1)" || fail "a held autoroom must still exit 0: $out"
+same_meta="$(suite_tasks)"
+[ -f "$same_meta" ] || fail "the launch under boot-token-C must leave a suite task meta"
+out="$("$BIN/ac-learn.sh" autoroom 2>&1)" || fail "a held autoroom must still exit 0: $out"
+export PATH="$save_path"
+assert_file "$same_meta" "an unchanged boot session must never reclaim a run genuinely still going"
+assert_contains "$out" "in flight" "the hold says the run is already going - no reclaim on a matching token"
+assert_eq "$(suite_tasks | wc -l | tr -d ' ')" "1" "still exactly one suite task - nothing reclaimed, nothing relaunched"
+suite_task_clear
+
+# -- the host-boot probe answers unknown: ALIVE and a recorded token, but no
+#    current one to compare it against - the gate must keep holding, never
+#    reclaim on a guess.
+rm -f "$suite_rec"
+export PATH="$boot_stub:$PATH"
+stub_boot_token boot-token-D
+out="$("$BIN/ac-learn.sh" autoroom 2>&1)" || fail "a held autoroom must still exit 0: $out"
+unknown_meta="$(suite_tasks)"
+[ -f "$unknown_meta" ] || fail "the launch under boot-token-D must leave a suite task meta"
+printf '#!/usr/bin/env bash\nexit 1\n' >"$boot_stub/sysctl"
+chmod +x "$boot_stub/sysctl"
+out="$("$BIN/ac-learn.sh" autoroom 2>&1)" || fail "a held autoroom must still exit 0: $out"
+export PATH="$save_path"
+assert_file "$unknown_meta" "an unreadable current boot token must never reclaim a run genuinely still going"
+assert_contains "$out" "in flight" "the hold says the run is already going - no reclaim with no current token to compare"
+assert_eq "$(suite_tasks | wc -l | tr -d ' ')" "1" "still exactly one suite task - nothing reclaimed, nothing relaunched"
+suite_task_clear
+
 # -- a run that DIED: only a DEFINITE gone reclaims it ------------------------
 # The one failure mode a presence check cannot heal. cmd_suite retires its own
 # identity when it FINISHES, never when it is KILLED, so a SIGKILLed pane (a
