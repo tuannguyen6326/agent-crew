@@ -9,17 +9,18 @@
 #     ac_crew_branch collapses every stage/revision id in a family onto ONE
 #     branch, so the fresh-crewmate-on-the-crew-branch recovery of the
 #     delivery-review skill legitimately continues it.
+# The guard reads git alone, before any window/lease - the backend that will
+# host the crewmate's pane never enters the decision.
 
 # Fail-closed sourcing: unsourced (suite run outside tests/sh/), errexit is never
 # armed and $AC_HOME is the operator's REAL fleet home - abort instead.
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
-make_fake_herdr
-# ac-spawn.sh's own no-config default is herdr (src/spawn.ts), unlike
-# ac_backend's general ladder (bin/ac-backend.sh, now orca) - pin explicitly
-# so this section does not depend on that one entry's own default.
-printf 'herdr\n' >"$AC_HOME/config/backend"
+make_fake_orca
+printf '\342\234\263 fake\n' >"$FAKE_ORCA/.default-title"
+# Pinned explicitly so this section does not depend on the no-config default.
+printf 'orca\n' >"$AC_HOME/config/backend"
 make_home
 repo="$(make_repo proj)"
 
@@ -29,11 +30,10 @@ export AC_SPAWN_SETTLE=0
 # kickoff_wait_input_ready) immediately - this suite is not testing that gate
 # (tests/sh/ac-spawn-kickoff-ready.test.sh owns it), it just needs its spawns to
 # complete without a real harness's boot delay.
-: >"$FAKE_HERDR/.pane-idle-by-default"
 export AC_KICKOFF_READY_BUDGET=5
 
 # A claude stub so the spawns below pass ac-spawn's command -v check; the fake
-# herdr never executes the launch line.
+# orca never executes the launch line.
 mkdir -p "$TMP/stub"
 printf '#!/usr/bin/env bash\nsleep 300\n' >"$TMP/stub/claude"
 chmod +x "$TMP/stub/claude"
@@ -65,18 +65,20 @@ case "$("$BIN/ac-tree.sh" list --repo "$repo" 2>/dev/null || true)" in
 esac
 
 # --- a LIVE family sibling owns the branch => no refusal -----------------------
-# c2 is in flight and commits on crew/c2; c2-r2 is the fresh execution crewmate
-# that continues that same branch (delivery-review skill recovery). Refusing it
-# would tell the operator to delete a branch holding live unlanded work.
-"$BIN/ac-brief.sh" c2 proj --mode local-only >/dev/null
-"$BIN/ac-spawn.sh" c2 "$repo" --harness claude >/dev/null 2>&1
+# c2 committed onto crew/c2 and its own pane is gone (a worktree can check out
+# a branch only once, so a real c2 lease would collide with c2-r2's own); its
+# meta is a fixture stand-in for the live family member, same convention as
+# c3-chief below. c2-r2 is the fresh execution crewmate that continues that
+# branch (delivery-review skill recovery) - refusing it would tell the
+# operator to delete a branch holding live unlanded work.
 git -C "$repo" branch crew/c2 main
+printf 'kind=ship\n' >"$AC_HOME/state/c2.meta"
 "$BIN/ac-brief.sh" c2-r2 proj --mode local-only --stage implement --captain-requested 'test fixture: staged pinned by the captain' --reason 'fixture: exercising the staged path' >/dev/null
 "$BIN/ac-spawn.sh" c2-r2 "$repo" --harness claude >/dev/null 2>&1
 assert_file "$AC_HOME/state/c2-r2.meta" \
   "a branch a live family sibling owns is continued, not refused"
 "$BIN/ac-teardown.sh" c2-r2 --force >/dev/null 2>&1
-"$BIN/ac-teardown.sh" c2 --force >/dev/null 2>&1
+rm -f "$AC_HOME/state/c2.meta"
 
 # --- the family's ROOMCHIEF owns no crew branch ---------------------------------
 # A promoted family's chief commits nothing on crew/<family>, yet once its own
@@ -91,21 +93,5 @@ err="$("$BIN/ac-spawn.sh" c3 "$repo" --harness claude 2>&1 1>/dev/null || true)"
 assert_contains "$err" "branch -D crew/c3" "a live roomchief does not own the stale crew branch - the spawn still refuses"
 assert_no_file "$AC_HOME/state/c3.meta" "...writing no meta"
 rm -f "$AC_HOME/state/c3-chief.meta"
-
-# --- the branch check is the same on an orca-backend fleet -----------------
-# The ref collision guard reads git alone, before any window/lease - the
-# backend that will host the crewmate's pane never enters the decision, so
-# one orca-pinned repeat of the core refusal is this contract's whole orca
-# obligation.
-make_fake_orca
-printf '\342\234\263 fake\n' >"$FAKE_ORCA/.default-title"
-printf 'orca\n' >"$AC_HOME/config/backend"
-git -C "$repo" branch crew/c4 main
-sha4="$(git -C "$repo" rev-parse --verify crew/c4)"
-"$BIN/ac-brief.sh" c4 proj --mode local-only >/dev/null
-err="$("$BIN/ac-spawn.sh" c4 "$repo" --harness claude 2>&1 1>/dev/null || true)"
-assert_contains "$err" "crew/c4" "orca: the refusal names the colliding ref"
-assert_no_file "$AC_HOME/state/c4.meta" "orca: the refused spawn writes no meta"
-assert_eq "$(git -C "$repo" rev-parse --verify crew/c4)" "$sha4" "orca: spawn never renames or deletes the ref either"
 
 pass

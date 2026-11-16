@@ -94,8 +94,8 @@ case "$line" in *"AC_FLEET_SCOPE"*) fail "an unscoped spawn must export no AC_FL
 assert_eq "$(awk -F= '$1=="fleet_scope"{print $2}' "$AC_HOME/state/m0.meta")" "" \
   "an unscoped spawn records no fleet_scope (byte-identical meta for a non-epic task)"
 # AC_FLEET_NAME rides the same rung and for the same reason: with no AC_HOME the
-# herdr workspace label a crewmate's observation tabs resolve (ac_fleet_name)
-# fell back to the one group every fleet on the box shares. The fixture home is
+# fleet token a crewmate's own panes are titled with (ac_fleet_name) falls
+# back to the one group every fleet on the box shares. The fixture home is
 # $TMP/home, so the fleet is "home".
 assert_contains "$line" "AC_FLEET_NAME=home" "the fleet name rides every crewmate launch line"
 # The codegraph front-load prompt-hook kill-switch rides the same rung: not a
@@ -267,37 +267,13 @@ case "$line" in *"/effort ultracode"*) fail "custom launch-claude must not get t
 "$BIN/ac-teardown.sh" uct --force >/dev/null 2>&1
 rm -f "$AC_HOME/config/launch-claude"
 
-# --- ultracode strand: an unacknowledged '/effort ultracode' line WITHHOLDS the
-# kickoff prompt (typing it would append to the stranded line and garble both -
-# the eaten-kickoff incident shape) and warns loudly. STAYS ON FAKE HERDR:
-# make_fake_orca's own .drop-enters (tests/sh/helpers.sh) is a bare count
-# with no pattern field (unlike fake herdr's "<count> <pattern>"), so it
-# cannot target the slash line's Enter alone - a count armed from the start
-# also swallows the LAUNCH LINE's own Enter first, which strands the WRONG
-# text and fails this case with ac-backend's generic "submit not
-# acknowledged" instead of the kickoff-specific warning this case exists to
-# prove.
-make_fake_herdr
-: >"$FAKE_HERDR/.pane-idle-by-default"
-printf 'herdr\n' >"$AC_HOME/config/backend"
-n="$(cat "$FAKE_HERDR/.n" 2>/dev/null || printf 0)"; upane="p$((n + 1))"
-printf '99 /effort\n' >"$FAKE_HERDR/panes/$upane.drop-enters"
-"$BIN/ac-brief.sh" u2 proj --mode local-only >/dev/null
-out="$("$BIN/ac-spawn.sh" u2 "$repo" --harness claude --effort ultracode 2>&1)"
-assert_contains "$out" "spawned u2" "spawn survives the stranded slash line"
-# Needle names the SLASH LINE. ac-spawn.sh deliver_kickoff's GENERIC "kickoff pointer NOT
-# acknowledged" contains a bare "NOT acknowledged" too, and a bare needle
-# measurably let it answer for this one: with the warning below AND its
-# kickoff-withhold deleted, the kickoff was delivered, its Enter was dropped
-# in turn, the generic warning fired - and this assertion stayed green over a warning that
-# was gone.
-assert_contains "$out" "'/effort ultracode' NOT acknowledged" "stranded '/effort ultracode' warns loudly"
-assert_contains "$out" "ac-send.sh u2" "warning names the manual fallback"
-assert_contains "$(cat "$FAKE_HERDR/panes/$upane.in")" "/effort ultracode" "slash line sits stranded in the composer"
-case "$(cat "$FAKE_HERDR/panes/$upane.in")" in *"kickoff order at"*) \
-  fail "the kickoff prompt must be WITHHELD after a stranded slash line" ;; esac
-"$BIN/ac-teardown.sh" u2 --force >/dev/null 2>&1
-printf 'orca\n' >"$AC_HOME/config/backend"
+# GAP, not ported: the ultracode-strand case (an unacknowledged '/effort
+# ultracode' line WITHHOLDS the kickoff prompt and warns loudly) needed fake
+# herdr's "<count> <pattern>" .drop-enters to target the slash line's Enter
+# alone - make_fake_orca's own .drop-enters (tests/sh/helpers.sh) is a bare
+# count with no pattern field, and a count armed from the start would instead
+# swallow the LAUNCH LINE's own Enter first, stranding the wrong text. No
+# orca-shaped fixture exists for this case.
 
 # --- AC_FLEET_HOME_CHECKED / AC_FLEET_PROJECT_CONFIG: ac-spawn.sh resolves the
 # project's pipeline config with its OWN real AC_HOME and hands the answer to

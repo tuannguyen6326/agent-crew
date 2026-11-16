@@ -4,22 +4,22 @@
 # INSTALL in src/spawn.ts's header):
 #   - no key => nothing runs and the meta carries no deps= (the spawn as before),
 #   - exit 0 on a clean tree => deps=ok, the command ran in the worktree with
-#     AC_LEASE_PRIMARY naming the primary checkout,
+#     AC_LEASE_PRIMARY naming the primary checkout, the orca-leased worktree
+#     named,
 #   - a non-zero exit, a timeout or a tree the command left dirty => the spawn
 #     still succeeds, one WARN names the cause (the dirty paths), the meta
 #     carries deps=failed and the kickoff tells the crewmate to install itself,
-#   - a scout never installs; an orca lease installs the same way.
+#   - a scout never installs.
 
 # Fail-closed sourcing: unsourced (suite run outside tests/sh/), errexit is never
 # armed and $AC_HOME is the operator's REAL fleet home - abort instead.
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
-make_fake_herdr
+make_fake_orca
+printf '\342\234\263 fake\n' >"$FAKE_ORCA/.default-title"
 export AC_SPAWN_SETTLE=0
-: >"$FAKE_HERDR/.pane-idle-by-default"
 export AC_KICKOFF_READY_BUDGET=5
-export AC_HERDR_RPC_TIMEOUT=10
 
 make_home
 repo="$(make_repo proj)"
@@ -49,6 +49,7 @@ case "$(cat "$AC_HOME/data/n1/kickoff.md")" in *"$NOTE"*) fail "no key must add 
 set_install "'mkdir -p node_modules && pwd -P >node_modules/where && printf %s \"\$AC_LEASE_PRIMARY\" >node_modules/primary'"
 spawn i1
 wt="$(meta_field "$AC_HOME/state/i1.meta" worktree)"
+case "$wt" in "$FAKE_ORCA/orca-wt/"*) ;; *) fail "fixture: the worktree must be orca-managed (got: $wt)" ;; esac
 assert_eq "$(cat "$wt/node_modules/where" 2>/dev/null)" "$(cd "$wt" && pwd -P)" "the install runs with the worktree as its cwd"
 assert_eq "$(cat "$wt/node_modules/primary" 2>/dev/null)" "$repo" "AC_LEASE_PRIMARY names the primary checkout"
 assert_eq "$(meta_field "$AC_HOME/state/i1.meta" deps)" "ok" "a clean successful install records deps=ok"
@@ -89,17 +90,5 @@ set_install '"exit 3"'
 "$BIN/ac-spawn.sh" sc1 "$repo" --harness fake --scout >/dev/null 2>"$TMP/sc1.err" || fail "the scout spawn must succeed"
 assert_eq "$(meta_field "$AC_HOME/state/sc1.meta" deps)" "" "a scout records no deps="
 "$BIN/ac-teardown.sh" sc1 --force >/dev/null 2>&1
-
-# --- an orca lease installs the same way --------------------------------------------
-make_fake_orca
-printf '\342\234\263 fake\n' >"$FAKE_ORCA/.default-title"
-printf 'orca\n' >"$AC_HOME/config/backend"
-set_install "'mkdir -p node_modules && printf %s \"\$AC_LEASE_PRIMARY\" >node_modules/primary'"
-spawn o1
-owt="$(meta_field "$AC_HOME/state/o1.meta" worktree)"
-case "$owt" in "$FAKE_ORCA/orca-wt/"*) ;; *) fail "fixture: the worktree must be orca-managed (got: $owt)" ;; esac
-assert_eq "$(cat "$owt/node_modules/primary" 2>/dev/null)" "$repo" "the orca lease runs the install with the primary named"
-assert_eq "$(meta_field "$AC_HOME/state/o1.meta" deps)" "ok" "the orca lease records deps=ok"
-"$BIN/ac-teardown.sh" o1 --force >/dev/null 2>&1
 
 pass

@@ -11,14 +11,17 @@
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
-make_fake_herdr
-# ac-spawn.sh's own no-config default is herdr (src/spawn.ts), unlike
-# ac_backend's general ladder (bin/ac-backend.sh, now orca) - pin explicitly
-# so this section does not depend on that one entry's own default.
-printf 'herdr\n' >"$AC_HOME/config/backend"
+make_fake_orca
+# Pinned explicitly so this section does not depend on the no-config default.
+printf 'orca\n' >"$AC_HOME/config/backend"
 export AC_SPAWN_SETTLE=0
 make_home
 repo="$(make_repo proj)"
+# Every orca spawn mints a startup terminal (closed right after) before the
+# crew's own, so the crew terminal is always the SECOND tick of the shared
+# $FAKE_ORCA/.n counter for that spawn - a knob armed on n+1 would silently
+# target a terminal nothing ever reads.
+onext() { local n; n="$(cat "$FAKE_ORCA/.n" 2>/dev/null || printf 0)"; printf 'term%s\n' "$((n + 2))"; }
 
 # --- a composer that becomes ready after a short delay: waited for, delivered correctly ---
 # Before this gate existed, deliver_kickoff typed the kickoff the instant the
@@ -34,14 +37,16 @@ repo="$(make_repo proj)"
 # git-stash the bin/ac-spawn.sh diff and re-run this file - the assertion
 # below is what fails). With the fix, kickoff_wait_input_ready holds off
 # typing anything until the composer is confirmed ready, so the prompt lands
-# only once the drop window has closed.
-n="$(cat "$FAKE_HERDR/.n" 2>/dev/null || echo 0)"
-p="p$((n + 1))"
-printf '2\n' >"$FAKE_HERDR/panes/$p.delay-ready-secs"
+# only once the drop window has closed. kickoffWaitInputReady (src/spawn.ts)
+# proves UP and IDLE off the orca terminal's TITLE alone (harnessUp's
+# spinner/✳ match, agentIdle's same two) - make_fake_orca's .delay-ready-secs
+# models exactly that, send-drop included.
+t="$(onext)"
+printf '2\n' >"$FAKE_ORCA/terminals/$t.delay-ready-secs"
 "$BIN/ac-brief.sh" ready1 proj --mode local-only >/dev/null
 out="$("$BIN/ac-spawn.sh" ready1 "$repo" --harness claude --mode local-only 2>&1)"
 assert_contains "$out" "spawned ready1" "a delayed-ready composer still spawns once ready"
-assert_contains "$(cat "$(fake_pane_buf ready1)")" \
+assert_contains "$(cat "$(fake_orca_buf ready1)")" \
   "kickoff order at" \
   "the kickoff pointer reaches the transcript once the composer surface is confirmed ready - not before"
 "$BIN/ac-teardown.sh" ready1 --force >/dev/null 2>&1
@@ -59,10 +64,9 @@ rm -rf "$AC_HOME/state/.wake-spool"
 # report success, never type blind. AC_KICKOFF_READY_BUDGET keeps the wait
 # bounded and the suite fast (real default is 60s).
 export AC_KICKOFF_READY_BUDGET=2
-n="$(cat "$FAKE_HERDR/.n" 2>/dev/null || echo 0)"
-p="p$((n + 1))"
-printf '9999\n' >"$FAKE_HERDR/panes/$p.delay-ready-secs"
-: >"$FAKE_HERDR/log"
+t="$(onext)"
+printf '9999\n' >"$FAKE_ORCA/terminals/$t.delay-ready-secs"
+: >"$FAKE_ORCA/log"
 "$BIN/ac-brief.sh" never1 proj --mode local-only >/dev/null
 rc=0
 err="$("$BIN/ac-spawn.sh" never1 "$repo" --harness claude --mode local-only 2>&1)" || rc=$?
@@ -71,26 +75,26 @@ assert_contains "$err" "input surface did NOT become ready" "the failure names w
 assert_contains "$err" "REFUSED" "the failure says the spawn is refused"
 assert_no_file "$AC_HOME/state/never1.meta" "a refused spawn leaves no task in flight"
 assert_contains "$(cat "$AC_HOME/state/never1.status")" "failed:" "the status log records the failure"
-case "$(cat "$FAKE_HERDR/log")" in
+case "$(cat "$FAKE_ORCA/log")" in
   *"kickoff order at"*)
     fail "the kickoff pointer must never be typed into a composer that was never confirmed ready" ;;
 esac
 
-# --- an UNOBSERVABLE composer (herdr cannot be read at all): warns, proceeds -
+# --- an UNOBSERVABLE composer (the backend cannot be read at all): warns, proceeds -
 # The three probe states are never collapsed (design decision this family is
 # bound to): a budget expiring because the backend cannot be READ is not the
 # same fact as a budget expiring on a confirmed-alive-but-frozen harness, and
-# must not refuse the spawn - that would ground the fleet on a herdr hiccup.
+# must not refuse the spawn - that would ground the fleet on a backend hiccup.
 export AC_KICKOFF_READY_BUDGET=2
-: >"$FAKE_HERDR/.probe-unreadable"
-: >"$FAKE_HERDR/log"
+: >"$FAKE_ORCA/.terminal-api-down"
+: >"$FAKE_ORCA/log"
 "$BIN/ac-brief.sh" blind2 proj --mode local-only >/dev/null
 rc=0
 err="$("$BIN/ac-spawn.sh" blind2 "$repo" --harness claude --mode local-only 2>&1 >/dev/null)" || rc=$?
 assert_eq "$rc" "0" "an unobservable input-surface probe is not evidence of a frozen composer - the spawn stands"
 assert_contains "$err" "input surface became ready" "the readiness gate names what it could not verify"
-rm -f "$FAKE_HERDR/.probe-unreadable"
-assert_contains "$(cat "$(fake_pane_buf blind2)")" \
+rm -f "$FAKE_ORCA/.terminal-api-down"
+assert_contains "$(cat "$(fake_orca_buf blind2)")" \
   "kickoff order at" "an unobservable probe still delivers the kickoff pointer"
 # The fail-open delivery leaves a DURABLE trail, not only stderr WARNs: a
 # status stamp the chief can read back, and ONE wake so the chief is TOLD
@@ -101,34 +105,5 @@ grep -rq 'kickoff-unverified' "$AC_HOME/state/.wake-spool" 2>/dev/null \
   || fail "an unverified delivery publishes a kickoff-unverified wake"
 assert_eq "$(grep -rl 'kickoff-unverified' "$AC_HOME/state/.wake-spool" 2>/dev/null | wc -l | tr -d ' ')" "1" \
   "exactly ONE wake per spawn, however many probes went unobservable"
-
-# --- orca: a composer that becomes ready after a short delay -------------------
-# kickoffWaitInputReady (src/spawn.ts) proves UP and IDLE off the orca
-# terminal's TITLE alone (harnessUp's spinner/✳ match, agentIdle's same two) -
-# make_fake_orca's .delay-ready-secs (tests/sh/helpers.sh) models exactly
-# that, with the send-drop half ported WHOLE from herdr's own knob: without
-# the drop, a send typed blind during the delay would still land, so this
-# would pass whether or not the production gate ever ran.
-make_fake_orca
-printf 'orca\n' >"$AC_HOME/config/backend"
-# A comfortable budget again - the first (herdr) scenario above ran at the
-# generous production default (60s) and only the later herdr scenarios
-# shrank it to 2, which this suite never widens back; a 2s delay needs more
-# than a 2s budget to also clear the three-tick stabilization afterward.
-export AC_KICKOFF_READY_BUDGET=10
-# The crew's own terminal is the SECOND one orca's worktree lease mints: the
-# lease's own startup terminal (closed right after) takes the first tick of
-# the shared $FAKE_ORCA/.n counter, so +1 here would silently arm the knob on
-# a terminal nothing ever reads.
-n="$(cat "$FAKE_ORCA/.n" 2>/dev/null || printf 0)"
-t="term$((n + 2))"
-printf '2\n' >"$FAKE_ORCA/terminals/$t.delay-ready-secs"
-"$BIN/ac-brief.sh" oready1 proj --mode local-only >/dev/null
-out="$("$BIN/ac-spawn.sh" oready1 "$repo" --harness claude --mode local-only 2>&1)"
-assert_contains "$out" "spawned oready1" "orca: a delayed-ready composer still spawns once ready"
-assert_contains "$(cat "$(fake_orca_buf oready1)")" \
-  "kickoff order at" \
-  "orca: the kickoff pointer reaches the transcript only once the terminal's title confirms ready"
-"$BIN/ac-teardown.sh" oready1 --force >/dev/null 2>&1
 
 pass
