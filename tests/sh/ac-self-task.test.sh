@@ -15,15 +15,12 @@
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
-make_fake_herdr
+make_fake_orca
+printf '\342\234\263 fake\n' >"$FAKE_ORCA/.default-title"
 make_home
 repo="$(make_repo proj)"
 state="$AC_HOME/state"
-# The worktree-pool lease (below, through the window-liveness ladder) is only
-# reachable on a herdr-backend fleet (src/self-task.ts routes an orca fleet to
-# the Orca CLI lease instead, proven further down) - pin it explicitly rather
-# than lean on the no-config default, which now resolves orca.
-printf 'herdr\n' >"$AC_HOME/config/backend"
+printf 'orca\n' >"$AC_HOME/config/backend"
 
 # --- start: worktree + pane + meta, all before the first edit ------------------
 out="$("$BIN/ac-self-task.sh" start s1 "$repo")"
@@ -31,8 +28,8 @@ assert_contains "$out" "self-task s1" "start reports the task it opened"
 assert_file "$state/s1.meta" "start writes the task meta"
 assert_eq "$(awk -F= '$1=="kind"{print $2}' "$state/s1.meta")" self "the meta records kind=self"
 worktree="$(awk -F= '$1=="worktree"{print $2}' "$state/s1.meta")"
-[ -n "$worktree" ] && [ -d "$worktree" ] || fail "start leases a pooled worktree and records it"
-case "$worktree" in "$repo"/.crew/worktrees/*) ;; *) fail "the lease must come from the repo's own pool: $worktree" ;; esac
+[ -n "$worktree" ] && [ -d "$worktree" ] || fail "start leases an orca worktree and records it"
+case "$worktree" in "$FAKE_ORCA/orca-wt/"*) ;; *) fail "the lease must be orca-managed: $worktree" ;; esac
 assert_eq "$(awk -F= '$1=="leases"{print $2}' "$state/s1.meta")" "$worktree" \
   "the lease is recorded so teardown gives it back"
 assert_eq "$(awk -F= '$1=="project_dir"{print $2}' "$state/s1.meta")" "$repo" \
@@ -42,10 +39,12 @@ assert_eq "$(awk -F= '$1=="mode"{print $2}' "$state/s1.meta")" "local-only" \
   "an unflagged start keeps the local-only default"
 
 # The pane tails the progress log - that is the whole of "the pane shows chief
-# progress"; no agent runs in it.
-pane="$(cat "$(fake_pane_buf s1)")"
-assert_contains "$pane" "tail -f" "the pane tails the progress log"
-assert_contains "$pane" "$state/s1.status" "the pane tails THIS task's progress log"
+# progress"; no agent runs in it. The tail is the orca terminal's OWN command
+# (--command at create, logged as "exec tail -f ..."), never typed into the
+# buffer after boot.
+log="$(cat "$FAKE_ORCA/log")"
+assert_contains "$log" "exec tail -f" "the pane tails the progress log"
+assert_contains "$log" "$state/s1.status" "the pane tails THIS task's progress log"
 
 # --- log: the chief's progress reaches the pane and every fleet view ----------
 "$BIN/ac-self-task.sh" log s1 'working: edited bin/ac-foo.sh'
@@ -65,7 +64,7 @@ case "$("$BIN/ac-guard.sh" 2>&1)" in
   *WATCHER-DOWN*) fail "a self task alone must not raise WATCHER-DOWN" ;;
 esac
 # ...and the watcher does not poll it for captain markers.
-printf 'done: chief finished the edit\n' >>"$(fake_pane_buf s1)"
+printf 'done: chief finished the edit\n' >>"$(fake_orca_buf s1)"
 case "$(bash "$BIN/ac-watch.sh" --once 2>/dev/null || true)" in
   *s1*) fail "the watcher must not wake on a pane no agent lives in" ;;
 esac
@@ -116,14 +115,17 @@ assert_contains "$err" "branch -D crew/s3" "the refusal states the delete comman
 assert_no_file "$state/s3.meta" "the refused start writes no meta"
 assert_eq "$(git -C "$repo" rev-parse --verify crew/s3)" "$sha" \
   "start never renames or deletes the ref - that is the operator's call"
-case "$("$BIN/ac-tree.sh" list --repo "$repo" 2>/dev/null || true)" in
-  *"self:s3"*) fail "the refused start must not leak a worktree lease" ;;
-esac
+[ ! -d "$FAKE_ORCA/orca-wt/crew-s3" ] || fail "the refused start must not leak a worktree lease"
 
 # a LIVE family sibling owns the branch => start proceeds (the same <fam>-r2
 # recovery property the delivery-review skill sanctions on the spawn side).
+# The orca lease for s4 already minted crew/s4; familyOwned reads the LIVE
+# META, not the worktree, so freeing the git-level worktree claim (never
+# torn down - s4.meta stays in flight) lets the revision's own lease switch
+# to the same branch instead of colliding on it.
 "$BIN/ac-self-task.sh" start s4 "$repo" >/dev/null
-git -C "$repo" branch crew/s4 main
+s4wt="$(awk -F= '$1=="worktree"{print $2}' "$state/s4.meta")"
+git -C "$repo" worktree remove "$s4wt"
 "$BIN/ac-self-task.sh" start s4-r2 "$repo" >/dev/null
 assert_file "$state/s4-r2.meta" \
   "a branch a live family sibling owns is continued, not refused"
@@ -138,9 +140,7 @@ printf '# Backlog\n## Queued\n## Done\n- [x] s1 - the first slice\n' >"$AC_HOME/
 "$BIN/ac-teardown.sh" s1 --no-lesson 'fixture' --no-fact 'fixture' >/dev/null 2>&1 \
   || fail "teardown must land a clean self task"
 assert_no_file "$state/s1.meta" "teardown archives the self task's meta"
-case "$("$BIN/ac-tree.sh" list --repo "$repo" 2>/dev/null || true)" in
-  *"self:s1"*) fail "teardown must give the self task's lease back" ;;
-esac
+[ ! -d "$FAKE_ORCA/orca-wt/crew-s1" ] || fail "teardown must give the self task's lease back"
 
 # --- the leased worktree is seeded like a crewmate's -------------------------
 # The chief/solo works the tree itself (or the captain opens a session INSIDE
@@ -199,14 +199,9 @@ err="$("$BIN/ac-self-task.sh" start s6 "$repo" --mode bogus 2>&1 1>/dev/null || 
 assert_contains "$err" "invalid --mode" "an unknown mode refuses rather than records nonsense"
 assert_no_file "$state/s6.meta" "the refused start writes no meta"
 
-# --base-branch only ever reaches the orca lease call site; on a herdr fleet
-# (the ambient default here) it would otherwise silently no-op instead of
-# failing loud - the exact silent-outcome defect this fleet's own
-# conventions refuse.
-err="$("$BIN/ac-self-task.sh" start s7 "$repo" --base-branch release 2>&1 1>/dev/null || true)"
-assert_contains "$err" "requires an orca-backend fleet" \
-  "--base-branch on a herdr-backend fleet must die, not silently no-op"
-assert_no_file "$state/s7.meta" "the refused start writes no meta"
+# --base-branch's positive thread-through (the fleet is orca-backed
+# throughout this suite now) is proven below in the orca section (so2) -
+# there is no herdr fleet left to prove the silent-no-op defect against.
 
 # --- the lease install: commands.install runs before the slice's first edit ---
 # (contract: src/self-task.ts step 2). No key records no deps= (s1 above).
@@ -285,84 +280,43 @@ case "$(cat "$FAKE_ORCA/log")" in
   *"worktree rm"*) fail "a lease that never happened must release nothing: $(cat "$FAKE_ORCA/log")" ;;
 esac
 
-printf 'herdr
-' >"$AC_HOME/config/backend"
-
 # --- window-liveness contract (bin/ac-backend.sh WINDOW LIVENESS): only a ----
 # --- DEFINITE code may proceed; everything else (127 included) refuses ------
 
 # rc=0 (a genuinely alive orphan pane, the shape an interrupted start with no
 # meta yet written would leave behind) still refuses "already exists" - the
 # case's 0) branch is untouched by the 127 fix below.
-printf 'pOR1 tOR1\n' >"$state/.pane-or1"
-printf 'pOR1\n' >"$FAKE_HERDR/tabs/tOR1"
-: >"$FAKE_HERDR/panes/pOR1.buf"
+printf 'pOR1 tabOR1\n' >"$state/.pane-or1"
+: >"$FAKE_ORCA/terminals/pOR1.buf"
 err="$("$BIN/ac-self-task.sh" start or1 "$repo" 2>&1 1>/dev/null || true)"
 assert_contains "$err" "already exists" "a genuinely alive orphan pane still refuses as before"
 assert_no_file "$state/or1.meta" "the refused start leaves no task in flight"
-rm -f "$state/.pane-or1" "$FAKE_HERDR/tabs/tOR1" "$FAKE_HERDR/panes/pOR1.buf"
+rm -f "$state/.pane-or1" "$FAKE_ORCA/terminals/pOR1.buf"
 
-# rc=2 (an unreadable backend) still refuses exactly as it does today.
-printf 'pOR2 tOR2\n' >"$state/.pane-or2"
-printf 'pOR2\n' >"$FAKE_HERDR/tabs/tOR2"
-: >"$FAKE_HERDR/panes/pOR2.buf"
-touch "$FAKE_HERDR/.unreachable"
-err="$("$BIN/ac-self-task.sh" start or2 "$repo" 2>&1 1>/dev/null || true)"
-rm -f "$FAKE_HERDR/.unreachable"
-assert_contains "$err" "could not be READ" "an unreadable backend still refuses exactly as before"
-assert_no_file "$state/or2.meta" "the refused start leaves no task in flight"
-rm -f "$state/.pane-or2" "$FAKE_HERDR/tabs/tOR2" "$FAKE_HERDR/panes/pOR2.buf"
-
-# Any code but 0 and 1 must refuse the SAME way, never proceed to open the pane
-# (contract: ac-backend.sh WINDOW LIVENESS). This row once drove a driver that
-# failed to LOAD (bash's 127, through a lab bin/ with the herdr driver
-# renamed); the backend verbs are native now (src/lib.ts backendCall), so no
-# driver can fail to load, and the row reaches the same unreadable verdict with
-# herdr absent from PATH (the liveness ladder's 2), an orphan handle planted so
-# the probe has a pane to ask about.
-printf 'pLF1 tLF1\n' >"$state/.pane-lf1"
-nh_path="$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin:/sbin"
-if [ -z "$(PATH="$nh_path" command -v herdr || true)" ]; then
-  : >"$FAKE_HERDR/log"
-  err="$(PATH="$nh_path" "$BIN/ac-self-task.sh" start lf1 "$repo" 2>&1 1>/dev/null || true)"
-  assert_contains "$err" "could not be READ" "a 127 (driver load failure) refuses like an unreadable backend"
-  assert_no_file "$state/lf1.meta" "the refused start leaves no task in flight"
-  assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" \
-    "a 127 driver failure must never reach the pane-open step - that is the fail-OPEN this closes"
-else
-  printf 'SKIP: self-task with herdr absent - bun shares its directory with a herdr on this host\n'
-fi
-rm -f "$state/.pane-lf1"
+# rc=2 (an unreadable backend) and rc=127 (a driver load failure) used to
+# refuse at the window-liveness check exactly like the rc=0 case above.
+# `.unreachable` (tests/sh/helpers.sh) fails the EARLIER lease first (step 2
+# precedes step 3, src/self-task.ts header) rather than isolating the check,
+# but a thin wrapper ahead of the real fake orca - failing only the two
+# verbs the check itself calls - keeps the lease intact: proven below as
+# x8b/xorcaro (rc=2) once the suite's own $XW battery is in scope. rc=127
+# (orca missing from PATH) cannot be scoped the same way - a missing binary
+# fails every call, lease included - so that ONE trigger stays undocumented
+# proof, though the contract it would exercise (unreadable means refuse, same
+# as rc=2) is not left unproven.
 
 # --- the pane OPEN failing: named, and nothing left behind -------------------
-# A stopped herdr server fails the tab create itself. Under errexit that death
-# is SILENT (the chief sees rc=1 and an unrelated pool WARN), and the partial
-# start used to leave its seeded status file on disk - so a retry reads as a
-# task already in flight in every fleet view.
-touch "$FAKE_HERDR/.server-stopped"
-rc=0; err="$("$BIN/ac-self-task.sh" start sdown "$repo" 2>&1 1>/dev/null)" || rc=$?
-rm -f "$FAKE_HERDR/.server-stopped"
-[ "$rc" != 0 ] || fail "a pane that cannot be opened must fail the start"
-assert_contains "$err" "could not open the pane" "the failure NAMES what could not be done"
-assert_contains "$err" "herdr server is not running" \
-  "the backend can say why it refused, so the failure says it"
-assert_contains "$err" "attach the session" "the reason carries the call that fixes it"
-assert_no_file "$state/sdown.status" "the trap removes the status file the start seeded"
-assert_no_file "$state/sdown.meta" "the trap removes the partial meta"
-assert_no_file "$AC_HOME/data/sdown" "a start that never wrote a meta mints no task dir"
-assert_eq "$("$BIN/ac-tree.sh" list --repo "$repo" 2>/dev/null | awk -F'\t' '$3=="sdown"{print $2}')" \
-  "available" "the trap gives the lease back"
-
+# A stopped runtime failing the pane-open call itself, isolated from the
+# lease, is proven below as x10b/xorcadown (section 10) via the same
+# thin-wrapper technique - no separate row needed here.
+#
 # --- the LEASE failing: the seeded status goes too ----------------------------
 # The status seed comes before the lease, so a lease failure is a partial start
 # like any later one: a left-behind status reads as a task in flight, and a
-# retry of the id appends to a dead slice's log.
-repoF="$(make_repo projfull)"
-rc=0; err="$(AC_MAX_TREES=0 "$BIN/ac-self-task.sh" start sfull "$repoF" 2>&1 1>/dev/null)" || rc=$?
-[ "$rc" != 0 ] || fail "a lease that cannot be had must fail the start"
-assert_contains "$err" "pool is full" "the failure is the lease's own"
-assert_no_file "$state/sfull.status" "the trap removes the status file when the LEASE fails"
-assert_no_file "$state/sfull.meta" "...and leaves no meta"
+# retry of the id appends to a dead slice's log. Pool exhaustion (AC_MAX_TREES)
+# has no orca equivalent (no pool, no slot cap) - the same "left-behind status
+# cleaned up on lease failure" contract is already proven on the orca fleet
+# above (sofail, `.unreachable`), so it is not reproven here a second way.
 
 # Everything from here on exercises self-task/teardown bookkeeping that never
 # forks on which backend leased the worktree (no pool path, lease_ids or
@@ -668,9 +622,9 @@ xworld() {  # xworld - a fresh world: the home $XW/$XHN, the repo $XW/proj (one 
     "$XW/tmp" "$XW/stub" "$XW/hh" "$XW/cwd" "$XW/herdr/panes" "$XW/herdr/tabs" "$XW/orca/terminals" "$XW/.claude"
   printf 'off\n' >"$XW/$XHN/config/wedge-alarm"
   printf 'off\n' >"$XW/$XHN/config/brain-auto-sync"
-  # Most rows below assert herdr's own text (window=herdr:..., "herdr ... failed");
-  # xorca overrides this for the rows that cut over to the Orca lease instead.
-  printf 'herdr\n' >"$XW/$XHN/config/backend"
+  # self-task.ts is orca-only now (T9 deleted the non-orca lease branch), so
+  # every row's world defaults to orca - xorca below is now a plain alias.
+  printf 'orca\n' >"$XW/$XHN/config/backend"
   printf 'the container crewmate layer\n' >"$XW/.claude/CLAUDE.md"
   printf '\342\234\263 fake\n' >"$XW/orca/.default-title"
   git init -q "$XW/proj"
@@ -818,14 +772,14 @@ xhas $'== log s1 x\nrc=1'
 # -- 3: start's flags, the duplicate, the project ---------------------------------------
 x3a() {
   xc start s1 proj --bogus; xc start s1 proj --mode; xc start s1 proj --harness; xc start s1 proj --base-branch
-  xc start s1 proj --mode ''; xc start s1 proj --base-branch main; xc start s1 proj --mode crew-ship --mode direct-pr
+  xc start s1 proj --mode ''; xc start s1 proj --base-branch nonexistent-branch; xc start s1 proj --mode crew-ship --mode direct-pr
 }
 xgo xworld x3a
 xhas $'== start s1 proj --bogus\nrc=1\n-- out\n-- err\nERROR: unknown argument: --bogus'
 xhas $'== start s1 proj --mode \nrc=1\n-- out\n-- err\nERROR: invalid --mode: empty'
 xhas '--harness names the harness working this slice'
 xhas '--base-branch names the branch the orca lease is cut from'
-xhas 'requires an orca-backend fleet (config/backend=herdr here)'
+xhas 'could not lease an Orca worktree for s1'
 xhas $'== start s1 proj --mode crew-ship --mode direct-pr\nrc=0'
 xwhas 'mode=direct-pr'
 x3b() { xc start s1 proj; xc start s1 proj; }
@@ -857,10 +811,10 @@ xhas 'self-task s4-r2 kind=self'
 xwhas 'refs/heads/crew/s3'
 xwlacks '== home/state/s3.status '
 
-# -- 5: the herdr start -----------------------------------------------------------------------
+# -- 5: the orca start -----------------------------------------------------------------------
 x5a() { xc start s1 proj; xc start s2 proj --mode direct-pr; }
 xgo xworld x5a
-xhas $'== start s1 proj\nrc=0\n-- out\nself-task s1 kind=self project=proj backend=herdr window=herdr:pane-p1 worktree='
+xhas $'== start s1 proj\nrc=0\n-- out\nself-task s1 kind=self project=proj backend=orca window=orca:term2 worktree='
 xwhas 'tail -f'
 xwhas 'working: self task started by the chief'
 xwhas '== home/state/port-slots.tsv '
@@ -889,7 +843,7 @@ xgo xskillsfile x6d
 xhas $'== start s1 proj\nrc=1'
 xwlacks '== home/state/s1.status '
 xwlacks '== home/state/s1.meta '
-xwhas 'leased=0'
+[ ! -d "$XW/orca/orca-wt/crew-s1" ] || fail "a skills-seed failure must give the orca lease back"
 
 # -- 7: the fleet-memory read ---------------------------------------------------------------
 xbrain() {
@@ -909,26 +863,40 @@ xhas 'data/fam-one/room.md'
 xlacks 'agent-crew: '
 
 # -- 8: the pane's refusals, each after the lease ----------------------------------------------
-# A live orphan window, an unreadable backend, herdr absent from PATH, a
-# stopped server: each rolls the lease and the status back.
+# A live orphan window rolls the lease and the status back.
 x8a() {
-  xput home/state/.pane-or1 'pOR1 tOR1\n'; xput herdr/tabs/tOR1 'pOR1 crew:or1\n'; : >"$XW/herdr/panes/pOR1.buf"
+  xput home/state/.pane-or1 'pOR1 tabOR1\n'; : >"$XW/orca/terminals/pOR1.buf"
   xc start or1 proj
-  xput home/state/.pane-or2 'pOR2 tOR2\n'; : >"$XW/herdr/.unreachable"; xc start or2 proj; rm -f "$XW/herdr/.unreachable"
-  : >"$XW/herdr/.server-stopped"; xc start sdown proj; rm -f "$XW/herdr/.server-stopped"
 }
 xgo xworld x8a
-xhas 'window herdr:pane-pOR1 already exists'
-xhas 'the BACKEND could not be READ for or2'
-xhas 'herdr workspace create failed (is the herdr server running?)'
-xhas 'could not open the pane for sdown on the herdr backend: the herdr server is not running - attach the session'
+xhas 'window orca:pOR1 already exists'
 xwhas '== home/state/.pane-or1 '
-for s in or1 or2 sdown; do xwlacks "== home/state/$s.status "; xwlacks "== home/state/$s.meta "; done
-xwlacks 'leased=1'
-x8b() { xput home/state/.pane-lf1 'pLF1 tLF1\n'; XPATH="$(xwithout herdr)"; xc start lf1 proj; }
-xgo xworld x8b
-xhas 'the BACKEND could not be READ for lf1'
-xhas $'== start lf1 proj\nrc=1'
+xwlacks "== home/state/or1.status "; xwlacks "== home/state/or1.meta "
+[ ! -d "$XW/orca/orca-wt/crew-or1" ] || fail "an orphan-window refusal must not leak the lease"
+# An unreadable backend (rc=2: `terminal show` AND `status` both fail while
+# `terminal create` stays healthy) still refuses, isolated from the lease -
+# a thin wrapper ahead of the real fake orca (same technique as xorcadown
+# below) fails only those two verbs, so the EARLIER lease still succeeds.
+xorcaro() {
+  xworld; mkdir -p "$XW/stub/ro"
+  printf '#!/bin/sh\ncase "$*" in "terminal show"*|"status"*) exit 1 ;; esac\nexec "%s" "$@"\n' "$TMP/stubbin/orca" >"$XW/stub/ro/orca"
+  chmod +x "$XW/stub/ro/orca"
+}
+x8b() {
+  xput home/state/.pane-or2 'pOR2 tabOR2\n'
+  XPATH="$XSTUBS:$XW/stub/ro:$PATH"; xc start or2 proj
+}
+xgo xorcaro x8b
+xhas 'the BACKEND could not be READ for or2'
+xwlacks "== home/state/or2.status "; xwlacks "== home/state/or2.meta "
+[ ! -d "$XW/orca/orca-wt/crew-or2" ] || fail "an unreadable-backend refusal must not leak the lease"
+# GAP, documented not silently dropped: orca absent from PATH (the 127 case)
+# cannot be scoped to just the pane-open step the way the rc=2 case above
+# can - the lookup failure is per-binary, not per-verb, so it would ALSO take
+# down the earlier lease (the same ordering gap documented above and in
+# ac-spawn-teardown.test.sh's bw1o 127 row). The liveness ladder treats rc=127
+# the same as the rc=2 case just proven, so this is not a distinct contract
+# left unproven, only a distinct TRIGGER left unreproducible under orca.
 # A meta write refused after the pane (its lock held by a live pid): the
 # rollback reaps the tab too.
 x8c() { mkdir -p "$XW/home/state/.s1.meta.lock"; printf '%s\n' "$$" >"$XW/home/state/.s1.meta.lock/pid"; xc start s1 proj; }
@@ -937,12 +905,14 @@ xhas 'cannot lock meta file'
 xwlacks '== home/state/s1.meta '
 xwlacks '== home/state/.pane-s1 '
 xwlacks '== home/state/s1.status '
-xwhas 'leased=0'
-# A tail whose Enter is never acknowledged warns, and the start goes on.
-x8d() { printf '9\n' >"$XW/herdr/panes/p1.drop-enters"; xc start s1 proj; }
-xgo xworld x8d
-xhas 'the pane may not have started tailing'
-xhas $'== start s1 proj\nrc=0\n-- out\nself-task s1 kind=self'
+[ ! -d "$XW/orca/orca-wt/crew-s1" ] || fail "a meta-lock refusal must give the orca lease back"
+# GAP: "a tail whose Enter is never acknowledged warns" tested herdr's pane
+# OPEN specifically typing the tail command into a booting shell and racing
+# its own Enter - the exact defect class orca's pane open is built to never
+# have (measured, orca section above: the tail rides --command at terminal
+# create, never typed after boot), so there is no "unacknowledged Enter" to
+# strand under orca in the first place - not a fixture gap, architecturally
+# inapplicable.
 # A meta rewrite whose mv dies by TERM: mv's status is the start's, and the
 # rollback runs.
 xmvterm() {
@@ -956,24 +926,23 @@ xhas $'== start s1 proj\nrc=143'
 xwlacks '== home/state/s1.meta '
 xwlacks '== home/state/.pane-s1 '
 xwlacks '== home/state/s1.status '
-xwhas 'leased=0'
+[ ! -d "$XW/orca/orca-wt/crew-s1" ] || fail "a TERM'd meta rewrite must give the orca lease back"
 
 # -- 9: the lease's refusals -------------------------------------------------------------------
-x9a() { XENV=(AC_MAX_TREES=0); xc start sfull proj; }
-xgo xworld x9a
-xhas 'pool is full'
-xwlacks '== home/state/sfull.status '
-# A lease whose child dies by TERM: its status is the start's, the status
-# removed. The lab runs the live scripts with an ac-tree.sh that kills itself
-# with TERM.
-xlab="$TMP/xlab"
-mkdir -p "$xlab/bin"; cp "$BIN"/*.sh "$xlab/bin/"
-ln -s "$ROOT/src" "$xlab/src"; ln -s "$ROOT/dashboard" "$xlab/dashboard"; ln -s "$ROOT/.agents" "$xlab/.agents"
-printf '#!/bin/sh\nkill -TERM $$\n' >"$xlab/bin/ac-tree.sh"; chmod +x "$xlab/bin/ac-tree.sh"
-x9b() { XBIN="$xlab/bin"; xc start s1 proj; }
-xgo xworld x9b
-xhas $'== start s1 proj\nrc=143'
-xwlacks '== home/state/s1.status '
+# AC_MAX_TREES (pool exhaustion) has no orca equivalent (no pool, no slot cap)
+# - the same "left-behind status cleaned up on lease failure" contract is
+# proven below (sofail, x9c's `.unreachable`), so it is not reproven here a
+# second way.
+#
+# GAP, documented not silently dropped: "a lease whose child dies by TERM"
+# relied on ac-tree.sh being a bash script sharing self-task.ts's own process
+# group, so `kill -TERM $$` inside it propagated to the caller (measured
+# rc=143, the SIGTERM handler's own exit code). Measured directly: a thin
+# wrapper doing the same `kill -TERM $$`/`kill -TERM 0` ahead of the real fake
+# orca only kills the wrapper's own subprocess (bun's spawnSync just sees a
+# failed call, rc=1) or the whole test's own process group (unfalsifiable) -
+# the orca CLI call is a plain subprocess, not a shared-group script, so this
+# specific signal-propagation path has no orca equivalent under this fixture.
 # The orca lease: an unreachable runtime, and the epic-branch fence refusing
 # a missing integration branch - nothing leased, nothing released.
 x9c() { : >"$XW/orca/.unreachable"; xc start sofail proj; }
@@ -1021,7 +990,7 @@ xhas $'== TERM start s1 proj\nrc=143'
 xwlacks '== home/state/s1.meta '
 xwlacks '== home/state/.pane-s1 '
 xwlacks '== home/state/s1.status '
-xwhas 'leased=0'
+[ ! -d "$XW/orca/orca-wt/crew-s1" ] || fail "a TERM mid-start must give the orca lease back"
 x11c() { xsig HUP start s1 proj; }
 xgo xstamp x11c
 xhas $'== HUP start s1 proj\nrc=129'
@@ -1061,7 +1030,7 @@ xwlacks '== home/state/s1.meta '
 xwlacks '== home/state/.s1.meta.lock '
 xwlacks '== home/state/s1.status '
 xwlacks '== home/state/.pane-s1 '
-xwhas 'leased=0'
+[ ! -d "$XW/orca/orca-wt/crew-s1" ] || fail "a TERM held through the meta mv must give the orca lease back"
 x11i() { XPATH="$XSTUBS:$XW/stub/mh:$PATH"; xsig HUP start s1 proj; xmvdone; }
 xgo xmvhold x11i
 xhas $'== HUP start s1 proj\nrc=129'
@@ -1097,14 +1066,9 @@ xhas $'== start zanzibar-quorum-reconciliation proj\nrc=1'
 
 # -- 13: %q (the status path's spelling in the tail) ------------------------------------
 # A home path holding a space and é, spelled as bash 3.2's printf %q spells it
-# under C and under UTF-8 - the herdr send-text argument and the orca terminal
-# command.
-xqworld() { XHN='hé x'; xworld; }
-xqorca() { XHN='hé x'; xorca; }
+# under C and under UTF-8 - the orca terminal command's tail -f argument.
+xqorca() { XHN='hé x'; xworld; }
 x13a() { xc start s1 proj; XLC=en_US.UTF-8; xc start s2 proj; }
-xgo xqworld x13a
-xwhas "herdr pane send-text p1 tail -f \$'$XW/h"'\303\251'" x/state/s1.status'"
-xwhas "herdr pane send-text p2 tail -f $XW/hé"'\'" x/state/s2.status"
 xgo xqorca x13a
 xwhas "&& exec tail -f \$'$XW/h"'\303\251'" x/state/s1.status' --json"
 xwhas "&& exec tail -f $XW/hé"'\'" x/state/s2.status --json"
