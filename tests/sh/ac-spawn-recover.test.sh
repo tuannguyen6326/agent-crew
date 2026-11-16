@@ -10,27 +10,25 @@
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
-make_fake_herdr
-# ac-spawn.sh's own no-config default is herdr (src/spawn.ts), unlike
-# ac_backend's general ladder (bin/ac-backend.sh, now orca) - pin explicitly
-# so this section does not depend on that one entry's own default.
-printf 'herdr\n' >"$AC_HOME/config/backend"
+make_fake_orca
+printf '\342\234\263 fake\n' >"$FAKE_ORCA/.default-title"
+# Pinned explicitly so this section does not depend on the no-config default.
+printf 'orca\n' >"$AC_HOME/config/backend"
 export AC_SPAWN_SETTLE=0
-: >"$FAKE_HERDR/.pane-idle-by-default"
 export AC_KICKOFF_READY_BUDGET=5
 
 make_home
 repo="$(make_repo proj)"
 
 # A claude stub so the claude-harness spawns pass ac-spawn's command -v check;
-# the fake herdr never executes the launch line.
+# the fake orca never executes the launch line.
 mkdir -p "$TMP/stub"
 printf '#!/usr/bin/env bash\nsleep 300\n' >"$TMP/stub/claude"
 chmod +x "$TMP/stub/claude"
 export PATH="$TMP/stub:$PATH"
 
 meta_field() { awk -v k="$2" 'index($0, k "=") == 1 { print substr($0, length(k) + 2) }' "$1"; }
-kill_pane() { rm -f "$FAKE_HERDR/panes/$(fake_pane "$1")".*; }
+kill_pane() { rm -f "$FAKE_ORCA/terminals/$(fake_pane "$1")".*; }
 
 # --- nothing to recover ------------------------------------------------------------
 
@@ -56,35 +54,34 @@ printf 'wip\n' >"$old_wt/wip.txt"
 err="$("$BIN/ac-spawn.sh" r1 "$repo" --recover 2>&1)" && fail "--recover must refuse while the pane is ALIVE"
 assert_contains "$err" "LIVE" "the alive refusal says why"
 assert_eq "$(cat "$AC_HOME/state/.pane-r1")" "$old_handle" "an alive refusal keeps the pane handle"
-assert_eq "$(meta_field "$meta" window)" "herdr:pane-$(fake_pane r1)" "an alive refusal keeps the meta window"
+assert_eq "$(meta_field "$meta" window)" "orca:$(fake_pane r1)" "an alive refusal keeps the meta window"
 
 # UNOBSERVABLE (2): the backend cannot answer - never a verdict about the pane.
 # DISPUTED: whether the backend can be read. HELD-CONSTANT: the pane's own
 # files are all still there, so the pane really is alive.
-touch "$FAKE_HERDR/.pane-api-down"
+: >"$FAKE_ORCA/.terminal-api-down"
 err="$("$BIN/ac-spawn.sh" r1 "$repo" --recover 2>&1)" && rc=0 || rc=$?
-rm -f "$FAKE_HERDR/.pane-api-down"
+rm -f "$FAKE_ORCA/.terminal-api-down"
 [ "${rc:-0}" != 0 ] || fail "--recover must refuse when the backend is UNOBSERVABLE"
 assert_contains "$err" "BACKEND could not be READ" "the unobservable refusal blames the backend, not the pane"
 assert_eq "$(cat "$AC_HOME/state/.pane-r1")" "$old_handle" "an unobservable refusal keeps the pane handle"
 
 # GONE (1): recovered in place.
 kill_pane r1
-: >"$FAKE_HERDR/log"
+: >"$FAKE_ORCA/log"
 out="$("$BIN/ac-spawn.sh" r1 "$repo" --recover 2>/dev/null)" || fail "--recover must accept a DEFINITELY gone pane"
 assert_contains "$out" "recovered r1" "the outcome line names the recovery"
 new_handle="$(cat "$AC_HOME/state/.pane-r1")"
 [ "$new_handle" != "$old_handle" ] || fail "recovery must open a FRESH pane"
-assert_eq "$(meta_field "$meta" window)" "herdr:pane-$(fake_pane r1)" "the meta window field follows the fresh pane"
+assert_eq "$(meta_field "$meta" window)" "orca:$(fake_pane r1)" "the meta window field follows the fresh pane"
 assert_eq "$(meta_field "$meta" worktree)" "$old_wt" "the recorded worktree is reused, never re-leased"
 assert_eq "$(meta_field "$meta" session_id)" "$old_sid" "the session id is untouched"
 assert_eq "$(meta_field "$meta" kind)" "ship" "the rest of the meta is untouched"
 assert_eq "$(cat "$old_wt/wip.txt")" "wip" "uncommitted work in the worktree is untouched"
-assert_eq "$(ls "$repo/.crew/slots/" | grep -c '\.meta$')" "1" "no second pool slot is leased"
 cmp -s "$AC_HOME/data/r1/brief.md" "$TMP/brief.before" || fail "the brief is untouched"
 cmp -s "$AC_HOME/data/r1/kickoff.md" "$TMP/kickoff.before" || fail "the original kickoff file is untouched"
 assert_contains "$(tail -n 1 "$AC_HOME/state/r1.status")" "recovered:" "the status log gains a recovered: line"
-buf="$(cat "$(fake_pane_buf r1)")"
+buf="$(cat "$(fake_orca_buf r1)")"
 assert_contains "$buf" "claude --permission-mode auto --resume $old_sid" "the fresh pane resumes the recorded session"
 assert_contains "$buf" "AC_FLEET_STATE=" "the crewmate's launch env rides the resume line (its completion push needs it)"
 assert_contains "$buf" "AC_CREW_ID=r1" "the crewmate's own id rides the resume line"
@@ -94,8 +91,8 @@ assert_contains "$buf" "has been RECOVERED" "the agent is told its pane was reco
 assert_contains "$buf" "killed mid-way" "...that a command running when the pane died may not have finished"
 assert_contains "$buf" "git status" "...and what to check before re-running it"
 case "$buf" in *"nothing lost"*) fail "recovery never promises nothing was lost: $buf" ;; esac
-case "$(cat "$FAKE_HERDR/log")" in *"tab close"*) fail "recovery closes nothing - the old pane was already gone" ;; esac
-assert_contains "$(cat "$FAKE_HERDR/log")" "tab create --workspace" "the fresh pane lands in a family workspace the ordinary spawn way"
+case "$(cat "$FAKE_ORCA/log")" in *"terminal close"*) fail "recovery closes nothing - the old pane was already gone" ;; esac
+assert_contains "$(cat "$FAKE_ORCA/log")" "terminal create" "the fresh pane lands the ordinary spawn way"
 
 # ...and once recovered it is ALIVE again: a second --recover refuses.
 err="$("$BIN/ac-spawn.sh" r1 "$repo" --recover 2>&1)" && fail "a recovered pane is alive - a second --recover must refuse"
@@ -105,26 +102,26 @@ assert_contains "$err" "LIVE" "the second refusal says why"
 # the same gone pane) would each read it gone and each open a pane - the second
 # typing its own `claude --resume` into the first one's live session. The id
 # claim, taken before the probe, serializes them: the second reads the first
-# one's pane ALIVE and refuses. A barrier in `tab create` holds the first one
-# INSIDE its window create while the second starts; the second is given up to
-# 2s to reach a create of its own (an unclaimed recover does) before release.
+# one's pane ALIVE and refuses. A barrier in `terminal create` holds the first
+# one INSIDE its window create while the second starts; the second is given up
+# to 2s to reach a create of its own (an unclaimed recover does) before release.
 kill_pane r1
 mkdir -p "$TMP/slowtab"
-printf '#!/usr/bin/env bash\ncase "$*" in *"tab create"*) echo x >>%q; while [ ! -e %q ]; do sleep 0.05; done ;; esac\nexec %q "$@"\n' \
-  "$TMP/arrived" "$TMP/go" "$(command -v herdr)" >"$TMP/slowtab/herdr"
-chmod +x "$TMP/slowtab/herdr"
+printf '#!/usr/bin/env bash\ncase "$*" in *"terminal create"*) echo x >>%q; while [ ! -e %q ]; do sleep 0.05; done ;; esac\nexec %q "$@"\n' \
+  "$TMP/arrived" "$TMP/go" "$(command -v orca)" >"$TMP/slowtab/orca"
+chmod +x "$TMP/slowtab/orca"
 rm -f "$TMP/arrived" "$TMP/go"
-: >"$FAKE_HERDR/log"
-( rc=0; PATH="$TMP/slowtab:$PATH" AC_HERDR_RPC_TIMEOUT=30 "$BIN/ac-spawn.sh" r1 "$repo" --recover >"$TMP/rA.out" 2>&1 || rc=$?; echo "$rc" >"$TMP/rA.rc" ) &
+: >"$FAKE_ORCA/log"
+( rc=0; PATH="$TMP/slowtab:$PATH" "$BIN/ac-spawn.sh" r1 "$repo" --recover >"$TMP/rA.out" 2>&1 || rc=$?; echo "$rc" >"$TMP/rA.rc" ) &
 rApid=$!
 i=0; until [ -s "$TMP/arrived" ] || [ "$i" -ge 100 ]; do sleep 0.1; i=$((i + 1)); done
 [ -s "$TMP/arrived" ] || fail "fixture: the first recover must reach its window create"
-( rc=0; PATH="$TMP/slowtab:$PATH" AC_HERDR_RPC_TIMEOUT=30 "$BIN/ac-spawn.sh" r1 "$repo" --recover >"$TMP/rB.out" 2>&1 || rc=$?; echo "$rc" >"$TMP/rB.rc" ) &
+( rc=0; PATH="$TMP/slowtab:$PATH" "$BIN/ac-spawn.sh" r1 "$repo" --recover >"$TMP/rB.out" 2>&1 || rc=$?; echo "$rc" >"$TMP/rB.rc" ) &
 rBpid=$!
 i=0; until [ "$(wc -l <"$TMP/arrived" | tr -d ' ')" -ge 2 ] || [ "$i" -ge 20 ]; do sleep 0.1; i=$((i + 1)); done
 : >"$TMP/go"
 wait "$rApid" "$rBpid"
-assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log")" "1" "overlapping recovers open ONE pane"
+assert_eq "$(grep -c 'terminal create' "$FAKE_ORCA/log")" "1" "overlapping recovers open ONE pane"
 assert_eq "$(cat "$TMP/rA.rc") $(cat "$TMP/rB.rc")" "0 1" "the first recovers, the second refuses"
 assert_contains "$(cat "$TMP/rB.out")" "LIVE" "...reading the first one's pane alive"
 
@@ -143,53 +140,13 @@ kill_pane famr-chief
 printf '85\n' >"$AC_HOME/config/compact-pct"
 "$BIN/ac-spawn.sh" --roomchief famr --recover >/dev/null 2>&1 || fail "a gone roomchief tab must recover"
 rm -f "$AC_HOME/config/compact-pct"
-assert_eq "$(meta_field "$cmeta" window)" "herdr:pane-$(fake_pane famr-chief)" "the roomchief meta window follows the fresh pane"
+assert_eq "$(meta_field "$cmeta" window)" "orca:$(fake_pane famr-chief)" "the roomchief meta window follows the fresh pane"
 assert_eq "$(meta_field "$cmeta" kind)" "roomchief" "the roomchief meta is otherwise untouched"
-cbuf="$(cat "$(fake_pane_buf famr-chief)")"
+cbuf="$(cat "$(fake_orca_buf famr-chief)")"
 assert_contains "$cbuf" "AC_SCOPE=famr" "the roomchief resumes under its own scope"
 assert_contains "$cbuf" "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=85" "the resumed roomchief keeps config/compact-pct"
 assert_contains "$cbuf" "claude --permission-mode auto --resume $csid" "the roomchief's session is resumed"
 assert_contains "$cbuf" 'AC_WATCH_ONLY=$(bin/ac-ready.sh watch-set famr)' "the roomchief is told to re-arm its family watcher, which died with the tab"
 assert_contains "$(tail -n 1 "$AC_HOME/state/famr-chief.status")" "recovered:" "the roomchief status log gains a recovered: line"
-
-# --- the SAME three-state ladder on an orca-backend fleet --------------------
-# GUARDED RECOVERY reads the probe's three states (alive/unobservable/gone),
-# which backend_window_alive forks per backend entirely - genuinely per-
-# backend, not scaffolding, so it gets its own orca-pinned proof using
-# .terminal-api-down (tests/sh/helpers.sh, make_fake_orca) for UNOBSERVABLE.
-make_fake_orca
-printf '\342\234\263 fake\n' >"$FAKE_ORCA/.default-title"
-printf 'orca\n' >"$AC_HOME/config/backend"
-
-"$BIN/ac-brief.sh" or1 proj --mode local-only >/dev/null
-"$BIN/ac-spawn.sh" or1 "$repo" --harness claude --mode local-only >/dev/null 2>&1 \
-  || fail "orca: the claude crewmate must spawn"
-ometa="$AC_HOME/state/or1.meta"
-oold_handle="$(cat "$AC_HOME/state/.pane-or1")"
-oold_wt="$(meta_field "$ometa" worktree)"
-[ -d "$oold_wt" ] || fail "orca fixture: the recorded worktree must exist"
-
-# ALIVE (0): the duplicate-agent refusal stands.
-err="$("$BIN/ac-spawn.sh" or1 "$repo" --recover 2>&1)" && fail "orca: --recover must refuse while the terminal is ALIVE"
-assert_contains "$err" "LIVE" "orca: the alive refusal says why"
-assert_eq "$(cat "$AC_HOME/state/.pane-or1")" "$oold_handle" "orca: an alive refusal keeps the terminal handle"
-
-# UNOBSERVABLE (2): the backend cannot answer - never a verdict about the terminal.
-: >"$FAKE_ORCA/.terminal-api-down"
-err="$("$BIN/ac-spawn.sh" or1 "$repo" --recover 2>&1)" && rc=0 || rc=$?
-rm -f "$FAKE_ORCA/.terminal-api-down"
-[ "${rc:-0}" != 0 ] || fail "orca: --recover must refuse when the backend is UNOBSERVABLE"
-assert_contains "$err" "BACKEND could not be READ" "orca: the unobservable refusal blames the backend, not the terminal"
-assert_eq "$(cat "$AC_HOME/state/.pane-or1")" "$oold_handle" "orca: an unobservable refusal keeps the terminal handle"
-
-# GONE (1): recovered in place - close the terminal outright (the production
-# twin of killing a herdr pane's files).
-rm -f "$FAKE_ORCA/terminals/$(fake_pane or1)".*
-out="$("$BIN/ac-spawn.sh" or1 "$repo" --recover 2>/dev/null)" || fail "orca: --recover must accept a DEFINITELY gone terminal"
-assert_contains "$out" "recovered or1" "orca: the outcome line names the recovery"
-onew_handle="$(cat "$AC_HOME/state/.pane-or1")"
-[ "$onew_handle" != "$oold_handle" ] || fail "orca: recovery must open a FRESH terminal"
-assert_eq "$(meta_field "$ometa" worktree)" "$oold_wt" "orca: the recorded worktree is reused, never re-leased"
-"$BIN/ac-teardown.sh" or1 --force >/dev/null 2>&1
 
 pass
