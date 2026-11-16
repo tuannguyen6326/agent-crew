@@ -36,6 +36,33 @@ fi
 exit 0
 EOF
 chmod +x "$stub/herdr"
+# The orca twin: `terminal show --terminal <h>` succeeds iff the sentinel
+# exists, `terminal read --terminal <h>` serves the same mock tail content as
+# its one line.
+cat >"$stub/orca" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-} ${2:-}" = "terminal show" ]; then
+  if [ -e "$AC_HOME/state/.mock-win-${4:-}" ]; then
+    printf '{"ok":true,"result":{"terminal":{"connected":true,"agentWait":null}}}\n'
+  else
+    printf '{"ok":false,"error":{"message":"terminal_not_found"}}\n'
+    exit 1
+  fi
+  exit 0
+fi
+if [ "${1:-} ${2:-}" = "terminal read" ]; then
+  line="$(cat "$AC_HOME/state/.mock-tail-${4:-}" 2>/dev/null || true)"
+  esc="$(printf '%s' "$line" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+  if [ -n "$line" ]; then
+    printf '{"ok":true,"result":{"terminal":{"status":"running","tail":["%s"]}}}\n' "$esc"
+  else
+    printf '{"ok":true,"result":{"terminal":{"status":"running","tail":[]}}}\n'
+  fi
+  exit 0
+fi
+printf '{"ok":true,"result":{}}\n'
+EOF
+chmod +x "$stub/orca"
 
 # A bin/ whose ac-ready.sh and ac-remote.sh are sentinel stubs: the drain
 # invokes its ride-alongs from the bin/ it was started from, so this is how
@@ -80,8 +107,8 @@ drain() {
   fi
 }
 
-chief_live() { printf 'window=crew:%s-chief\nbackend=herdr\n' "$1" >"$state/$1-chief.meta"; printf '%s-chief t0\n' "$1" >"$state/.pane-$1-chief"; : >"$state/.mock-win-$1-chief"; }
-chief_dead_window() { printf 'window=crew:%s-chief\nbackend=herdr\n' "$1" >"$state/$1-chief.meta"; printf '%s-chief t0\n' "$1" >"$state/.pane-$1-chief"; rm -f "$state/.mock-win-$1-chief"; }
+chief_live() { printf 'window=crew:%s-chief\nbackend=orca\n' "$1" >"$state/$1-chief.meta"; printf '%s-chief t0\n' "$1" >"$state/.pane-$1-chief"; : >"$state/.mock-win-$1-chief"; }
+chief_dead_window() { printf 'window=crew:%s-chief\nbackend=orca\n' "$1" >"$state/$1-chief.meta"; printf '%s-chief t0\n' "$1" >"$state/.pane-$1-chief"; rm -f "$state/.mock-win-$1-chief"; }
 chief_gone() { rm -f "$state/$1-chief.meta" "$state/.mock-win-$1-chief"; }
 reset_state() { rm -f "$state"/*-chief.meta "$state"/.mock-win-* "$state"/*.meta; rm -rf "$state"/.wake-spool* "$state"/.wake-tmp.*; seedn=0; }
 
@@ -574,7 +601,7 @@ assert_contains "$(drain fam1)" "report fam1-review done: recovered family work"
 # phantom .wake-spool.<id> no roomchief drains.
 reset_state
 sh -c 'exit 0' & DEADPID3=$!; wait "$DEADPID3" 2>/dev/null || true
-printf 'window=crew:famA-api\nbackend=herdr\nfleet_scope=famA\n' >"$state/famA-api.meta"
+printf 'window=crew:famA-api\nbackend=orca\nfleet_scope=famA\n' >"$state/famA-api.meta"
 mkdir -p "$state/.wake-spool-draining.$DEADPID3"
 printf '1\treport\tfamA-api\tdone: api slice landed\n' >"$state/.wake-spool-draining.$DEADPID3/1.$DEADPID3.000000"
 chief_live famA
@@ -743,7 +770,7 @@ past=202601010000
 
 task_meta() {
   # task_meta <id> - a live task: its meta, and a pane keyed by the id itself.
-  printf 'window=crew:%s\nbackend=herdr\n' "$1" >"$state/$1.meta"
+  printf 'window=crew:%s\nbackend=orca\n' "$1" >"$state/$1.meta"
   printf '%s t0\n' "$1" >"$state/.pane-$1"
 }
 seed_report() {
@@ -943,7 +970,7 @@ done <<<"$out"
 # for any kind that exists today.
 verify_meta() {
   # verify_meta <id> - a live VERIFICATION agent, otherwise identical to task_meta.
-  printf 'kind=verify-codereview\nwindow=crew:%s\nbackend=herdr\n' "$1" >"$state/$1.meta"
+  printf 'kind=verify-codereview\nwindow=crew:%s\nbackend=orca\n' "$1" >"$state/$1.meta"
   printf '%s t0\n' "$1" >"$state/.pane-$1"
 }
 
@@ -1083,7 +1110,7 @@ chief() {  # chief <fam> [<backend>] - a promoted roomchief meta and its pane ha
   m "$1-chief" "kind=roomchief\nbackend=${2:-herdr}\n"; pane "$1-chief"
 }
 chg() { printf "$2" >"$H/home/state/.change-$1"; touch -t 202301010000 "$H/home/state/.change-$1"; }  # chg <id> <printf format>
-idle() { m "$1" 'kind=implement\nbackend=herdr\n'; pane "$1"; win "p$1"; chg "$1" "$((WT - 999))\n"; ptail "p$1" "${2:-quiet here}\n"; }
+idle() { m "$1" 'kind=implement\nbackend=orca\n'; pane "$1"; win "p$1"; chg "$1" "$((WT - 999))\n"; ptail "p$1" "${2:-quiet here}\n"; }
 report() {  # report <id> <dir under data> - a past-dated stage report
   mkdir -p "$H/home/data/$2"; printf 'b\n' >"$H/home/data/$2/brief.md"; printf 'r\n' >"$H/home/data/$2/report.md"
   touch -t 202301010000 "$H/home/data/$2/report.md"

@@ -11,8 +11,8 @@
 # Its own file, matching how ac-spawn.sh's tests are already split by concern:
 # the cap-ACCOUNTING half of the same change lives in ac-room-parallel-cap.test.sh.
 #
-# The fake herdr + a config/launch-fake template are armed because the FIRING
-# path runs a real `ac-spawn.sh --roomchief` to completion - with a real herdr on
+# The fake orca + a config/launch-fake template are armed because the FIRING
+# path runs a real `ac-spawn.sh --roomchief` to completion - with a real orca on
 # PATH that would open a live harness window on the OPERATOR's server.
 
 # Fail-closed sourcing: unsourced (suite run outside tests/sh/), errexit is never
@@ -20,7 +20,7 @@
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
-make_fake_herdr
+make_fake_orca
 make_home
 
 export AC_SPAWN_SETTLE=0
@@ -28,10 +28,14 @@ export AC_SPAWN_SETTLE=0
 # kickoff_wait_input_ready) immediately - this suite is not testing that gate
 # (tests/sh/ac-spawn-kickoff-ready.test.sh owns it), it just needs the real
 # --roomchief spawn the firing path runs to complete without a boot delay.
-: >"$FAKE_HERDR/.pane-idle-by-default"
+printf '✳ fake\n' >"$FAKE_ORCA/.default-title"
 export AC_KICKOFF_READY_BUDGET=5
 printf 'echo roomchief __ID__\n' >"$AC_HOME/config/launch-fake"
 printf 'fake\n' >"$AC_HOME/config/crew-harness"
+# ac-spawn.sh pins a NEW task's AC_BACKEND from configReadSoft("backend",
+# "herdr") when no --backend flag is given (src/spawn.ts) - the firing
+# path's real --roomchief spawn must find orca pinned explicitly.
+printf 'orca\n' >"$AC_HOME/config/backend"
 
 meta="$AC_HOME/state/learning-chief.meta"
 room="$AC_HOME/data/learning/room.md"
@@ -453,7 +457,7 @@ e2k_reap || fail "E2-SIGKILL: the reap did not OBSERVE the spared child settled 
 assert_eq "$(promotes)" "1" "E2-SIGKILL: exactly one PROMOTED post - the dead racer's window was not double-promoted"
 assert_eq "$(grep -c 'DECIDED:' "$room" 2>/dev/null || true)" "1" "E2-SIGKILL: exactly one DECIDED receipt"
 e2k_win="$(awk -F= '$1 == "window" { print $2 }' "$meta" 2>/dev/null || true)"
-assert_file "$FAKE_HERDR/panes/${e2k_win#herdr:pane-}.buf" "E2-SIGKILL: the surviving meta still addresses a live pane - the loser did not reap the winner's window"
+assert_file "$FAKE_ORCA/terminals/${e2k_win#orca:}.buf" "E2-SIGKILL: the surviving meta still addresses a live pane - the loser did not reap the winner's window"
 assert_eq "$e2k_b_out" "" "E2-SIGKILL: the loser is SILENT - not an orphan-window reap warning printed into the drain"
 assert_eq "$e2k_b_rc" "0" "E2-SIGKILL: racer B exits 0 - a race is normal operation, not a fault"
 # Measured 1 in BOTH legs, so it does NOT distinguish them: it pins the headline
@@ -521,7 +525,7 @@ assert_eq "$fresh" "fired" "AC-3: the roomchief meta is the durable already-fire
 # counted population is UNCHANGED afterwards - the learning chief added nothing.
 reset_family
 printf '1\n' >"$AC_HOME/config/room-parallel"
-printf 'kind=roomchief\nbackend=herdr\ninitiated_by=chief\n' >"$AC_HOME/state/other-chief.meta"
+printf 'kind=roomchief\nbackend=orca\ninitiated_by=chief\n' >"$AC_HOME/state/other-chief.meta"
 due 9
 out="$("$BIN/ac-learn.sh" autoroom 2>&1)" || fail "AC-5: a full cap must not refuse the learning room: $out"
 assert_file "$meta" "AC-5: the learning room is promoted at a full cap"
@@ -783,8 +787,8 @@ suite_meta="$(suite_tasks)"
 suite_id="$(basename "$suite_meta" .meta)"
 assert_eq "$(awk -F= '$1=="kind"{print $2}' "$suite_meta")" "verify-suite" \
   "the suite task is a VERIFICATION meta - supervised like any pane, out of crew accounting"
-assert_file "$AC_HOME/state/.pane-$suite_id" "the suite task has its own herdr pane"
-assert_contains "$(cat "$(fake_pane_buf "$suite_id")")" "ac-learn.sh suite $suite_id" \
+assert_file "$AC_HOME/state/.pane-$suite_id" "the suite task has its own orca pane"
+assert_contains "$(cat "$(fake_orca_buf "$suite_id")")" "ac-learn.sh suite $suite_id" \
   "the suite RUNS IN ITS OWN PANE - not inside the drain, not in a chief's context"
 
 # -- a run already in flight: the gate WAITS, it never starts a second ---------
@@ -883,10 +887,10 @@ reset_family
 suite_task_clear
 rm -f "$suite_rec"
 dead=verify-suite-1
-printf 'kind=verify-suite\nbackend=herdr\nwindow=x\n' >"$AC_HOME/state/$dead.meta"
+printf 'kind=verify-suite\nbackend=orca\nwindow=x\n' >"$AC_HOME/state/$dead.meta"
 # A handle naming a pane herdr does not have: `pane get` fails, `pane list`
 # answers and does not carry it - the backend was REACHED and said gone.
-printf 'pGONE tGONE\n' >"$AC_HOME/state/.pane-$dead"
+printf 'termGONE tabGONE\n' >"$AC_HOME/state/.pane-$dead"
 out="$("$BIN/ac-learn.sh" autoroom 2>&1)" || fail "a held autoroom must still exit 0: $out"
 assert_no_file "$AC_HOME/state/$dead.meta" "a DEFINITE gone reclaims the dead run's meta"
 assert_no_file "$AC_HOME/state/.pane-$dead" "and its pane handle"
@@ -905,8 +909,8 @@ suite_task_clear
 dead2=verify-suite-2
 snap_dir="$ROOT/.crew/learn-suite-snapshots/$dead2"
 git -C "$ROOT" worktree add --detach --quiet "$snap_dir" "$suite_head"
-printf 'kind=verify-suite\nbackend=herdr\nwindow=x\n' >"$AC_HOME/state/$dead2.meta"
-printf 'pGONE tGONE\n' >"$AC_HOME/state/.pane-$dead2"
+printf 'kind=verify-suite\nbackend=orca\nwindow=x\n' >"$AC_HOME/state/$dead2.meta"
+printf 'termGONE tabGONE\n' >"$AC_HOME/state/.pane-$dead2"
 out="$("$BIN/ac-learn.sh" autoroom 2>&1)" || fail "a held autoroom must still exit 0: $out"
 [ ! -e "$snap_dir" ] || fail "the killed-pane reclaim must remove the snapshot worktree it left behind"
 grep -q "learn-suite-snapshots/$dead2" < <(git -C "$ROOT" worktree list) \
@@ -919,11 +923,11 @@ suite_task_clear
 # pane. Reclaiming there would start a second suite on top of a live one, and
 # the two runs would race for the same verdict record.
 suite_task_clear
-printf 'kind=verify-suite\nbackend=herdr\nwindow=x\n' >"$AC_HOME/state/$dead.meta"
-printf 'pGONE tGONE\n' >"$AC_HOME/state/.pane-$dead"
-: >"$FAKE_HERDR/.pane-api-down"
+printf 'kind=verify-suite\nbackend=orca\nwindow=x\n' >"$AC_HOME/state/$dead.meta"
+printf 'termGONE tabGONE\n' >"$AC_HOME/state/.pane-$dead"
+: >"$FAKE_ORCA/.terminal-api-down"
 out="$("$BIN/ac-learn.sh" autoroom 2>&1)" || fail "a held autoroom must still exit 0: $out"
-rm -f "$FAKE_HERDR/.pane-api-down"
+rm -f "$FAKE_ORCA/.terminal-api-down"
 assert_file "$AC_HOME/state/$dead.meta" "an UNREADABLE backend is not a death - the meta stays"
 assert_contains "$out" "in flight" "and the gate keeps holding"
 assert_eq "$(suite_tasks | wc -l | tr -d ' ')" "1" "no second suite on top of a possibly-live one"
@@ -978,8 +982,8 @@ reset_family
 suite_task_clear
 rm -f "$suite_rec"
 printf 'generation=0\nhead=%s\n' "$stale_sha" >"$AC_HOME/state/.learn-suite-pin.meta"
-printf 'kind=verify-suite\nbackend=herdr\nwindow=x\n' >"$AC_HOME/state/$dead.meta"
-printf 'pGONE tGONE\n' >"$AC_HOME/state/.pane-$dead"
+printf 'kind=verify-suite\nbackend=orca\nwindow=x\n' >"$AC_HOME/state/$dead.meta"
+printf 'termGONE tabGONE\n' >"$AC_HOME/state/.pane-$dead"
 out="$("$BIN/ac-learn.sh" autoroom 2>&1)" || fail "a held autoroom must still exit 0: $out"
 assert_no_file "$AC_HOME/state/$dead.meta" "the dead run is reclaimed"
 assert_contains "$out" "against ${suite_head:0:7}" "the fresh run is pinned to live HEAD, never the dead run's tree"
@@ -989,11 +993,11 @@ suite_task_clear
 # The opposite direction is the unrecoverable one: re-pinning under a run that
 # may still be going would discard the verdict it is about to record.
 printf 'generation=0\nhead=%s\n' "$stale_sha" >"$AC_HOME/state/.learn-suite-pin.meta"
-printf 'kind=verify-suite\nbackend=herdr\nwindow=x\n' >"$AC_HOME/state/$dead.meta"
-printf 'pGONE tGONE\n' >"$AC_HOME/state/.pane-$dead"
-: >"$FAKE_HERDR/.pane-api-down"
+printf 'kind=verify-suite\nbackend=orca\nwindow=x\n' >"$AC_HOME/state/$dead.meta"
+printf 'termGONE tabGONE\n' >"$AC_HOME/state/.pane-$dead"
+: >"$FAKE_ORCA/.terminal-api-down"
 out="$("$BIN/ac-learn.sh" autoroom 2>&1)" || fail "a held autoroom must still exit 0: $out"
-rm -f "$FAKE_HERDR/.pane-api-down"
+rm -f "$FAKE_ORCA/.terminal-api-down"
 assert_contains "$out" "in flight" "a run that may still be going holds the gate"
 assert_eq "$(awk -F= '$1=="head"{print $2}' "$AC_HOME/state/.learn-suite-pin.meta")" "$stale_sha" \
   "and keeps its pin - only a launch re-pins"
@@ -1052,8 +1056,12 @@ rm -f "$AC_HOME/state/.learn-suite-pin.meta"
 reset_family
 suite_task_clear
 rm -f "$suite_rec"
-n="$(cat "$FAKE_HERDR/.n")"; spane="p$((n + 1))"
-printf '99\n' >"$FAKE_HERDR/panes/$spane.drop-enters"
+# Orca's drop-enters knob is count-only (no pattern match, unlike fake
+# herdr's) - see tests/sh/ac-roomchief.test.sh's orphan-window case (1) for
+# the traced count: a worktree-arm create presses up to 3 enters (the typed
+# `cd`, the first submit, the focus-and-retry submit) before giving up.
+n="$(cat "$FAKE_ORCA/.n" 2>/dev/null || printf 0)"; snext="term$((n + 1))"
+printf '3\n' >"$FAKE_ORCA/terminals/$snext.drop-enters"
 out="$("$BIN/ac-learn.sh" autoroom 2>&1)" || fail "a held autoroom must still exit 0: $out"
 assert_contains "$out" "could not be started" "an unacknowledged send is reported, not assumed delivered"
 assert_eq "$(suite_tasks | wc -l | tr -d ' ')" "0" \
