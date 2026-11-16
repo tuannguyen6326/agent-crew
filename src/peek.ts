@@ -31,9 +31,9 @@
 // 6. Liveness: backendCall("window_alive", [<id>]) (src/lib.ts, the twin of
 //    bin/ac-backend.sh's drivers) as the original's top level ran it. A name
 //    the route refuses (a meta's backend=tmux) is its ERROR line above. 0
-//    goes on; 1 is `ERROR: window gone for <id>` (no handle, a pane herdr's
-//    pane list lacks, a stopped herdr server, a disconnected orca terminal -
-//    kind=self has no detached arm here); any other status is `ERROR: the
+//    goes on; 1 is `ERROR: window gone for <id>` (no handle, or a
+//    disconnected orca terminal - kind=self has no detached arm here); any
+//    other status is `ERROR: the
 //    BACKEND could not be read for <id> - the pane's liveness is UNKNOWN and
 //    no work is lost; check the backend itself, then
 //    peek again`. Contract: bin/ac-backend.sh's WINDOW LIVENESS - a pane that
@@ -43,10 +43,7 @@
 //      backend_capture <id> <lines> | sed '/^$/d' | tail -n <lines> | sed 's/^/peek| /'
 //    backendCall("capture", [<id>, <lines>]) as that pipeline's first member
 //    ran it, its bytes fed through the three filters, each spawned with that
-//    argv and its stderr passed through. herdr: `pane read <pane> --source
-//    recent --lines <n>` (<n> is <lines> when an integer >= 200, else 200,
-//    W4), read as `$( )` reads it (NULs dropped, trailing LFs cut), one LF
-//    restored, then `tail -n <lines>`; orca: `terminal read --terminal <h>
+//    argv and its stderr passed through. orca: `terminal read --terminal <h>
 //    --limit <lines> --screen --json`, then `jq -r '.result.terminal.tail[]?'`.
 //    The exit is pipefail's: the rightmost non-zero status of the four.
 // Prefixed, never merely indented: AC_CAPTAIN_RE's negated class still
@@ -59,16 +56,14 @@
 // the raw tail, so <lines> counts raw lines and fewer may print (W12); a
 // line of blanks or a lone CR is no blank, CR and TAB are kept, a last line
 // without LF gains one (W13); `0` prints nothing; BSD tail reads `-2` as 2
-// and `+3` from line 3 - on herdr twice, the driver's tail and this one's
-// (W2); `abc` is tail's `illegal offset` line, twice on herdr and once on
-// orca, exit 1 (W3); under a UTF-8 locale a byte that is not UTF-8 makes sed
-// abort with its `RE error: illegal byte sequence` line - the lines before
-// it print, exit 1 (W6). A capture that fails (a read that fails, no
-// handle) prints nothing on either stream, exit 1 (W5).
+// and `+3` from line 3 (W2); `abc` is tail's `illegal offset` line, exit 1
+// (W3); under a UTF-8 locale a byte that is not UTF-8 makes sed abort with
+// its `RE error: illegal byte sequence` line - the lines before it print,
+// exit 1 (W6). A capture that fails (a read that fails, no handle) prints
+// nothing on either stream, exit 1 (W5).
 //
-// STDIN BY POSITION: herdr's `pane get` reads the caller's stdin; its `pane
-// list`, `status server` and the capture's `pane read` read /dev/null; orca
-// reads the caller's at every call, so its first call can drain it.
+// STDIN BY POSITION: orca reads the caller's stdin at every call, so its
+// first call can drain it.
 //
 // EXIT: 0 rendered (even empty); 1 for every refusal; else the rightmost
 // failing stage's status (128+n when a signal ended it, 141 at a closed

@@ -480,8 +480,8 @@ function promotedFamilies(): string {
 // subshell's stderr; a fleet backend name the driver refuses ends the whole
 // run 1 (W3), the driver having been sourced into the hook's own shell. The
 // chief meta's OWN pinned backend= is best-effort like the rest of the
-// nudge: orca without one, and a name this fleet refuses (herdr included)
-// is silently NOT sent to - backendCall's own refusal, never a hard exit,
+// nudge: orca without one, and a refused name is silently NOT sent to -
+// backendCall's own refusal, never a hard exit,
 // so one bad per-meta pin never costs the hook's exit-2 handback.
 function nudge(why: string): void {
   const meta = `${sd}/${scope}-chief.meta`;

@@ -911,15 +911,15 @@ rm -f "$tjson"
 trun trust-none
 assert_no_file "$tjson" "a missing ~/.claude.json is never created"
 
-# --- reap: dead-cwd sweep is herdr-only; orca panes reap by handle --------------
+# --- reap: the dead-cwd sweep does not apply to orca; its panes reap by handle (reap-pane) --------------
 # `reap` never reads an argument and never touches any backend: it always
 # answers the fixed note below and exits 0 - reap-pane (next) is how an orca
 # pane agent is actually retired.
 out="$("$BIN/ac-pane-agent.sh" reap)"
-assert_eq "$out" '{"event":"reap","note":"dead-cwd sweep is herdr-only; orca panes reap by handle"}' \
+assert_eq "$out" '{"event":"reap","note":"the dead-cwd sweep does not apply to orca; its panes reap by handle (reap-pane)"}' \
   "reap is a fixed no-op note"
 out="$("$BIN/ac-pane-agent.sh" reap --dry-run --an-otherwise-unknown-arg)"
-assert_eq "$out" '{"event":"reap","note":"dead-cwd sweep is herdr-only; orca panes reap by handle"}' \
+assert_eq "$out" '{"event":"reap","note":"the dead-cwd sweep does not apply to orca; its panes reap by handle (reap-pane)"}' \
   "reap never reads its args, not even an unknown one"
 
 # --- reap-pane: retire ONE known orca terminal, VERIFYING the close -------------
@@ -2259,7 +2259,7 @@ xrc 0; xhas '{"event":"reap-pane-done","pane":"h1","closed":true}'
 xone 'xs sticky h1' 'xc reap-pane --pane h1'
 xrc 0; xhas '{"event":"reap-pane-done","pane":"h1","closed":false}'
 xone xnone 'xc reap --bogus'
-xrc 0; xhas '{"event":"reap","note":"dead-cwd sweep is herdr-only; orca panes reap by handle"}'
+xrc 0; xhas '{"event":"reap","note":"the dead-cwd sweep does not apply to orca; its panes reap by handle (reap-pane)"}'
 
 # 8. Signals: TERM and HUP end the run at once (143, 129), the pane or the
 #    rung left running; INT to the pid alone ends it 130 with no done event; a

@@ -90,8 +90,7 @@
 //      projectsDir, each run with AC_HOME=<home>; the caller's own AC_HOME is
 //      never read) - the twins ARE the layout ac-lib.sh defines, so this file
 //      cannot drift from it
-//   c. config/backend := `orca\n`, unasked - the default backend (herdr is the
-//      per-fleet opt-in)
+//   c. config/backend := `orca\n`, unasked - the only backend there is
 //   d. a knob file `<value>\n` for captain model effort gate-agent gate-model
 //      gate-effort promote flow ONLY when the answer was non-empty (a
 //      whitespace-only answer IS written - the bash's `[ -n ]`, kept; readers
@@ -112,9 +111,9 @@
 //      `\nNEXT:\n  ac <name>                    # via the launcher (bin/ac-setup.sh installs it)\n`
 //      `  AC_HOME=<home> claude   # or point a harness at it directly\n`
 //      `\nThe crewchief clones projects into <home>/projects/ on your word - do not pre-clone.\n`
-// Exit 0. No workspace ids are seeded: the retired herdr-workspace* knobs are
-// never read - ac-backend.sh (FAMILY WORKSPACE GROUPING) resolves every
-// workspace adopt-by-label per fleet at runtime.
+// Exit 0. No node selector is seeded: config/orca-node is auto-pinned on
+// first use instead (orca_home_node, ac-backend-orca.sh), and every pane's
+// grouping is resolved per fleet at runtime (ac-backend.sh FAMILY GROUPING).
 //
 // Container = --container > $AC_HOMES_CONTAINER > ~/Work/ac-homes, shown on the
 // prompt for confirmation. Deliberately NOT derived from $AC_HOME's parent (the

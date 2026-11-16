@@ -65,13 +65,8 @@
 //     with the ERROR line above, status 1: DOWN - a malformed meta, a
 //     different variable from a backend the fleet cannot READ. The state is
 //     the substitution's reading of the probe's stdout followed by the word.
-//     The drivers: herdr `pane get <pane>` (alive), else `pane list` (a
-//     parsed list answers present/absent), else `status server --json`
-//     (`running:false` is gone) - each through herdr_rpc_bounded, with
-//     `--session <s>` for a configured session; no .pane-<id> handle is 1;
-//     herdr absent from PATH reads 2. orca `terminal show --terminal <h>
-//     --json` (connected true 0, else 1), failing that `status --json` (1 if
-//     it answers, else 2).
+//     orca `terminal show --terminal <h> --json` (connected true 0, else 1),
+//     failing that `status --json` (1 if it answers, else 2).
 //     UNOBSERVABLE is NOT a verdict of down and earns no recover hint.
 // Rendering, TAB-separated head line plus TAB-indented continuations:
 //   <STATE>\t<id>\thome: <home>\tprojects: <projects>
@@ -222,7 +217,7 @@
 // `tr '\t' '\037'` (the parse's reader), `tr '\t\n' '  '` (the body on
 // stdin); basename; `grep -q '^## Queued'`; mv, rm -f; date through iso(),
 // wakePublish and statusAppend; mkdir -p, tar and rm through recordsBackup;
-// awk, herdr or orca, and jq per probed entry (backendCall); and mkfifo,
+// awk, orca, and jq per probed entry (backendCall); and mkfifo,
 // for the one pipe each `<parse> | <reader>` pair runs on (a private temp
 // dir; with none to be had the pair runs one after the other).
 //

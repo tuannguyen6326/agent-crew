@@ -115,24 +115,22 @@
 // and stderr the caller's); `rm -f`; metaSet's `mv` (stderr dropped).
 // Per orphan candidate WITH a chief meta, roomchiefLive
 // probes backend_window_alive <fam>-chief through backendCall (src/lib.ts,
-// the twin of bin/ac-backend.sh's drivers) with AC_BACKEND set to the meta's
+// the twin of bin/ac-backend.sh's orca driver) with AC_BACKEND set to the meta's
 // backend= (orca when none) for that call alone, stdin, stdout and stderr
 // dropped; only status 0 is live (1 gone, 2 unreadable, a refused name such
 // as `backend=tmux` - every other answer is an orphan). It spawns awk for the
-// pane handle, then `herdr pane get|pane list|status server --json` (with
-// `--session <s>` and HERDR_SESSION=<s> for a configured session, each under
-// the per-RPC ceiling that kills its process group: a hung herdr costs up to
-// three AC_HERDR_RPC_TIMEOUTs) or `orca terminal show --terminal <h> --json`
-// / `orca status --json`, with jq.
+// pane handle, then `orca terminal show --terminal <h> --json` /
+// `orca status --json`, with jq.
 //
 // ALSO:
 // - ORDER: the metas and the family spools are walked in byte order under
 //   every locale.
 // - THE ORPHAN SCAN stops at the answering orphan: no probe runs past it or
 //   outlives the run.
-// - THE PROBE'S STDIN: the driver's children read /dev/null, so a herdr or an
-//   orca that reads stdin swallows neither the caller's stdin nor the
-//   families after it.
+// - THE PROBE'S STDIN: orca reads the controlling terminal directly rather
+//   than the pipe Bun spawns it with (backendCall's comment, src/lib.ts), so
+//   a probe never swallows the caller's stdin, whatever order the orphan
+//   scan runs its families in.
 // - W13: an unreadable stamp is printed past and left as it is (metaSet
 //   refuses to rewrite what it cannot read), so it prints on every run.
 // - No line of a shell's own is printed for a grace, a quiet window, a clock

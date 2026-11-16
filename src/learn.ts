@@ -3153,7 +3153,7 @@ function hostBootToken(root: string): string | null {
 // having reclaimed every one whose pane the backend DEFINITELY reports gone,
 // and every one whose pane the backend reports ALIVE but whose own recorded
 // boot_id (stamped at suiteLaunch) differs from the CURRENT boot token:
-// herdr restores a pane across a reboot as a bare login shell with no
+// a backend can restore a pane across a reboot as a bare login shell with no
 // runner inside it, so "alive" alone cannot tell that apart from a run
 // genuinely still going - only a boot-session change can, and only when
 // BOTH tokens are readable (unobservable, or either token unreadable, keeps

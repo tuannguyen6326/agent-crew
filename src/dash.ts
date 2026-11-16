@@ -30,7 +30,7 @@
 //   ⚓ <basename of the physical home>  captain: <c>  backend: <b>  flow: <f>
 //       c/b/f = config/captain|backend|flow, first line, [:space:]-trimmed under
 //       the locale bash was given (configReadDir), NULs dropped; defaults
-//       captain / herdr / auto when absent; "" when present but unreadable,
+//       captain / orca / auto when absent; "" when present but unreadable,
 //       nothing on stderr.
 //   <blank>
 //   CREW

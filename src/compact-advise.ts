@@ -76,9 +76,12 @@
 // state/.compact-advise/send.log), which waits up to AC_COMPACT_SEND_WAIT (10)
 // seconds for the pane to go idle (backendAgentIdle, polled each `sleep 1`),
 // then types /compact through bin/ac-send.sh; a pane still busy is left alone,
-// and the message keeps the hint for that case. On herdr a roomchief stamped
-// captain-wait (its room holds pending asks) never reads idle, so the hint is
-// all it gets until the room clears. The crewchief and a solo session own no
+// and the message keeps the hint for that case. orca's own idle check never
+// consults the captain-wait stamp (backend_agent_idle_pane_orca reads only
+// the render), so a roomchief stamped captain-wait while its own turn has
+// genuinely ended still reads idle and gets /compact sent; one still
+// rendering busy (spinner or dialog) keeps getting the hint regardless of
+// the stamp. The crewchief and a solo session own no
 // meta and keep the hint; a crewmate is the next section's. Outcomes land in
 // send.log as `<date -u +%FT%TZ> compact-auto <id>: <not idle - left to the
 // hint | sent (<ac-send's output>) | send failed (<its output>)>`, the output
@@ -96,9 +99,9 @@
 // its line as `compact=auto score=<s> floor=<f> usage=<u>`, which tells the
 // chief reading the wake that the fleet sends /compact itself. `--now` skips
 // the idle wait: the watcher's ended: and stale: arms fire only on a pane it
-// has just read quiet, and its ended: arm stamps the pane captain-wait before
-// the note is built - herdr reads that stamp `blocked` for as long as it
-// stands, so a waiting sender would never reach the pane. bin/ac-send.sh's
+// has just read quiet, so polling for idle again would be redundant; its
+// ended: arm also stamps the pane captain-wait before the note is built.
+// bin/ac-send.sh's
 // own fail-closed refusals (src/send.ts) still stand, and land in send.log as
 // `send failed`. Anything short of the act - the knob not `on`, usage under
 // the minimum - prints the `compact=advise` hint. A compaction drops usage under

@@ -131,9 +131,10 @@
 // pane held nothing the turn depended on, took no part in observing it, and had
 // to be reaped by somebody. It also could not be placed correctly: a one-shot's
 // callers were PANES (the gate judge, and review scout lanes the reviewer ran),
-// and a pane carries no AC_HOME, so the backend resolved to the herdr default
-// and opened herdr panes for an ORCA fleet, one per lane per round, owned by
-// nobody. `--pane-file` is therefore refused with `--exec`, and the `done`
+// and a pane carries no AC_HOME, so the backend resolved to a global default
+// that did not match the fleet's own config/backend, opening panes on the
+// WRONG backend for an ORCA fleet, one per lane per round, owned by nobody.
+// `--pane-file` is therefore refused with `--exec`, and the `done`
 // event's `pane` is empty. The SESSION and CREWMATE arms are unchanged: their
 // turn IS a pane, and they place one on the fleet's own backend.
 //
@@ -143,11 +144,12 @@
 // A claude SESSION here is worth its machinery: it resumes across fix rounds, a
 // human can steer it mid-turn, and its transcript is the harvest. All of that is
 // claude-specific, and reproducing it per harness is what this arm will not do:
-//   - TURN-END. claude's is the Stop-hook marker below. herdr agent_status:idle
-//     is proven insufficient on its own - codex-cli 0.144.6 blocked on its own
-//     interactive TRUST DIALOG while herdr reported `idle`, the SAME value it
-//     reports for a finished turn (probe 2026-07-21, two throwaway panes). For
-//     claude the ambiguity is broken by a second, claude-specific observable (the
+//   - TURN-END. claude's is the Stop-hook marker below. A backend's own
+//     agent_status:idle is proven insufficient on its own - codex-cli 0.144.6
+//     blocked on its own interactive TRUST DIALOG while the then-current
+//     driver reported `idle`, the SAME value it reports for a finished turn
+//     (probe 2026-07-21, two throwaway panes). For claude the ambiguity is
+//     broken by a second, claude-specific observable (the
 //     transcript's mtime idling past 120s); a harness with no transcript has
 //     nothing to break it with, and would harvest the dialog as its verdict.
 //   - FINAL-MESSAGE HARVEST. claude's is a transcript locator ($PROJ/*.jsonl)
@@ -330,7 +332,7 @@
 // bounds the whole wait.
 //
 // IDLE FALLBACK (the authoritative contract): transcript idle >120s with a final
-// assistant message AND an idle agent_status (herdr idle|done; orca idle) also
+// assistant message AND an idle agent_status (orca idle) also
 // ends the turn, in case project hooks fail to load. It EXISTS for a recorded
 // reason and is not to be tightened into uselessness: the Stop hook can fail to
 // fire, and long xhigh-thinking stretches write nothing to the transcript for
@@ -394,8 +396,9 @@
 //     closes, polls `terminal show` up to eight times 0.25 s apart while the
 //     terminal stays connected, and reports `{"event":"reap-pane-done",
 //     "pane":"<id>","closed":true|false}`. Exit 0.
-//   reap: answers `{"event":"reap","note":"dead-cwd sweep is herdr-only; orca
-//     panes reap by handle"}` without reading args. Exit 0.
+//   reap: answers `{"event":"reap","note":"the dead-cwd sweep does not apply
+//     to orca; its panes reap by handle (reap-pane)"}` without reading args.
+//     Exit 0.
 //   run: every flag above (repeats: the last wins; any other word the done
 //     error `unknown arg <w>`). Refusals in order, each a done error and
 //     exit 1, BEFORE any pane or rung: `--exec runs a one-shot command: there
@@ -1246,7 +1249,7 @@ function reapPane(args: string[]): never {
 }
 
 function reap(_args: string[]): never {
-  emit('{"event":"reap","note":"dead-cwd sweep is herdr-only; orca panes reap by handle"}');
+  emit('{"event":"reap","note":"the dead-cwd sweep does not apply to orca; its panes reap by handle (reap-pane)"}');
   process.exit(0);
 }
 
@@ -1380,7 +1383,8 @@ async function run(args: string[]): Promise<never> {
   if (!isDir(CWD)) fail(`cwd missing: ${CWD}`);
   if (!isFile(PF)) fail(`prompt file missing: ${PF}`);
   // A one-shot needs no backend at all: its callers were panes carrying no
-  // AC_HOME, and resolving one here opened herdr panes for an orca fleet.
+  // AC_HOME, and resolving one here opened panes on the WRONG backend for an
+  // orca fleet.
   if (ARM !== "oneshot" && !commandV("orca")) fail("orca not on PATH");
 
   const PROJ = `${(claudeTranscriptRoot() ?? "").replace(/\n+$/, "")}/${CWD.replace(/[/.]/g, "-").replace(/\n+$/, "")}`;
