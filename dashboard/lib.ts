@@ -1531,26 +1531,6 @@ export function renderMarkdown(md: string, srcline = false): string {
   return html.join("\n");
 }
 
-/** The terminal theme push, shared VERBATIM by the SPA terminal tab and the
- * standalone /term page (both interpolate this function into their scripts -
- * the redrawMessage precedent): resolve --term-bg/--term-fg (falling back to
- * the page canvas pair) plus the 16 --ansi-N slots from computed styles into
- * an xterm theme object and a dedupe signature. Pure. */
-export function termThemeCore(cs: { getPropertyValue(p: string): string }): { theme: Record<string, string>; sig: string } | null {
-  var XT = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
-    "brightBlack", "brightRed", "brightGreen", "brightYellow", "brightBlue", "brightMagenta", "brightCyan", "brightWhite"];
-  var bg = ((cs.getPropertyValue("--term-bg") || cs.getPropertyValue("--canvas")) || "").trim();
-  var fg = ((cs.getPropertyValue("--term-fg") || cs.getPropertyValue("--fg")) || "").trim();
-  if (!bg) return null;
-  var t: Record<string, string> = { background: bg, foreground: fg, cursor: fg, cursorAccent: bg };
-  var sig = bg + "|" + fg;
-  for (var i = 0; i < 16; i++) {
-    var c = (cs.getPropertyValue("--ansi-" + i) || "").trim();
-    if (c) { t[XT[i]] = c; sig += "|" + c; }
-  }
-  return { theme: t, sig: sig };
-}
-
 /** Mermaid render pass for a markdown reader, shared verbatim (toString()) by
  * /review's iframe overlay AND the SPA's markdown readers (Reports, Records,
  * Board) - reports-mermaid: the SPA readers used to leave a ```mermaid fence
@@ -1867,51 +1847,6 @@ export function graphHtml(text: string): string {
       + '<span class="ggmsg">' + escg(r.subject) + "</span></div>";
   }
   return '<div class="gg">' + out + "</div>";
-}
-
-// ===========================================================================
-// Agent-status chips (dash-agent-status-chips): the live 5-state machine
-// herdr already derives per pane (idle|working|blocked|done|unknown), joined
-// to task ids so the Board answers "what is each agent DOING right now"
-// without opening a terminal. Read-only over `herdr agent list` output; the
-// recorded status line (boardLive) stays the lifecycle view - this is the
-// real-time one.
-// ===========================================================================
-
-export type AgentPaneStatus = { pane: string; status: string };
-
-/** `herdr agent list` JSON -> [{pane, status}]. Tolerant: anything that is
- *  not the expected shape contributes nothing (a chip that cannot be derived
- *  is absent, never guessed - the boardLive fallback still renders). */
-export function parseAgentList(out: string): AgentPaneStatus[] {
-  let j: unknown;
-  try { j = JSON.parse(out); } catch { return []; }
-  const agents = (j as { result?: { agents?: unknown[] } })?.result?.agents;
-  if (!Array.isArray(agents)) return [];
-  const res: AgentPaneStatus[] = [];
-  for (const a of agents) {
-    const pane = (a as { pane_id?: unknown }).pane_id;
-    const status = (a as { agent_status?: unknown }).agent_status;
-    if (typeof pane === "string" && pane && typeof status === "string" && status)
-      res.push({ pane, status });
-  }
-  return res;
-}
-
-/** Join task pane handles to agent states. A pane herdr does not report is
- *  ABSENT from the map - the caller renders nothing rather than a stale or
- *  invented state. */
-export function agentStatusMap(
-  entries: AgentPaneStatus[],
-  panes: { id: string; pane: string }[],
-): Record<string, string> {
-  const byPane = new Map(entries.map((e) => [e.pane, e.status]));
-  const out: Record<string, string> = {};
-  for (const p of panes) {
-    const s = byPane.get(p.pane);
-    if (s) out[p.id] = s;
-  }
-  return out;
 }
 
 // ===========================================================================

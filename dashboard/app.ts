@@ -34,8 +34,6 @@
 //
 // Routes:
 //   GET  /* (non-/api)         -> the SPA shell page (deep-link / reload safe)
-//   GET  /attach-frame?path=<home>&(fleet=1|family=<fam>)[&watch=<id>] -> standalone xterm page over the attach ws below: ONE task pane, full width, typed input via roomInput (chief-pane-native-attach, re-landed as its own URL - the chief panel stays on the snapshot stream)
-//   WS   /api/room/attach-ws?path=<home>&(fleet=1|family=<fam>)[&watch=<id>] -> native byte-stream of that pane (`herdr agent attach` on a server pty at the PANE's own geometry, reattached when the pane resizes; output-only - the attach pty is a pure viewer, measured)
 //   GET  /api/snapshot.json    -> ac-fleets.sh --json, passed through (Fleets route + shell health)
 //   GET  /api/processes?path=<home> -> {rooms,rooms_unreadable,pools,remote} for the Processes route
 //   GET  /api/backlog?path=<home>   -> {backlog:{in_flight,queued,done}} for the Backlog route
@@ -93,10 +91,10 @@ import {
   TimelineEvent, UX_BASE, artifactKind, artifactPainted, backlogFamilyIds, boardSystemPanes, buildReviewSrcdoc, 
   cadenceLabel, chiefFitPx, clampBgDim, imeOwnsKey, composeFamily, contractTokens, deriveProgress, 
   familyOfTaskId, familyRepos, familyStages, fleetAttnItems, groupArtifacts, isHtmlArtifact, 
-  matchBacklog, mermaidPass, nextPalette, nextTheme, normalizeBgColor, parseAgentList, agentStatusMap, parseArtifactPath,
+  matchBacklog, mermaidPass, nextPalette, nextTheme, normalizeBgColor, parseArtifactPath,
   parseBacklog, parseBacklogLine, parseLearningLedger, parseRoomList, parseTimeline, readerCss,
   renderMarkdown, resolvePalette, resolveTheme, reviewableArtifact, stemRegroup, storyState,
-  termThemeCore, usageFromJsonl, verifyProcessRows, escapeHtml,
+  usageFromJsonl, verifyProcessRows, escapeHtml,
 } from "./lib.ts";
 export * from "./lib.ts";
 import { PAGE } from "./page.ts";
@@ -1395,7 +1393,7 @@ export const CONFIG_KNOB_META: Record<(typeof EDITABLE_CONFIG)[number], KnobMeta
   "gate-agent": { desc: "Second-chief engine for design gates - one engine, no fallback; off = the chief self-judges (receipted).", options: ["codex", "claude", "opencode", "pi", "cursor", "off"] },
   "gate-effort": { desc: "Reasoning effort for the gate judge; empty = the engine's own default.", options: EFFORTS },
   "gate-model": { desc: "Model for the gate judge; empty = the engine's own default." },
-  backend: { desc: "Session backend for new crewmates: herdr (default) or orca.", options: ["herdr", "orca"] },
+  backend: { desc: "Session backend for new crewmates: orca (the only supported backend).", options: ["orca"] },
   "remote-poll-interval": { desc: "Seconds between the fleet watcher's remote-order polls (default 300; 0 = slot off).", numeric: true },
   captain: { desc: "How the fleet addresses the human (e.g. TN); absent = captain." },
   "slack-captain-id": { desc: "Slack member id the remote channel treats as the captain." },
@@ -2219,37 +2217,7 @@ async function backlogDetail(homePath: string): Promise<Response> {
   const own = existsSync(backlogFile)
     ? parseBacklog(readFileSync(backlogFile, "utf8"))
     : { in_flight: [], queued: [], done: [] };
-  return json({ backlog: own, agents: await agentStatusesFor(homePath) });
-}
-
-/** One `herdr agent list` serves every home and every polling client inside
- *  the window - herdr derives agent state fleet-wide, the per-home filter is
- *  the pane join below. */
-const herdrAgents = ttlMemo(2500, async (): Promise<ReturnType<typeof parseAgentList>> => {
-  const { code, out } = await run(["herdr", "agent", "list"], {});
-  return code === 0 ? parseAgentList(out) : [];
-});
-
-/** Task id -> live agent state (idle|working|blocked|done|unknown) for one
- *  home: herdr's own 5-state detection joined to state/*.meta pane handles.
- *  Read-only; any failure is an empty map - the board renders no chip rather
- *  than a guessed one. */
-async function agentStatusesFor(homePath: string): Promise<Record<string, string>> {
-  let entries: ReturnType<typeof parseAgentList>;
-  try { entries = await herdrAgents(); } catch { return {}; }
-  if (entries.length === 0) return {};
-  const panes: { id: string; pane: string }[] = [];
-  try {
-    for (const f of readdirSync(`${homePath}/state`)) {
-      if (!f.endsWith(".meta")) continue;
-      const id = f.slice(0, -".meta".length);
-      try {
-        const h = paneHandleByMeta(homePath, id, readFileSync(`${homePath}/state/${f}`, "utf8"));
-        if (h) panes.push({ id, pane: h.pane });
-      } catch { /* unreadable meta - no chip for it */ }
-    }
-  } catch { return {}; }
-  return agentStatusMap(entries, panes);
+  return json({ backlog: own });
 }
 
 /** Reports route (§7.4): the discovered artifact master list (viewer bodies load
@@ -2353,48 +2321,6 @@ export async function readRoomEntries(homePath: string, family: string): Promise
   return out.split("\n").filter((l) => l.startsWith("- ["));
 }
 
-/** Keys the browser may press into a chief pane (chief panel, slice B). A
- * closed allowlist, not a passthrough: navigation/answer keys for TUI prompts
- * plus the interrupt - never a way to type arbitrary control sequences. */
-export const CHIEF_KEYS = [
-  "up", "down", "left", "right", "enter", "esc", "tab", "shift+tab",
-  "backspace", "space", "pageup", "pagedown", "ctrl+c", "ctrl+v", "ctrl+u",
-] as const;
-export function isChiefKey(k: string): boolean {
-  // Web-terminal parity: the attach page types like
-  // the web terminal, so the whole ctrl+<letter> range passes - the full-shell
-  // /api/term/ws on this same listener already grants strictly more.
-  return (CHIEF_KEYS as readonly string[]).includes(k) || /^ctrl\+[a-z]$/.test(k);
-}
-
-/** Text a type-through keystroke may carry: one printable character. The
- * composer path (whole messages) goes through ac-send.sh instead - this is
- * only for live typing into a TUI prompt. */
-export function isChiefChar(t: string): boolean {
-  return t.length === 1 && t >= " " && t !== "";
-}
-
-/** Image attachment content types the chat panel accepts; the extension is
- * derived HERE (never from a client filename), so the saved name is always
- * ours. */
-export function attachExt(contentType: string | null): string | null {
-  const m: Record<string, string> = {
-    "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif",
-  };
-  return m[(contentType ?? "").toLowerCase()] ?? null;
-}
-
-/** Type-through text beyond one keystroke: an IME composition (Vietnamese
- * telex commits "\u1ec1" as one input event) or a clipboard paste. Printable
- * only - control bytes except \n and \t are rejected, so an escape sequence
- * can never ride the text path; the length cap keeps a runaway paste out of
- * the pane. */
-export function isChiefPaste(t: string): boolean {
-  if (!t || t.length > 2000) return false;
-  // eslint-disable-next-line no-control-regex
-  return !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(t);
-}
-
 /** The chief pane + tab for a family: the .pane-<id> handle file's two tokens
  * (what the backend itself reads - survives pane re-creation), falling back to
  * the meta's window= echo for the pane with no tab (focus becomes best-effort
@@ -2465,522 +2391,17 @@ async function roomPanes(homePath: string, family: string): Promise<Response> {
   return json({ panes: familyPaneIds(metas, family) });
 }
 
-// ---------------------------------------------------------------------------
-// Web terminal: a NATIVE full herdr terminal in the browser - no ttyd, no
-// node-pty, no CDN. Each websocket at /api/term/ws spawns herdr on a PTY -
-// keystrokes flow ws -> pty, frames flow pty -> ws - and the VENDORED
-// xterm.js (served at /assets/xterm/, provenance in dashboard/assets/)
-// renders in /term-frame, which the Terminal page iframes. Same trust model
-// as the dashboard (127.0.0.1). Each socket is one herdr client attaching
-// the shared session; killing the bridge detaches it.
-// The Terminal page ships enabled: the terminal is native and dependency-free,
-// and the chat panel already types into panes with no knob - gating this page
-// protected a ttyd install that no longer exists. Same trust model as every
-// surface here: 127.0.0.1 only.
-function webtermEnabled(_homePath: string): boolean {
-  return true;
+/** Herdr is refused fleet-wide (orca-cutover): every live pane is orca-backed,
+ * so there is no native terminal left to embed - the dock always offers the
+ * open-Orca affordance (/api/orca/focus) in its place. No home-specific
+ * branch is left to test: this is the one shape, unconditionally. */
+export function termStatusBody(): { enabled: false; running: false; why: string; orca: true } {
+  return { enabled: false, running: false, why: "this fleet runs on the Orca app", orca: true };
 }
-
-/** Clamp the client-reported terminal size to something a pty can hold; the
- * values are interpolated into an stty command line, so they must come out of
- * here as INTEGERS no matter what the query string carried. */
-export function termSize(colsRaw: string | null, rowsRaw: string | null): { cols: number; rows: number } {
-  const cols = Math.min(500, Math.max(20, Math.floor(Number(colsRaw)) || 80));
-  const rows = Math.min(200, Math.max(5, Math.floor(Number(rowsRaw)) || 24));
-  return { cols, rows };
-}
-
 async function termStatus(homePath: string): Promise<Response> {
   if (!(await allowedHomePaths()).has(homePath))
     return json({ error: "unknown home" }, 404);
-  // An orca-backed home has no herdr surface to embed: the dock renders an
-  // open-Orca affordance (via /api/orca/focus) instead of an empty client.
-  try {
-    if (readFileSync(`${homePath}/config/backend`, "utf8").trim() === "orca")
-      return json({ enabled: false, running: false, why: "this fleet runs on the Orca app", orca: true });
-  } catch { /* no knob - herdr default */ }
-  return json({ enabled: true, running: true, url: "/term-frame?path=" + encodeURIComponent(homePath) });
-}
-
-/** Vendored terminal renderer (dashboard/assets/xterm/, provenance in its
- * README): a page whose script can type into a live PTY must not trust a CDN
- * at runtime, so xterm.js is served by this process - a CLOSED name->type map,
- * never a directory read, so the route cannot traverse. */
-const TERM_ASSETS: Record<string, string> = {
-  "xterm.js": "text/javascript; charset=utf-8",
-  "addon-fit.js": "text/javascript; charset=utf-8",
-  "addon-unicode11.js": "text/javascript; charset=utf-8",
-  "addon-web-links.js": "text/javascript; charset=utf-8",
-  "xterm.css": "text/css; charset=utf-8",
-};
-function termAsset(name: string): Response {
-  const ct = TERM_ASSETS[name];
-  if (!ct) return new Response("not found", { status: 404 });
-  return new Response(Bun.file(import.meta.dir + "/assets/xterm/" + name), {
-    headers: { "content-type": ct, "cache-control": "public, max-age=86400" },
-  });
-}
-
-function termFramePage(): Response {
-  const html = `<!doctype html>
-<html><head><meta charset="utf-8"><title>agent-crew terminal</title>
-<link rel="stylesheet" href="/assets/xterm/xterm.css">
-<style>
-/* overflow:hidden on BOTH: this document lives in an iframe, so a transient
-   few-px overshoot while the fit addon resizes would otherwise flash the
-   iframe's own UA scrollbars - the outer page hiding ITS scrollbars can't
-   reach these. */
-html,body{margin:0;height:100%;overflow:hidden;background:#0c252d}#t{height:100%;padding:4px 0 0 6px;box-sizing:border-box}
-/* Kill xterm's viewport scrollbar: the UA paints it a light track that reads as
-   a white stripe down the right edge of a dark terminal. Scrollback is reached
-   by wheel and by the pane's own keys, so the bar carries no function here. */
-.xterm-viewport{scrollbar-width:none;-ms-overflow-style:none}
-.xterm-viewport::-webkit-scrollbar{width:0;height:0}</style>
-<!-- The #0b0f14 above is only the pre-theme default: the parent paints its own
-     canvas colour in through acSetTheme the moment the frame is up, so the
-     terminal stops being a black rectangle pasted onto a themed page. -->
-<script src="/assets/xterm/xterm.js"></script>
-<script src="/assets/xterm/addon-fit.js"></script>
-<script src="/assets/xterm/addon-unicode11.js"></script>
-<script src="/assets/xterm/addon-web-links.js"></script>
-</head><body><div id="t"></div>
-<script>
-const q = new URLSearchParams(location.search);
-const path = q.get("path") ?? "";
-// Font + width tables both matter here: xterm's defaults are courier-new and
-// Unicode 6 widths, while herdr lays panes out with modern (Unicode 11+)
-// widths - on glyphs like the TUI's status arrows the two disagree, so
-// redraw-in-place left misaligned residue (reported as a font glitch).
-// Font size is captain-adjustable (the page chrome's A-/A+) and persists per
-// browser under one key, so every mount comes back at the chosen size.
-const FKEY = "ac_term_font";
-const fclamp = (v) => Math.max(8, Math.min(24, Math.round((v || 12) * 2) / 2));
-let fpx = 12;
-try { fpx = fclamp(parseFloat(localStorage.getItem(FKEY) || "12")); } catch { }
-const term = new Terminal({
-  fontSize: fpx, scrollback: 5000, theme: { background: "#0c252d" },
-  // WezTerm parity: JetBrains Mono is what the operator's WezTerm renders,
-  // so the web terminal leads with it; Hack Nerd
-  // Font Mono next supplies the nerd/powerline glyphs JetBrains Mono lacks -
-  // the same shape as WezTerm's own built-in Symbols Nerd Font fallback.
-  fontFamily: "'JetBrains Mono', 'Hack Nerd Font Mono', Menlo, Monaco, 'SF Mono', 'DejaVu Sans Mono', monospace",
-  allowProposedApi: true,  // the unicode-version switch is behind this flag
-});
-const fit = new FitAddon.FitAddon();
-term.loadAddon(fit);
-term.loadAddon(new Unicode11Addon.Unicode11Addon());
-term.unicode.activeVersion = "11";
-// Clickable URLs (vendored addon-web-links). Pane content is UNTRUSTED - an
-// agent or escape sequence can print any URL - so the handler re-validates
-// the scheme and opens with no opener; nothing navigates this frame.
-term.loadAddon(new WebLinksAddon.WebLinksAddon((e, uri) => {
-  if (/^https?:$/i.test(uri.split("//")[0])) { const w = window.open(uri, "_blank"); if (w) w.opener = null; }
-}));
-term.open(document.getElementById("t"));
-fit.fit(); term.focus();
-let ws = null, gen = 0, rt = null, sentCols = 0, sentRows = 0;
-function connect() {
-  const g = ++gen;
-  fit.fit();
-  // The spawn query IS a size send, so record it as one - else the dedupe below
-  // would suppress the first real change back to whatever we opened with.
-  sentCols = term.cols; sentRows = term.rows;
-  // fleet=1 / family=<fam> ride through: the server resolves the target's
-  // workspace and steers THIS client onto it right after spawn - a full
-  // herdr client opened at the pane the URL names.
-  const scope = (q.get("fleet") === "1" ? "&fleet=1" : "") + (q.get("family") ? "&family=" + encodeURIComponent(q.get("family")) : "");
-  ws = new WebSocket("ws://" + location.host + "/api/term/ws?path=" + encodeURIComponent(path) + scope
-    + "&cols=" + term.cols + "&rows=" + term.rows);
-  ws.binaryType = "arraybuffer";
-  // Reset only when a connection actually OPENS (fresh stream, fresh screen).
-  // Resetting before each RETRY blanked the screen every 1.2s, so a capped
-  // server (429 handshake) showed an empty terminal instead of the message.
-  ws.onopen = () => { if (g === gen) term.reset(); };
-  // First-byte watchdog (the dock once opened onto a silent blank): a
-  // connection that OPENS but
-  // never streams is a dead pty wearing a live socket - no close event ever
-  // fires, so the reconnect loop below never runs. Say so and force the
-  // reconnect; on first output tell the embedding parent (the dock drops its
-  // connecting overlay on this signal - same-origin direct call, the
-  // parent.termTheme precedent).
-  let gotByte = false;
-  const wd = setTimeout(() => {
-    if (g !== gen || gotByte) return;
-    term.write("\\x1b[33m[no output - respawning…]\\x1b[0m\\r\\n");
-    try { ws.close(); } catch { }
-  }, 4000);
-  ws.onmessage = (e) => {
-    if (g !== gen) return;
-    if (!gotByte) { gotByte = true; clearTimeout(wd); try { if (parent !== window && typeof parent.acTermLive === "function") parent.acTermLive(); } catch { } }
-    term.write(typeof e.data === "string" ? e.data : new Uint8Array(e.data));
-  };
-  ws.onclose = (e) => {
-    if (g !== gen) return;
-    clearTimeout(wd);
-    term.write("\\r\\n\\x1b[33m[" + (e.reason || "disconnected") + " - reconnecting…]\\x1b[0m\\r\\n");
-    setTimeout(() => { if (g === gen) connect(); }, 1200);
-  };
-}
-// Keystrokes ride BINARY frames; TEXT frames carry control JSON (resize).
-const enc = new TextEncoder();
-term.onData((d) => { if (ws && ws.readyState === 1) ws.send(enc.encode(d)); });
-// The PTY must follow the FRAME, and window.resize alone does not see that.
-// Measured: mount is always correct (fit runs at the real size), but every
-// LATER change to the iframe's box made by the PARENT - collapsing the nav,
-// termFit's height pass, switching back to this tab - resized the frame
-// WITHOUT firing resize in here, so xterm re-fit on its own to 233 cols while
-// the pty stayed at the 129 it was spawned with, and herdr painted 129 columns
-// into a 233-column frame: the captain's black band down the right. A
-// ResizeObserver on the holder sees the box change whatever caused it. The
-// guard is the point of the dedupe: only a real cols/rows CHANGE crosses the
-// wire, so the observer's own layout churn never floods the pty with SIGWINCH.
-// Oscillation damper: a scrollbar (or any layout feedback) can flip the box
-// between two sizes forever - A/B alternation slips the equality dedupe every
-// time and, at the 200ms debounce, storms the server with ~5 resizes/s that
-// reflow every shared pty (measured live: 272 resize events/min, two sizes
-// alternating). Remember the previous send; when the new size equals it
-// (A->B->A), hold that send until the size stays put for 1.5s.
-let prevCols = 0, prevRows = 0;
-function syncSize() {
-  clearTimeout(rt);
-  const doSend = () => {
-    fit.fit();
-    if (term.cols === sentCols && term.rows === sentRows) return;
-    if (term.cols === prevCols && term.rows === prevRows) { rt = setTimeout(doSend, 1500); return; }
-    prevCols = sentCols; prevRows = sentRows;
-    sentCols = term.cols; sentRows = term.rows;
-    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ resize: { cols: term.cols, rows: term.rows } }));
-  };
-  rt = setTimeout(doSend, 200);
-}
-addEventListener("resize", syncSize);
-new ResizeObserver(syncSize).observe(document.getElementById("t"));
-// Font-metrics refit: cols were measured at mount, possibly against the
-// fallback font (JetBrains Mono is local but canvas measurement can run
-// before it is applied). A glyph-width change re-fits NOTHING by itself -
-// the box never changed - so re-fit when the font set settles.
-if (document.fonts && document.fonts.ready) {
-  document.fonts.load("12px 'JetBrains Mono'").catch(() => {});
-  document.fonts.ready.then(() => { fit.fit(); syncSize(); });
-}
-// Theme, pushed IN by the parent (same-origin, so a plain function call - no
-// postMessage handshake to get wrong). Called on mount and on every theme or
-// palette change; it repaints the live terminal in place, because remounting
-// the iframe would kill the herdr client attached to the captain's session.
-window.acSetTheme = (t) => {
-  if (!t || !t.background) return;
-  document.body.style.background = t.background;
-  term.options.theme = { ...(term.options.theme || {}), ...t };
-};
-// Font controls, driven by the parent chrome (same-origin direct calls like
-// acSetTheme): step the size, persist it, refit, tell the pty. Returns the
-// applied size so the chrome's label never guesses.
-window.acGetFont = () => term.options.fontSize || 12;
-window.acSetFont = (d) => {
-  const v = fclamp((term.options.fontSize || 12) + d);
-  term.options.fontSize = v;
-  try { localStorage.setItem(FKEY, String(v)); } catch { }
-  fit.fit(); syncSize();
-  return v;
-};
-// Ask for it now rather than waiting for the parent's next poll render - the
-// frame knows when it is ready, the parent does not.
-try { if (parent !== window && typeof parent.termTheme === "function") parent.termTheme(); } catch { /* no parent - opened directly */ }
-connect();
-</script></body></html>`;
-  return new Response(html, { headers: reviewFrameHeaders() });
-}
-
-/** Standalone native pane view (chief-pane-native-attach, re-landed as its
- * own URL after the panel reverted to the snapshot): xterm.js over
- * /api/room/attach-ws - a real byte-stream of ONE task pane. The grid is
- * FIXED at the pane's real geometry (the server's {geometry} frame); the
- * FONT fills the width and the bottom anchors (the pane's aspect never
- * matches the window's). Typing translates xterm.onData into the gated
- * roomInput route - the attach pty itself is a pure viewer (measured). */
-function attachFramePage(): Response {
-  const html = `<!doctype html>
-<html><head><meta charset="utf-8"><title>agent-crew pane mirror</title>
-<link rel="stylesheet" href="/assets/xterm/xterm.css">
-<style>
-html,body{margin:0;height:100%;overflow:hidden;background:#0c252d}
-/* Bottom-anchored: the pane grid rarely shares the panel's aspect ratio, so a
- * width-filling font can overflow the height - a terminal lives at its bottom
- * (prompt, newest output), so the top is what crops, and the wheel (xterm
- * scrollback) still reaches everything above. */
-#t{height:100%;padding:4px 0 0 6px;box-sizing:border-box;display:flex;flex-direction:column;justify-content:flex-end;overflow:hidden}
-/* WRAP mode (re-wrap to the viewer's font): the byte mirror can only zoom -
- * its grid belongs to the real pane - so rewrap-on-font rides the snapshot
- * HTML instead, where soft-wrap is free. Reading surface: typing needs the
- * mirror, so the toggle swaps whole surfaces. */
-:root{${ANSI_DARK}}
-#w{display:none;height:100%;overflow-y:auto;padding:6px 12px;box-sizing:border-box;white-space:pre-wrap;word-break:break-word;font:13px 'JetBrains Mono','Hack Nerd Font Mono',Menlo,Monaco,monospace;line-height:1.4;color:var(--ansi-7)}
-body.wrapmode #t{display:none}
-body.wrapmode #w{display:block}
-/* Box-drawing rules are drawn at the pane's own width - wrapped they leave a
- * stub line under every rule, so each run stays on one clipped line. */
-#w .wsep{display:inline-block;max-width:100%;white-space:nowrap;overflow:hidden;vertical-align:bottom}
-/* Font controls: hover-dim so the bar never competes with pane content; the
- * size label doubles as the back-to-auto-fit reset. */
-#bar{position:fixed;top:6px;right:10px;z-index:2;display:flex;gap:4px;align-items:center;opacity:.35;transition:opacity .15s;font:11px 'JetBrains Mono',Menlo,monospace}
-#bar:hover{opacity:1}
-#bar button,#bar span{background:#16323c;color:#9fb6bd;border:1px solid #24444f;border-radius:4px;padding:2px 7px;cursor:pointer;font:inherit}
-.xterm-viewport{scrollbar-width:none;-ms-overflow-style:none}
-.xterm-viewport::-webkit-scrollbar{width:0;height:0}</style>
-<script src="/assets/xterm/xterm.js"></script>
-<script src="/assets/xterm/addon-unicode11.js"></script>
-<script src="/assets/xterm/addon-web-links.js"></script>
-</head><body><div id="t"></div>
-<pre id="w"></pre>
-<div id="bar"><button id="fm" title="Smaller font">A-</button><span id="fs" title="Click: back to auto-fit">auto</span><button id="fp" title="Larger font">A+</button><button id="wr" title="Wrap: re-wrap the pane text to this window and font (reading view; typing needs the mirror)">wrap</button></div>
-<script>
-const q = new URLSearchParams(location.search);
-const path = q.get("path") ?? "";
-const tq = q.get("fleet") === "1" ? "&fleet=1" : "&family=" + encodeURIComponent(q.get("family") ?? "");
-const watch = q.get("watch") ?? "";
-const term = new Terminal({
-  fontSize: 12, scrollback: 2000, theme: { background: "#0c252d" },
-  // Same stack as the term page: WezTerm parity (see the note there).
-  fontFamily: "'JetBrains Mono', 'Hack Nerd Font Mono', Menlo, Monaco, 'SF Mono', 'DejaVu Sans Mono', monospace",
-  allowProposedApi: true,
-});
-term.loadAddon(new Unicode11Addon.Unicode11Addon());
-term.unicode.activeVersion = "11";
-term.loadAddon(new WebLinksAddon.WebLinksAddon((e, uri) => {
-  if (/^https?:$/i.test(uri.split("//")[0])) { const w = window.open(uri, "_blank"); if (w) w.opener = null; }
-}));
-term.open(document.getElementById("t"));
-// Typing types into the pane, web-terminal style. The attach pty itself
-// never forwards input (measured: \`herdr agent attach\` is a pure viewer)
-// and the ws stays output-only - xterm.onData (composed text, Vietnamese IME
-// included, or an encoded control sequence) is translated to the roomInput
-// shapes, the same gated path every other typing surface uses.
-const ATT_KEYS = { "\\r": "enter", "\\x7f": "backspace", "\\t": "tab", "\\x1b": "esc", "\\x1b[A": "up", "\\x1b[B": "down", "\\x1b[C": "right", "\\x1b[D": "left", "\\x1b[Z": "shift+tab", "\\x1b[5~": "pageup", "\\x1b[6~": "pagedown" };
-function sendInput(body) {
-  fetch("/api/room/input?path=" + encodeURIComponent(path) + tq + (watch ? "&watch=" + encodeURIComponent(watch) : ""),
-    { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).catch(() => { });
-}
-term.onData((d) => {
-  if (ATT_KEYS[d] !== undefined) { sendInput({ key: ATT_KEYS[d] }); return; }
-  if (d.length === 1) {
-    const c = d.charCodeAt(0);
-    if (c < 32 || c === 127) { if (c >= 1 && c <= 26) sendInput({ key: "ctrl+" + String.fromCharCode(96 + c) }); return; }
-    sendInput({ text: d }); return;
-  }
-  if (d.charCodeAt(0) === 27) return;   // unmapped escape sequence - dropped
-  sendInput({ paste: d });
-});
-term.focus();
-// Font-fit: grid is the pane's, so scale the font until the pane's COLUMNS
-// span the box - full width, no dead right margin; height crops at the TOP
-// via the bottom-anchored holder. One
-// proportional step off the rendered screen size, then ONE settle pass that
-// may only SHRINK: xterm cell sizes round to whole pixels, so the exact fit
-// can sit between two font steps and a symmetric epsilon loop oscillates
-// between them forever (measured: the whole pane shimmered between two
-// sizes). Shrink-only settling terminates by construction.
-let grid = null, fitT = null;
-// Manual font override (the A-/A+ header, web-terminal parity): a chosen size
-// wins over auto-fit until reset to auto; persisted per browser like the web
-// terminal's own FKEY.
-const AFK = "ac_attach_font";
-let manualFont = 0;
-try { manualFont = parseInt(localStorage.getItem(AFK) || "0", 10) || 0; } catch { }
-window.acGetFont = () => term.options.fontSize || 12;
-window.acSetFont = (d) => {
-  if (d === 0) { manualFont = 0; try { localStorage.removeItem(AFK); } catch { } fitFont(); return window.acGetFont(); }
-  manualFont = Math.max(6, Math.min(24, Math.round((term.options.fontSize || 12) + d)));
-  try { localStorage.setItem(AFK, String(manualFont)); } catch { }
-  term.options.fontSize = manualFont;
-  return manualFont;
-};
-function fitFont(settle) {
-  if (!grid) return;
-  if (manualFont) { if (term.options.fontSize !== manualFont) term.options.fontSize = manualFont; return; }
-  const holder = document.getElementById("t");
-  const screen = document.querySelector(".xterm-screen");
-  if (!holder || !screen || !screen.clientWidth || !screen.clientHeight) return;
-  const f = term.options.fontSize || 12;
-  const scale = (holder.clientWidth - 10) / screen.clientWidth;
-  const nf = Math.max(6, Math.min(20, Math.floor(f * scale * 100) / 100));
-  if (Math.abs(nf - f) > 0.15 && (!settle || nf < f)) {
-    term.options.fontSize = nf;
-    if (!settle) { clearTimeout(fitT); fitT = setTimeout(() => fitFont(true), 60); }
-  }
-}
-new ResizeObserver(() => { clearTimeout(fitT); fitT = setTimeout(fitFont, 120); }).observe(document.getElementById("t"));
-// A pane that cannot be mirrored: tell the parent when embedded, else say so
-// inline - a standalone tab has nobody else to fall back to.
-function attachGone(why) {
-  try { if (parent !== window && parent.acAttachDead) { parent.acAttachDead(why); return; } } catch { }
-  term.write("\\r\\n\\x1b[33m[" + why + " - reload to retry]\\x1b[0m\\r\\n");
-}
-let ws = null, gen = 0, dead = false, retries = 0, carry = "";
-// NOT TextDecoder("latin1"): that label is windows-1252, which remaps bytes
-// 0x80-0x9f onto punctuation code points - exactly the range Vietnamese
-// UTF-8 continuation bytes live in (measured: every "đ" vanished). A manual
-// byte->char map is the only true 1:1 round-trip.
-const b2s = (buf) => { const u = new Uint8Array(buf); let out = ""; for (let i = 0; i < u.length; i++) out += String.fromCharCode(u[i]); return out; };
-function connect() {
-  const g = ++gen;
-  carry = "";
-  ws = new WebSocket("ws://" + location.host + "/api/room/attach-ws?path=" + encodeURIComponent(path)
-    + tq + (watch ? "&watch=" + encodeURIComponent(watch) : ""));
-  ws.binaryType = "arraybuffer";
-  ws.onopen = () => { if (g === gen) { retries = 0; term.reset(); } };
-  ws.onmessage = (e) => {
-    if (g !== gen) return;
-    if (typeof e.data === "string") {
-      // TEXT frames are server control: {closed,why} latches pane-gone (no
-      // reconnect loop on a dead pane); {geometry} fixes the grid.
-      try {
-        const c = JSON.parse(e.data);
-        if (c.closed) { dead = true; attachGone(c.why || "pane gone"); return; }
-        if (c.geometry) { grid = c.geometry; term.resize(grid.cols, grid.rows); requestAnimationFrame(fitFont); }
-      } catch { }
-      return;
-    }
-    // The pane paints on the ALTERNATE screen (no xterm scrollback) and
-    // enables MOUSE TRACKING (the wheel reports to the app instead of
-    // scrolling - measured: 1000h/1002h/1003h/1006h ride the live stream).
-    // Strip both families of switches: the paint lands on the normal buffer
-    // where the preloaded history accumulates, and the wheel scrolls it
-    // locally. Bytes ride a manual 1:1 char map and re-encode, so UTF-8 text
-    // is never mangled; the carry holds an escape split across chunks.
-    let s = carry + b2s(e.data);
-    carry = "";
-    const tail = s.match(/\\x1b(?:\\[\\??[0-9]{0,4})?$/);
-    if (tail) { carry = tail[0]; s = s.slice(0, s.length - tail[0].length); }
-    s = s.replace(/\\x1b\\[\\?(?:1049|1047|47|100[0-6]|101[56])[hl]/g, "");
-    if (s) term.write(Uint8Array.from(s, (ch) => ch.charCodeAt(0)));
-  };
-  ws.onclose = (e) => {
-    if (g !== gen || dead) return;
-    retries++;
-    if (retries > 3) { attachGone(e.reason || "attach unavailable"); return; }
-    term.write("\\r\\n\\x1b[33m[reconnecting…]\\x1b[0m\\r\\n");
-    setTimeout(() => { if (g === gen) connect(); }, 1200);
-  };
-}
-// Theme: pull the parent's live palette at load (same-origin), then follow
-// pushes - the parent's termTheme() covers every later theme/palette change.
-window.acSetTheme = (t) => {
-  if (!t || !t.background) return;
-  document.body.style.background = t.background;
-  term.options.theme = { ...(term.options.theme || {}), ...t };
-};
-try {
-  if (parent !== window && typeof parent.termThemeCore === "function") {
-    const r = parent.termThemeCore(parent.getComputedStyle(parent.document.documentElement));
-    if (r) window.acSetTheme(r.theme);
-  }
-} catch { /* opened directly - keep the default */ }
-// WRAP mode: 1s snapshot poll into the pre-wrap surface; the mirror ws stays
-// connected underneath so switching back is instant.
-const wEl = document.getElementById("w");
-let wrapMode = false, wrapT = null, wrapFont = 13;
-try { wrapFont = parseInt(localStorage.getItem("ac_wrap_font") || "13", 10) || 13; } catch { }
-wEl.style.fontSize = wrapFont + "px";
-function wrapTick() {
-  fetch("/api/room/pane?path=" + encodeURIComponent(path) + tq + (watch ? "&watch=" + encodeURIComponent(watch) : "") + "&lines=1200")
-    .then((r) => r.json()).then((j) => {
-      if (!wrapMode || j.html === undefined || wEl._h === j.html) return;
-      const pinned = wEl.scrollTop + wEl.clientHeight >= wEl.scrollHeight - 8;
-      wEl._h = j.html;
-      // Pane lines are padded to the pane's full width - the trailing space
-      // runs wrap into phantom blank fragments, so they go before render.
-      wEl.innerHTML = j.html.replace(/ +(?=\\n|$)/gm, "").replace(/─{20,}/g, '<span class="wsep">$&</span>');
-      if (pinned) wEl.scrollTop = wEl.scrollHeight;
-    }).catch(() => { });
-}
-function setWrap(on) {
-  wrapMode = on;
-  document.body.classList.toggle("wrapmode", on);
-  document.getElementById("wr").style.color = on ? "#b4fa72" : "";
-  try { localStorage.setItem("ac_attach_wrap", on ? "1" : "0"); } catch { }
-  if (on) { wEl._h = undefined; wrapTick(); wrapT = setInterval(wrapTick, 1000); }
-  else { clearInterval(wrapT); wrapT = null; term.focus(); }
-  fsLabel();
-}
-// The bar drives whichever surface is up: mirror font is the acSetFont
-// manual-override (label resets to auto-fit), wrap font is its own persisted
-// size (label resets to 13).
-const fsEl = document.getElementById("fs");
-const fsLabel = () => { fsEl.textContent = wrapMode ? String(wrapFont) : (manualFont ? String(manualFont) : "auto"); };
-const bump = (d) => {
-  if (wrapMode) {
-    wrapFont = d === 0 ? 13 : Math.max(8, Math.min(28, wrapFont + d));
-    try { localStorage.setItem("ac_wrap_font", String(wrapFont)); } catch { }
-    wEl.style.fontSize = wrapFont + "px";
-  } else window.acSetFont(d);
-  fsLabel();
-};
-document.getElementById("fm").onclick = () => bump(-1);
-document.getElementById("fp").onclick = () => bump(1);
-fsEl.onclick = () => bump(0);
-document.getElementById("wr").onclick = () => setWrap(!wrapMode);
-fsLabel();
-connect();
-try { if (localStorage.getItem("ac_attach_wrap") === "1") setWrap(true); } catch { }
-</script></body></html>`;
-  return new Response(html, { headers: reviewFrameHeaders() });
-}
-
-/** Standalone terminal page (GET /term?path=<home>) - the captain opens the
- * fleet terminal in its OWN browser tab, the same shape /review gives an
- * artifact: no SPA shell, a minimal bar, a full-viewport /term-frame iframe.
- * The frame calls parent.termTheme() when ready, so this page carries its own
- * copy of the SPA's theme push (same --term-bg/--term-fg + --ansi-N pipeline
- * into acSetTheme); /api/term/status still gates the home path, and an
- * unavailable terminal retries rather than dying on a blank frame. */
-async function termStandalonePage(): Promise<Response> {
-  // The terminal does not FOLLOW a home: herdr is one
-  // session machine-wide, so ?path is only the API gate's ticket - absent it,
-  // any known home is embedded as the fallback and the URL stays a bare /term.
-  const fallbackHome: string = (await allowedHomePaths()).values().next().value ?? "";
-  const html = `<!doctype html>
-<html><head><meta charset="utf-8"><title>agent-crew terminal</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-${THEME_INIT}
-<style>
-${THEME_VARS}
-${UX_BASE}
-  :root{ --ui: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
-  html,body{margin:0;height:100%}
-  body{background:var(--canvas);color:var(--fg);font:14px/1.5 var(--ui);display:flex;flex-direction:column;height:100dvh;overflow:hidden}
-  #bar{display:flex;gap:10px;align-items:center;padding:7px 12px;border-bottom:1px solid var(--border);background:var(--surface)}
-  #bar .name{font-weight:600;font-size:14px}
-  #bar #status{color:var(--fg2);font-size:12px}
-  #frame{flex:1;min-height:0}
-  #frame iframe{width:100%;height:100%;border:0;background:var(--term-bg, var(--canvas))}
-  .cdead{padding:16px;color:var(--fg2)}
-</style></head><body>
-<div id="bar"><span class="name">terminal</span><span id="status"></span></div>
-<div id="frame"></div>
-<script>
-const q = new URLSearchParams(location.search);
-const home = q.get("path") || ${JSON.stringify(fallbackHome)};
-${termThemeCore.toString()}
-let lastSig = "";
-window.termTheme = () => {
-  const f = document.querySelector("#frame iframe"); if (!f) return;
-  const r = termThemeCore(getComputedStyle(document.documentElement));
-  if (!r || r.sig === lastSig) return;
-  const w = f.contentWindow;
-  if (w && typeof w.acSetTheme === "function") { w.acSetTheme(r.theme); lastSig = r.sig; }
-};
-function boot(){
-  const fr=document.getElementById("frame"), st=document.getElementById("status");
-  if(!home){ fr.innerHTML="<div class=cdead>no fleet home is registered - the API gate has no ticket</div>"; return; }
-  st.textContent = "";
-  fetch("/api/term/status?path="+encodeURIComponent(home)).then((r)=>r.json()).then((j)=>{
-    if(j && j.running && j.url){ const f=document.createElement("iframe"); f.src=j.url; f.title="herdr terminal"; fr.replaceChildren(f); }
-    else { fr.innerHTML="<div class=cdead>terminal unavailable - retrying</div>"; setTimeout(boot, 3000); }
-  }).catch(()=>{ st.textContent="retrying"; setTimeout(boot, 3000); });
-}
-boot();
-</script></body></html>`;
-  return new Response(html, { headers: reviewFrameHeaders() });
+  return json(termStatusBody());
 }
 
 /** The CREWCHIEF pane for a home (chief panel, slice C): the fleet session is
@@ -3020,131 +2441,6 @@ async function fleetChiefHandle(homePath: string): Promise<{ pane: string; tab: 
   }
   fleetChiefCache.set(homePath, { at: Date.now(), h });
   return h;
-}
-
-/** POST /api/room/send (chief panel, slice B): one whole message into the
- * family's roomchief session, through bin/ac-send.sh - the SAME verified
- * typed-then-submitted path the crewchief itself steers with, so delivery
- * failures surface here instead of vanishing. Chief-only by construction:
- * the id sent is always `<family>-chief` and the meta kind was checked. */
-/** Membership gate shared by send/input for a watched pane: the id counts
- * only if familyPaneIds derives it from this family's own metas. Returns the
- * pane handle, or null. */
-function watchedHandle(homePath: string, family: string, watchId: string): { pane: string; tab: string | null } | null {
-  let metas: { id: string; text: string }[] = [];
-  try {
-    metas = readdirSync(`${homePath}/state`).filter((f) => f.endsWith(".meta"))
-      .map((f) => { try { return { id: f.slice(0, -5), text: readFileSync(`${homePath}/state/${f}`, "utf8") }; } catch { return null; } })
-      .filter((x): x is { id: string; text: string } => !!x);
-  } catch { return null; }
-  if (!familyPaneIds(metas, family).some((x) => x.id === watchId)) return null;
-  const meta = metas.find((x) => x.id === watchId);
-  return paneHandleByMeta(homePath, watchId, meta ? meta.text : "");
-}
-
-async function roomSend(homePath: string, family: string, text: string, watchId = ""): Promise<Response> {
-  if (!(await allowedHomePaths()).has(homePath))
-    return json({ error: "unknown home" }, 404);
-  const fleet = family === "";
-  if (!fleet && !/^[a-zA-Z0-9_-]+$/.test(family))
-    return json({ error: "bad family" }, 400);
-  const msg = text.replace(/\r/g, "").trim();
-  if (!msg) return json({ error: "message required" }, 400);
-  if (msg.length > 4000) return json({ error: "message too long (4000 max)" }, 400);
-  if (fleet) {
-    // Crewchief (slice C): not a task id, so ac-send cannot address it - the
-    // message goes in the way the captain's own keyboard would: focus, type,
-    // Enter. Single-line only; a multi-line paste would submit line one.
-    if (/\n/.test(msg)) return json({ error: "crewchief messages are one line" }, 400);
-    const h = await fleetChiefHandle(homePath);
-    if (!h) return json({ error: "no live crewchief session for this fleet" }, 409);
-    if (h.tab) await run(["herdr", "tab", "focus", h.tab], { AC_HOME: homePath });
-    const t1 = await run(["herdr", "pane", "send-text", h.pane, msg], { AC_HOME: homePath });
-    if (t1.code !== 0) return json({ error: "send failed" }, 502);
-    const t2 = await run(["herdr", "pane", "send-keys", h.pane, "enter"], { AC_HOME: homePath });
-    return t2.code === 0 ? json({ ok: true }) : json({ error: "typed but not submitted - press Enter in the pane" }, 502);
-  }
-  if (watchId) {
-    if (!/^[a-zA-Z0-9_.-]+$/.test(watchId)) return json({ error: "bad watch id" }, 400);
-    if (!watchedHandle(homePath, family, watchId))
-      return json({ error: "not a pane of this family" }, 409);
-    const r = await run([`${BIN}/ac-send.sh`, watchId, msg], { AC_HOME: homePath });
-    return r.code === 0 ? json({ ok: true })
-      : json({ error: "send failed", detail: r.out.split("\n").slice(-3).join(" ").slice(0, 300) }, 502);
-  }
-  if (!chiefHandleOf(homePath, family))
-    return json({ error: "no live roomchief for this family" }, 409);
-  // Multi-line is legal for ac-send (one submitted message); \r never is.
-  const { code, out } = await run(
-    [`${BIN}/ac-send.sh`, `${family}-chief`, msg],
-    { AC_HOME: homePath },
-  );
-  if (code !== 0)
-    return json({ error: "send failed", detail: out.split("\n").slice(-3).join(" ").slice(0, 300) }, 502);
-  return json({ ok: true });
-}
-
-/** POST /api/room/input (chief panel, slice B): ONE keystroke into the chief
- * pane - a named key from the closed CHIEF_KEYS list (herdr send-keys) or one
- * printable character (herdr send-text). Focus-first, mirroring
- * backend_send_key: an unfocused pane no-ops key presses at exit 0. */
-async function roomInput(homePath: string, family: string, body: { key?: string; text?: string; paste?: string }, watchId = ""): Promise<Response> {
-  if (!(await allowedHomePaths()).has(homePath))
-    return json({ error: "unknown home" }, 404);
-  if (family !== "" && !/^[a-zA-Z0-9_-]+$/.test(family))
-    return json({ error: "bad family" }, 400);
-  let h: { pane: string; tab: string | null } | null;
-  if (watchId) {
-    if (family === "" || !/^[a-zA-Z0-9_.-]+$/.test(watchId)) return json({ error: "bad watch id" }, 400);
-    h = watchedHandle(homePath, family, watchId);
-    if (!h) return json({ error: "not a pane of this family" }, 409);
-  } else {
-    h = family === "" ? await fleetChiefHandle(homePath) : chiefHandleOf(homePath, family);
-    if (!h) return json({ error: family === "" ? "no live crewchief session" : "no live roomchief for this family" }, 409);
-  }
-  const key = (body.key ?? "").toLowerCase();
-  const paste = (body.paste ?? "").replace(/\r/g, "");
-  const text = body.text ?? "";
-  if (key && !isChiefKey(key)) return json({ error: "key not allowed" }, 400);
-  if (!key && paste && !isChiefPaste(paste)) return json({ error: "paste must be printable, 2000 chars max" }, 400);
-  if (!key && !paste && !isChiefChar(text)) return json({ error: "one printable character or an allowed key" }, 400);
-  if (h.tab) await run(["herdr", "tab", "focus", h.tab], { AC_HOME: homePath });
-  const { code } = key
-    ? await run(["herdr", "pane", "send-keys", h.pane, key], { AC_HOME: homePath })
-    : await run(["herdr", "pane", "send-text", h.pane, paste || text], { AC_HOME: homePath });
-  return code === 0 ? json({ ok: true }) : json({ error: "input failed" }, 502);
-}
-
-/** POST /api/room/attach (image paste): save the pasted image under the
- * family's data dir (data/<family>/attachments/, or data/attachments for the
- * fleet chief) and TYPE its absolute path into the target pane - no Enter,
- * the captain finishes the message around it. Claude harnesses read image
- * paths from the prompt, so the pane gets exactly what typing the path by
- * hand would. Target resolution shares the chat gates verbatim. */
-async function roomAttach(homePath: string, family: string, watchId: string, contentType: string | null, bytes: Uint8Array): Promise<Response> {
-  if (!(await allowedHomePaths()).has(homePath))
-    return json({ error: "unknown home" }, 404);
-  if (family !== "" && !/^[a-zA-Z0-9_-]+$/.test(family))
-    return json({ error: "bad family" }, 400);
-  const ext = attachExt(contentType);
-  if (!ext) return json({ error: "png, jpeg, webp or gif only" }, 415);
-  if (!bytes.length || bytes.length > 8 * 1024 * 1024)
-    return json({ error: "image must be 1 byte .. 8MB" }, 413);
-  let h: { pane: string; tab: string | null } | null;
-  if (watchId) {
-    if (family === "" || !/^[a-zA-Z0-9_.-]+$/.test(watchId)) return json({ error: "bad watch id" }, 400);
-    h = watchedHandle(homePath, family, watchId);
-  } else {
-    h = family === "" ? await fleetChiefHandle(homePath) : chiefHandleOf(homePath, family);
-  }
-  if (!h) return json({ error: "no live target pane" }, 409);
-  const dir = family === "" ? `${homePath}/data/attachments` : `${familyDataDir(homePath, family)}/attachments`;
-  mkdirSync(dir, { recursive: true });
-  const file = `${dir}/paste-${Date.now()}.${ext}`;
-  writeFileSync(file, bytes);
-  if (h.tab) await run(["herdr", "tab", "focus", h.tab], { AC_HOME: homePath });
-  const typed = await run(["herdr", "pane", "send-text", h.pane, `${file} `], { AC_HOME: homePath });
-  return json({ ok: typed.code === 0, file, typed: typed.code === 0 });
 }
 
 /**
@@ -3258,30 +2554,6 @@ async function roomPane(homePath: string, family: string, watchId = "", lines = 
   const body: Record<string, unknown> = { live: true, pane: t.pane, cols: await paneCols(homePath, t.pane), html: ansiToHtml(r.out.split("\n").slice(-lines).join("\n")) };
   if (t.readonly) body.readonly = true;
   return json(body);
-}
-
-/** herdr argv for the chief panel's native mirror: `agent attach` shares the
- * pane's real pty non-disruptively (proven in the field by the distro peer's
- * dash-server). Pure - unit-tested. */
-export function attachArgv(pane: string): string[] {
-  return ["herdr", "agent", "attach", pane];
-}
-
-/** Rows for a native attach, from `herdr pane get` scroll.viewport_rows: the
- * mirror must spawn at the pane's OWN grid (passive-size), because herdr
- * sizes a shared pane to the last writer - a viewer-sized attach would
- * reflow the pane under the working agent. Pure - unit-tested. */
-export function paneViewportRows(out: string, dflt: number): number {
-  try {
-    const r = (JSON.parse(out) as { result?: { pane?: { scroll?: { viewport_rows?: number } } } }).result?.pane?.scroll?.viewport_rows;
-    return typeof r === "number" && Number.isFinite(r) && r >= 1 ? Math.min(Math.floor(r), 200) : dflt;
-  } catch {
-    return dflt;
-  }
-}
-async function paneRows(homePath: string, pane: string): Promise<number> {
-  const { code, out } = await run(["herdr", "pane", "get", pane], { AC_HOME: homePath });
-  return code === 0 ? paneViewportRows(out, 40) : 40;
 }
 
 /** Full room narrative for one family (§2.3). */
@@ -6852,24 +6124,6 @@ export function dashboardMain(argv: string[] = process.argv) {
   // is covered without a restart.
   const fleetWatcher = watchHomes(() => { void snapshotResult.invalidate(); }, { log: slog });
   void snapshotResult.start(({ code, out }) => { if (code === 0) fleetWatcher.sync([...homePathsIn(out)]); });
-  // Each terminal socket is a live pty + herdr client; a buggy reconnect loop
-  // must not fork-bomb the machine. 4 covers every real captain shape (a few
-  // browser tabs), and the 429 names the limit.
-  let ptyCount = 0;
-  // Reap pty children on shutdown: a killed dashboard otherwise ORPHANS every
-  // live terminal's herdr client (reparented to launchd, still attached to
-  // the shared herdr session at its old size) - measured five zombies after a
-  // day of restarts, clamping the session and reflow-janking every live tab.
-  const livePtys = new Set<ReturnType<typeof Bun.spawn>>();
-  let reaping = false;
-  for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const)
-    process.on(sig, () => {
-      if (reaping) return;
-      reaping = true;
-      for (const p of livePtys) try { p.kill(); } catch { /* already gone */ }
-      slog(`shutdown: ${sig}`);
-      process.exit(sig === "SIGINT" ? 130 : 143);
-    });
   // Bun already dies on both; the handlers only make the log say why, since
   // a daemon found dead an hour later has no terminal left to have shown it.
   process.on("uncaughtException", (err) => {
@@ -6888,243 +6142,54 @@ export function dashboardMain(argv: string[] = process.argv) {
     // quiet poll cycle cost the shim a spurious reconnect.
     idleTimeout: 40,
     websocket: {
+      // /api/room/stream (chat-panel pane stream): the only socket kind left
+      // once the native terminal/attach mirrors are gone. A periodic ANSI-HTML
+      // snapshot push (dedup'd on change), plus a {lines} control message to
+      // change the read depth - everything else on the wire is ignored.
       open(ws) {
-        const dk = ws.data as { kind?: string };
-        if (dk.kind === "attach") {
-          // Native mirror (chief-pane-native-attach): a real `herdr agent
-          // attach` on a pty this process owns, spawned at the PANE's own
-          // geometry (passive-size - herdr sizes a shared pane to the last
-          // writer, so a viewer-sized attach would reflow it under the
-          // working agent). OUTPUT-ONLY by construction: the message handler
-          // drops every frame, so typing keeps riding roomInput's gates.
-          const d = ws.data as { home: string; fam: string; watch: string; term?: Bun.Terminal; proc?: ReturnType<typeof Bun.spawn>; timer?: ReturnType<typeof setInterval> };
-          ptyCount++;
-          void (async () => {
-            const t = await panelPaneOf(d.home, d.fam, d.watch);
-            if ("why" in t || "orcaId" in t) {
-              // {closed} FIRST so the frame latches "pane gone" instead of
-              // treating the bare close as transient and reconnect-looping.
-              const why = "why" in t ? t.why : "runs on the Orca app";
-              try { ws.send(JSON.stringify({ closed: true, why })); } catch { /* ws gone */ }
-              try { ws.close(1008, "no pane"); } catch { /* already closed */ }
-              return;
-            }
-            const cols = (await paneCols(d.home, t.pane)) ?? 120;
-            const rows = await paneRows(d.home, t.pane);
-            if (ws.readyState !== WebSocket.OPEN) return; // closed mid-gate; close already released the slot
-            // Scrollback: the attach stream only ever paints the live
-            // viewport, so the wheel had nothing to scroll. Pre-fill xterm's
-            // buffer with the pane's history once per mount (minus the
-            // viewport rows the live paint is about to draw) - local scroll,
-            // the real pane is never moved.
-            const hist = await run(
-              ["herdr", "pane", "read", t.pane, "--source", "recent-unwrapped", "--format", "ansi", "--lines", "2000"],
-              { AC_HOME: d.home },
-            );
-            if (hist.code === 0 && hist.out) {
-              const lines = hist.out.split("\n").slice(0, -rows).join("\r\n");
-              if (lines) { try { ws.send(new TextEncoder().encode(lines + "\r\n")); } catch { /* ws closing */ } }
-            }
-            if (ws.readyState !== WebSocket.OPEN) return;
-            try {
-              const term = new Bun.Terminal({
-                cols, rows,
-                data(_t, chunk) { try { ws.send(chunk); } catch { /* socket gone */ } },
-              });
-              d.term = term;
-              d.proc = Bun.spawn(attachArgv(t.pane), { terminal: term, env: { ...process.env, TERM: "xterm-256color" } });
-              livePtys.add(d.proc);
-              void d.proc.exited.then(() => { try { ws.close(1000, "attach ended"); } catch { /* already closed */ } });
-              // The pane's REAL grid: the frame sizes its FONT to show the
-              // whole pane instead of clipping; {resize} is never honored.
-              try { ws.send(JSON.stringify({ geometry: { cols, rows } })); } catch { /* ws closing */ }
-              // Follow the pane by REATTACHING, not resizing in place: herdr
-              // streams an attach only at the pane's exact grid (measured: a
-              // mismatched viewer receives no further frames and the initial
-              // paint is a stub), so once the working client resizes the pane
-              // this pty is starved - close, and the frame reconnects into a
-              // fresh attach at the new grid with a full paint.
-              const geo0 = cols + "x" + rows;
-              d.timer = setInterval(() => {
-                void (async () => {
-                  const c2 = (await paneCols(d.home, t.pane)) ?? cols;
-                  const r2 = await paneRows(d.home, t.pane);
-                  if (c2 + "x" + r2 === geo0) return;
-                  try { ws.close(1000, "pane resized"); } catch { /* already closed */ }
-                })();
-              }, 5000);
-            } catch {
-              try { d.term?.close(); } catch { /* never opened */ }
-              try { ws.close(1011, "pty unavailable"); } catch { /* already closed */ }
-            }
-          })();
-          return;
-        }
-        if (dk.kind === "pane") {
-          const d = ws.data as { home: string; fam: string; watch: string; lines: number; last?: string; timer?: ReturnType<typeof setInterval> };
-          const tick = async () => {
-            try {
-              const res = await roomPane(d.home, d.fam, d.watch, d.lines);
-              const j = await res.json() as { live?: boolean; html?: string; cols?: number };
-              const key = (j.live ? "1" : "0") + (j.html ?? "") + String(d.lines) + "|" + String(j.cols ?? "");
-              if (d.last === key) return;
-              d.last = key;
-              ws.send(JSON.stringify(j));
-            } catch { /* backend hiccup - next tick retries */ }
-          };
-          d.timer = setInterval(tick, 250);
-          void tick();
-          return;
-        }
-        // Native PTY (Bun.Terminal): herdr runs on a real pty this process
-        // owns - no python3 bridge, and resize() means a window resize no
-        // longer tears the connection down.
-        const d = ws.data as { cols: number; rows: number; term?: Bun.Terminal; proc?: ReturnType<typeof Bun.spawn> };
-        ptyCount++;
-        try {
-          const term = new Bun.Terminal({
-            cols: d.cols, rows: d.rows,
-            data(_t, chunk) { try { ws.send(chunk); } catch { /* socket gone */ } },
-          });
-          d.term = term;
-          d.proc = Bun.spawn(["herdr"], { terminal: term, env: { ...process.env, TERM: "xterm-256color" } });
-          livePtys.add(d.proc);
-        } catch {
-          try { d.term?.close(); } catch {}
-          ws.close(1011, "pty unavailable");
-          return;
-        }
-        void d.proc.exited.then(() => { try { ws.close(1000, "herdr client exited"); } catch {} });
-        const dd = ws.data as { wsDigit?: string; focusTab?: string; home?: string };
-        if (dd.wsDigit) {
-          // Steer ONLY this client onto the scoped workspace once herdr has
-          // painted: the config prefix chord (ctrl+b, then the picker digit).
-          // Workspace view is per-client - captain-verified: a webterm client
-          // never moves the WezTerm one.
-          setTimeout(() => { try { d.term?.write("\x02" + dd.wsDigit); } catch { /* pty gone */ } }, 900);
-        }
-        if (dd.focusTab && dd.home) {
-          setTimeout(() => { void run(["herdr", "tab", "focus", dd.focusTab!], { AC_HOME: dd.home }); }, 1200);
-        }
+        const d = ws.data as { home: string; fam: string; watch: string; lines: number; last?: string; timer?: ReturnType<typeof setInterval> };
+        const tick = async () => {
+          try {
+            const res = await roomPane(d.home, d.fam, d.watch, d.lines);
+            const j = await res.json() as { live?: boolean; html?: string; cols?: number };
+            const key = (j.live ? "1" : "0") + (j.html ?? "") + String(d.lines) + "|" + String(j.cols ?? "");
+            if (d.last === key) return;
+            d.last = key;
+            ws.send(JSON.stringify(j));
+          } catch { /* backend hiccup - next tick retries */ }
+        };
+        d.timer = setInterval(tick, 250);
+        void tick();
       },
       message(ws, data) {
-        const dk = ws.data as { kind?: string };
-        // A native mirror is display-only: every inbound frame is dropped, so
-        // the frame's own typing path stays the gated roomInput HTTP route.
-        if (dk.kind === "attach") return;
-        if (dk.kind === "pane") {
-          const d = ws.data as { home: string; fam: string; watch: string; lines: number; last?: string };
-          let body: { key?: string; text?: string; paste?: string; lines?: number } = {};
-          try { body = JSON.parse(typeof data === "string" ? data : new TextDecoder().decode(data as ArrayBuffer)); } catch { return; }
-          if (body.lines !== undefined) {
-            d.lines = Math.min(3000, Math.max(100, Math.floor(Number(body.lines)) || 400));
-            d.last = undefined; // force a fresh frame at the new depth
-            return;
-          }
-          // Same gates as the HTTP path - roomInput IS the HTTP path.
-          void roomInput(d.home, d.fam, body, d.watch).then(async (r) => {
-            if (r.status !== 200) { try { ws.send(JSON.stringify({ inputError: (await r.json() as { error?: string }).error })); } catch {} }
-          });
-          return;
-        }
-        // pty protocol: BINARY frames are keystrokes; TEXT frames are control
-        // JSON (resize) - a paste can contain anything, so the data channel
-        // must never be sniffed for control shapes.
-        const d = ws.data as { term?: Bun.Terminal };
-        if (!d.term) return;
-        if (typeof data === "string") {
-          try {
-            const c = JSON.parse(data) as { resize?: { cols?: unknown; rows?: unknown } };
-            if (c && c.resize) {
-              const s = termSize(String(c.resize.cols), String(c.resize.rows));
-              d.term.resize(s.cols, s.rows);
-            }
-          } catch { /* not control - dropped, keystrokes ride binary */ }
-          return;
-        }
-        try { d.term.write(new Uint8Array(data as ArrayBuffer)); } catch { /* pty gone - close reaps */ }
+        const d = ws.data as { lines: number; last?: string };
+        let body: { lines?: number } = {};
+        try { body = JSON.parse(typeof data === "string" ? data : new TextDecoder().decode(data as ArrayBuffer)); } catch { return; }
+        if (body.lines === undefined) return;
+        d.lines = Math.min(3000, Math.max(100, Math.floor(Number(body.lines)) || 400));
+        d.last = undefined; // force a fresh frame at the new depth
       },
       close(ws) {
-        const dk = ws.data as { kind?: string; timer?: ReturnType<typeof setInterval> };
-        if (dk.kind === "pane") { if (dk.timer) clearInterval(dk.timer); return; }
-        const d = ws.data as { term?: Bun.Terminal; proc?: ReturnType<typeof Bun.spawn>; timer?: ReturnType<typeof setInterval> };
+        const d = ws.data as { timer?: ReturnType<typeof setInterval> };
         if (d.timer) clearInterval(d.timer);
-        ptyCount = Math.max(0, ptyCount - 1);
-        if (d.proc) { livePtys.delete(d.proc); try { d.proc.kill(); } catch {} }
-        if (d.term) try { d.term.close(); } catch {}
       },
     },
     async fetch(req, server) {
       if (!localHostOk(req.headers.get("host"), port) || !originOk(req.headers.get("origin"), port))
         return new Response("forbidden - local origin required", { status: 403 });
       const url = new URL(req.url);
-      if (url.pathname === "/api/term/ws") {
-        const p = url.searchParams.get("path") ?? "";
-        if (!(await allowedHomePaths()).has(p) || !webtermEnabled(p))
-          return json({ error: "terminal disabled (config/webterm)" }, 403);
-        // 8, not 4: the global dock and the Terminal tab are separate clients
-        // by design, so one captain with a couple of windows hits 4 fast
-        // (measured live: a blank dock on the captain's own machine).
-        if (ptyCount >= 8) return json({ error: "too many terminals (8 max)" }, 429);
-        const size = termSize(url.searchParams.get("cols"), url.searchParams.get("rows"));
-        // A fleet/family scope opens this client AT that target's workspace:
-        // resolve the pane, map its workspace to its picker number, and the
-        // pty open branch types the switch chord once herdr has painted.
-        let wsDigit = "", focusTab = "";
-        const famT = url.searchParams.get("fleet") === "1" ? "" : url.searchParams.get("family");
-        if (famT !== null) {
-          const t = await panelPaneOf(p, famT, "");
-          if (!("why" in t) && !("orcaId" in t)) {
-            const wl = await run(["herdr", "workspace", "list"], { AC_HOME: p });
-            try {
-              const wss = (JSON.parse(wl.out) as { result?: { workspaces?: { workspace_id: string; number: number }[] } }).result?.workspaces ?? [];
-              const n = wss.find((w) => w.workspace_id === t.pane.split(":")[0])?.number;
-              if (n && n >= 1 && n <= 9) wsDigit = String(n);
-            } catch { /* list unreadable - open unscoped */ }
-            // The workspace chord alone can land on whichever tab was active
-            // there (a watcher tail, a crewmate) - focus the target's own tab
-            // so the scoped open shows the CHIEF pane (the roomSend precedent:
-            // it focuses this same tab before every typed message).
-            const pl = await run(["herdr", "pane", "list"], { AC_HOME: p });
-            try {
-              const panes = (JSON.parse(pl.out) as { result?: { panes?: { pane_id: string; tab_id?: string }[] } }).result?.panes ?? [];
-              focusTab = panes.find((x) => x.pane_id === t.pane)?.tab_id ?? "";
-            } catch { /* unreadable - workspace-only steering */ }
-          }
-        }
-        if (server.upgrade(req, { data: { kind: "pty", ...size, wsDigit, focusTab, home: p } })) return undefined as unknown as Response;
-        return json({ error: "websocket required" }, 400);
-      }
       if (url.pathname === "/api/room/stream") {
-        // Chat-panel pane stream (native, ONE task pane,
-        // never a full herdr client): the server reads the pane every 250ms
-        // and pushes a frame only when it changed; input rides the same
-        // socket and is executed by roomInput - so every membership gate,
-        // key allowlist, and paste rule holds bit-for-bit.
+        // Chat-panel pane stream (native, ONE task pane, never a full herdr
+        // client): the server reads the pane every 250ms and pushes a frame
+        // only when it changed. View-only - typing retired with the herdr
+        // steer endpoints (orca-dashboard, T12); the open-Orca focus jump is
+        // the replacement.
         const p2 = url.searchParams.get("path") ?? "";
         if (!(await allowedHomePaths()).has(p2)) return json({ error: "unknown home" }, 404);
         const fam2 = url.searchParams.get("fleet") === "1" ? "" : (url.searchParams.get("family") ?? "");
         if (fam2 !== "" && !/^[a-zA-Z0-9_-]+$/.test(fam2)) return json({ error: "bad family" }, 400);
         const watch2 = url.searchParams.get("watch") ?? "";
         if (server.upgrade(req, { data: { kind: "pane", home: p2, fam: fam2, watch: watch2, lines: 400 } }))
-          return undefined as unknown as Response;
-        return json({ error: "websocket required" }, 400);
-      }
-      if (url.pathname === "/api/room/attach-ws") {
-        // Standalone native view of ONE task pane (`herdr agent attach` on a
-        // server pty at the PANE's own geometry, /attach-frame renders it):
-        // never a full herdr client - the pty is scoped to the single
-        // resolved pane, the socket is output-only, and typing rides the
-        // gated roomInput route. The chief panel itself stays on the
-        // snapshot stream (the settled chief-panel transport).
-        const p3 = url.searchParams.get("path") ?? "";
-        if (!(await allowedHomePaths()).has(p3)) return json({ error: "unknown home" }, 404);
-        const fam3 = url.searchParams.get("fleet") === "1" ? "" : (url.searchParams.get("family") ?? "");
-        if (fam3 !== "" && !/^[a-zA-Z0-9_-]+$/.test(fam3)) return json({ error: "bad family" }, 400);
-        const watch3 = url.searchParams.get("watch") ?? "";
-        if (watch3 && (fam3 === "" || !/^[a-zA-Z0-9_.-]+$/.test(watch3))) return json({ error: "bad watch id" }, 400);
-        if (ptyCount >= 8) return json({ error: "too many terminals (8 max)" }, 429);
-        if (server.upgrade(req, { data: { kind: "attach", home: p3, fam: fam3, watch: watch3 } }))
           return undefined as unknown as Response;
         return json({ error: "websocket required" }, 400);
       }
@@ -7207,19 +6272,6 @@ export function dashboardMain(argv: string[] = process.argv) {
           ? roomShow(p, fam)
           : json({ error: "path and family required" }, 400);
       }
-      if (url.pathname.startsWith("/assets/xterm/"))
-        return termAsset(url.pathname.slice("/assets/xterm/".length));
-      if (url.pathname === "/term-frame") {
-        const p = url.searchParams.get("path") ?? "";
-        if (!(await allowedHomePaths()).has(p) || !webtermEnabled(p))
-          return json({ error: "terminal disabled (config/webterm)" }, 403);
-        return termFramePage();
-      }
-      if (url.pathname === "/attach-frame") {
-        const p = url.searchParams.get("path") ?? "";
-        if (!(await allowedHomePaths()).has(p)) return json({ error: "unknown home" }, 404);
-        return attachFramePage();
-      }
       if (url.pathname === "/api/orca/focus") {
         // Focus jump into the Orca app: bring the app forward and, when a task
         // id is named, switch its terminal to the foreground first. The handle
@@ -7248,14 +6300,6 @@ export function dashboardMain(argv: string[] = process.argv) {
         const p = url.searchParams.get("path");
         return p ? termStatus(p) : json({ error: "path required" }, 400);
       }
-      if (url.pathname === "/api/room/attach") {
-        if (req.method !== "POST") return json({ error: "POST required" }, 405);
-        const p = url.searchParams.get("path");
-        const fam = url.searchParams.get("fleet") === "1" ? "" : url.searchParams.get("family");
-        if (!p || fam === null) return json({ error: "path and family (or fleet=1) required" }, 400);
-        const bytes = new Uint8Array(await req.arrayBuffer());
-        return roomAttach(p, fam, url.searchParams.get("watch") ?? "", req.headers.get("content-type"), bytes);
-      }
       if (url.pathname === "/api/room/panes") {
         const p = url.searchParams.get("path");
         const fam = url.searchParams.get("family");
@@ -7268,22 +6312,6 @@ export function dashboardMain(argv: string[] = process.argv) {
         return p && fam !== null
           ? roomPane(p, fam, url.searchParams.get("watch") ?? "", ln)
           : json({ error: "path and family (or fleet=1) required" }, 400);
-      }
-      if (url.pathname === "/api/room/send") {
-        if (req.method !== "POST") return json({ error: "POST required" }, 405);
-        const p = url.searchParams.get("path");
-        const fam = url.searchParams.get("fleet") === "1" ? "" : url.searchParams.get("family");
-        if (!p || fam === null) return json({ error: "path and family (or fleet=1) required" }, 400);
-        return roomSend(p, fam, await req.text(), url.searchParams.get("watch") ?? "");
-      }
-      if (url.pathname === "/api/room/input") {
-        if (req.method !== "POST") return json({ error: "POST required" }, 405);
-        const p = url.searchParams.get("path");
-        const fam = url.searchParams.get("fleet") === "1" ? "" : url.searchParams.get("family");
-        if (!p || fam === null) return json({ error: "path and family (or fleet=1) required" }, 400);
-        let body: { key?: string; text?: string; paste?: string } = {};
-        try { body = JSON.parse(await req.text()); } catch { return json({ error: "json body required" }, 400); }
-        return roomInput(p, fam, body, url.searchParams.get("watch") ?? "");
       }
       if (url.pathname === "/api/family") {
         const p = url.searchParams.get("path");
@@ -7384,7 +6412,6 @@ export function dashboardMain(argv: string[] = process.argv) {
         }
         return scene ? whiteboardShow(p, scene) : whiteboardList(p);
       }
-      if (url.pathname === "/term") return termStandalonePage();
       if (url.pathname === "/whiteboard") return whiteboardPage();
       if (url.pathname === "/whiteboard-frame") return whiteboardFramePage();
       if (url.pathname.startsWith("/api/review/")) {

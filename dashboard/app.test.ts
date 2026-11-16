@@ -11,7 +11,7 @@
 import { test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync, statSync, chmodSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { reviewWakeParts, reviewWakeText, reviewWakeFamily, reviewWakeTask, chiefPaneOf, orcaWindowOf, ansiToHtml, CHIEF_KEYS, isChiefKey, isChiefChar, isChiefPaste, familyPaneIds, termSize, localHostOk, originOk, attachExt, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, reviewBound, reviewLoad, reviewSave, REVIEW_SESSION_MAX_BYTES, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, attachArgv, paneViewportRows, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, warmMemo, homePathsIn, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, domainTallies, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted, pastedPngFile, composerEscapeCloses, imeOwnsKey, unreachableNotice, noteReceipt, annotatePassThrough, reviewPage, reviewFrameHeaders, roomList } from "./app.ts";
+import { reviewWakeParts, reviewWakeText, reviewWakeFamily, reviewWakeTask, chiefPaneOf, orcaWindowOf, ansiToHtml, familyPaneIds, localHostOk, originOk, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, reviewBound, reviewLoad, reviewSave, REVIEW_SESSION_MAX_BYTES, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, warmMemo, homePathsIn, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, domainTallies, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted, pastedPngFile, composerEscapeCloses, imeOwnsKey, unreachableNotice, noteReceipt, annotatePassThrough, reviewPage, reviewFrameHeaders, roomList, termStatusBody } from "./app.ts";
 
 test("review chrome is framable only by its own origin", () => {
   // The SPA embeds /review in its own #toolview iframe (same origin), so the
@@ -662,22 +662,6 @@ test("paneLayoutCols returns undefined on malformed JSON, a missing pane, or no 
   expect(paneLayoutCols(JSON.stringify({ result: { layout: { panes: [{ pane_id: "w7X:p3", rect: {} }] } } }), "w7X:p3")).toBeUndefined();
 });
 
-test("attachArgv builds the shared non-disruptive mirror command", () => {
-  expect(attachArgv("w7X:p3")).toEqual(["herdr", "agent", "attach", "w7X:p3"]);
-});
-
-test("paneViewportRows reads the pane's real viewport height from herdr pane get JSON", () => {
-  const out = JSON.stringify({ result: { pane: { scroll: { viewport_rows: 47 } } } });
-  expect(paneViewportRows(out, 40)).toBe(47);
-});
-
-test("paneViewportRows falls back on malformed JSON, a missing field, or a non-positive value", () => {
-  expect(paneViewportRows("not json", 40)).toBe(40);
-  expect(paneViewportRows(JSON.stringify({ result: {} }), 40)).toBe(40);
-  expect(paneViewportRows(JSON.stringify({ result: { pane: { scroll: { viewport_rows: 0 } } } }), 40)).toBe(40);
-  expect(paneViewportRows(JSON.stringify({ result: { pane: { scroll: { viewport_rows: 9999 } } } }), 40)).toBe(200);
-});
-
 // --- Slice 3a: markdown -> readable HTML renderer ------------------------
 
 test("renderMarkdown emits headings, paragraphs with hard breaks, and lists", () => {
@@ -1132,6 +1116,29 @@ test("the System One knobs are editable, constrained, and placed in a config sec
   const start = page.indexOf("var CFG_SECTIONS=[");
   const sections = page.slice(start, page.indexOf("\n];", start));
   for (const name of EDITABLE_CONFIG) expect(sections.includes(`'${name}'`)).toBe(true);
+});
+
+// --- orca-dashboard (T12): herdr refused fleet-wide, orca is the sole backend
+
+test("the editable backend knob offers only orca now - herdr is refused fleet-wide", () => {
+  expect(CONFIG_KNOB_META["backend"].options).toEqual(["orca"]);
+  const home = tmpHome();
+  try {
+    const rejected = applyConfigWrite(home, "backend", "herdr");
+    expect(rejected.status).toBe(400);
+    expect(existsSync(`${home}/config/backend`)).toBe(false); // rejected write touches nothing
+    const accepted = applyConfigWrite(home, "backend", "orca");
+    expect(accepted.status).toBe(200);
+    expect(readFileSync(`${home}/config/backend`, "utf8").trim()).toBe("orca");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("termStatusBody always gives the Orca affordance - no config/backend branch left to vary it", () => {
+  expect(termStatusBody()).toEqual({
+    enabled: false, running: false, why: "this fleet runs on the Orca app", orca: true,
+  });
 });
 
 // --- dash-config: write path + durable receipt -----------------------------
@@ -3220,36 +3227,6 @@ test("orcaWindowOf: backend=orca meta yields the terminal handle, anything else 
   expect(orcaWindowOf("window=orca:term_x\n")).toBeNull(); // backend not declared orca
 });
 
-test("isChiefPaste: printable multi-char in, control bytes and runaway length out", () => {
-  expect(isChiefPaste("xin chao thuyen truong \u1ec1")).toBe(true); // composed Vietnamese
-  expect(isChiefPaste("line1\nline2\ttabbed")).toBe(true);          // newline and tab are typing
-  expect(isChiefPaste("")).toBe(false);
-  expect(isChiefPaste("\u001b[31mred")).toBe(false);                 // an escape can never ride the text path
-  expect(isChiefPaste("a\u0000b")).toBe(false);
-  expect(isChiefPaste("x".repeat(2001))).toBe(false);
-  expect(isChiefPaste("x".repeat(2000))).toBe(true);
-});
-
-test("attachExt: only the four image types, extension is ours never the client's", () => {
-  expect(attachExt("image/png")).toBe("png");
-  expect(attachExt("IMAGE/JPEG")).toBe("jpg");
-  expect(attachExt("image/webp")).toBe("webp");
-  expect(attachExt("image/gif")).toBe("gif");
-  expect(attachExt("image/svg+xml")).toBeNull();   // scriptable - never saved
-  expect(attachExt("application/pdf")).toBeNull();
-  expect(attachExt(null)).toBeNull();
-});
-
-test("termSize clamps garbage to safe integer pty dimensions", () => {
-  expect(termSize("120", "40")).toEqual({ cols: 120, rows: 40 });
-  expect(termSize(null, null)).toEqual({ cols: 80, rows: 24 });
-  expect(termSize("nonsense", "-5")).toEqual({ cols: 80, rows: 5 });
-  expect(termSize("99999", "99999")).toEqual({ cols: 500, rows: 200 });
-  // never a float or an injection vector - these ride an stty command line
-  expect(termSize("100.9", "30.2")).toEqual({ cols: 100, rows: 30 });
-  expect(termSize("80; rm -rf /", "24")).toEqual({ cols: 80, rows: 24 });
-});
-
 test("localHostOk/originOk: only this server's own local names pass", () => {
   // Host: the three local spellings on the served port, nothing else
   expect(localHostOk("127.0.0.1:8787", 8787)).toBe(true);
@@ -3286,23 +3263,6 @@ test("familyPaneIds: own tasks + verify panes in, chief/self/other families out"
   ];
   const ids = familyPaneIds(metas, "greet2").map((x) => x.id);
   expect(ids).toEqual(["greet2", "greet2-design", "greet2-frontend", "greet2-verify-codereview", "verify-qa-x"]);
-});
-
-test("chief input surface: named keys + the full ctrl range, single printable chars only", () => {
-  for (const k of CHIEF_KEYS) expect(isChiefKey(k), k).toBe(true);
-  // Web-terminal parity: every ctrl+<letter>
-  // passes - the full-shell web terminal on this same listener already
-  // grants strictly more.
-  expect(isChiefKey("ctrl+d")).toBe(true);
-  expect(isChiefKey("ctrl+r")).toBe(true);
-  expect(isChiefKey("ctrl+")).toBe(false);    // shape stays strict: one letter
-  expect(isChiefKey("f12")).toBe(false);
-  expect(isChiefKey("")).toBe(false);
-  expect(isChiefChar("a")).toBe(true);
-  expect(isChiefChar("Đ")).toBe(true);        // Vietnamese input is one char too
-  expect(isChiefChar("ab")).toBe(false);      // never a string smuggled as a char
-  expect(isChiefChar("\u001b")).toBe(false);  // never a raw escape byte
-  expect(isChiefChar("")).toBe(false);
 });
 
 test("ansiToHtml renders SGR colors, strips other escapes, and escapes markup", () => {
@@ -3705,10 +3665,6 @@ test("every send-on-Enter composer leaves an IME-owned keydown alone", () => {
     expect(h).toContain("imeOwnsKey(e)");
   }
   expect(app).toContain("${imeOwnsKey.toString()}");
-  const page = readFileSync(new URL("./page.ts", import.meta.url), "utf8");
-  const chief = page.slice(page.indexOf("if(t && t.id==='chief-msg')"));
-  expect(chief.slice(0, chief.indexOf("\n"))).toMatch(/e\.key==='Enter' && !e\.shiftKey && !imeOwnsKey\(e\)/);
-  expect(page).toContain("${imeOwnsKey.toString()}");
 });
 
 // A dead daemon left the review page looking healthy: the session poll just
@@ -4142,40 +4098,6 @@ test("readLocalBranches reads loose and packed refs recursively, loose wins", ()
   expect(out.every((b) => b.repo === "alpha" && b.root.endsWith("/projects/alpha"))).toBe(true);
   expect(out.length).toBe(4);
   rmSync(home, { recursive: true, force: true });
-});
-
-// ---- agent-status chips (dash-agent-status-chips): herdr agent list -> per-task state
-import { parseAgentList, agentStatusMap } from "./app.ts";
-
-test("parseAgentList extracts pane_id + agent_status from herdr JSON, tolerant of junk", () => {
-  const out = JSON.stringify({
-    id: "cli:agent:list",
-    result: { type: "agent_list", agents: [
-      { agent: "claude", agent_status: "working", pane_id: "w8K:p2", cwd: "/x" },
-      { agent: "claude", agent_status: "idle", pane_id: "w7A:p1", cwd: "/y" },
-      { agent: "codex", pane_id: "w9Z:p3" },              // no status -> dropped
-      { agent: "claude", agent_status: "blocked" },        // no pane -> dropped
-    ] },
-  });
-  expect(parseAgentList(out)).toEqual([
-    { pane: "w8K:p2", status: "working" },
-    { pane: "w7A:p1", status: "idle" },
-  ]);
-  expect(parseAgentList("not json")).toEqual([]);
-  expect(parseAgentList(JSON.stringify({ result: {} }))).toEqual([]);
-});
-
-test("agentStatusMap joins task panes to agent states; unknown panes are absent, never guessed", () => {
-  const entries = [
-    { pane: "w8K:p2", status: "working" },
-    { pane: "w7A:p1", status: "blocked" },
-  ];
-  const panes = [
-    { id: "taskA", pane: "w8K:p2" },
-    { id: "taskB", pane: "w7A:p1" },
-    { id: "ghost", pane: "wZZ:p9" },  // pane herdr does not report -> absent
-  ];
-  expect(agentStatusMap(entries, panes)).toEqual({ taskA: "working", taskB: "blocked" });
 });
 
 // ---- family inbox badges (dash-family-inbox): room pending/handback per family

@@ -4,11 +4,11 @@
 // runs the same bun-tested code.
 import {
   THEME_INIT, THEME_VARS, UX_BASE,
-  boardSystemPanes, cadenceLabel, chiefFitPx, composeFamily, imeOwnsKey, contractTokens,
+  boardSystemPanes, cadenceLabel, chiefFitPx, composeFamily, contractTokens,
   deriveProgress, familyInbox, familyOfTaskId, familyRepos, familyStages, fleetAttnItems,
   groupArtifacts, inboxUnknown, isHtmlArtifact, mermaidPass, nextPalette, nextTheme,
   parseBacklogLine, parseTimeline, readerCss, resolvePalette,
-  reviewableArtifact, stemRegroup, storyState, termThemeCore, verifyProcessRows,
+  reviewableArtifact, stemRegroup, storyState, verifyProcessRows,
   diffHtml, diffStats, graphHtml,
 } from "./lib.ts";
 
@@ -457,11 +457,6 @@ ${UX_BASE}
   /* The wait chip doubles as the approve shortcut (opens the dock at the
      family's pane), so it reads as pressable. */
   .chipm.wait{ cursor:pointer; }
-  .chipm.ag-working{ color:var(--good); border-color:var(--good); background:var(--good-soft); }
-  .chipm.ag-idle{ color:var(--warning); border-color:var(--warning); background:var(--warn-soft); }
-  .chipm.ag-blocked{ color:var(--error); border-color:var(--error); font-weight:700; }
-  .chipm.ag-done{ color:var(--muted); }
-  .chipm.ag-unknown{ color:var(--muted); border-style:dashed; }
   .chipm.inbx{ color:var(--warning); border-color:var(--warning); background:var(--warn-soft); }
   .chipm.inbx.p{ color:var(--error); border-color:var(--error); background:none; font-weight:700; }
   .chipm.wait:hover{ filter:brightness(1.25); }
@@ -542,30 +537,19 @@ ${UX_BASE}
   .chiefp{ border-left:1px solid var(--line); background:var(--panel); display:flex; flex-direction:column; min-height:0; }
   .chiefp .cbar{ display:flex; align-items:center; gap:8px; padding:8px 12px; border-bottom:1px solid var(--line); font-size:12px; color:var(--muted); }
   .chiefp .cbar b{ color:var(--ink); font-family:var(--mono); font-weight:600; }
-  .chiefp .cbar .cbtn{ margin-left:auto; font:600 11px var(--mono); padding:3px 10px; border:1px solid var(--line); border-radius:4px; background:var(--elev); color:var(--muted); cursor:pointer; }
-  .chiefp .cbar .cbtn[aria-pressed="true"]{ color:var(--accent); border-color:var(--accent); }
-  .chiefp .cbar .cbtn:hover{ border-color:var(--border-strong); color:var(--ink); }
-  /* Page tokens, not a hardcoded slab: the web terminal takes --term-bg/--term-fg
-     (the captain's Warp dark_city surface in dark, the page canvas in light)
-     through acSetTheme, so the snapshot pane reads the SAME pair - one terminal
-     look, both surfaces - and the same JetBrains Mono the captain's Warp runs. */
+  /* Page tokens, not a hardcoded slab: the snapshot pane takes --term-bg/
+     --term-fg (the captain's Warp dark_city surface in dark, the page canvas
+     in light) so it reads like a terminal with the same JetBrains Mono the
+     captain's Warp runs. */
   .chiefp .cterm{ flex:1 1 auto; overflow-y:auto; overflow-x:hidden; margin:0; padding:10px 12px; background:var(--term-bg, var(--canvas)); color:var(--term-fg, var(--fg));
     font:12px/1.45 'JetBrains Mono', 'Hack Nerd Font Mono', var(--mono); white-space:pre-wrap; word-break:break-word;
-    /* Same white stripe the web terminal had: the UA's light scrollbar track
+    /* Same white stripe a web terminal has: the UA's light scrollbar track
        against a dark pane. Wheel still scrolls; only the bar is gone. */
     scrollbar-width:none; -ms-overflow-style:none; }
   .chiefp .cterm::-webkit-scrollbar{ width:0; height:0; }
   .chiefp .cterm .csep{ display:inline-block; max-width:100%; white-space:nowrap; overflow:hidden; vertical-align:bottom; }
   .chiefp .cterm a{ color:var(--accent); text-decoration:underline; cursor:pointer; }
   .chiefp .cdead{ padding:14px; color:var(--muted); font-size:12.5px; }
-  .chiefp .ckeys{ display:flex; gap:6px; padding:6px 10px; border-top:1px solid var(--line); }
-  .chiefp .ckeys button{ font:600 11px var(--mono); padding:3px 10px; border:1px solid var(--line); border-radius:4px; background:var(--elev); color:var(--muted); cursor:pointer; }
-  .chiefp .ckeys button:hover{ color:var(--ink); border-color:var(--line-strong); }
-  .chiefp .ckeys #chief-kb.on{ color:var(--accent); border-color:var(--accent); }
-  .chiefp .csend{ display:flex; gap:8px; padding:8px 10px; border-top:1px solid var(--line); align-items:flex-end; }
-  .chiefp .csend textarea{ flex:1; resize:none; background:var(--elev); color:var(--ink); border:1px solid var(--line); border-radius:6px; padding:7px 9px; font:12.5px var(--ui); }
-  .chiefp .cnote{ padding:0 12px 8px; font-size:11.5px; color:var(--muted); min-height:16px; }
-  .chiefp .cnote.err{ color:var(--error); }
   .chiefp .ctabs{ display:flex; flex-wrap:wrap; gap:7px; padding:8px 12px; background:var(--panel-2, var(--surface)); border-bottom:1px solid var(--line); }
   .chiefp .ctabs:empty{ display:none; }
   .chiefp .ctabs .ct{ display:inline-flex; align-items:center; gap:6px; font:600 11.5px var(--mono); padding:4px 12px;
@@ -578,25 +562,13 @@ ${UX_BASE}
   .chiefp .ctabs .ct.on .k{ border-color:var(--accent-ink, #04252c); color:var(--accent-ink, #04252c); opacity:.85; }
   .chiefp .ctabs .ct.on .dot{ background:var(--accent-ink, #04252c); }
   .chiefp .ctabs .ct:hover{ border-color:var(--border-strong); color:var(--ink); }
-  /* FULL-BLEED terminal surfaces: a terminal
-     is the one page whose content is measured in COLUMNS, so every pixel the
-     chrome keeps costs readable text - the pane snapshot wrapped mid-word and
-     the herdr frame cut its own lines off at the right edge. Both cancel the
-     page gutter exactly (the --pagepad-* vars above) and drop the frame's
-     border/radius; termFit then measures the real offset for height (it fits
-     whichever of the two is mounted - one measurer, never two). */
-  .chatpage, .termpage{ height:calc(100vh - 130px); min-height:420px; /* fallback; the fit fns measure the real offset */
+  /* FULL-BLEED chat surface: cancels the page gutter exactly (the
+     --pagepad-* vars above) so the pane snapshot never wraps mid-word. */
+  .chatpage{ height:calc(100vh - 130px); min-height:420px; /* fallback; the fit fns measure the real offset */
     margin:calc(-1 * var(--pagepad-y)) calc(-1 * var(--pagepad-x)); }
   .chatpage .chiefp{ height:100%; border:0; border-radius:0; overflow:hidden; }
-  .termpage iframe{ width:100%; border:0; border-radius:0; background:var(--term-bg, var(--canvas)); flex:1 1 auto; min-height:0; }
-  .termpage{ position:relative; overflow:hidden; display:flex; flex-direction:column; }
-  .termbar{ flex:0 0 auto; display:flex; align-items:center; gap:6px; padding:5px 10px;
-    border-bottom:1px solid var(--line); background:var(--surface); }
-  .tbtitle{ font-size:11px; color:var(--muted); font-weight:700; }
-  .tbsp{ flex:1 1 auto; }
-  .tbfs{ font-size:11px; color:var(--fg2); min-width:2ch; text-align:center; }
-  /* Terminal dock (every route except the Terminal page - tdRouteOk owns
-     the rule): split-right / fullscreen-with-header. */
+  /* Dock (every route - no competing full-page client excludes it any
+     more): split-right / fullscreen-with-header. */
   .termdock{ position:fixed; top:0; right:0; bottom:0; width:var(--tdw,480px); z-index:60; display:flex;
     background:var(--panel); border-left:1px solid var(--line); box-shadow:-6px 0 22px rgba(0,0,0,.18); }
   /* display:flex above outranks the UA's [hidden]{display:none} - without
@@ -635,20 +607,13 @@ ${UX_BASE}
   .tdico[aria-pressed="true"]{ color:var(--accent); border-color:var(--accent); }
   #td-close:hover{ color:var(--error); border-color:var(--error); }
   .tdbody{ flex:1 1 auto; min-height:0; position:relative; }
-  .tdbody iframe{ width:100%; height:100%; border:0; background:var(--term-bg, var(--canvas)); }
   .tdbody .cdead{ padding:16px; color:var(--muted); }
-  /* Connecting overlay: the dock is never a silent blank - this sits over the
-     iframe until the frame reports its first pty byte (acTermLive). */
-  .tdload{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
-    color:var(--muted); font:12px var(--mono); background:var(--term-bg, var(--canvas)); pointer-events:none; }
-  .tdload span{ animation:tdpulse 1.2s ease-in-out infinite; }
-  @keyframes tdpulse{ 0%,100%{ opacity:.35; } 50%{ opacity:1; } }
   body.term-docked .shell{ margin-right:var(--tdw,480px); }
-  /* HIDDEN state (chat-widget shape): the dock slides fully off-screen - the iframe STAYS
-     MOUNTED so the terminal session survives the hide - and what remains is
-     a chat-widget-style floating pill at the bottom-right corner. The pill
-     lives OUTSIDE .termdock: a transformed ancestor becomes position:fixed's
-     containing block, so a pill inside would slide off with the dock. */
+  /* HIDDEN state (chat-widget shape): the dock slides fully off-screen and
+     what remains is a chat-widget-style floating pill at the bottom-right
+     corner. The pill lives OUTSIDE .termdock: a transformed ancestor becomes
+     position:fixed's containing block, so a pill inside would slide off with
+     the dock. */
   .termdock.hid{ transform:translateX(100%); box-shadow:none; }
   .termdock.hid .tdgrip{ display:none; }
   .tdrail{ position:fixed; right:18px; bottom:18px; z-index:59; display:flex; align-items:center; gap:7px;
@@ -670,20 +635,14 @@ ${UX_BASE}
     .tdgrip{ display:none; }
     body.term-docked .shell{ margin-right:0; }
   }
-  /* Pressed state is DELIBERATE accent styling (fullscreen active), never a
-     leftover focus ring - clicks blur the button after acting. */
-  .termbar .btn[aria-pressed="true"]{ color:var(--accent); border-color:var(--accent); }
   /* full-bleed routes: the page shell's bottom padding is the last 15px of
      scroll height (measured), and zoom rounding adds the rest - kill both so
      the viewport-fitted pane never grows scrollbars */
-  .page:has(.termpage), .page:has(.chatpage){ padding-bottom:0; }
+  .page:has(.chatpage){ padding-bottom:0; }
   /* and the document itself never scrolls on full-bleed routes: transient
      overflow during poll re-renders flickered both bars in and out */
-  html:has(.termpage), html:has(.chatpage){ overflow:hidden; }
-  body:has(.termpage), body:has(.chatpage){ overflow:hidden; }
-  .termpage .termopen{ position:absolute; top:8px; right:14px; z-index:2; font-size:13px; line-height:1; padding:5px 8px; border-radius:6px; background:var(--surface); border:1px solid var(--border); color:var(--fg2); opacity:.55; }
-  .termpage .termopen:hover{ opacity:1; color:var(--accent); border-color:var(--border-strong); text-decoration:none; }
-  .termpage .cdead{ padding:16px; color:var(--muted); }
+  html:has(.chatpage){ overflow:hidden; }
+  body:has(.chatpage){ overflow:hidden; }
   .cgrip{ cursor:col-resize; background:var(--line); width:6px; }
   .cgrip:hover, .cgrip:active{ background:var(--accent); }
   .ovroom{ margin-top:18px; }
@@ -897,7 +856,6 @@ ${UX_BASE}
       <a class="navitem" href="/fleets" data-nav="/fleets"><span class="ico">&#9635;</span><span class="lbl">Fleets</span></a>
       <ul id="fleet-list" class="fleetlist" aria-label="Fleets"></ul>
       <a class="navitem" href="/search" data-nav="/search"><span class="ico">&#9906;</span><span class="lbl">Search</span></a>
-      <a class="navitem" href="/terminal" data-nav="/terminal"><span class="ico">&#10095;</span><span class="lbl">Terminal</span></a>
     </div>
     <div class="navsec">
       <div class="navcap">Selected fleet</div>
@@ -928,32 +886,25 @@ ${UX_BASE}
     </div>
   </main>
 </div>
-<!-- Terminal dock (every route except
-     the Terminal page, whose own full client made the v2 global dock lag
-     with two clients at once - tdRouteOk owns the rule). Lives OUTSIDE #page
-     so route morphs never remount the iframe; only entering the Terminal
-     page closes the dock and ends its session. Fullscreen KEEPS this header
-     (v1's one real defect: header covered, controls lost). -->
+<!-- Dock (every route). Lives OUTSIDE #page so route morphs never remount
+     it. Herdr is refused fleet-wide, so there is no native terminal left to
+     embed here: the body always resolves to the open-Orca affordance
+     (/api/orca/focus). -->
 <div id="term-dock" class="termdock" hidden>
   <div class="tdgrip" id="td-grip" title="Drag to resize (min 320px, max 72% of the window)"></div>
   <div class="tdcol">
     <div class="tdbar">
       <span class="tddot" aria-hidden="true"></span>
-      <span class="tdtitle mono"><b>herdr</b><i>dock</i></span>
+      <span class="tdtitle mono"><b>dock</b></span>
       <span class="tdsp"></span>
-      <span class="tdseg" role="group" aria-label="Terminal font size">
-        <button type="button" id="td-fminus" title="Smaller terminal font">A-</button>
-        <span id="td-fsize" class="tdfs mono">12</span>
-        <button type="button" id="td-fplus" title="Larger terminal font">A+</button>
-      </span>
-      <button type="button" class="tdico" id="td-min" title="Hide to the edge - the session keeps running">&#8677;</button>
-      <button type="button" class="tdico" id="td-full" aria-pressed="false" title="Fullscreen (header stays; press again or Esc outside the terminal to return to split)">&#x2922;</button>
-      <button type="button" class="tdico" id="td-close" title="Close the dock - the terminal session ends (Ctrl+&#96; reopens)">&#10005;</button>
+      <button type="button" class="tdico" id="td-min" title="Hide to the edge">&#8677;</button>
+      <button type="button" class="tdico" id="td-full" aria-pressed="false" title="Fullscreen (press again or Esc to return to split)">&#x2922;</button>
+      <button type="button" class="tdico" id="td-close" title="Close the dock (Ctrl+&#96; reopens)">&#10005;</button>
     </div>
     <div class="tdbody" id="td-body"></div>
   </div>
 </div>
-<button type="button" class="tdrail" id="td-rail" title="Show the terminal dock" hidden>&gt;_ herdr</button>
+<button type="button" class="tdrail" id="td-rail" title="Show the dock" hidden>&gt;_ dock</button>
 <div id="dialog-root"></div>
 <script>
 "use strict";
@@ -974,7 +925,6 @@ ${inboxUnknown.toString()}
 ${familyInbox.toString()}
 ${verifyProcessRows.toString()}
 ${chiefFitPx.toString()}
-${imeOwnsKey.toString()}
 // Board (dashboard-board): the card join runs the SAME bun-tested joiners the
 // server does - one source of truth, no client re-implementation.
 ${parseBacklogLine.toString()}
@@ -1330,13 +1280,21 @@ function applyRoute(isPop){
     if(typeof tdOpen==='function' && tdMode==='closed') tdOpen('split');
     return;
   }
+  // The Terminal tab is retired too (its native client was herdr-only) - old
+  // links land on the board with the dock up, same as chat.
+  if(r.name==='term'){
+    var tf=r.fleet || currentFleet();
+    navigate(tf ? '/fleets/'+enc(tf)+'/board' : '/fleets', {replace:true});
+    if(tf && typeof tdOpen==='function' && tdMode==='closed') tdOpen('split');
+    return;
+  }
   if(r.fleet){ r.home=fleetByName(S.snap, r.fleet); rememberFleet(r.fleet); }
   var changed = !prev || prev.name!==r.name || prev.fleet!==r.fleet;
   if(changed){ pollGen++; if(pageCtrl){ try{pageCtrl.abort();}catch(e){} } pageInFlight=false; S.page=null; S.pageFail=false; toolClose(); }
   S.route=r;
-  // Leaving the dock-carrying screens closes the dock and ends its session -
-  // this is what keeps it structurally unable to coexist with the /terminal
-  // page's own client (the v2 two-clients lag).
+  // Leaving the dock-carrying screens closes the dock - a route exclusion
+  // mechanism tdRouteOk keeps vestigial (always true today; no route excludes
+  // the dock any more now that the terminal/chat tabs are both retired to it).
   if(typeof tdMode!=='undefined' && tdMode!=='closed' && !tdRouteOk()) tdClose(false);
   // The standing intent reopens the dock on every carrying route - boot after
   // a reload included - so the terminal is ALWAYS loaded once the captain
@@ -1543,7 +1501,7 @@ function renderNav(){
   var top=document.querySelectorAll('.navitem[data-nav]');
   for(var i=0;i<top.length;i++){
     var nv=top[i].getAttribute('data-nav');
-    var on=(nv==='/fleets' && (r.name==='fleets'||r.name==='root')) || (nv==='/search' && r.name==='search') || (nv==='/terminal' && r.name==='term');
+    var on=(nv==='/fleets' && (r.name==='fleets'||r.name==='root')) || (nv==='/search' && r.name==='search');
     if(on) top[i].setAttribute('aria-current','page'); else top[i].removeAttribute('aria-current');
   }
   var fs=allFleets(S.snap), fl='';
@@ -1654,7 +1612,6 @@ function renderPage(){
   else if(r.name==='worktrees') html=pageWorktrees();
   else if(r.name==='board') html=pageBoard();
   else if(r.name==='chat') html=pageChat();
-  else if(r.name==='term') html=pageTerm();
   else if(r.name==='reports') html=pageReports();
   else if(r.name==='whiteboards') html=pageWhiteboards();
   else if(r.name==='reviews') html=pageReviews();
@@ -1670,10 +1627,6 @@ function renderPage(){
   // board, boardSyncFamily owns the same poll for the open family's chief.
   if(r && r.name==='chat'){ chiefNoChief=false; chiefPollStart(r.fam||true); }
   else if(chiefCur!==null && boardOpenFam===null) chiefPollStop();
-  if(r && r.name==='term' && !termT && !termUrl) termPoll();
-  if(r && (r.name==='term'||r.name==='chat')) termFit();
-  if(r && r.name==='term'){ termTheme(); termFontLabel(); }   // frame not up yet on the first pass - the next render lands it
-  if(r && r.name!=='term' && termUrl) termUrl=null;
   postFrames();
 }
 
@@ -2091,22 +2044,6 @@ function boardLive(home, known){
   for(var i=0;i<tasks.length;i++){ var fam=familyOfTaskId(tasks[i].id, known); if(!(fam in map)) map[fam]=tasks[i].status||''; }
   return map;
 }
-// family -> live agent state (dash-agent-status-chips): herdr's own 5-state
-// detection per task id, folded per family WORST-FIRST - a family with one
-// blocked pane reads blocked, whatever its siblings do. Absent = no chip.
-var AG_RANK={blocked:0, idle:1, working:2, unknown:3, done:4};
-function famAgentStates(agents, known){
-  var map={};
-  for(var id in agents){ if(!Object.prototype.hasOwnProperty.call(agents,id)) continue;
-    var fam=familyOfTaskId(id, known), st=agents[id], cur=map[fam];
-    if(cur===undefined || (AG_RANK[st]||9)<(AG_RANK[cur]||9)) map[fam]=st;
-  }
-  return map;
-}
-function agentChip(st){
-  if(!st) return '';
-  return '<span class="chipm ag-'+esc(st)+'" title="live agent state (herdr agent detection)">'+esc(st)+'</span> ';
-}
 // Room-inbox badge (dash-family-inbox): the same pending/handback truth the
 // fleets-overview attention queue shows, on the family's own card. The badge
 // title carries the room's last entry so hover answers "waiting on WHAT".
@@ -2168,8 +2105,6 @@ function pageBoard(){
   var bd=boardData(b);
   var live=boardLive(r.home, bd.known);
   var liveModes=boardLiveModes(r.home, bd.known);
-  var agents=(S.page&&S.page.agents)||{};
-  var agFam=famAgentStates(agents, bd.known);
   var inbox=familyInbox(r.home&&r.home.inbox?r.home.inbox.entries:[]);
   var q=(ui.query||'').toLowerCase();
   var hideDone=boardHideDone();
@@ -2193,12 +2128,12 @@ function pageBoard(){
     for(var i=0;i<lines.length;i++){ var f=parseBacklogLine(lines[i]); if(!f.id) continue;
       if(f.epic && bd.known.indexOf(f.epic)>=0) continue;    // nests inside its epic card (unless the epic has no card -> show standalone)
       if(q && lines[i].toLowerCase().indexOf(q)<0) continue;
-      shown++; cards+=boardCard(f, lines[i], key, arts, bd, live[f.id], liveModes[f.id], agFam[f.id], inbox[f.id]);
+      shown++; cards+=boardCard(f, lines[i], key, arts, bd, live[f.id], liveModes[f.id], inbox[f.id]);
     }
     if(key==='in_flight'){ for(var sp=0;sp<sysPanes.length;sp++){ var pn=sysPanes[sp];
       if(q && (pn.id+' '+pn.kind+' '+pn.status).toLowerCase().indexOf(q)<0) continue;
       var pfam=(pn.kind==='roomchief' && /-chief$/.test(pn.id)) ? pn.id.replace(/-chief$/,'') : pn.id;
-      shown++; cards+=boardSysCard(pn, agents[pn.id], inbox[pfam]); } }
+      shown++; cards+=boardSysCard(pn, inbox[pfam]); } }
     // Eye on the Done header hides the column (same toggle as the toolbar switch).
     var eye=key==='done'?' <button class="eye" type="button" data-board-hidedone title="Hide Done column" aria-label="Hide Done column">👁</button>':'';
     s+='<div class="bcol '+cls+'"><div class="bch"><span class="bar"></span>'+esc(label)+'<span class="cnt">'+shown+'</span>'+eye+'</div>';
@@ -2219,7 +2154,7 @@ function toggleHideDone(){ var v=!boardHideDone(); try{ localStorage.setItem('ac
 // state ITSELF is derived by the bun-tested storyState, not here).
 var STORY_ICON={done:'✓',in_flight:'●',queued:'○',failed:'✗',abandoned:'⊘'};
 var STORY_BADGE={done:'ok',in_flight:'accent',queued:'',failed:'err',abandoned:'stale'};
-function boardCard(f, line, sectionKey, arts, bd, liveStatus, liveMode, agState, inboxIt){
+function boardCard(f, line, sectionKey, arts, bd, liveStatus, liveMode, inboxIt){
   var d=composeFamily({ family:f.id, line:line, section:sectionKey, project:'', artifacts:arts, roomEntries:[], children:(bd.childrenOf[f.id]||[]), knowledgeRepos:[], learningsCiteFamily:false });
   // A standalone (non-epic) family's own card carried no state marker at all,
   // so a [failed]/[abandoned] row was indistinguishable from a real success
@@ -2239,7 +2174,7 @@ function boardCard(f, line, sectionKey, arts, bd, liveStatus, liveMode, agState,
   // Same d.state, same err/stale vocabulary as the badge - never re-derived.
   var barCls=d.state==='failed'?'err':(d.state==='abandoned'?'stale':'');
   var prog=d.progress.pct>0?'<div class="bprog"><i class="'+barCls+'" style="width:'+d.progress.pct+'%"></i></div>':'';
-  var right = agentChip(agState) + (liveStatus ? '<span class="chipm a live">'+esc(liveStatus)+'</span>' : '<span class="live" style="margin-left:auto;color:var(--muted);font-size:10.5px">'+esc(d.progress.label)+'</span>');
+  var right = liveStatus ? '<span class="chipm a live">'+esc(liveStatus)+'</span>' : '<span class="live" style="margin-left:auto;color:var(--muted);font-size:10.5px">'+esc(d.progress.label)+'</span>';
   var roll=d.rollup?'<div class="broll">rollup '+d.rollup.done+'/'+d.rollup.total+' done</div>':'';
   var subs='';
   if(d.rollup && d.children.length){
@@ -2275,7 +2210,7 @@ function boardCard(f, line, sectionKey, arts, bd, liveStatus, liveMode, agState,
 // any in-flight card (it IS running work), with its kind as a badge and its
 // live status line. Transient: gone when the pane is reaped and its meta
 // disappears from the snapshot.
-function boardSysCard(p, agState, inboxIt){
+function boardSysCard(p, inboxIt){
   // A system pane's FAMILY detail is reachable like any card's: a roomchief
   // id maps to its family (room + data dir exist even with no backlog row -
   // the brainstorm shape), any other id is its own family.
@@ -2284,7 +2219,6 @@ function boardSysCard(p, agState, inboxIt){
   return '<a class="bcard sys'+(wait?' wait':'')+'" href="/fleets/'+enc(currentFleet())+'/board/'+enc(fam)+'" data-link>'
     +'<div class="cid">'+esc(p.id)+' <span class="badgeb sys">'+esc(p.kind)+'</span>'+(wait?' <span class="chipm wait" data-td-open data-td-family="'+esc(fam)+'" title="Open the dock at this roomchief&#39;s pane to answer">⏳ waiting on captain</span>':'')+inboxChips(inboxIt)+'</div>'
     +'<div class="brow"><span class="chipm">repo: '+esc(p.project||'—')+'</span>'
-    +agentChip(agState)
     +'<span class="chipm a live">'+esc(p.status||'—')+'</span></div>'
     +'</a>';
 }
@@ -2549,17 +2483,18 @@ function famHasLiveCrew(d){
 function familyDetailHtml(d){
   var fleet=S.route.fleet;
   if(d.error) return boardDetailHead(boardOpenFam, null)+'<div style="padding:20px 18px">'+stateBox('Detail unavailable', d.error, 'err')+'</div>';
-  // The snapshot chief panel is retired - the terminal dock (the herdr pill)
-  // is the one live-terminal surface, so the detail keeps the full width.
+  // The snapshot chief panel is retired - the dock pill is the one
+  // live-pane surface left, so the detail keeps the full width.
   return boardDetailHead(d.id, d)
     +'<div class="fbody'+(railCut()?' railcut':'')+'">'
     +boardDetailRail(d, fleet)+boardDetailViewer(d)+'</div>';
 }
-// ---- Chief panel input (room-chat slice B/C) ------------------------------
+// ---- Chief panel view (room-chat slice B/C) -------------------------------
 // ONE live target at a time: a family overlay's roomchief, or the fleet
 // crewchief drawer - opening either closes the other, so the shared ids
-// (chief-term/chief-msg/...) never exist twice.
-var chiefKb=false, chiefWatch='';   // ''=the chief itself; else a family pane id (read-only)
+// (chief-term/chief-tabs/...) never exist twice. View-only: typing retired
+// with the herdr steer endpoints (orca-dashboard, T12).
+var chiefWatch='';   // ''=the chief itself; else a family pane id (read-only)
 var chiefNoChief=false;             // task-terminal-mount: panel mounted for crew panes only (no roomchief tab, auto-watch)
 function chatRoute(){ return S.route&&S.route.name==='chat'?S.route:null; }
 function chiefFam(){ var cr=chatRoute(); if(cr) return cr.fam||null; return boardOpenFam; }
@@ -2590,119 +2525,31 @@ function chiefSetWatch(id){
   try{ if(chiefWatch) localStorage.setItem(chiefWatchKey(chiefCur), chiefWatch); else localStorage.removeItem(chiefWatchKey(chiefCur)); }catch(e){}
   var ro=chiefWatch!=='';
   var tt=el('chief-title'); if(tt) tt.textContent = ro ? chiefWatch : (tt.getAttribute('data-t')||'');
-  var ta=el('chief-msg'); if(ta) ta.placeholder = ro ? 'Message '+chiefWatch+'… (Enter to send)' : 'Message the chief… (Enter to send, Shift+Enter for newline)';
   var t=el('chief-term'); if(t) t.innerHTML='';
   var st=el('chief-state'); if(st) st.textContent='connecting…';
   chiefLoadTabs();
   var tgt=chiefCur; chiefPollStop(); chiefPollStart(tgt, true); // re-arm keeping the new watch (stream reconnects with the watch param)
 }
-function chiefTargetQ(){
-  var cr=chatRoute();
-  if(cr) return cr.fam?'&family='+enc(cr.fam):'&fleet=1';
-  if(boardOpenFam!==null) return '&family='+enc(boardOpenFam);
-  return null;
-}
-function chiefApi(pathname, body, isJson){
-  var hp=S.route.home?S.route.home.path:''; var tq=chiefTargetQ();
-  if(!hp||tq===null) return Promise.reject();
-  return fetch(pathname+'?path='+enc(hp)+tq+(chiefWatch?'&watch='+enc(chiefWatch):''),
-    { method:'POST', headers:{'content-type': isJson?'application/json':'text/plain'}, body:body });
-}
 function chiefPanelHtml(title, backHref){
   return '<div class="chiefp"><div class="cbar">'
     +(backHref?'<a class="cback" href="'+esc(backHref)+'" data-link title="Back to Processes">←</a>':'')
     +'<b id="chief-title" data-t="'+esc(title)+'">'+esc(title)+'</b><span id="chief-state">connecting…</span>'
-    +'<button type="button" id="chief-compose" class="cbtn" aria-pressed="'+(chiefComposerOpen?'true':'false')+'" title="Composer: draft a longer message and send it whole (ac-send)">✉ Compose</button>'
     +'</div>'
     +'<div class="ctabs" id="chief-tabs"></div>'
-    +'<pre class="cterm" id="chief-term" aria-label="Live chief terminal"></pre>'
-    +'<input id="chief-ime" autocomplete="off" spellcheck="false" aria-label="Type-through input" style="position:absolute;left:-9999px;width:2px;height:2px;opacity:0">'
-    +'<div class="csend"'+(chiefComposerOpen?'':' style="display:none"')+'><textarea id="chief-msg" rows="2" placeholder="Message the chief… (Enter to send, Shift+Enter for newline)"></textarea>'
-    +'<button type="button" class="btn sm primary" id="chief-send">Send</button></div>'
-    +'<div class="cnote" id="chief-note"></div></div>';
+    +'<pre class="cterm" id="chief-term" aria-label="Live chief terminal"></pre></div>';
 }
-// Terminal page (top-level /terminal tab): iframe the native /term-frame
-// bridge /api/term/status points at; poll status until it serves, then mount
-// ONCE (the iframe is a keyed island - re-rendering it would kill the live
-// session). Nothing starts until this page is opened: the PTY spawns on the
-// iframe's websocket connect and dies with it when the page is left.
-var termUrl=null, termWhy='checking…', termT=null;
-function pageTerm(){
-  if(termUrl){
-    // The toolbar carries the mockup-approved controls on the EXISTING
-    // terminal: A-/A+ font, the sidebar toggle (widen the terminal), and the
-    // open-in-own-tab hop.
-    var bar='<div class="termbar">'
-      +'<span class="tbtitle mono">herdr &middot; terminal</span>'
-      +'<span class="tbsp"></span>'
-      +'<button type="button" class="btn sm" id="tp-fminus" title="Smaller terminal font">A-</button>'
-      +'<span id="tp-fsize" class="tbfs mono">&middot;</span>'
-      +'<button type="button" class="btn sm" id="tp-fplus" title="Larger terminal font">A+</button>'
-      +'<button type="button" class="btn sm" id="tp-side" title="Toggle the sidebar - widen the terminal">&#8676;</button>'
-      +'<a class="btn sm" href="/term" target="_blank" rel="noopener" title="open in its own page">&#8599;</a>'
-      +'</div>';
-    return '<div class="termpage">'+bar+'<iframe src="'+esc(termUrl)+'" title="herdr terminal"></iframe></div>';
-  }
-  return '<div class="termpage"><div class="cdead">'+esc(termWhy)+'</div></div>';
-}
-function termFrameWin(){ var f=document.querySelector('.termpage iframe'); return f?f.contentWindow:null; }
-function termFont(d){
-  var w=termFrameWin();
-  if(w && typeof w.acSetFont==='function'){ var v=w.acSetFont(d); var s=el('tp-fsize'); if(s) s.textContent=String(v); }
-}
-function termFontLabel(){
-  var w=termFrameWin(); var s=el('tp-fsize');
-  if(w && s && typeof w.acGetFont==='function'){ try{ s.textContent=String(w.acGetFont()); }catch(e){} }
-}
-function termFit(){
-  // Fill the viewport exactly: the old fixed calc guessed the header height
-  // and left a dead band under the frame - measure the page's real offset
-  // instead, every render and resize (the iframe is a keyed island, so a
-  // height change never remounts the live session). Full-bleed, so the frame
-  // runs to the viewport floor - no gutter left under it either.
-  var tp=document.querySelector('.termpage, .chatpage'); if(!tp) return;
-  var r=tp.getBoundingClientRect();
-  tp.style.height=Math.max(420, Math.floor(window.innerHeight - r.top) - 1)+'px';
-}
-// Paint the terminal frame in the page's OWN theme (the webterm background
-// must match the page). The frame is same-origin, so this is a direct call into the
-// function it exposes - never a remount, which would kill the herdr client.
-// Deduped on the pair, so the per-poll renderPage never repaints for nothing.
-// The mapping itself lives in the shared termThemeCore (interpolated below) -
-// one implementation for this tab AND the standalone /term page.
-${termThemeCore.toString()}
-var termBg='';
-function termTheme(){
-  // Every terminal surface present (the Terminal tab AND the dock) gets the
-  // page theme; the dedupe sig only advances when all took the paint, so a
-  // dock mounted later still gets its coat.
-  var fs=document.querySelectorAll('.termpage iframe, #td-body iframe'); if(!fs.length) return;
-  var r=termThemeCore(getComputedStyle(document.documentElement));
-  if(!r || r.sig===termBg) return;
-  var ok=true;
-  for(var i=0;i<fs.length;i++){
-    var w=fs[i].contentWindow;
-    if(w && typeof w.acSetTheme==='function') w.acSetTheme(r.theme); else ok=false;
-  }
-  if(ok) termBg=r.sig;
-}
-// ---- Terminal dock (every route except the Terminal page). OUR backend untouched: the iframe is the same
-// /term-frame client the Terminal tab mounts. The one exclusion is BY
-// CONSTRUCTION: tdRouteOk() gates open, and applyRoute closes the dock on
-// entering 'term' - so the dock can never coexist with the /terminal page's
-// own client (the two-full-clients lag that reverted the v2 GLOBAL dock).
+// ---- Dock (every route). Herdr is refused fleet-wide, so the dock has no
+// native terminal left to embed - its body always resolves to the open-Orca
+// affordance (tdMount below).
 var tdMode='closed', tdW=480, tdIntent='';
 // tdIntent is the CAPTAIN'S standing choice (open as split/full, or ''), kept
-// apart from tdMode because route exclusions close the dock without the
-// captain asking - the intent is what survives a reload and what reopens the
-// dock after the /terminal page's structural close.
+// apart from tdMode so a reload or a future route exclusion can reopen the
+// dock without the captain asking again.
 try{ var tds=JSON.parse(localStorage.getItem('ac_term_dock')||'{}'); if(tds.w) tdW=tds.w; if(tds.mode==='split'||tds.mode==='full') tdIntent=tds.mode; }catch(e){}
 function tdPersist(){ try{ localStorage.setItem('ac_term_dock', JSON.stringify({w:tdW, mode:tdIntent})); }catch(e){} }
-// Every route carries the dock EXCEPT the Terminal page - that page mounts its own full client, and dock
-// + page together is the measured two-clients lag that reverted the v2
-// global dock. Entering 'term' closes the dock; the page shows the same
-// herdr session anyway.
-function tdRouteOk(){ return !!(S.route && S.route.name!=='term'); }
+// Every route carries the dock - there is no longer a competing full-page
+// terminal client to exclude it from (the native terminal was herdr-only).
+function tdRouteOk(){ return true; }
 function tdApply(){
   var d=el('term-dock'); if(!d) return;
   d.hidden = tdMode==='closed';
@@ -2717,7 +2564,10 @@ function tdApply(){
   document.body.classList.toggle('term-docked', tdMode==='split');
   var fb=el('td-full'); if(fb) fb.setAttribute('aria-pressed', tdMode==='full'?'true':'false');
 }
-function tdFrameWin(){ var f=document.querySelector('#td-body iframe'); return f?f.contentWindow:null; }
+// The scoped family id, when the dock was opened at a specific family's wait
+// chip ('' otherwise) - threaded into the open-Orca link so it focuses that
+// family's pane rather than just bringing the app forward.
+function tdScopeId(){ var m=/&family=([^&]*)/.exec(tdScope); return m?dec(m[1]):''; }
 function tdMount(){
   var b=el('td-body'); if(!b||b.firstChild) return;
   var hp=S.route&&S.route.home?S.route.home.path:'';
@@ -2729,53 +2579,30 @@ function tdMount(){
     b.innerHTML='<div class="cdead">resolving fleet home&hellip;</div>';
     setTimeout(function(){
       var bb=el('td-body');
-      if(bb && tdMode!=='closed' && !bb.querySelector('iframe')){ bb.innerHTML=''; tdMount(); }
+      if(bb && tdMode!=='closed' && !bb.firstChild){ tdMount(); }
     }, 900);
     return;
   }
+  var id=tdScopeId();
   fetch('/api/term/status?path='+enc(hp)).then(function(r){ return r.json(); }).then(function(j){
     var bb=el('td-body'); if(!bb||bb.firstChild) return;
-    if(j.running&&j.url){
-      var f=document.createElement('iframe'); f.src=j.url+tdScope; f.title='herdr terminal';
-      bb.appendChild(f);
-      // Never a silent blank: the overlay stands until the frame's first pty
-      // byte (acTermLive below) - the frame's own watchdog respawns a silent
-      // connection, so this converges to a live terminal, not a spinner.
-      var ov=document.createElement('div'); ov.className='tdload'; ov.id='td-load';
-      ov.innerHTML='<span>connecting to herdr&hellip;</span>';
-      bb.appendChild(ov);
-      termBg=''; setTimeout(function(){ termTheme(); tdFontLabel(); }, 800);
-    } else if(j.orca){
-      bb.innerHTML='<div class="cdead">'+esc(j.why||'this fleet runs on the Orca app')+' · <a href="#" onclick="return acOrcaOpen()">open Orca</a></div>';
-    } else bb.innerHTML='<div class="cdead">'+esc(j.why||j.error||'terminal unavailable')+'</div>';
-  }).catch(function(){ var bb=el('td-body'); if(bb&&!bb.firstChild) bb.innerHTML='<div class="cdead">terminal unreachable</div>'; });
+    if(j.orca) bb.innerHTML='<div class="cdead">'+esc(j.why||'this fleet runs on the Orca app')+' · <a href="#" data-orca="'+esc(id)+'" onclick="return acOrcaOpen(this.dataset.orca||null)">open Orca</a></div>';
+    else bb.innerHTML='<div class="cdead">'+esc(j.why||j.error||'unavailable')+'</div>';
+  }).catch(function(){ var bb=el('td-body'); if(bb&&!bb.firstChild) bb.innerHTML='<div class="cdead">unreachable</div>'; });
 }
 function tdOpen(mode){ tdMode=mode; tdIntent=mode; tdPersist(); tdApply(); tdMount(); }
-// Workspace scope for the dock's client: '' = plain, '&fleet=1' = the
-// crewchief's workspace, '&family=<f>' = that family's workspace (the
-// /term-frame scope machinery types the picker chord itself). A scope CHANGE
-// remounts the iframe so the new client opens at the right workspace; the
-// same scope just re-raises the running session.
+// Scope the dock was opened at: '' = plain, '&fleet=1' = the crewchief,
+// '&family=<f>' = that family's wait chip. A scope CHANGE remounts the body
+// so the open-Orca link re-targets the new family.
 var tdScope='';
 function tdOpenScoped(sc){
   if(sc!==tdScope){ tdScope=sc; var b=el('td-body'); if(b) b.innerHTML=''; }
   tdOpen('split');
 }
-// The frame's first pty byte lands here (same-origin direct call): drop the
-// dock's connecting overlay. The Terminal tab calls it too - harmless no-op.
-window.acTermLive=function(){ var o=el('td-load'); if(o) o.remove(); };
 // user=false is a STRUCTURAL close (route exclusion) - the captain's intent
 // stands and the next carrying route reopens; only the captain's own X
 // clears it.
 function tdClose(user){ tdMode='closed'; tdApply(); var b=el('td-body'); if(b) b.innerHTML=''; if(user!==false){ tdIntent=''; tdPersist(); } }
-function tdFont(d){
-  var w=tdFrameWin();
-  if(w && typeof w.acSetFont==='function'){ var v=w.acSetFont(d); var sp=el('td-fsize'); if(sp) sp.textContent=String(v); }
-}
-function tdFontLabel(){
-  var w=tdFrameWin(); var sp=el('td-fsize');
-  if(w && sp && typeof w.acGetFont==='function'){ try{ sp.textContent=String(w.acGetFont()); }catch(e){} }
-}
 (function(){
   var g=el('td-grip'); if(!g) return;
   var drag=false, sx=0, sw=0, raf=0;
@@ -2799,120 +2626,14 @@ function tdFontLabel(){
   });
 })();
 // Ctrl+backtick toggles the dock on the screens that carry it; Esc drops
-// fullscreen to split. Both fire only with focus OUTSIDE the terminal frame -
-// inside it, every key belongs to the pty.
+// fullscreen to split.
 addEventListener('keydown', function(e){
   if(e.ctrlKey && e.key==='\u0060' && tdRouteOk()){ e.preventDefault(); (tdMode==='closed'||tdMode==='hidden')?tdOpen('split'):tdClose(); return; }
   if(e.key==='Escape' && tdMode==='full') tdOpen('split');
 });
-function termPoll(){
-  // Top-level /terminal has no fleet in the route: herdr is one session
-  // machine-wide, so any known home path satisfies the server's gate.
-  var hp=S.route&&S.route.home?S.route.home.path:'';
-  if(!hp){ var th=fleetByName(S.snap, currentFleet()); hp=th?th.path:''; }
-  if(!hp) return;
-  fetch('/api/term/status?path='+enc(hp)).then(function(r){ return r.json(); }).then(function(j){
-    if(!S.route||S.route.name!=='term'){ clearTimeout(termT); termT=null; return; }
-    if(j.running&&j.url){ if(termUrl!==j.url){ termUrl=j.url; renderPage(); setTimeout(termFontLabel, 900); } return; }
-    termUrl=null; termWhy=j.why||j.error||'unavailable'; renderPage();
-    termT=setTimeout(termPoll, 1500);
-  }).catch(function(){ termT=setTimeout(termPoll, 3000); });
-}
-
 // The chat route is retired (applyRoute/boot redirect it to the board with
 // the dock up); this stub only covers a render squeezed in before redirect.
 function pageChat(){ return ''; }
-function chiefNote(t, err){ var n=el('chief-note'); if(n){ n.textContent=t||''; n.className='cnote'+(err?' err':''); } }
-function chiefSendMsg(){
-  var ta=el('chief-msg'); if(!ta) return;
-  var msg=(ta.value||'').trim(); if(!msg) return;
-  var btn=el('chief-send'); if(btn) btn.disabled=true;
-  chiefNote('sending…');
-  chiefApi('/api/room/send', msg).then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
-    .then(function(res){
-      if(btn) btn.disabled=false;
-      if(res.ok){ ta.value=''; chiefNote('sent — the chief answers in its pane and posts receipts to the room'); chiefPoke(); }
-      else chiefNote('refused: '+((res.j&&res.j.error)||'failed')+(res.j&&res.j.detail?' — '+res.j.detail:''), true);
-    })
-    .catch(function(){ if(btn) btn.disabled=false; chiefNote('unreachable — nothing sent', true); });
-}
-function chiefInput(body){
-  if(chiefSock && chiefSock.readyState===1){ chiefSock.send(JSON.stringify(body)); return; }
-  chiefApi('/api/room/input', JSON.stringify(body), true).then(chiefPoke).catch(function(){});
-}
-function chiefKey(k){ chiefInput({key:k}); }
-function chiefChar(c){ chiefInput({text:c}); }
-function chiefText(v){ if(!v) return; chiefInput(v.length===1?{text:v}:{paste:v}); }
-// IME-correct type-through: printable keys land in the hidden input, whose
-// input/compositionend events deliver COMPOSED text (Vietnamese telex commits
-// one accented char, not its raw keystrokes). Named keys never compose and
-// keep the direct send-keys path.
-addEventListener('input', function(e){
-  var t=e.target; if(!t||t.id!=='chief-ime'||e.isComposing) return;
-  var v=t.value; if(v){ t.value=''; chiefText(v); }
-});
-addEventListener('compositionend', function(e){
-  var t=e.target; if(!t||t.id!=='chief-ime') return;
-  var v=t.value; if(v){ t.value=''; chiefText(v); }
-});
-addEventListener('paste', function(e){
-  if(boardOpenFam===null && !chatRoute()) return;
-  // Image paste works from ANY focus (composer included): the image is saved
-  // under the family's data dir and its path typed into the pane.
-  var items=(e.clipboardData&&e.clipboardData.items)||[];
-  for(var pi=0;pi<items.length;pi++){
-    if(items[pi].type && items[pi].type.indexOf('image/')===0){
-      e.preventDefault();
-      var f=items[pi].getAsFile(); if(!f) return;
-      chiefNote('uploading image…');
-      f.arrayBuffer().then(function(buf){
-        var hp=S.route.home?S.route.home.path:''; var tq=chiefTargetQ();
-        if(!hp||tq===null) return;
-        return fetch('/api/room/attach?path='+enc(hp)+tq+(chiefWatch?'&watch='+enc(chiefWatch):''),
-          { method:'POST', headers:{'content-type': f.type}, body: buf })
-          .then(function(r){ return r.json(); })
-          .then(function(j){
-            if(j.ok) chiefNote('image saved + path typed into pane — add a message then Enter to send');
-            else chiefNote('refused: '+(j.error||'attach failed'), true);
-          });
-      }).catch(function(){ chiefNote('unreachable — image not sent', true); });
-      return;
-    }
-  }
-  if(!chiefKb) return;
-  var t=e.target;
-  if(t && t.id!=='chief-ime' && (t.id==='chief-msg' || t.tagName==='INPUT' || t.tagName==='TEXTAREA')) return;
-  var txt=(e.clipboardData&&e.clipboardData.getData('text'))||'';
-  if(txt){ e.preventDefault(); if(t&&t.id==='chief-ime') t.value=''; chiefText(txt.replace(/\\r/g,'')); }
-});
-function chiefKbToggle(){
-  chiefKb=!chiefKb;
-  var b=el('chief-kb'); if(b){ b.setAttribute('aria-pressed', chiefKb?'true':'false'); b.classList.toggle('on', chiefKb); }
-  chiefNote(chiefKb?'typing straight into the pane (keys · Vietnamese IME · Ctrl+V images) — open ✉ Compose to stop':'');
-  var im=el('chief-ime'); if(im){ if(chiefKb) im.focus(); else im.blur(); }
-  chiefRearmCadence();   // 500ms echo while typing, 2s otherwise
-}
-// Type-through capture: alive only while the toggle is on AND the overlay is
-// open; the composer textarea keeps its own keys (it is for whole messages).
-addEventListener('keydown', function(e){
-  var t=e.target;
-  // Composer: Enter sends, Shift+Enter stays a newline.
-  if(t && t.id==='chief-msg'){ if(chiefKb && e.key!=='Enter'){ chiefKb=false; chiefNote(''); } if(e.key==='Enter' && !e.shiftKey && !imeOwnsKey(e)){ e.preventDefault(); chiefSendMsg(); return; } }
-  if(!chiefKb || (boardOpenFam===null && !chatRoute())) return;
-  var inIme = t && t.id==='chief-ime';
-  if(!inIme && t && (t.id==='chief-msg' || t.tagName==='INPUT' || t.tagName==='TEXTAREA')) return;
-  var map={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',Enter:'enter',Escape:'esc',Tab:e.shiftKey?'shift+tab':'tab',Backspace:'backspace',PageUp:'pageup',PageDown:'pagedown'};
-  if(e.ctrlKey && e.key==='c'){ e.preventDefault(); chiefKey('ctrl+c'); return; }
-  if(e.ctrlKey && e.key==='u'){ e.preventDefault(); chiefKey('ctrl+u'); return; }
-  if(e.ctrlKey && !e.metaKey && e.key==='v'){ e.preventDefault(); chiefKey('ctrl+v'); return; }
-  if(map[e.key]){
-    if(inIme && e.key==='Backspace' && t.value){ return; }   // editing the IME buffer, not the pane
-    e.preventDefault(); chiefKey(map[e.key]); return;
-  }
-  if(e.key===' ' && !inIme){ e.preventDefault(); chiefKey('space'); return; }
-  if(inIme) return;   // printable keys flow into the hidden input -> composed text
-  if(e.key.length===1 && !e.metaKey && !e.ctrlKey && !e.altKey){ e.preventDefault(); chiefChar(e.key); }
-}, true);
 // Poll loop for the chief panel: alive only while the overlay shows a family
 // with a live chief; boardSyncFamily arms and disarms it. Autoscroll pins
 // to the bottom unless the captain scrolled up to read history.
@@ -2938,13 +2659,7 @@ addEventListener('mouseup', function(){
   try{ if(w) localStorage.setItem('ac_dash_chiefw', parseInt(w,10)); }catch(e){}
 });
 var chiefTimer=null, chiefCur=null, chiefTickFn=null, chiefLines=400, chiefMore=false, chiefPokeT=null;
-var chiefSock=null, chiefSockGen=0, chiefComposerOpen=false;
-function chiefComposeToggle(){
-  chiefComposerOpen=!chiefComposerOpen;
-  var cs=document.querySelector('.chiefp .csend'); if(cs) cs.style.display=chiefComposerOpen?'':'none';
-  var b=el('chief-compose'); if(b) b.setAttribute('aria-pressed', chiefComposerOpen?'true':'false');
-  if(chiefComposerOpen){ chiefKb=false; chiefNote(''); var ta=el('chief-msg'); if(ta) try{ ta.focus(); }catch(e){} }
-}
+var chiefSock=null, chiefSockGen=0;
 function acOrcaOpen(id){
   fetch('/api/orca/focus?path='+enc(hp)+(id?'&id='+enc(id):''), {method:'POST'}).catch(function(){});
   return false;
@@ -3005,8 +2720,6 @@ function chiefStreamStart(target){
   return true;
 }
 function chiefStreamStop(){ chiefSockGen++; if(chiefSock){ try{ chiefSock.close(); }catch(e){} chiefSock=null; } }
-function chiefCadence(){ return chiefKb?500:2000; }
-function chiefRearmCadence(){ if(!chiefTimer||!chiefTickFn) return; clearInterval(chiefTimer); chiefTimer=setInterval(chiefTickFn, chiefCadence()); }
 // One immediate (debounced) refresh right after an input lands: the echo
 // arrives in ~150ms instead of at the next tick.
 function chiefPoke(){ if(!chiefTickFn) return; clearTimeout(chiefPokeT); chiefPokeT=setTimeout(function(){ if(chiefTickFn) chiefTickFn(); },150); }
@@ -3050,7 +2763,7 @@ function chiefPollStartPoll(target){
   };
   chiefTickFn=tick;
   tick();
-  chiefTimer=setInterval(tick, chiefCadence());
+  chiefTimer=setInterval(tick, 2000);
 }
 // Reaching the top of the terminal loads older scrollback (up to 3000 lines).
 addEventListener('scroll', function(e){
@@ -4396,16 +4109,6 @@ function onClick(e){
   var t=e.target; if(!t) return; if(t.nodeType===3) t=t.parentElement; if(!t||!t.closest) return;
   var n;
   if(t.closest('#refresh-btn')){ tick(true); return; }
-  // Terminal toolbar: blur the clicked button so the focus ring never sticks
-  // as a phantom highlight after the action.
-  var tbtn=t.closest('#tp-fminus,#tp-fplus,#tp-side');
-  if(tbtn){
-    tbtn.blur();
-    if(tbtn.id==='tp-fminus') termFont(-1);
-    else if(tbtn.id==='tp-fplus') termFont(1);
-    else { var cb=el('collapse-btn'); if(cb) cb.click(); }
-    return;
-  }
   // Any [data-td-open] control raises the dock IN PLACE - never a route hop;
   // data-td-family / data-td-fleet aim the client at a workspace.
   if((n=t.closest('[data-td-open]'))){
@@ -4415,28 +4118,22 @@ function onClick(e){
     return;
   }
   // Dock controls (blur after acting - the focus-ring lesson).
-  var tdb=t.closest('#td-fminus,#td-fplus,#td-min,#td-full,#td-close,#td-rail');
+  var tdb=t.closest('#td-min,#td-full,#td-close,#td-rail');
   if(tdb){
     tdb.blur();
     if(tdb.id==='td-rail') tdOpen('split');
     else if(tdb.id==='td-min'){ tdMode='hidden'; tdApply(); }
-    else if(tdb.id==='td-fminus') tdFont(-0.5);
-    else if(tdb.id==='td-fplus') tdFont(0.5);
     else if(tdb.id==='td-full') tdOpen(tdMode==='full'?'split':'full');
     else tdClose();
     return;
   }
-  if((n=t.closest('[data-chief-key]'))){ chiefKey(n.getAttribute('data-chief-key')); return; }
   if((n=t.closest('[data-chief-watch]'))!==null && n){ chiefSetWatch(n.getAttribute('data-chief-watch')); return; }
   if(t.closest('#chief-term')){
-    // A linkified URL inside the pane wins over type-through arming: open it
-    // (scheme re-checked; opener severed) instead of focusing the IME.
+    // A linkified URL inside the pane: open it (scheme re-checked, opener
+    // severed) - the only click behavior the view-only pane still has.
     var pl=t.closest('a[target="_blank"]');
     if(pl){ var pu=pl.getAttribute('href')||''; if(/^https?:$/i.test(pu.split('//')[0])){ e.preventDefault(); var pw=null; try{ pw=window.open(pu,'_blank'); }catch(err){} if(pw){ try{ pw.opener=null; }catch(err){} } } return; }
-    if(!chiefKb) chiefKbToggle(); var im0=el('chief-ime'); if(im0) im0.focus(); return; }
-  if(t.closest('#chief-compose')){ chiefComposeToggle(); return; }
-  if(t.closest('#chief-send')){ chiefSendMsg(); return; }
-  if(t.closest('#chief-kb')){ chiefKbToggle(); return; }
+    return; }
   if(t.closest('#theme-btn')){ toggleTheme(); return; }
   if(t.closest('#palette-btn')){ togglePalette(); return; }
   if(t.closest('#bg-btn')){ openBgDialog(); return; }
@@ -4610,7 +4307,6 @@ function boot(){
   }, true);
   window.addEventListener('scroll', function(){ if(S.route) uiFor(routeKey(S.route)).pageScroll=window.scrollY; }, {passive:true});
   window.addEventListener('popstate', function(){ applyRoute(true); });
-  window.addEventListener('resize', function(){ if(S.route && (S.route.name==='term'||S.route.name==='chat')) termFit(); });
   document.addEventListener('visibilitychange', function(){ if(!document.hidden) tick(true); });
 
   S.route=parseRoute(location.pathname);
