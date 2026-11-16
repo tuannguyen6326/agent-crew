@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ac-watch.test.sh - watcher semantics: the durable wake queue + drain +
 # turn-end guard predicate (backend-free), then scope routing, liveness and
-# marker passes driven through the file-backed fake herdr CLI (helpers.sh), and
+# marker passes driven through the file-backed fake orca CLI (helpers.sh), and
 # last the watcher end to end against stubbed children, one scenario per row.
 
 # Fail-closed sourcing: unsourced (suite run outside tests/sh/), errexit is never
@@ -579,30 +579,20 @@ assert_eq "$custom" "CUSTOMWAKE" "AC_CAPTAIN_RE override wins"
 # --- scope-aware turn-end guard (+ the lock-exemption reconciliation) ------
 # No turn ends blind, per SCOPE: each session is gated on the wakes IT must
 # drain. Two shapes matter and are pinned in both directions here. From here
-# down every backend-touching pass runs against the fake herdr CLI: a pane is
+# down every backend-touching pass runs against the fake orca CLI: a pane is
 # alive while its files exist, its buffer file is the pane text.
 rm -f "$state"/*.meta "$state"/.session-lock
 rm -rf "$state"/.wake-spool*
 rm -f "$state"/.last-watcher-beat*
-make_fake_herdr
 make_fake_orca
 
 seed_pane() {
-  # seed_pane <id> <p> <t> [herdr] - a live fake pane for <id>: handle + tab +
-  # empty buffer (the ac-backend.test.sh p90/t90 idiom), orca by default.
-  # Pass a 5th argument of "herdr" for the one case that still needs the
-  # herdr driver itself (the RPC-wedge test below - no orca RPC timeout
-  # exists to model it against). Inject pane text by appending to
-  # "$(fake_orca_buf <id>)" (or "$(fake_pane_buf <id>)" under herdr); rm the
-  # pane files to vanish it.
+  # seed_pane <id> <p> <t> - a live fake orca pane for <id>: handle + tab +
+  # empty buffer (the ac-backend.test.sh p90/t90 idiom). Inject pane text by
+  # appending to "$(fake_orca_buf <id>)"; rm the pane files to vanish it.
   printf '%s %s\n' "$2" "$3" >"$state/.pane-$1"
-  if [ "${4:-}" = herdr ]; then
-    printf '%s\n' "$2" >"$FAKE_HERDR/tabs/$3"
-    : >"$FAKE_HERDR/panes/$2.buf"
-  else
-    : >"$FAKE_ORCA/terminals/$2.buf"
-    printf '%s\n' "$3" >"$FAKE_ORCA/terminals/$2.tab"
-  fi
+  : >"$FAKE_ORCA/terminals/$2.buf"
+  printf '%s\n' "$3" >"$FAKE_ORCA/terminals/$2.tab"
 }
 
 guard() {
@@ -682,7 +672,7 @@ rm -f "$state/.session-lock" "$state"/*.meta "$state"/.last-watcher-beat*; rm -r
 # A wake is filed for its intended CONSUMER: the fleet watcher publishes to
 # state/.wake-spool/, a promoted family's watcher (AC_SCOPE=<fam>, inherited
 # from ac-spawn.sh) publishes to state/.wake-spool.<fam>/, which only that
-# roomchief drains. Driven through the fake herdr so both scopes are
+# roomchief drains. Driven through the fake orca so both scopes are
 # exercised hermetically - no real pane, no sleep.
 rm -f "$state"/*.meta "$state"/.last-watcher-beat*
 rm -f "$state"/.hash-* "$state"/.seen-* "$state"/.change-* "$state"/.stale-*
@@ -857,37 +847,18 @@ rm -f "$state"/*.meta "$state"/.pane-* "$state"/.hash-* "$state"/.change-* \
   "$state"/.seen-* "$state"/.stale-* "$state"/.unobservable-* "$state"/.last-watcher-beat*
 rm -rf "$state"/.wake-spool*; mkdir -p "$state/.wake-spool"
 
-wedge_survivors() {
-  # The children this run's own hung calls forked and are still alive, from the
-  # stub's own record. Never a scan of the host process table - the suite runs
-  # test files concurrently under --jobs and every one forks the same sleep, so
-  # a scan would mis-report and then KILL a sibling file's child - and never a
-  # process-group kill, since each test file backgrounds under its own `set -m`
-  # and this file's group IS this file.
-  local p
-  while read -r p; do
-    [ -n "$p" ] && kill -0 "$p" 2>/dev/null && printf '%s\n' "$p"
-  done 2>/dev/null <"$FAKE_HERDR/hang-children" || true
-}
-reap_wedge_children() { local p; for p in $(wedge_survivors); do kill -9 "$p" 2>/dev/null || true; done; }
-reap_wedge_children
-
-# The RPC-wedge scenario below needed the herdr driver specifically (no
-# orca RPC timeout exists to model it against, per seed_pane's own header);
-# the cutover (T8) refuses backend=herdr before the pane pass ever reaches
-# a dispatch call, so the wedge itself is unreachable now - this proves the
-# refusal fires there instead, named, before any pane is even touched.
+# The RPC-wedge scenario this row once drove needed the herdr driver itself
+# (no orca RPC timeout exists to model it against - ac-backend.sh HUNG RPC);
+# the cutover (T8) refuses backend=herdr before the pane pass ever reaches a
+# dispatch call, so the wedge itself is unreachable now - this proves the
+# refusal fires there instead, named, before any pane is even touched (no
+# pane fixture is needed either, for the same reason).
 printf 'window=crew:w1\nbackend=herdr\n' >"$state/w1.meta"
-seed_pane w1 pW1 tW1 herdr
 AC_LOCK_PID=$$ AC_REMOTE_POLL=0 bash "$BIN/ac-watch.sh" --once >"$TMP/wedge.out" 2>"$TMP/wedge.err" || true
 assert_contains "$(cat "$TMP/wedge.err")" "ERROR: unsupported backend 'herdr' (valid backend: orca)" \
   "a herdr-pinned task refuses, named, instead of ever reaching the pane"
 assert_no_file "$state/.gone-w1" "a refusal never stamps a pane gone"
 assert_no_file "$state/.unobservable-w1" "a refusal is never read as unobservable either"
-if [ -n "$(wedge_survivors)" ]; then
-  reap_wedge_children
-  fail "the pane pass must reap what a killed RPC forked"
-fi
 rm -f "$state"/*.meta "$state"/.pane-* "$state"/.unobservable-* "$state"/.hash-* \
   "$state"/.change-* "$state"/.last-watcher-beat*
 rm -rf "$state"/.wake-spool*
@@ -1805,7 +1776,7 @@ assert_contains "$(cat "$TMP/badclock.err")" "wake-publish FAILED" "... and on s
 assert_no_file "$state/.wake-spool" "no record was published by the failed pass"
 
 # A DECISION marker (needs-decision:/blocked:) stamps the pane BLOCKED in the
-# herdr UI until answered; any later non-decision marker clears the stamp,
+# UI until answered; any later non-decision marker clears the stamp,
 # and the stamp itself never re-wakes the watcher as an ask: (contract:
 # ac-backend.sh CAPTAIN-WAIT STAMP; captain ruling).
 rm -rf "$state/.wake-spool"
@@ -1847,13 +1818,15 @@ assert_no_file "$state/.captain-wait-w6" "busy pane never reconcile-stamped"
 assert_contains "$out" "report:w7" "a delivery-await marker wakes"
 assert_file "$state/.captain-wait-w7" "a delivery-await marker stamps - it waits on the captain's merge"
 
-# BUSY-PANE STAMP GUARD (crewmate-pane-absent-from-herdr-grouped-agents): only a
-# PARKED pane is stamped. The stamp takes herdr's agent lifecycle authority and
-# MASKS herdr's own detection; the release that must follow a busy stamp is the
-# STALE-STAMP SUPERSESSION, which fires ONLY while busy - so it lands with no
-# state transition ahead of it and leaves the pane with NO agent identity until
-# the turn ends. That is what emptied the grouped agents panel (measured: ~20min
-# on w1F:p3K, 9m43s on w1F:p3M). The guard sits on the backend_mark_wait CALL
+# BUSY-PANE STAMP GUARD: only a PARKED pane is stamped. Stamping a BUSY pane
+# would write the stamp file with no state transition ahead of it; on herdr
+# that MASKED the backend's own agent-lifecycle detection and emptied its
+# grouped-agents UI panel (measured: ~20min on w1F:p3K, 9m43s on w1F:p3M) -
+# on orca the stamp file is the CAPTAIN-WAIT STAMP's sole authority, with
+# nothing left to mask, but landing with no transition ahead of it would
+# still leave the pane with no accurate state until the turn ends. The
+# release that must follow a busy stamp is the STALE-STAMP SUPERSESSION,
+# which fires ONLY while busy. The guard sits on the backend_mark_wait CALL
 # alone: the status append and the wake stay UNCONDITIONAL, because a dropped
 # captain wake is worse than the defect. The colour is not lost, it is DEFERRED
 # to the Reconcile branch above, which stamps once the pane reads non-busy -
@@ -3711,33 +3684,30 @@ assert_contains "$(fleet_spool)" "gone	ub1" "the second gone wake is published d
 
 # --- exit 127 (a driver failed to LOAD) is UNOBSERVABLE, never gone ------------------
 # Contract: ac-backend.sh WINDOW LIVENESS is THREE-STATE; ac_backend_route's
-# PER-CALL dispatch ("backend_${fn}_herdr") means a driver function that
+# PER-CALL dispatch ("backend_${fn}_orca") means a driver function that
 # failed to load - the production shape, not a hand-picked sentinel - makes
 # bash itself return 127 from the very call being classified. The watcher's
 # `if [ "$alive_rc" = 2 ]` gate was the ONLY door into the unobservable
 # branch; anything else (127 included) fell through into the death path.
 # This row once drove that 127 through a lab bin/ with the herdr driver
 # renamed; the backend verbs are native now (src/lib.ts backendCall), so no
-# driver can fail to load under the watcher, and the row reaches the same
-# unobservable read with herdr absent from PATH (the liveness ladder's 2).
+# driver can ever fail to load under the watcher - a narrowed PATH reaches
+# the same unobservable read (the liveness ladder's 2) with nothing on it
+# the native call could shell out to regardless.
 reset_state
 rm -f "$state"/*.status
 printf 'window=crew:lf1\nbackend=orca\n' >"$state/lf1.meta"
 seed_pane lf1 pLF1 tLF1
 nh_path="$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin:/sbin"
-if [ -z "$(PATH="$nh_path" command -v herdr || true)" ]; then
-  out="$(PATH="$nh_path" bash "$BIN/ac-watch.sh" --once)"
-  assert_contains "$out" "unobservable:lf1" "a driver-load failure (127) wakes the chief as UNOBSERVABLE"
-  case "$out" in *gone:lf1*) \
-    fail "THE REGRESSION: exit 127 (loadable-driver failure) must never be reported as a gone pane" ;; esac
-  assert_contains "$(cat "$state/lf1.status")" "unobservable:" "the status records what actually happened"
-  case "$(cat "$state/lf1.status")" in *"failed:"*) \
-    fail "THE REGRESSION: a driver-load failure must write no death record" ;; esac
-  assert_contains "$(fleet_spool)" "unobservable	lf1" "the wake is published durably like every other"
-  assert_no_file "$state/.gone-lf1" "the gone dedup marker is untouched - a real death is still news"
-else
-  printf 'SKIP: the watcher with herdr absent - bun shares its directory with a herdr on this host\n'
-fi
+out="$(PATH="$nh_path" bash "$BIN/ac-watch.sh" --once)"
+assert_contains "$out" "unobservable:lf1" "a driver-load failure (127) wakes the chief as UNOBSERVABLE"
+case "$out" in *gone:lf1*) \
+  fail "THE REGRESSION: exit 127 (loadable-driver failure) must never be reported as a gone pane" ;; esac
+assert_contains "$(cat "$state/lf1.status")" "unobservable:" "the status records what actually happened"
+case "$(cat "$state/lf1.status")" in *"failed:"*) \
+  fail "THE REGRESSION: a driver-load failure must write no death record" ;; esac
+assert_contains "$(fleet_spool)" "unobservable	lf1" "the wake is published durably like every other"
+assert_no_file "$state/.gone-lf1" "the gone dedup marker is untouched - a real death is still news"
 
 reset_state
 rm -f "$state"/*.status
@@ -3940,7 +3910,7 @@ fi
 
 # --- ask-alert resume line must NOT fire under a captain-wait mask ---------
 # backend_agent_blocked reads FALSE while a CAPTAIN-WAIT STAMP
-# (state/.captain-wait-<id>) is live (bin/ac-backend.sh backend_agent_blocked_herdr) - a MASK, not a
+# (state/.captain-wait-<id>) is live (bin/ac-backend-orca.sh backend_agent_blocked_orca) - a MASK, not a
 # real resume. bin/ac-room.sh cmd_post stamps it on any room GATE/ASK pending
 # edge 0 -> >0, independent of this watcher's own poll loop, so the latch can
 # still be live when the stamp lands. Without this guard, a pane genuinely
@@ -4456,8 +4426,8 @@ reset_state
 # TMPDIR, a HOME and a claude transcript root under it; a lab bin/ holding every
 # live script (src/ linked beside it) with ac-lock, ac-remote, ac-jev,
 # ac-compact-advise and ac-brain replaced by ONE logging stub answering per
-# sentinel file; a stub dir $WA_H/stub first on PATH - herdr and orca logging
-# argv and answering per sentinel file, `date` reading $WA_H/stub/clock (`+%s%N`
+# sentinel file; a stub dir $WA_H/stub first on PATH - orca logging argv and
+# answering per sentinel file, `date` reading $WA_H/stub/clock (`+%s%N`
 # the clock and a call counter, the ISO stamp the clock's), `sleep` advancing
 # that clock by a whole-second argument (a real sleep while $WA_H/stub/block
 # exists, and for a fraction). The env: every knob the watcher reads scrubbed,
@@ -4511,7 +4481,7 @@ WA_ENV=(); WA_LC=C; WA_WRAP=(); WA_BOUND=30
 WA_UNSET=(-u AC_HOME -u AC_SCOPE -u AC_SOLO -u AC_BACKEND -u AC_FLEET_STATE -u AC_FLEET_SCOPE -u AC_WATCH_ONLY
   -u AC_WATCH_SKIP -u AC_AUTOARM -u AC_POLL -u AC_HEARTBEAT -u AC_STALE -u AC_BUSY_MAX -u AC_GUARD_GRACE
   -u AC_ARMLOG_KEEP -u AC_REMOTE_POLL -u AC_REMOTE_POLL_TIMEOUT -u AC_CAPTAIN_RE -u AC_DECISION_RE -u AC_BUSY_RE
-  -u AC_COMPACT_ADVISE -u AC_BRAIN_SYNC_IV -u AC_LOCK_STALE_GRACE -u AC_HERDR_SESSION -u AC_HERDR_RPC_TIMEOUT
+  -u AC_COMPACT_ADVISE -u AC_BRAIN_SYNC_IV -u AC_LOCK_STALE_GRACE
   -u AC_STALE_MAX_WAKES -u AC_STALE_CAP_HORIZON -u AC_PAUSE_RESURFACE
   -u EPOCHSECONDS -u LANG -u LC_CTYPE)
 wa_env() {  # the environment a run gets, in WA_E
@@ -4652,28 +4622,13 @@ case "$1" in ''|*[!0-9]*) exec /bin/sleep "$@" ;; esac
 printf 'sleep %s\n' "$1" >>"$d/log"
 c="$(cat "$d/clock")"; printf '%s\n' "$((c + $1))" >"$d/clock"
 EOF
-  cat >"$H/stub/herdr" <<'EOF'
-#!/bin/sh
-d="$STUB_DIR"
-printf 'herdr %s\n' "$*" >>"$d/log"
-case "$1 $2" in
-  "pane get") [ -e "$d/win-$3" ] || exit 1
-    printf '{"result":{"pane":{"pane_id":"%s","agent_status":"%s"}}}\n' "$3" "$(cat "$d/status-$3" 2>/dev/null || echo working)" ;;
-  "pane list") [ ! -e "$d/list-fails" ] || exit 1; printf '{"result":{"panes":[]}}\n' ;;
-  "status server") printf '{"running":true}\n' ;;
-  "pane read") [ -e "$d/tail-$3" ] || exit 1; cat "$d/tail-$3" ;;
-  "pane report-agent"|"pane release-agent"|"pane send-text"|"pane send-keys"|"tab focus") exit 0 ;;
-  *) exit 2 ;;
-esac
-EOF
   cat >"$H/stub/orca" <<'EOF'
 #!/bin/sh
 d="$STUB_DIR"
 printf 'orca %s\n' "$*" >>"$d/log"
-# .down: every call fails, herdr's list-fails pushed one level up - orca's
-# window_alive only reaches "unobservable" when BOTH `terminal show` and the
-# `status` fallback fail (bin/ac-backend-orca.sh's backend_window_alive_orca),
-# unlike herdr's single `pane list` outage.
+# .down: every call fails - window_alive only reaches "unobservable" when
+# BOTH `terminal show` and the `status` fallback fail
+# (bin/ac-backend-orca.sh's backend_window_alive_orca).
 [ ! -e "$d/down" ] || exit 1
 case "$1 $2" in
   "terminal show") [ -e "$d/win-$4" ] && c=true || c=false
@@ -4684,7 +4639,7 @@ case "$1 $2" in
   *) printf '{"ok":true}\n' ;;
 esac
 EOF
-  chmod +x "$H/stub/date" "$H/stub/sleep" "$H/stub/herdr" "$H/stub/orca"
+  chmod +x "$H/stub/date" "$H/stub/sleep" "$H/stub/orca"
 }
 m() { printf -- "$2" >"$H/home/state/$1.meta"; }  # m <id> <printf format>
 pane() { printf '%s t%s\n' "${2:-p$1}" "$1" >"$H/home/state/.pane-$1"; }  # pane <id> [<handle>]
@@ -4860,8 +4815,8 @@ wa_at win pt1; wa_call --once; assert_eq "$(wout)" "check:quiet" "row 4: back"
 assert_no_file "$WA_H/home/state/.gone-t1" "row 4: back clears the gone stamp"
 wa_at rm -f '$H/home/state/t1.meta'
 # ask, its two resume lines, the captain-wait mask. orca's agent_blocked
-# reads agentWait (the fake's wait-<handle> file), never herdr's agent_status
-# string; its idle/working split (backendAgentIdle, src/lib.ts orcaAgentIdle)
+# reads agentWait (the fake's wait-<handle> file); its idle/working split
+# (backendAgentIdle, src/lib.ts orcaAgentIdle)
 # comes off the title glyph - the idle glyph itself proves idle, and no glyph
 # with the wait unsatisfied (the fake's "terminal wait" always answers
 # unsatisfied) and no codex identity falls through to working.
@@ -4933,8 +4888,7 @@ wa_at rm -f '$H/home/state/bs1.meta'
 # The quiet arm: limited (claude, codex), needs-login (claude, codex), a
 # completion already reported, ended, stale; unreadable idle stamps.
 wa_quiet() {  # wa_quiet <id> <tail format> <agent status> [<meta extra>] - "idle"
-  # and "done" both prove ENDED-TURN for herdr (backend_agent_idle_pane_herdr,
-  # bin/ac-backend.sh: "idle|done" alike); orca has no "done" status at all -
+  # and "done" both prove ENDED-TURN: orca has no "done" status at all -
   # ENDED-TURN is purely the title's idle glyph (orcaAgentIdle, src/lib.ts),
   # so both map to it. Any other status just needs to NOT be that glyph,
   # which an ordinary word already is.
