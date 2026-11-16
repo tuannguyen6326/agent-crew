@@ -24,7 +24,7 @@ assert_eq "$out" "no active crew-ship run in $repo" \
 # repo/ with the row's .crew/ship run dir, home/config/, log/, hooks/), cwd
 # $XW/repo, stdin /dev/null, under the leg's PATH stubs: a sleep that logs each
 # call, runs the row's hook, and from call XKILL on signals its parent and
-# waits for it to go; a logging herdr; a date answering 1767225600 for %s. The
+# waits for it to go; a date answering 1767225600 for %s. The
 # role's own bytes are here (the header, the override list, the reviewer-pane
 # close, its idle knob), the shared body's in tests/sh/ac-watch-dash.test.sh.
 XW="$TMP/xw"; XS="$TMP/xstubs"
@@ -41,11 +41,6 @@ if [ "$n" -ge "${XKILL:-999}" ]; then
 fi
 exit 0
 STUB
-cat >"$XS/herdr" <<'STUB'
-#!/bin/sh
-printf '%s\n' "$*" >>"$XW/log/herdr.log"
-exit 0
-STUB
 cat >"$XS/date" <<'STUB'
 #!/bin/sh
 case "$*" in *%s*) echo 1767225600 ;; *) exec /bin/date "$@" ;; esac
@@ -58,7 +53,7 @@ import os, signal, sys
 signal.signal(signal.SIGINT, signal.SIG_DFL)
 os.execvp(sys.argv[1], sys.argv[1:])
 STUB
-chmod +x "$XS/sleep" "$XS/herdr" "$XS/date" "$XS/int-default"
+chmod +x "$XS/sleep" "$XS/date" "$XS/int-default"
 
 XLC=C; XTERMV=xterm; XHOMELESS=0; XE=""; XPATH=""; XWRAP=""; XTTY=0; XKILL=999; XSIG=TERM; XCWD=repo; XRC=0
 xside() {  # xside <bin> <entry> <prefix> <args...> - one run in the current world (XTTY=1: on a pty, stderr in stdout), SIGKILLed past 30 s
@@ -69,7 +64,7 @@ xside() {  # xside <bin> <entry> <prefix> <args...> - one run in the current wor
   [ "$XTERMV" = unset ] || e+=("TERM=$XTERMV")
   [ "$XHOMELESS" = 1 ] || e+=("AC_HOME=$XW/home")
   for x in $XE; do e+=("$x"); done
-  local u=(-u AC_HOME -u TERM -u AC_HERDR_SESSION -u AC_SHIP_WATCH_IDLE -u AC_QA_WATCH_IDLE -u AC_FLEET_STATE -u AC_SCOPE
+  local u=(-u AC_HOME -u TERM -u AC_SHIP_WATCH_IDLE -u AC_QA_WATCH_IDLE -u AC_FLEET_STATE -u AC_SCOPE
     -u LANG -u LC_CTYPE -u COLUMNS -u LINES -u CDPATH -u EPOCHSECONDS)
   rm -f "$TMP/$p.pid" "$TMP/$p.done"
   ( n=0 x="" id=""
@@ -92,7 +87,6 @@ xside() {  # xside <bin> <entry> <prefix> <args...> - one run in the current wor
   : >"$TMP/$p.done"
   wait "$dog" 2>/dev/null || true
   cat "$XW/log/sleep.log" >"$TMP/$p.sleep" 2>/dev/null || : >"$TMP/$p.sleep"
-  cat "$XW/log/herdr.log" >"$TMP/$p.herdr" 2>/dev/null || : >"$TMP/$p.herdr"
   (cd "$XW/repo" && find .crew -print 2>/dev/null | LC_ALL=C sort) >"$TMP/$p.world" || true
   XRC=$rc
 }
@@ -160,37 +154,21 @@ XLC=en_US.UTF-8 xrun w_ovbad ac-ship-watch.sh --once
 assert_eq "$XN_RC:$(xerr)" "0:" "row 2: a byte that is no UTF-8 renders, silent on stderr"
 assert_contains "$(xout)" "[checks-passed passed-with-override:te"$'\351'"st,lint]" "row 2: ...and both rows are listed"
 
-# 3. the live finish: a reviewer pane left in review.pane is closed through raw
-#    herdr and the file removed (then `sleep 5` and the self close), on the
-#    session ladder; herdr absent from PATH keeps the file and closes nothing.
-w_review() { w_ship passed; printf 'pR7\n' >"$XRD/review.pane"; printf 'cfgses\n' >"$XW/home/config/herdr-session"; }
-XKILL=9 xrun w_review ac-ship-watch.sh --self-pane p9
-assert_eq "$XN_RC:$(tr '\n' '|' <"$TMP/xn.herdr"):$(cat "$TMP/xn.sleep")" "0:--session cfgses pane close pR7|--session cfgses pane close p9|:5" "row 3: the reviewer pane, sleep 5, the board's pane"
-case "$(cat "$TMP/xn.world")" in *review.pane*) fail "row 3: review.pane is removed" ;; esac
-XE=AC_HERDR_SESSION=envses XKILL=9 xrun w_review ac-ship-watch.sh --self-pane p9
-assert_eq "$XN_RC:$(tr '\n' '|' <"$TMP/xn.herdr")" "0:--session envses pane close pR7|--session envses pane close p9|" "row 3: AC_HERDR_SESSION outranks config/herdr-session"
-XSN="$TMP/xstubs-noherdr"; mkdir -p "$XSN"; ln -sf "$XS/sleep" "$XS/date" "$XSN/"
-nh="$XSN"; IFS=: read -r -a xdirs <<<"$PATH"
-for d in "${xdirs[@]}"; do
-  [ -n "$d" ] || continue
-  if [ -x "$d/herdr" ]; then
-    m="$TMP/nh$(printf '%s' "$d" | tr -c 'A-Za-z0-9' '_')"; mkdir -p "$m"
-    for f in "$d"/*; do [ "$(basename "$f")" = herdr ] || ln -sf "$f" "$m/$(basename "$f")" 2>/dev/null || true; done
-    d="$m"
-  fi
-  nh="$nh:$d"
-done
-XPATH="$nh" XKILL=9 xrun w_review ac-ship-watch.sh --self-pane p9
-assert_eq "$XN_RC:$(cat "$TMP/xn.herdr")" "0:" "row 3: no herdr, nothing closed"
-assert_contains "$(cat "$TMP/xn.world")" "review.pane" "row 3: no herdr, review.pane kept"
+# 3. the live finish: the role has no finish hook now, so a reviewer pane left
+#    in review.pane is left exactly as found - sleep 5, then exit, no pane of
+#    its own to close.
+w_review() { w_ship passed; printf 'pR7\n' >"$XRD/review.pane"; }
+XKILL=9 xrun w_review ac-ship-watch.sh
+assert_eq "$XN_RC:$(cat "$TMP/xn.sleep")" "0:5" "row 3: sleep 5, then exit"
+assert_contains "$(cat "$TMP/xn.world")" "review.pane" "row 3: review.pane is left untouched"
 
 # 4. the role's idle knob: AC_QA_WATCH_IDLE is not this board's (a fresh run at
 #    the stub's instant stays open), AC_SHIP_WATCH_IDLE is (0 closes it).
 w_live() { w_ship running; printf 'build\trunning\t0\n' >"$XRD/steps.tsv"; xnow "$XRD/steps.tsv" "$XRD/logs/run.log"; }
 XE=AC_QA_WATCH_IDLE=0 XKILL=3 xrun w_live ac-ship-watch.sh --interval 1
 assert_eq "$XN_RC" "143" "row 4: AC_QA_WATCH_IDLE is not read"
-XE=AC_SHIP_WATCH_IDLE=-1 XKILL=9 xrun w_live ac-ship-watch.sh --interval 1 --self-pane p4
-assert_eq "$XN_RC:$(cat "$TMP/xn.herdr")" "0:--session default pane close p4" "row 4: AC_SHIP_WATCH_IDLE is"
+XE=AC_SHIP_WATCH_IDLE=-1 XKILL=9 xrun w_live ac-ship-watch.sh --interval 1
+assert_eq "$XN_RC" "0" "row 4: AC_SHIP_WATCH_IDLE is read - the run idles out before XKILL"
 
 # 5. colors on a tty: the outcome's color - running cyan, an override yellow,
 #    checks-passed green, failed red, anything else dim.

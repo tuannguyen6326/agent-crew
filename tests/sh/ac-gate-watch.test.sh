@@ -240,11 +240,6 @@ if [ "$n" -ge "${XKILL:-999}" ]; then
 fi
 exit 0
 STUB
-cat >"$XS/herdr" <<'STUB'
-#!/bin/sh
-printf '%s\n' "$*" >>"$XW/log/herdr.log"
-exit 0
-STUB
 # A job a non-interactive shell starts may hold SIGINT ignored, which bash
 # cannot trap; a SIGINT row runs the board with INT at its default first.
 cat >"$XS/int-default" <<'STUB'
@@ -253,7 +248,7 @@ import os, signal, sys
 signal.signal(signal.SIGINT, signal.SIG_DFL)
 os.execvp(sys.argv[1], sys.argv[1:])
 STUB
-chmod +x "$XS/sleep" "$XS/herdr" "$XS/int-default"
+chmod +x "$XS/sleep" "$XS/int-default"
 
 XLC=C; XTERMV=xterm; XHOMELESS=0; XE=""; XPATH=""; XWRAP=""; XTTY=0; XKILL=999; XSIG=TERM; XRC=0
 xrun() {  # xrun <world fn> <args...> - the shim in a fresh world (XTTY=1: on a pty, stderr in stdout), SIGKILLed past 30 s; sets XRC
@@ -264,7 +259,7 @@ xrun() {  # xrun <world fn> <args...> - the shim in a fresh world (XTTY=1: on a 
   [ "$XTERMV" = unset ] || e+=("TERM=$XTERMV")
   [ "$XHOMELESS" = 1 ] || e+=("AC_HOME=$XW/home")
   for x in $XE; do e+=("$x"); done
-  local u=(-u AC_HOME -u TERM -u AC_HERDR_SESSION -u AC_GATE_WATCH_IDLE -u AC_FLEET_NAME -u AC_FLEET_STATE -u AC_SCOPE
+  local u=(-u AC_HOME -u TERM -u AC_GATE_WATCH_IDLE -u AC_FLEET_NAME -u AC_FLEET_STATE -u AC_SCOPE
     -u LANG -u LC_CTYPE -u COLUMNS -u LINES -u CDPATH)
   rm -f "$TMP/$p.pid" "$TMP/$p.done"
   ( n=0 x="" id=""
@@ -287,7 +282,6 @@ xrun() {  # xrun <world fn> <args...> - the shim in a fresh world (XTTY=1: on a 
   : >"$TMP/$p.done"
   wait "$dog" 2>/dev/null || true
   cat "$XW/log/sleep.log" >"$TMP/$p.sleep" 2>/dev/null || : >"$TMP/$p.sleep"
-  cat "$XW/log/herdr.log" >"$TMP/$p.herdr" 2>/dev/null || : >"$TMP/$p.herdr"
   XRC=$rc
 }
 xok() { xrun "$@"; assert_eq "$XRC" "0" "gate-watch exit for '$*'"; }
@@ -507,8 +501,8 @@ assert_contains "$(xout)" "2 active" "row 5: a byte that is no UTF-8 in a marker
 assert_eq "$(xrows)" "other f " "row 5: ... and the rows keep their order"
 assert_contains "$(xout)" "$(printf ' > %-22s %-8s %-5s ' f spec r1)c"$'\351'"x" "row 5: the byte reaches the frame"
 assert_eq "$(xerr)" "" "row 5: nothing on stderr for it"
-XLC=en_US.UTF-8 XE=AC_GATE_WATCH_IDLE=1 XKILL=3 xkilled w_badval --interval 1 --self-pane pZ
-assert_eq "$(tr '\n' ' ' <"$TMP/xn.sleep"):$(cat "$TMP/xn.herdr")" "1 1 1 :" "row 5: the board stays open while that gate runs, closing nothing"
+XLC=en_US.UTF-8 XE=AC_GATE_WATCH_IDLE=1 XKILL=3 xkilled w_badval --interval 1
+assert_eq "$(tr '\n' ' ' <"$TMP/xn.sleep")" "1 1 1 " "row 5: the board stays open while that gate runs"
 
 # 6. arguments: a positional interval, the refusals in scan order, a value
 #    flag with no value or an empty one, and --once --tail (tail wins).
@@ -521,21 +515,16 @@ xrefuse "ERROR: unknown arg: -h" w_one -h
 xrefuse "ERROR: unknown arg: " w_one ''
 xrefuse "ERROR: unknown arg: --bogus" w_one --round 3 --bogus
 xrefuse "ERROR: unknown arg: x" w_one --family f --once x
-for f in --family --stage --round --self-pane --interval; do
+xrefuse "ERROR: unknown arg: --self-pane" w_one --self-pane pZ
+for f in --family --stage --round --interval; do
   xrefuse "ERROR: $f needs a value" w_one --once "$f"
   xrefuse "ERROR: $f needs a value" w_one "$f" '' --once
 done
 XKILL=2 xkilled w_two --once --tail
 assert_contains "$(xout)" "following the active second-chief run" "row 6: --tail wins over --once"
 
-# 7. a PATH without jq, an unreadable herdr-session (the board goes on) and a
-#    PATH without bun.
+# 7. a PATH without jq and a PATH without bun.
 XPATH="$(xwithout jq)" xrefuse "ERROR: ac-gate-watch needs jq" w_one --once
-if [ "$(id -u)" != 0 ]; then
-  w_lockedcfg() { w_one; printf 's9\n' >"$XW/home/config/herdr-session"; chmod 000 "$XW/home/config/herdr-session"; }
-  xok w_lockedcfg --once
-  assert_contains "$(xout)" "1 active" "row 7: an unreadable session knob does not stop the board"
-fi
 XPATH="$(xwithout bun)" xrefuse "ERROR: required tool not found: bun" w_one --once
 
 # 8. --tail, driven tick by tick: the newest gate followed (prompt with no
@@ -665,24 +654,16 @@ w_tailint() { w_empty; xhook 2 'kill -INT "$PPID"; i=0; while kill -0 "$PPID" 2>
 XWRAP="$XS/int-default" XKILL=4 xrun w_tailint --tail --interval 1
 assert_eq "$XRC:$(tr '\n' ' ' <"$TMP/xn.sleep")" "130:1 1 " "row 8: SIGINT alone ends the --tail board 130 at its second tick"
 
-# 9. the dashboard loop: the prelude, one paint, the idle close through the
-#    raw herdr stub (the default session, AC_HERDR_SESSION, a padded
-#    config/herdr-session), no --self-pane; a paint only when the frame
-#    changes; the interval's arithmetic (010 is 8); an AC_GATE_WATCH_IDLE that
-#    is no integer (never closes); TERM, HUP and INT restoring the cursor.
-XE=AC_GATE_WATCH_IDLE=1 xok w_empty --interval 1 --self-pane pX
-assert_eq "$XRC:$(xout)" "0:"$'\033[2J\033[H\033[?25l\033[Hac-gate home  0 active\033[K\n\033[K\n(no gate running)\033[K\033[J\n\nno active gate - closing watch\n\033[?25h' "row 9: the idle close, byte for byte"
-assert_eq "$(cat "$TMP/xn.sleep"):$(cat "$TMP/xn.herdr")" "1
-2:--session default pane close pX" "row 9: one tick, the close's sleep 2, the raw herdr close"
-XE="AC_GATE_WATCH_IDLE=1 AC_HERDR_SESSION=s1" xok w_empty --interval 1 --self-pane pX
-assert_eq "$(cat "$TMP/xn.herdr")" "--session s1 pane close pX" "row 9: AC_HERDR_SESSION names the session"
-w_cfgses() { xseed; printf ' s2 \n' >"$XW/home/config/herdr-session"; }
-XE=AC_GATE_WATCH_IDLE=1 xok w_cfgses --interval 1 --self-pane pX
-assert_eq "$(cat "$TMP/xn.herdr")" "--session s2 pane close pX" "row 9: config/herdr-session, trimmed"
+# 9. the dashboard loop: the prelude, one paint, the idle exit (no pane of
+#    its own to close); a paint only when the frame changes; the interval's
+#    arithmetic (010 is 8); an AC_GATE_WATCH_IDLE that is no integer (never
+#    closes); TERM, HUP and INT restoring the cursor.
 XE=AC_GATE_WATCH_IDLE=1 xok w_empty --interval 1
-assert_eq "$XRC:$(cat "$TMP/xn.herdr")" "0:" "row 9: no --self-pane, no herdr call"
+assert_eq "$XRC:$(xout)" "0:"$'\033[2J\033[H\033[?25l\033[Hac-gate home  0 active\033[K\n\033[K\n(no gate running)\033[K\033[J\n\nno active gate - closing watch\n\033[?25h' "row 9: the idle exit, byte for byte"
+assert_eq "$(cat "$TMP/xn.sleep")" "1
+2" "row 9: one tick, then the exit's sleep 2"
 XE=AC_GATE_WATCH_IDLE=3 xok w_empty
-assert_eq "$XRC:$(tr '\n' ' ' <"$TMP/xn.sleep")" "0:2 2 " "row 9: the default interval 2, past 3 at the second tick, then the close's sleep 2"
+assert_eq "$XRC:$(tr '\n' ' ' <"$TMP/xn.sleep")" "0:2 2 " "row 9: the default interval 2, past 3 at the second tick, then the exit's sleep 2"
 w_live() { local d="$XW/home/data/fam1"; w_one; printf 'second\n' >"$d/more"; xhook 2 "cat '$d/more' >>'$d/o1'"; }
 XKILL=4 xkilled w_live --interval 1
 assert_eq "$XRC" "143" "row 9: a live gate keeps the board open"
@@ -694,10 +675,10 @@ assert_eq "$XRC:$(cat "$TMP/xn.sleep")" "0:2" "row 9: 010 is 8 to the shell's ar
 XE=AC_GATE_WATCH_IDLE=100 XKILL=2 XSIG=HUP xrun w_empty --interval 1
 assert_eq "$XRC:$(tail -c 6 "$TMP/xn.out" | od -An -c | tr -d ' \n')" "129:033[?25h" "row 9: HUP restores the cursor"
 XE=AC_GATE_WATCH_IDLE=abc XKILL=3 xkilled w_empty --interval 1
-assert_eq "$(tr '\n' ' ' <"$TMP/xn.sleep"):$(cat "$TMP/xn.herdr"):$(xerr)" "1 1 1 ::" "row 9: an AC_GATE_WATCH_IDLE that is no integer never closes, silently"
+assert_eq "$(tr '\n' ' ' <"$TMP/xn.sleep"):$(xerr)" "1 1 1 :" "row 9: an AC_GATE_WATCH_IDLE that is no integer never closes, silently"
 XWRAP="$XS/int-default" XE=AC_GATE_WATCH_IDLE=100 XKILL=4 xrun w_tailint --interval 1
 assert_eq "$XRC:$(tr '\n' ' ' <"$TMP/xn.sleep"):$(tail -c 6 "$TMP/xn.out" | od -An -c | tr -d ' \n')" "130:1 1 :033[?25h" "row 9: SIGINT alone restores the cursor and ends the dashboard 130"
-XTTY=1 XE=AC_GATE_WATCH_IDLE=1 xok w_empty --interval 1 --self-pane pT
+XTTY=1 XE=AC_GATE_WATCH_IDLE=1 xok w_empty --interval 1
 assert_contains "$(xout)" $'\033[2J\033[H\033[?25l\033[H\033[1mac-gate\033[0m' "row 9: the dashboard's colors on a tty"
 # A closed stdout (>&-): the writes land in the /dev/null bun opens over the
 # closed fd (bin/ac-bun.sh leaves this module's closed channels to bun),

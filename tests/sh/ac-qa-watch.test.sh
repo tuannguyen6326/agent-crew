@@ -25,7 +25,7 @@ assert_eq "$out" "no active qa run in $repo" \
 # repo/ with the row's .crew/qa run dir, home/config/, log/, hooks/), cwd
 # $XW/repo, stdin /dev/null, under the leg's PATH stubs: a sleep that logs each
 # call, runs the row's hook, and from call XKILL on signals its parent and
-# waits for it to go; a logging herdr; a date answering 1767225600 for %s. The
+# waits for it to go; a date answering 1767225600 for %s. The
 # role's own bytes are here (the header, the step table at width 12, the case
 # ledger, its idle files and knob), the shared body's in
 # tests/sh/ac-watch-dash.test.sh.
@@ -43,11 +43,6 @@ if [ "$n" -ge "${XKILL:-999}" ]; then
 fi
 exit 0
 STUB
-cat >"$XS/herdr" <<'STUB'
-#!/bin/sh
-printf '%s\n' "$*" >>"$XW/log/herdr.log"
-exit 0
-STUB
 cat >"$XS/date" <<'STUB'
 #!/bin/sh
 case "$*" in *%s*) echo 1767225600 ;; *) exec /bin/date "$@" ;; esac
@@ -60,7 +55,7 @@ import os, signal, sys
 signal.signal(signal.SIGINT, signal.SIG_DFL)
 os.execvp(sys.argv[1], sys.argv[1:])
 STUB
-chmod +x "$XS/sleep" "$XS/herdr" "$XS/date" "$XS/int-default"
+chmod +x "$XS/sleep" "$XS/date" "$XS/int-default"
 
 XLC=C; XTERMV=xterm; XHOMELESS=0; XE=""; XPATH=""; XWRAP=""; XTTY=0; XKILL=999; XSIG=TERM; XCWD=repo; XRC=0
 xside() {  # xside <bin> <entry> <prefix> <args...> - one run in the current world (XTTY=1: on a pty, stderr in stdout), SIGKILLed past 30 s
@@ -71,7 +66,7 @@ xside() {  # xside <bin> <entry> <prefix> <args...> - one run in the current wor
   [ "$XTERMV" = unset ] || e+=("TERM=$XTERMV")
   [ "$XHOMELESS" = 1 ] || e+=("AC_HOME=$XW/home")
   for x in $XE; do e+=("$x"); done
-  local u=(-u AC_HOME -u TERM -u AC_HERDR_SESSION -u AC_SHIP_WATCH_IDLE -u AC_QA_WATCH_IDLE -u AC_FLEET_STATE -u AC_SCOPE
+  local u=(-u AC_HOME -u TERM -u AC_SHIP_WATCH_IDLE -u AC_QA_WATCH_IDLE -u AC_FLEET_STATE -u AC_SCOPE
     -u LANG -u LC_CTYPE -u COLUMNS -u LINES -u CDPATH -u EPOCHSECONDS)
   rm -f "$TMP/$p.pid" "$TMP/$p.done"
   ( n=0 x="" id=""
@@ -94,7 +89,6 @@ xside() {  # xside <bin> <entry> <prefix> <args...> - one run in the current wor
   : >"$TMP/$p.done"
   wait "$dog" 2>/dev/null || true
   cat "$XW/log/sleep.log" >"$TMP/$p.sleep" 2>/dev/null || : >"$TMP/$p.sleep"
-  cat "$XW/log/herdr.log" >"$TMP/$p.herdr" 2>/dev/null || : >"$TMP/$p.herdr"
   (cd "$XW/repo" && find .crew -print 2>/dev/null | LC_ALL=C sort) >"$TMP/$p.world" || true
   XRC=$rc
 }
@@ -201,11 +195,12 @@ xrun w_run ac-qa-watch.sh --once
 assert_eq "$XN_RC" "0" "row 3: a running outcome renders"
 case "$(xout)" in *"run finished"*) fail "row 3: a running outcome is not finished" ;; esac
 
-# 4. the live finish: `run finished`, `sleep 5`, the self close only - no
-#    finish hook, so a review.pane present is neither closed nor removed.
+# 4. the live finish: `run finished`, `sleep 5`, exit - no finish hook and no
+#    pane of its own to close, so a review.pane present is neither closed nor
+#    removed.
 w_done() { w_qa passed; printf 'pR7\n' >"$XRD/review.pane"; }
-XKILL=9 xrun w_done ac-qa-watch.sh --self-pane pq
-assert_eq "$XN_RC:$(cat "$TMP/xn.herdr"):$(cat "$TMP/xn.sleep")" "0:--session default pane close pq:5" "row 4: the board's pane alone"
+XKILL=9 xrun w_done ac-qa-watch.sh
+assert_eq "$XN_RC:$(cat "$TMP/xn.sleep")" "0:5" "row 4: sleep 5, then exit"
 assert_contains "$(cat "$TMP/xn.world")" "review.pane" "row 4: review.pane untouched"
 
 # 5. idle, from the date stub's instant: old steps/log with a fresh cases.tsv
@@ -215,10 +210,10 @@ w_idlecases() { w_qa running; printf 'exec\trunning\t0\t-\n' >"$XRD/steps.tsv"; 
 w_allold() { w_idlecases; xold "$XRD/cases.tsv"; }
 XE=AC_QA_WATCH_IDLE=1000 XKILL=3 xrun w_idlecases ac-qa-watch.sh --interval 1
 assert_eq "$XN_RC" "143" "row 5: a fresh cases.tsv keeps the board open"
-XE=AC_QA_WATCH_IDLE=1000 XKILL=9 xrun w_allold ac-qa-watch.sh --interval 1 --self-pane pq
-assert_eq "$XN_RC:$(cat "$TMP/xn.herdr")" "0:--session default pane close pq" "row 5: all old, the idle close"
-XE=AC_SHIP_WATCH_IDLE=99999999999 XKILL=9 xrun w_allold ac-qa-watch.sh --interval 1 --self-pane pq
-assert_eq "$XN_RC:$(cat "$TMP/xn.herdr")" "0:--session default pane close pq" "row 5: AC_SHIP_WATCH_IDLE is not read"
+XE=AC_QA_WATCH_IDLE=1000 XKILL=9 xrun w_allold ac-qa-watch.sh --interval 1
+assert_eq "$XN_RC" "0" "row 5: all old, the idle exit"
+XE=AC_SHIP_WATCH_IDLE=99999999999 XKILL=9 xrun w_allold ac-qa-watch.sh --interval 1
+assert_eq "$XN_RC" "0" "row 5: AC_SHIP_WATCH_IDLE is not read"
 
 # 6. colors on a tty: the ledger's green/red/yellow glyphs and counts; the
 #    outcome's color for running, passed, failed, unverifiable and anything
