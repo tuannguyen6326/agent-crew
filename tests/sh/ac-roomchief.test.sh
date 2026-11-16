@@ -2,7 +2,7 @@
 # ac-roomchief.test.sh - design C: promote a room to its own session
 # (spawn --roomchief), demotion guarded by family in-flight, and the
 # watcher family filters (AC_WATCH_ONLY / AC_WATCH_SKIP).
-# Driven end to end through the file-backed fake herdr CLI (tests/sh/helpers.sh):
+# Driven end to end through the file-backed fake orca CLI (tests/sh/helpers.sh):
 # the launch line and kickoff prompt land VERBATIM in the pane buffer
 # (nothing executes them), crewmate output is injected by appending to the
 # buffer, and a task with no pane handle reads as a vanished window.
@@ -12,6 +12,12 @@
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
+make_fake_orca
+# Fake herdr stays armed too, for the one ORPHAN-WINDOW case below (3) that
+# has no orca production signal: backend_kill_window_orca closes by HANDLE
+# alone (handle uniqueness is its own ownership proof, bin/ac-backend-orca.sh),
+# so there is no "foreign tab" shape to refuse - that KILL OWNERSHIP PROOF
+# check is herdr-only and stays pinned to herdr there.
 make_fake_herdr
 # Deliver the kickoff prompt immediately (default 8s) so the suite stays fast.
 export AC_SPAWN_SETTLE=0
@@ -19,18 +25,24 @@ export AC_SPAWN_SETTLE=0
 # kickoff_wait_input_ready) immediately - this suite is not testing that gate
 # (tests/sh/ac-spawn-kickoff-ready.test.sh owns it), it just needs its spawns to
 # complete without a real harness's boot delay.
-: >"$FAKE_HERDR/.pane-idle-by-default"
+printf '✳ fake\n' >"$FAKE_ORCA/.default-title"
+: >"$FAKE_HERDR/.pane-idle-by-default"   # the herdr-only case (3) needs this too
 export AC_KICKOFF_READY_BUDGET=5
 
 make_home
+# ac-spawn.sh pins a NEW task's AC_BACKEND from configReadSoft("backend",
+# "herdr") when no --backend flag is given (src/spawn.ts) - every promote
+# below must find orca pinned explicitly, not rely on ac_backend()'s own
+# session-level default.
+printf 'orca\n' >"$AC_HOME/config/backend"
 printf 'echo roomchief __ID__; sleep 300\n' >"$AC_HOME/config/launch-fake"
 
 seed_pane() {
-  # seed_pane <id> <p> <t> - a live fake pane for <id> without a spawn:
-  # handle + tab + empty buffer (the ac-backend.test.sh p90/t90 idiom).
+  # seed_pane <id> <h> <tab> - a live fake terminal for <id> without a spawn:
+  # handle + tab + empty buffer (the ac-backend.test.sh idiom, orca dialect).
   printf '%s %s\n' "$2" "$3" >"$AC_HOME/state/.pane-$1"
-  printf '%s\n' "$2" >"$FAKE_HERDR/tabs/$3"
-  : >"$FAKE_HERDR/panes/$2.buf"
+  : >"$FAKE_ORCA/terminals/$2.buf"
+  printf '%s\n' "$3" >"$FAKE_ORCA/terminals/$2.tab"
 }
 
 room_seed() {
@@ -81,10 +93,12 @@ room_seed og3 "CHARTER: room og3 carries the captain standing order"
 "$BIN/ac-spawn.sh" --roomchief og3 --harness fake >/dev/null 2>&1 \
   || fail "the charter-first promote must pass the gate"
 assert_file "$AC_HOME/state/og3-chief.meta" "the charter-first promote writes its meta"
-# workspace = home: the chief pane opens AT the fleet home (it carries the
-# executable core symlinks), and the meta records the same dir.
-assert_contains "$(grep 'tab create' "$FAKE_HERDR/log" | tail -n 1)" "--cwd $AC_HOME " \
-  "the roomchief pane opens with its cwd at the fleet home"
+# workspace = home: the chief pane opens AT the fleet home (a HOME-ARM create
+# has no --cwd flag for orca, so the shell is moved there by a typed cd -
+# bin/ac-backend-orca.sh orca_place_pane/orca_type_cd), and the meta records
+# the same dir.
+assert_contains "$(cat "$FAKE_ORCA/log")" "cd '$AC_HOME'" \
+  "the roomchief pane's shell is moved to the fleet home"
 assert_contains "$(cat "$AC_HOME/state/og3-chief.meta")" "worktree=$AC_HOME" \
   "the roomchief meta records the home as its dir"
 "$BIN/ac-teardown.sh" og3-chief >/dev/null 2>&1
@@ -199,7 +213,7 @@ assert_contains "$(cat "$AC_HOME/data/fam1/room.md")" "PROMOTED" "room receipt"
 # short pointer; the full charter sits in the task dir's kickoff.md, so
 # content asserts read THAT file.
 buf="$(cat "$AC_HOME/data/fam1/chief/kickoff.md")"
-assert_contains "$(cat "$(fake_pane_buf fam1-chief)")" \
+assert_contains "$(cat "$(fake_orca_buf fam1-chief)")" \
   "$AC_HOME/data/fam1/chief/kickoff.md" "the pane receives the kickoff-file pointer"
 assert_contains "$buf" \
   "You are the ROOMCHIEF of family fam1" "kickoff prompt content"
@@ -237,12 +251,12 @@ assert_contains "$buf" \
 # crewchief, and without AC_HOME a roomchief resolves NO data/ at all -
 # ac_home refuses an unset AC_HOME (ac-lib.sh, ac_home). Launch-line asserts
 # read the PANE buffer - the kickoff file carries only the charter.
-assert_contains "$(cat "$(fake_pane_buf fam1-chief)")" \
+assert_contains "$(cat "$(fake_orca_buf fam1-chief)")" \
   "AC_HOME=" "launch line pins AC_HOME for the fresh shell"
 # The codegraph front-load prompt-hook kill-switch: the roomchief kickoff mandate
 # is the fleet prompt that actually pays the hook's whole-tree query (measured
 # 161.72s against Claude Code's 30s hook budget), so the pane must launch with it.
-assert_contains "$(cat "$(fake_pane_buf fam1-chief)")" \
+assert_contains "$(cat "$(fake_orca_buf fam1-chief)")" \
   "CODEGRAPH_NO_PROMPT_HOOK=1" "launch line disarms the codegraph prompt hook"
 
 # --- crew-dispatch panes.roomchief: harness resolution -------------------------
@@ -345,8 +359,8 @@ assert_fails "$BIN/ac-room.sh" open never-promoted
 # AC_STALE=0 fam1-chief (no pending gate of its own) would take the very
 # pass this block asserts on. Park its meta for the block.
 mv "$AC_HOME/state/fam1-chief.meta" "$TMP/fam1-chief.meta.parked"
-seed_pane stq-chief pSTQ tSTQ
-printf 'kind=roomchief\nbackend=herdr\n' >"$AC_HOME/state/stq-chief.meta"
+seed_pane stq-chief termSTQ tabSTQ
+printf 'kind=roomchief\nbackend=orca\n' >"$AC_HOME/state/stq-chief.meta"
 # AC_SCOPE=stq stands in for the live roomchief itself (its launch line sets
 # AC_SCOPE to its own family) - without it, the family-owned-receipt guard in
 # cmd_post would refuse this GATE as an unscoped write into a family whose
@@ -359,7 +373,7 @@ case "$out" in *stale:stq-chief*) fail "gate-parked chief must not go stale" ;; 
 AC_SCOPE=stq "$BIN/ac-room.sh" post stq captain 'DECIDED: approve' >/dev/null
 out="$(AC_STALE=0 "$BIN/ac-watch.sh" --once)" || true
 assert_contains "$out" "stale:stq-chief" "answered gate: stale applies again"
-rm -f "$FAKE_HERDR/panes/pSTQ.buf" "$FAKE_HERDR/tabs/tSTQ" "$AC_HOME/state/.pane-stq-chief"
+rm -f "$FAKE_ORCA/terminals/termSTQ.buf" "$FAKE_ORCA/terminals/termSTQ.tab" "$AC_HOME/state/.pane-stq-chief"
 rm -f "$AC_HOME/state/stq-chief.meta" "$AC_HOME/state/.stale-stq-chief" \
   "$AC_HOME/state/.hash-stq-chief" "$AC_HOME/state/.change-stq-chief" \
   "$AC_HOME/state/.seen-stq-chief" "$AC_HOME/state/stq-chief.status" \
@@ -372,7 +386,7 @@ mv "$TMP/fam1-chief.meta.parked" "$AC_HOME/state/fam1-chief.meta"
 # (family-of-id-suffix-collision) - a real fam1-spec task always has one,
 # since ac-brief.sh mkdirs it before any crewmate can commit.
 mkdir -p "$AC_HOME/data/fam1/spec"
-printf 'kind=scout\nbackend=herdr\nworktree=/tmp/x\nproject_dir=/tmp/x\n' >"$AC_HOME/state/fam1-spec.meta"
+printf 'kind=scout\nbackend=orca\nworktree=/tmp/x\nproject_dir=/tmp/x\n' >"$AC_HOME/state/fam1-spec.meta"
 assert_fails "$BIN/ac-teardown.sh" fam1-chief
 rm -f "$AC_HOME/state/fam1-spec.meta"
 
@@ -382,9 +396,9 @@ rm -f "$AC_HOME/state/fam1-spec.meta"
 # (room stuck in HANDBACK, turn-end guard refusing) took a --force on a family
 # with nothing unlanded. An epic STORY still blocks: it belongs by neither
 # suffix rule, only by its meta fleet_scope.
-printf 'kind=ship\nbackend=herdr\nworktree=/tmp/x\nproject_dir=/tmp/x\n' \
+printf 'kind=ship\nbackend=orca\nworktree=/tmp/x\nproject_dir=/tmp/x\n' \
   >"$AC_HOME/state/fam1-curate-automation.meta"
-printf 'kind=ship\nbackend=herdr\nworktree=/tmp/x\nproject_dir=/tmp/x\nfleet_scope=fam1\n' \
+printf 'kind=ship\nbackend=orca\nworktree=/tmp/x\nproject_dir=/tmp/x\nfleet_scope=fam1\n' \
   >"$AC_HOME/state/storyx.meta"
 assert_fails "$BIN/ac-teardown.sh" fam1-chief
 rm -f "$AC_HOME/state/storyx.meta"
@@ -393,16 +407,16 @@ assert_contains "$(cat "$AC_HOME/data/fam1/room.md")" "DEMOTED" "room demotion r
 assert_file "$AC_HOME/state/archive/fam1-chief/meta"
 rm -f "$AC_HOME/state/fam1-curate-automation.meta"
 
-# Watcher family filters: two dead-window tasks in different families (a
-# herdr meta with no pane handle IS a vanished window - nothing to seed).
+# Watcher family filters: two dead-window tasks in different families (an
+# orca meta with no pane handle IS a vanished window - nothing to seed).
 # AC_WATCH_SKIP is only honored while famA's OWN scoped coverage is LIVE
 # (watcher-skip-staleness, ac-watch.sh), so seed a live famA-chief + a fresh
 # family beacon before the SKIP pass - else the skip is revoked and famA-x
 # surfaces instead of famB-y.
-printf 'kind=ship\nbackend=herdr\n' >"$AC_HOME/state/famA-x.meta"
-printf 'kind=ship\nbackend=herdr\n' >"$AC_HOME/state/famB-y.meta"
-seed_pane famA-chief pFAC tFAC
-printf 'kind=roomchief\nbackend=herdr\n' >"$AC_HOME/state/famA-chief.meta"
+printf 'kind=ship\nbackend=orca\n' >"$AC_HOME/state/famA-x.meta"
+printf 'kind=ship\nbackend=orca\n' >"$AC_HOME/state/famB-y.meta"
+seed_pane famA-chief termFAC tabFAC
+printf 'kind=roomchief\nbackend=orca\n' >"$AC_HOME/state/famA-chief.meta"
 date +%s >"$AC_HOME/state/.last-watcher-beat.famA"
 out="$(AC_WATCH_ONLY=famA "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "gone:famA-x" "ONLY watches its family"
@@ -414,7 +428,7 @@ assert_contains "$out" "gone:famB-y" "SKIP ignores a LIVE promoted family"
 # ONLY=<fam> must not self-watch it, SKIP=<fam> must not hide it. Kill famA's
 # scoped coverage (its chief window + beacon) so the chief pane reads gone; it
 # sorts before famA-x and is fleet-scoped, so it surfaces even under SKIP=famA.
-rm -f "$FAKE_HERDR/panes/pFAC.buf" "$FAKE_HERDR/tabs/tFAC" \
+rm -f "$FAKE_ORCA/terminals/termFAC.buf" "$FAKE_ORCA/terminals/termFAC.tab" \
   "$AC_HOME/state/.pane-famA-chief" "$AC_HOME/state/.last-watcher-beat.famA" \
   "$AC_HOME/state/.skip-revoked-famA"
 out="$(AC_WATCH_ONLY=famA "$BIN/ac-watch.sh" --once)"
@@ -426,8 +440,8 @@ assert_contains "$out" "gone:famA-chief" "SKIP keeps the chief on the fleet watc
 # the liveness probe runs through the real backend code (backend_window_alive),
 # only the CLI under it is the file-backed fake.
 rm -rf "$AC_HOME/state"/.wake-spool*
-seed_pane famE-chief pFE tFE
-printf 'kind=roomchief\nbackend=herdr\n' >"$AC_HOME/state/famE-chief.meta"
+seed_pane famE-chief termFE tabFE
+printf 'kind=roomchief\nbackend=orca\n' >"$AC_HOME/state/famE-chief.meta"
 mkdir -p "$AC_HOME/state/.wake-spool.famE"
 printf '%s\treport\tfamE-t1\tdone: family work\n' "$(date +%s)" >"$AC_HOME/state/.wake-spool.famE/1.1.000000"
 
@@ -456,34 +470,39 @@ assert_eq "$(find "$AC_HOME/state/.wake-spool.famE" -type f | wc -l | tr -d ' ')
 # refusal. Contract: ORPHAN-WINDOW SAFETY in bin/ac-spawn.sh.
 
 # (1) the launch line strands: the spawn dies, and takes its own window with it.
-# The drop pattern targets the LAUNCH line only (AC_SCOPE= never appears in the
-# kickoff prompt), and the pane id is predicted the ac-spawn-teardown.test.sh way
-# - the chiefs workspace already exists here, so the next handle is the next id.
-n="$(cat "$FAKE_HERDR/.n")"; opane="p$((n + 1))"; otab="t$((n + 1))"
-printf '9 AC_SCOPE=\n' >"$FAKE_HERDR/panes/$opane.drop-enters"
-: >"$FAKE_HERDR/log"
+# Orca's drop-enters knob is count-only (no pattern match, unlike fake herdr's),
+# so it drops whichever --enter sends come first; a HOME-ARM create for a new
+# family presses exactly three before a strand is given up on - orca_type_cd's
+# `cd '<dir>'` enter, then backend_send_line_pane_orca's own press, then its
+# one focus-and-retry press (bin/ac-backend-orca.sh orca_submit_verified_pane)
+# - so dropping 3 strands the launch line for real (the cd's drop is inert:
+# orca_type_cd never verifies it landed). The handle is predicted the
+# ac-spawn-teardown.test.sh way - the chiefs workspace already exists here,
+# so the next handle is the next id.
+n="$(cat "$FAKE_ORCA/.n" 2>/dev/null || printf 0)"; onext="term$((n + 1))"
+printf '3\n' >"$FAKE_ORCA/terminals/$onext.drop-enters"
+: >"$FAKE_ORCA/log"
 room_seed orph1
 assert_fails "$BIN/ac-spawn.sh" --roomchief orph1 --harness fake
 assert_no_file "$AC_HOME/state/orph1-chief.meta" "a died spawn leaves no meta"
-assert_contains "$(cat "$FAKE_HERDR/log")" "tab close $otab" "the trap reaps the window it created"
-assert_no_file "$FAKE_HERDR/tabs/$otab" "no orphan tab survives the death"
+assert_contains "$(cat "$FAKE_ORCA/log")" "terminal close --terminal $onext" "the trap reaps the window it created"
+assert_no_file "$FAKE_ORCA/terminals/$onext.buf" "no orphan tab survives the death"
 assert_no_file "$AC_HOME/state/.pane-orph1-chief" "no orphan pane handle survives it either"
 
 # (2) a kill -9 leaves a window no trap could ever reap. The retry REAPS it and
 # recreates instead of dead-ending on 'window ... already exists' (--recover is
 # crewdeputy-only, so a stranded chief tab has no recovery verb at all), and the
 # meta it writes carries every key its consumers depend on.
-printf 'pORPH crew:orph2-chief\n' >"$FAKE_HERDR/tabs/tORPH"
-: >"$FAKE_HERDR/panes/pORPH.buf"
-printf 'tORPH\n' >"$FAKE_HERDR/panes/pORPH.tab"
-printf 'pORPH tORPH\n' >"$AC_HOME/state/.pane-orph2-chief"
-: >"$FAKE_HERDR/log"
+: >"$FAKE_ORCA/terminals/termORPH.buf"
+printf 'tabORPH\n' >"$FAKE_ORCA/terminals/termORPH.tab"
+printf 'termORPH tabORPH\n' >"$AC_HOME/state/.pane-orph2-chief"
+: >"$FAKE_ORCA/log"
 room_seed orph2
 out="$("$BIN/ac-spawn.sh" --roomchief orph2 --harness fake 2>&1)" \
   || fail "the retry must not dead-end on the orphan window: $out"
 assert_contains "$out" "spawned orph2-chief" "the retry is not wedged by the orphan window"
-assert_contains "$(cat "$FAKE_HERDR/log")" "tab close tORPH" "the orphan tab is reaped before the new one opens"
-assert_no_file "$FAKE_HERDR/tabs/tORPH" "the orphan tab is gone"
+assert_contains "$(cat "$FAKE_ORCA/log")" "terminal close --terminal termORPH" "the orphan tab is reaped before the new one opens"
+assert_no_file "$FAKE_ORCA/terminals/termORPH.buf" "the orphan terminal is gone"
 for k in backend window worktree project project_dir harness kind initiated_by mode spawned_at; do
   [ -n "$(awk -F= -v k="$k" '$1==k{print $2}' "$AC_HOME/state/orph2-chief.meta")" ] \
     || fail "the meta written after a reap must carry $k (its consumers key off it)"
@@ -497,13 +516,17 @@ assert_eq "$(awk -F= '$1=="initiated_by"{print $2}' "$AC_HOME/state/orph2-chief.
 # (3) the reap stays INSIDE the KILL OWNERSHIP PROOF (ac-backend.sh header): a
 # tab no longer labelled crew:<id> is a co-tenant, and closing one has taken the
 # whole chiefs workspace down three times. It is refused and warned about, and
-# the spawn simply opens its own window.
+# the spawn simply opens its own window. HERDR-ONLY: backend_kill_window_orca
+# closes by its unique HANDLE alone and never round-trips a label, so there is
+# no foreign-tab shape for fake orca to model here (fixture report,
+# "herdr observations deliberately left unmodeled") - this case stays pinned
+# to fake herdr, still armed above for exactly this one case.
 printf 'pFOR crew:someone-else\n' >"$FAKE_HERDR/tabs/tFOR"
 : >"$FAKE_HERDR/panes/pFOR.buf"
 printf 'tFOR\n' >"$FAKE_HERDR/panes/pFOR.tab"
 printf 'pFOR tFOR\n' >"$AC_HOME/state/.pane-orph3-chief"
 room_seed orph3
-out="$("$BIN/ac-spawn.sh" --roomchief orph3 --harness fake 2>&1)" \
+out="$("$BIN/ac-spawn.sh" --roomchief orph3 --harness fake --backend herdr 2>&1)" \
   || fail "a refused reap must still spawn: $out"
 assert_contains "$out" "spawned orph3-chief" "a refused reap still spawns"
 assert_contains "$out" "not closing tab tFOR" "a foreign tab is refused, never closed"
@@ -532,9 +555,9 @@ assert_eq "$(awk -F= '$1=="solo"{print $2}' "$AC_HOME/state/sc1-chief.meta")" "1
 assert_eq "$(awk -F= '$1=="kind"{print $2}' "$AC_HOME/state/sc1-chief.meta")" "roomchief" \
   "a solo chief IS a roomchief: kind is unchanged, so cap, watcher skip and teardown cover it"
 read -r sc1_pane _ <"$AC_HOME/state/.pane-sc1-chief"
-assert_contains "$(cat "$FAKE_HERDR/panes/$sc1_pane.buf")" "AC_CHIEF_SOLO=1" \
+assert_contains "$(cat "$FAKE_ORCA/terminals/$sc1_pane.buf")" "AC_CHIEF_SOLO=1" \
   "the launch line carries AC_CHIEF_SOLO=1 beside AC_SCOPE"
-assert_contains "$(cat "$FAKE_HERDR/panes/$sc1_pane.buf")" "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=80" \
+assert_contains "$(cat "$FAKE_ORCA/terminals/$sc1_pane.buf")" "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=80" \
   "config/compact-pct lowers the chief's own auto-compact threshold"
 sc1_kick="$(cat "$AC_HOME/data/sc1/chief/kickoff.md")"
 assert_contains "$sc1_kick" "SOLO CHIEF" "the kickoff names the role"
@@ -548,7 +571,7 @@ printf '150\n' >"$AC_HOME/config/compact-pct"
 "$BIN/ac-spawn.sh" --roomchief sc2 --harness fake >/dev/null 2>&1
 rm -f "$AC_HOME/config/compact-pct"
 read -r sc2_pane _ <"$AC_HOME/state/.pane-sc2-chief"
-case "$(cat "$FAKE_HERDR/panes/$sc2_pane.buf")" in
+case "$(cat "$FAKE_ORCA/terminals/$sc2_pane.buf")" in
   *CLAUDE_AUTOCOMPACT_PCT_OVERRIDE*) fail "an out-of-range compact-pct must not reach the launch line" ;;
 esac
 case "$(cat "$AC_HOME/data/sc2/chief/kickoff.md")" in
