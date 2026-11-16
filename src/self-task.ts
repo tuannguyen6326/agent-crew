@@ -30,7 +30,7 @@
 // charter does.
 //
 // BEFORE EITHER VERB, in this order: the backend name (AC_BACKEND >
-// config/backend > <AC_FLEET_STATE>/../config/backend > herdr) - any other
+// config/backend > <AC_FLEET_STATE>/../config/backend > orca) - any other
 // name is `ERROR: unsupported backend '<b>' ...`, exit 1, whatever the argv,
 // usage included (W14); git on PATH (`ERROR: required tool not found: git`,
 // `log` included - W3); the verb; a non-empty id inside [a-z0-9-] read by its
@@ -55,14 +55,9 @@
 //      the predicate the spawn entry's own refusal calls). Fires before the
 //      status seed, the lease and the pane, so a refusal leaves nothing
 //      half-open, and never touches the ref. Then AC_BACKEND is SET to
-//      config/backend (default herdr) for this run and its children - an
-//      environment pin validated above is overwritten here (W2) - and
-//      --base-branch on a fleet that is not orca is refused.
+//      config/backend (default orca) for this run and its children.
 //   1. seed state/<id>.status, the progress log (the pane needs a file to tail),
-//   2. lease a worktree per the fleet backend - a herdr fleet from the in-repo
-//      pool (<bin>/ac-tree.sh get, holder self:<id>, the same pool a crewmate
-//      leases from - its status is the start's), an orca fleet an
-//      Orca-managed worktree on crew/<id> (orcaWorktreeLease; the meta
+//   2. lease an Orca-managed worktree on crew/<id> (orcaWorktreeLease; the meta
 //      records worktree_backend=orca so teardown routes to the release arm) -
 //      then run the project's commands.install in it (the spawn entry's THE
 //      LEASE INSTALL: deps=ok|failed on the meta, a failure only WARNed - with
@@ -76,9 +71,7 @@
 //      below),
 //   3. open the labelled tab in the fleet ROOT workspace and run `tail -f` on
 //      the progress log in it - the pane's ONLY job is to show the chief's own
-//      progress. A pane that cannot be opened FAILS the start saying so, and
-//      names the backend's own reason where the backend has one it can state
-//      (a stopped herdr server, plus the call that fixes it),
+//      progress. A pane that cannot be opened FAILS the start saying so,
 //   4. write the COMPLETE state/<id>.meta with kind=self.
 //   THE ROLLBACK: from step 1 until step 4 is done, every exit gives the lease
 //   back, removes BOTH the partial meta and the status file step 1 seeded,
@@ -127,10 +120,10 @@
 // EXIT: 0 started (a fallback notice, the recall block, a tail that may be
 // stranded and an unknown --harness included) or logged; 1 every ERROR above,
 // a status append that failed or a meta write that failed before its mv, a
-// closed stdout, a seed the shell's arithmetic refused; the herdr lease's own
-// status (bin/ac-tree.sh get), mv's under a meta write, date's under an
-// unguarded append, sed's in the recall block and the skills seed's failed
-// mkdir, ln or rm; 143, 129 and 130 when TERM, HUP or INT ends the run.
+// closed stdout, a seed the shell's arithmetic refused; mv's under a meta
+// write, date's under an unguarded append, sed's in the recall block and the
+// skills seed's failed mkdir, ln or rm; 143, 129 and 130 when TERM, HUP or
+// INT ends the run.
 // SIGNALS: TERM, HUP and INT are handled alike - each runs THE ROLLBACK for
 // the step reached and exits 128+n. A signal held through a synchronous child
 // acts at the next turn of the event loop, which the start takes after each
@@ -144,9 +137,6 @@
 //   start still exits 0; where any layer source exists the layer lands at the
 //   FALLBACK path with the "repo ships its own instruction file" notice
 //   although the repo ships none.
-// - W2: an AC_BACKEND in the environment is validated, then overwritten by
-//   config/backend or herdr - an orca pin with no config leases from the
-//   herdr pool.
 // - W3: `log` requires git.
 // - W4: a dash-only id (`-`, `--`) starts a task.
 // - W5: log's refusal reads kind= a second time, unsilenced: an unreadable
@@ -162,10 +152,10 @@
 // - W10: a log line holding LF writes an unstamped second record line.
 // - W14: an unsupported backend name refuses every argv, usage included.
 // - W15: a signal held through the lease acts before the rollback knows the
-//   worktree: the slot or Orca worktree stays leased, the status removed.
-// - W16: a signal from the pane's opening until its target is read (the open,
-//   the herdr tail send) leaves the tab and its handle: the rollback reaps
-//   only a window whose target it read.
+//   worktree: the Orca worktree stays leased, the status removed.
+// - W16: a signal from the pane's opening until its target is read (the
+//   open) leaves the tab and its handle: the rollback reaps only a window
+//   whose target it read.
 //
 // ALSO:
 // - BUN: every path needs bun (the shim's `ERROR: required tool not found:
@@ -190,7 +180,7 @@
 // bin/ac-sessionstart-nudge.sh's orientation and the spawn entry's --solo
 // kickoff name it), reading its `self-task` line, the fallback notice and the
 // recall block. No caller runs it under errexit, so nothing fails soft. What
-// it writes is read by src/teardown.ts (leases=, lease_ids=,
+// it writes is read by src/teardown.ts (leases=,
 // worktree_backend=, project_dir=, fleet_scope=, kind= - the knowledge-loop
 // gate), src/merge-local.ts (project_dir=, worktree=), the fleet views and
 // ac-crew-state (kind=self, project, mode, window, the status's last line),
@@ -205,13 +195,11 @@ import {
   backendCall,
   backendKillWindow,
   backendName,
-  backendWindowNew,
   configReadSoft,
   crewBranch,
   die,
   enterCaller,
   familyOwned,
-  herdrCli,
   iso,
   metaGet,
   metaIsSelf,
@@ -299,10 +287,7 @@ let binDir = "";
 // its target is known. The original's rm ran under errexit inside its trap, so
 // an rm that failed ended the rollback there.
 function rollback(): void {
-  if (S.worktree !== "") {
-    if (S.backend === "orca") orcaWorktreeRelease(S.worktree);
-    else run([`${binDir}/ac-tree.sh`, "return", S.worktree, "--force"], { stdout: "ignore", stderr: "ignore" });
-  }
+  if (S.worktree !== "") orcaWorktreeRelease(S.worktree);
   if (run(["rm", "-f", S.meta, S.status], { stdout: "inherit" }).status !== 0) return;
   if (S.window !== "") backendKillWindow(S.id);
 }
@@ -336,20 +321,6 @@ function bc(fn: Parameters<typeof backendCall>[0], args: string[], io: Parameter
   return r;
 }
 const target = (id: string): string => cap(bc("target", [id], { ...IO, stdout: "pipe" }).out.toString("utf8"));
-
-// The ONE backend fault that names itself: herdr answers `status server` from
-// the CLIENT when the socket has no server behind it (the reading window
-// liveness takes as positive absence), and a stopped server is what a chief
-// can act on. The fix is attaching the session - `herdr --help` lists no
-// `server start`, only `server stop`, and a bare `herdr` launches or attaches
-// the persistent session - so it is the CAPTAIN's call, never one this module
-// makes for them.
-function backendWhy(backend: string): string {
-  if (backend !== "herdr") return "";
-  const st = herdrCli(["status", "server", "--json"], "ignore", "pipe");
-  const running = run(["jq", "-r", ".running"], { stdin: st.out, stderr: "ignore" });
-  return cap(running.out) === "false" ? ": the herdr server is not running - attach the session (run `herdr`) and try again" : "";
-}
 
 const MODES = ["crew-ship", "direct-pr", "local-only", "feature-pr"];
 
@@ -425,13 +396,8 @@ async function start(id: string, sd: string, meta: string, status: string, rest:
   drop it:   git -C ${projectDirC} branch -D ${branch}
 then start again`);
 
-  process.env.AC_BACKEND = configReadSoft("backend", "herdr");
+  process.env.AC_BACKEND = configReadSoft("backend", "orca");
   const backend = backendName();
-  // --base-branch only ever reaches the orca lease below; on a herdr fleet it
-  // would otherwise silently no-op (the pool lease has no base-branch
-  // concept), the exact silent-outcome defect this fleet's own conventions
-  // refuse.
-  if (baseBranch !== "" && backend !== "orca") die(`--base-branch requires an orca-backend fleet (config/backend=${backend} here) - a herdr fleet leases from its own worktree pool, which has no base-branch concept`);
 
   Object.assign(S, { armed: true, id, meta, status, backend });
 
@@ -439,19 +405,12 @@ then start again`);
   statusHard(id, "working: self task started by the chief");
   await turn();
 
-  // 2. The lease - per the fleet backend, like every other isolated checkout
-  // (crew, verifier): an orca fleet leases through the Orca CLI, on crew/<id>.
-  if (backend === "orca") {
-    const lease = orcaWorktreeLease(id, projectDirC, baseBranch);
-    await turn();
-    S.worktree = lease.out;
-    if (lease.status !== 0) die(`could not lease an Orca worktree for ${id}`);
-  } else {
-    const get = run([`${binDir}/ac-tree.sh`, "get", "--repo", projectDirC, "--id", id, "--holder", `self:${id}`, "--mode", mode]);
-    await turn();
-    S.worktree = cap(get.out);
-    ee(get.status);
-  }
+  // 2. The lease - like every other isolated checkout (crew, verifier): an
+  // Orca-managed worktree through the Orca CLI, on crew/<id>.
+  const lease = orcaWorktreeLease(id, projectDirC, baseBranch);
+  await turn();
+  S.worktree = lease.out;
+  if (lease.status !== 0) die(`could not lease an Orca worktree for ${id}`);
   const wt = S.worktree;
   const deps = leaseInstall(id, projectDirC, wt);
   await turn();
@@ -516,30 +475,17 @@ then start again`);
   const alive = bc("window_alive", [id]).status;
   await turn();
   if (alive === 0) die(`window ${target(id)} already exists`);
-  if (alive !== 1) die(`the BACKEND could not be READ for ${id} - whether ${target(id)} still exists is UNKNOWN, so this is REFUSED rather than open a second window beside a possibly LIVE one; check the backend itself (herdr status server), then try again`);
-  if (backend === "orca") {
-    // The tail is the PANE'S OWN command - nothing is ever typed into a
-    // booting shell (a typed tail measurably raced the shell's cd+exec and
-    // landed as interleaved fragments, killing the first start).
-    const placed = withEnv("AC_WINDOW_FAMILY", "", () => orcaPlacePane(wt, `cd ${q(wt)} && exec tail -f ${q(status)}`, id));
-    await turn();
-    if (placed === null) die(`orca pane placement failed for ${id} at ${wt}`);
-    try {
-      writeFileSync(`${sd}/.pane-${id}`, Buffer.from(`${placed}\n`, "latin1"));
-    } catch {
-      fatal(1);
-    }
-  } else {
-    // The original's SUBSHELL kept the driver's own die from ending the start
-    // wherever it happened (a bare rc=1 under the pool's WARN): the driver's
-    // reason still prints, then what the start was doing. Its errexit slept
-    // inside it.
-    const opened = withEnv("AC_WINDOW_FAMILY", "", () => backendWindowNew(id, wt, false));
-    await turn();
-    if (opened.status !== 0) die(`could not open the pane for ${id} on the ${backend} backend${backendWhy(backend)}`);
-    const sent = withEnv("AC_SEND_UNPROVEN", "1", () => bc("send_line", [id, `tail -f ${q(status)}`]).status);
-    await turn();
-    if (sent !== 0) warn(`the pane may not have started tailing ${status} - peek it (bin/ac-peek.sh ${id})`);
+  if (alive !== 1) die(`the BACKEND could not be READ for ${id} - whether ${target(id)} still exists is UNKNOWN, so this is REFUSED rather than open a second window beside a possibly LIVE one; check the backend itself, then try again`);
+  // The tail is the PANE'S OWN command - nothing is ever typed into a
+  // booting shell (a typed tail measurably raced the shell's cd+exec and
+  // landed as interleaved fragments, killing the first start).
+  const placed = withEnv("AC_WINDOW_FAMILY", "", () => orcaPlacePane(wt, `cd ${q(wt)} && exec tail -f ${q(status)}`, id));
+  await turn();
+  if (placed === null) die(`orca pane placement failed for ${id} at ${wt}`);
+  try {
+    writeFileSync(`${sd}/.pane-${id}`, Buffer.from(`${placed}\n`, "latin1"));
+  } catch {
+    fatal(1);
   }
   const window = target(id);
   await turn();
@@ -550,16 +496,7 @@ then start again`);
   metaSetHard("window", b8(window));
   metaSetHard("worktree", b8(wt));
   metaSetHard("leases", b8(wt));
-  if (backend === "orca") metaSetHard("worktree_backend", "orca");
-  else {
-    // lease_ids is a POOL concept (the slot meta's reclaim token); an orca
-    // lease has no slot to read it from, and teardown's orca arm never pops it.
-    let leaseId = "";
-    try {
-      leaseId = metaGet(`${projectDirC}/.crew/slots/${basename(wt)}.meta`, "lease_id").replace(/\0[\s\S]*$/, "");
-    } catch {}
-    metaSetHard("lease_ids", leaseId);
-  }
+  metaSetHard("worktree_backend", "orca");
   metaSetHard("project", b8(projectName));
   metaSetHard("project_dir", b8(projectDirC));
   metaSetHard("kind", "self");
