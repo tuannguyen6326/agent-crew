@@ -585,14 +585,24 @@ rm -f "$state"/*.meta "$state"/.session-lock
 rm -rf "$state"/.wake-spool*
 rm -f "$state"/.last-watcher-beat*
 make_fake_herdr
+make_fake_orca
 
 seed_pane() {
-  # seed_pane <id> <p> <t> - a live fake pane for <id>: handle + tab + empty
-  # buffer (the ac-backend.test.sh p90/t90 idiom). Inject pane text by
-  # appending to "$(fake_pane_buf <id>)"; rm the pane files to vanish it.
+  # seed_pane <id> <p> <t> [herdr] - a live fake pane for <id>: handle + tab +
+  # empty buffer (the ac-backend.test.sh p90/t90 idiom), orca by default.
+  # Pass a 5th argument of "herdr" for the one case that still needs the
+  # herdr driver itself (the RPC-wedge test below - no orca RPC timeout
+  # exists to model it against). Inject pane text by appending to
+  # "$(fake_orca_buf <id>)" (or "$(fake_pane_buf <id>)" under herdr); rm the
+  # pane files to vanish it.
   printf '%s %s\n' "$2" "$3" >"$state/.pane-$1"
-  printf '%s\n' "$2" >"$FAKE_HERDR/tabs/$3"
-  : >"$FAKE_HERDR/panes/$2.buf"
+  if [ "${4:-}" = herdr ]; then
+    printf '%s\n' "$2" >"$FAKE_HERDR/tabs/$3"
+    : >"$FAKE_HERDR/panes/$2.buf"
+  else
+    : >"$FAKE_ORCA/terminals/$2.buf"
+    printf '%s\n' "$3" >"$FAKE_ORCA/terminals/$2.tab"
+  fi
 }
 
 guard() {
@@ -622,7 +632,7 @@ assert_eq "$(guard '')" "2" "fleet turn blocks on an orphaned family's spool rec
 # A LIVE family's spool is NOT the fleet's to drain, so it must not pin the
 # fleet's turn. (Fresh fleet beat: isolate the queued predicate from the
 # watcher-liveness one, which the chief meta would otherwise trip.)
-printf 'window=crew:fam1-chief\nbackend=herdr\n' >"$state/fam1-chief.meta"
+printf 'window=crew:fam1-chief\nbackend=orca\n' >"$state/fam1-chief.meta"
 seed_pane fam1-chief pG1 tG1
 date +%s >"$state/.last-watcher-beat"
 assert_eq "$(guard '')" "0" "a LIVE family's spool never pins the fleet turn"
@@ -688,9 +698,9 @@ watch_once() {
   fi
 }
 
-printf 'window=crew:c1\nbackend=herdr\n' >"$state/c1.meta"
+printf 'window=crew:c1\nbackend=orca\n' >"$state/c1.meta"
 seed_pane c1 pC1 tC1
-printf 'done: fleet work\n' >>"$(fake_pane_buf c1)"
+printf 'done: fleet work\n' >>"$(fake_orca_buf c1)"
 
 # Fleet watcher (AC_SCOPE unset) -> the FLEET spool and the FLEET beacon.
 assert_contains "$(watch_once '')" "report:c1" "fleet watcher reports"
@@ -705,9 +715,9 @@ rm -rf "$state"/.wake-spool*
 # files for it, which are the same set by construction (see the mirror-case
 # assert below). The fleet spool must stay untouched: this is the wake the
 # fleet chief used to steal.
-printf 'window=crew:fam1-t1\nbackend=herdr\n' >"$state/fam1-t1.meta"
+printf 'window=crew:fam1-t1\nbackend=orca\n' >"$state/fam1-t1.meta"
 seed_pane fam1-t1 pF1 tF1
-printf 'done: family work\n' >>"$(fake_pane_buf fam1-t1)"
+printf 'done: family work\n' >>"$(fake_orca_buf fam1-t1)"
 assert_contains "$(watch_once fam1)" "report:fam1-t1" "family watcher reports its own crewmate"
 assert_contains "$(fam_spool fam1)" "done: family work" "scoped wake -> family spool"
 assert_no_file "$state/.wake-spool" "scoped wake never touches the fleet spool"
@@ -729,9 +739,9 @@ rm -rf "$state"/.wake-spool*
 
 # A <fam>-chief pane is FLEET-scoped (in_scope excludes it), so its hand-back
 # wake is produced by the fleet watcher and lands on the fleet spool.
-printf 'window=crew:fam1-chief\nbackend=herdr\n' >"$state/fam1-chief.meta"
+printf 'window=crew:fam1-chief\nbackend=orca\n' >"$state/fam1-chief.meta"
 seed_pane fam1-chief pFC tFC
-printf 'done: family landed\n' >>"$(fake_pane_buf fam1-chief)"
+printf 'done: family landed\n' >>"$(fake_orca_buf fam1-chief)"
 rm -f "$state/c1.meta" "$state/.pane-c1"
 assert_contains "$(watch_once '')" "report:fam1-chief" "fleet watcher owns the chief pane"
 assert_contains "$(fleet_spool)" "done: family landed" "chief wake -> fleet spool"
@@ -785,12 +795,12 @@ case "$out" in *refused*) fail "a scope-containing multi-family set must not be 
 # bin/ac-watch.sh" lands here. Unguarded it would watch every pane
 # FLEET-wide while filing every wake to .wake-spool.<fam>/. The scope is the
 # authoritative signal, so the watch set defaults from it.
-printf 'window=crew:c1\nbackend=herdr\n' >"$state/c1.meta"
-printf 'window=crew:fam1-t1\nbackend=herdr\n' >"$state/fam1-t1.meta"
+printf 'window=crew:c1\nbackend=orca\n' >"$state/c1.meta"
+printf 'window=crew:fam1-t1\nbackend=orca\n' >"$state/fam1-t1.meta"
 seed_pane c1 pC2 tC2
 seed_pane fam1-t1 pF2 tF2
-printf 'done: fleet pane\n' >>"$(fake_pane_buf c1)"
-printf 'done: family pane\n' >>"$(fake_pane_buf fam1-t1)"
+printf 'done: fleet pane\n' >>"$(fake_orca_buf c1)"
+printf 'done: family pane\n' >>"$(fake_orca_buf fam1-t1)"
 out="$(AC_SCOPE=fam1 env -u AC_WATCH_ONLY bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "report:fam1-t1" "a scoped watcher with no AC_WATCH_ONLY watches its own family"
 case "$out" in *report:c1*) fail "a scoped watcher must not watch panes outside its family" ;; esac
@@ -812,12 +822,12 @@ printf '# Backlog\n\n## In flight\n\n## Queued\n\n## Done\n' >"$AC_HOME/records/
 watch_only="$("$BIN/ac-ready.sh" watch-set fanfam)"
 assert_eq "$watch_only" "fanfam" "watch-set for a non-epic fan-out family is exactly the family id"
 
-printf 'window=crew:fanfam-frontend\nbackend=herdr\n' >"$state/fanfam-frontend.meta"
-printf 'window=crew:otherfam-frontend\nbackend=herdr\n' >"$state/otherfam-frontend.meta"
+printf 'window=crew:fanfam-frontend\nbackend=orca\n' >"$state/fanfam-frontend.meta"
+printf 'window=crew:otherfam-frontend\nbackend=orca\n' >"$state/otherfam-frontend.meta"
 seed_pane fanfam-frontend pFF tFF
 seed_pane otherfam-frontend pOF tOF
-printf 'done: frontend shipped\n' >>"$(fake_pane_buf fanfam-frontend)"
-printf 'done: unrelated family\n' >>"$(fake_pane_buf otherfam-frontend)"
+printf 'done: frontend shipped\n' >>"$(fake_orca_buf fanfam-frontend)"
+printf 'done: unrelated family\n' >>"$(fake_orca_buf otherfam-frontend)"
 out="$(AC_SCOPE=fanfam AC_WATCH_ONLY="$watch_only" bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "report:fanfam-frontend" "the scoped watcher covers a fan-out sub-deliverable pane"
 case "$out" in *report:otherfam-frontend*) fail "a fan-out watcher must not cover a same-slug outsider family" ;; esac
@@ -826,9 +836,9 @@ rm -f "$state"/*.meta "$state"/.pane-* "$state"/.seen-* \
   "$state"/.hash-* "$state"/.change-* "$state"/.stale-* "$state"/.last-watcher-beat*
 rm -rf "$state"/.wake-spool*
 
-printf 'window=crew:fanfam-backend\nbackend=herdr\n' >"$state/fanfam-backend.meta"
+printf 'window=crew:fanfam-backend\nbackend=orca\n' >"$state/fanfam-backend.meta"
 seed_pane fanfam-backend pFB tFB
-printf 'done: backend shipped\n' >>"$(fake_pane_buf fanfam-backend)"
+printf 'done: backend shipped\n' >>"$(fake_orca_buf fanfam-backend)"
 out="$(AC_SCOPE=fanfam AC_WATCH_ONLY="$watch_only" bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "report:fanfam-backend" "the scoped watcher covers a second, differently-slugged fan-out pane"
 assert_contains "$(fam_spool fanfam)" "done: backend shipped" "the second fan-out wake files under the family"
@@ -863,7 +873,7 @@ reap_wedge_children() { local p; for p in $(wedge_survivors); do kill -9 "$p" 2>
 reap_wedge_children
 
 printf 'window=crew:w1\nbackend=herdr\n' >"$state/w1.meta"
-seed_pane w1 pW1 tW1
+seed_pane w1 pW1 tW1 herdr
 : >"$FAKE_HERDR/.hang"
 AC_HERDR_RPC_TIMEOUT=1 AC_LOCK_PID=$$ AC_REMOTE_POLL=0 \
   bash "$BIN/ac-watch.sh" --once >"$TMP/wedge.out" 2>&1 &
@@ -1761,9 +1771,9 @@ rm -f "$state/.watcher-arm.log"
 # live pane's buffer wakes the watcher once (the launch-to-capture plumbing
 # is backend_capture over the fake CLI - synchronous, no settle sleeps).
 rm -rf "$state/.wake-spool"
-printf 'window=crew:w1\nbackend=herdr\n' >"$state/w1.meta"
+printf 'window=crew:w1\nbackend=orca\n' >"$state/w1.meta"
 seed_pane w1 pW1 tW1
-printf 'done: shipped the widget\n' >>"$(fake_pane_buf w1)"
+printf 'done: shipped the widget\n' >>"$(fake_orca_buf w1)"
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "report:w1" "watcher exit reason"
 assert_contains "$(fleet_spool)" "done: shipped the widget" "wake published"
@@ -1774,9 +1784,9 @@ out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "check:quiet" "marker absorbed once seen"
 assert_no_file "$state/.wake-spool" "no duplicate wake"
 # A pane merely DISPLAYING code that quotes a marker does not wake.
-printf 'window=crew:w2\nbackend=herdr\n' >"$state/w2.meta"
+printf 'window=crew:w2\nbackend=orca\n' >"$state/w2.meta"
 seed_pane w2 pW2 tW2
-printf '%s\n' '  printf "done: %s"' >>"$(fake_pane_buf w2)"
+printf '%s\n' '  printf "done: %s"' >>"$(fake_orca_buf w2)"
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "check:quiet" "displayed code marker absorbed"
 assert_no_file "$state/.wake-spool" "no false-positive wake"
@@ -1797,9 +1807,9 @@ exec /bin/date "$@"
 EOF
 chmod +x "$badclock/date"
 rm -f "$state/.watcher-arm.log"
-printf 'window=crew:w3\nbackend=herdr\n' >"$state/w3.meta"
+printf 'window=crew:w3\nbackend=orca\n' >"$state/w3.meta"
 seed_pane w3 pW3 tW3
-printf 'done: publish will fail\n' >>"$(fake_pane_buf w3)"
+printf 'done: publish will fail\n' >>"$(fake_orca_buf w3)"
 out="$(PATH="$badclock:$PATH" bash "$BIN/ac-watch.sh" --once 2>"$TMP/badclock.err")"
 assert_contains "$out" "report:w3" "the reason line still prints when the publish fails"
 assert_contains "$(cat "$state/.watcher-arm.log")" "wake-publish FAILED" \
@@ -1812,21 +1822,19 @@ assert_no_file "$state/.wake-spool" "no record was published by the failed pass"
 # and the stamp itself never re-wakes the watcher as an ask: (contract:
 # ac-backend.sh CAPTAIN-WAIT STAMP; captain ruling).
 rm -rf "$state/.wake-spool"
-printf 'window=crew:w4\nbackend=herdr\n' >"$state/w4.meta"
+printf 'window=crew:w4\nbackend=orca\n' >"$state/w4.meta"
 seed_pane w4 pW4 tW4
-printf 'needs-decision: keep or drop the cache?\n' >>"$(fake_pane_buf w4)"
+printf 'needs-decision: keep or drop the cache?\n' >>"$(fake_orca_buf w4)"
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "report:w4" "decision marker wakes"
-assert_eq "$(cat "$FAKE_HERDR/panes/pW4.reported")" "blocked" "decision marker stamps the pane blocked"
 assert_file "$state/.captain-wait-w4" "stamp ownership recorded"
 rm -rf "$state/.wake-spool"
 out="$(bash "$BIN/ac-watch.sh" --once)"
 case "$out" in *ask:w4*) fail "a fleet stamp must never produce an ask: wake" ;; esac
-printf 'done: decision applied\n' >>"$(fake_pane_buf w4)"
+printf 'done: decision applied\n' >>"$(fake_orca_buf w4)"
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "report:w4" "the later marker still wakes"
-assert_no_file "$FAKE_HERDR/panes/pW4.reported" "a non-decision marker releases the stamp"
-assert_no_file "$state/.captain-wait-w4" "stamp ownership file removed"
+assert_no_file "$state/.captain-wait-w4" "stamp ownership file removed - a non-decision marker releases it"
 
 # Reconcile: a pane still PARKED on an already-seen captain-wait marker but
 # carrying no stamp is re-stamped silently (no wake); a BUSY pane whose tail
@@ -1834,20 +1842,19 @@ assert_no_file "$state/.captain-wait-w4" "stamp ownership file removed"
 # (checks-passed: from crew-ship finish) stamps like the decision verbs - it
 # waits on the captain's merge.
 rm -rf "$state/.wake-spool"
-printf 'window=crew:w5\nbackend=herdr\n' >"$state/w5.meta"
+printf 'window=crew:w5\nbackend=orca\n' >"$state/w5.meta"
 seed_pane w5 pW5 tW5
-printf 'needs-decision: pick color\n' >>"$(fake_pane_buf w5)"
+printf 'needs-decision: pick color\n' >>"$(fake_orca_buf w5)"
 printf 'needs-decision: pick color\n' >"$state/.seen-w5"
-printf 'window=crew:w6\nbackend=herdr\n' >"$state/w6.meta"
+printf 'window=crew:w6\nbackend=orca\n' >"$state/w6.meta"
 seed_pane w6 pW6 tW6
-printf 'needs-decision: pick shape\nesc to interrupt\n' >>"$(fake_pane_buf w6)"
+printf 'needs-decision: pick shape\nesc to interrupt\n' >>"$(fake_orca_buf w6)"
 printf 'needs-decision: pick shape\n' >"$state/.seen-w6"
-printf 'window=crew:w7\nbackend=herdr\n' >"$state/w7.meta"
+printf 'window=crew:w7\nbackend=orca\n' >"$state/w7.meta"
 seed_pane w7 pW7 tW7
-printf 'checks-passed: w7-ship PR raised, awaiting merge\n' >>"$(fake_pane_buf w7)"
+printf 'checks-passed: w7-ship PR raised, awaiting merge\n' >>"$(fake_orca_buf w7)"
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_file "$state/.captain-wait-w5" "parked pane reconciled to a stamp"
-assert_eq "$(cat "$FAKE_HERDR/panes/pW5.reported")" "blocked" "reconciled pane reported blocked"
 case "$out" in *report:w5*) fail "a reconcile must not wake - the marker was already seen" ;; esac
 assert_no_file "$state/.captain-wait-w6" "busy pane never reconcile-stamped"
 assert_contains "$out" "report:w7" "a delivery-await marker wakes"
@@ -1865,23 +1872,21 @@ assert_file "$state/.captain-wait-w7" "a delivery-await marker stamps - it waits
 # to the Reconcile branch above, which stamps once the pane reads non-busy -
 # exactly the idle precondition ac-backend.sh's CAPTAIN-WAIT STAMP states.
 rm -rf "$state/.wake-spool"
-printf 'window=crew:w8\nbackend=herdr\n' >"$state/w8.meta"
+printf 'window=crew:w8\nbackend=orca\n' >"$state/w8.meta"
 seed_pane w8 pW8 tW8
-printf 'needs-decision: keep the index?\nesc to interrupt\n' >>"$(fake_pane_buf w8)"
+printf 'needs-decision: keep the index?\nesc to interrupt\n' >>"$(fake_orca_buf w8)"
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "report:w8" "a busy pane's decision marker still WAKES - the guard never touches the wake"
 assert_contains "$(cat "$state/w8.status")" "needs-decision: keep the index?" \
   "... and still appends the durable status line every fleet view renders"
-assert_no_file "$FAKE_HERDR/panes/pW8.reported" "a BUSY pane is never stamped blocked"
-assert_no_file "$state/.captain-wait-w8" "... so the fleet records no stamp ownership it would have to release mid-work"
+assert_no_file "$state/.captain-wait-w8" "a BUSY pane is never stamped blocked - no stamp ownership it would have to release mid-work"
 
 # The DEFERRED colour: same pane, same marker still in its tail, now non-busy.
 rm -rf "$state/.wake-spool"
-: >"$(fake_pane_buf w8)"
-printf 'needs-decision: keep the index?\n' >>"$(fake_pane_buf w8)"
+: >"$(fake_orca_buf w8)"
+printf 'needs-decision: keep the index?\n' >>"$(fake_orca_buf w8)"
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_file "$state/.captain-wait-w8" "the stamp is DEFERRED to the moment the pane parks, never dropped"
-assert_eq "$(cat "$FAKE_HERDR/panes/pW8.reported")" "blocked" "the deferred stamp reports blocked"
 case "$out" in *report:w8*) fail "the deferred stamp must not re-wake - the marker was already seen" ;; esac
 
 # === supervision-liveness (watcher-liveness, 2026-07-18) ======================
@@ -1905,11 +1910,11 @@ reset_state() {
 # and logs the takeover once (watcher-skip-staleness).
 reset_state
 mkdir -p "$AC_HOME/data/rf"                             # rf is a real family here
-printf 'window=crew:rf-chief\nbackend=herdr\n' >"$state/rf-chief.meta"
+printf 'window=crew:rf-chief\nbackend=orca\n' >"$state/rf-chief.meta"
 seed_pane rf-chief pRFC tRFC                            # live roomchief
-printf 'window=crew:rf-t1\nbackend=herdr\n' >"$state/rf-t1.meta"
+printf 'window=crew:rf-t1\nbackend=orca\n' >"$state/rf-t1.meta"
 seed_pane rf-t1 pRF1 tRF1
-printf 'done: family work\n' >>"$(fake_pane_buf rf-t1)"
+printf 'done: family work\n' >>"$(fake_orca_buf rf-t1)"
 
 # Coverage LIVE (chief live + fresh beacon) -> rf-t1 is skipped (happy path).
 date +%s >"$state/.last-watcher-beat.rf"
@@ -1931,11 +1936,11 @@ printf '0\n' >"$state/.last-watcher-beat.rf"                 # stand-down (d52ec
 # about the CHIEF pane. With a per-RPC ceiling landed, the count is what decides
 # whether a wedged backend keeps a sweep inside its budget - so asking the same
 # question twice is now a cost, not a rounding error.
-: >"$FAKE_HERDR/log"
+: >"$FAKE_ORCA/log"
 out="$(AC_WATCH_SKIP=rf bash "$BIN/ac-watch.sh" --once)"
-skip_probe_calls="$(grep -c 'pRFC' "$FAKE_HERDR/log" 2>/dev/null || true)"
+skip_probe_calls="$(grep -c 'pRFC' "$FAKE_ORCA/log" 2>/dev/null || true)"
 assert_eq "$skip_probe_calls" "4" \
-  "one coverage probe on the chief pane per pass (the other three are rf-chief's own pane pass); 5 before the dedup, against this LIVE stub - the header's 6->4 is the wedged-stub count, where the ladder costs 2"
+  "rf-chief's own full pane pass costs three orca calls (window_alive's show, agent_blocked's show, capture's read); rf-t1's pass adds one more show re-checking the roomchief's coverage before it short-circuits - four terminal calls total, each verb costing exactly one call under orca (no herdr-style ladder)"
 assert_contains "$out" "check:quiet" "a live roomchief mid re-arm keeps its skip (re-arm grace)"
 case "$out" in *report:rf-t1*) fail "the fleet must not steal a re-arming family's pane" ;; esac
 assert_no_file "$state/.skip-revoked-rf" "no revoke during the re-arm grace"
@@ -1989,7 +1994,7 @@ assert_contains "$(cat "$state/.watcher-arm.log")" "skip revoked: rf" "the takeo
 # live-but-asleep chief; a dead pane swallows it harmlessly).
 grep -rq "coverage" "$state/.wake-spool" 2>/dev/null \
   || fail "the revoke must publish a coverage wake to the fleet spool"
-assert_contains "$(cat "$(fake_pane_buf rf-chief)")" "scoped watcher" \
+assert_contains "$(cat "$(fake_orca_buf rf-chief)")" "scoped watcher" \
   "the revoke nudges the roomchief pane with a drain-and-re-arm order"
 
 # A scoped watcher may not carry a skip at all: queue_wake files under
@@ -2039,7 +2044,7 @@ assert_file "$state/.skip-stale-since-rf" "a zero-padded beacon reads as stale, 
 # roomchief left to re-arm). The fresh beacon is restored here rather than
 # inherited, because the unreadable-beacon case above leaves a poisoned one.
 date +%s >"$state/.last-watcher-beat.rf"
-rm -f "$FAKE_HERDR/panes/pRFC.buf" "$FAKE_HERDR/tabs/tRFC" "$state/.pane-rf-chief" \
+rm -f "$FAKE_ORCA/terminals/pRFC".* "$state/.pane-rf-chief" \
   "$state/rf-chief.meta" "$state/.seen-rf-t1" "$state/.skip-revoked-rf" "$state/.skip-stale-since-rf"
 out="$(AC_WATCH_SKIP=rf bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "report:rf-t1" "a family whose roomchief is gone is covered directly"
@@ -2054,11 +2059,11 @@ assert_file "$state/.skip-revoked-rf" "a gone roomchief revokes immediately (no 
 # revokes exactly as before once it is not.
 reset_state
 mkdir -p "$AC_HOME/data/bf"
-printf 'window=crew:bf-chief\nbackend=herdr\n' >"$state/bf-chief.meta"
+printf 'window=crew:bf-chief\nbackend=orca\n' >"$state/bf-chief.meta"
 seed_pane bf-chief pBFC tBFC                            # live roomchief, inside a gate
-printf 'window=crew:bf-t1\nbackend=herdr\n' >"$state/bf-t1.meta"
+printf 'window=crew:bf-t1\nbackend=orca\n' >"$state/bf-t1.meta"
 seed_pane bf-t1 pBF1 tBF1
-printf 'done: family work\n' >>"$(fake_pane_buf bf-t1)"
+printf 'done: family work\n' >>"$(fake_orca_buf bf-t1)"
 printf '0\n' >"$state/.last-watcher-beat.bf"                              # scoped watcher stood down
 printf '%s\n' "$(( $(date +%s) - 9999 ))" >"$state/.skip-stale-since-bf"  # gap opened PAST the re-arm grace
 
@@ -2083,7 +2088,7 @@ assert_file "$state/.skip-revoked-bf" "the takeover is marked once past the decl
 
 # The other direction, (b): a GONE roomchief revokes IMMEDIATELY whatever it
 # declared - the declaration extends the BUSY case only, never overrides liveness.
-rm -f "$FAKE_HERDR/panes/pBFC.buf" "$FAKE_HERDR/tabs/tBFC" "$state/.pane-bf-chief" \
+rm -f "$FAKE_ORCA/terminals/pBFC".* "$state/.pane-bf-chief" \
   "$state/bf-chief.meta" "$state/.seen-bf-t1" "$state/.skip-revoked-bf"
 printf '%s\n' "$(( $(date +%s) + 300 ))" >"$state/.chief-busy-until.bf"
 out="$(AC_WATCH_SKIP=bf bash "$BIN/ac-watch.sh" --once)"
@@ -2098,13 +2103,13 @@ assert_file "$state/.skip-revoked-bf" "a gone roomchief revokes immediately desp
 # the story id) and RE-COVERS it when that coverage is gone.
 reset_state
 mkdir -p "$AC_HOME/data/ep"                              # ep is the promoted epic
-printf 'window=crew:ep-chief\nbackend=herdr\n' >"$state/ep-chief.meta"
+printf 'window=crew:ep-chief\nbackend=orca\n' >"$state/ep-chief.meta"
 seed_pane ep-chief pEPC tEPC                             # live epic roomchief
 # st is a STORY family: its id matches neither ep nor ep-* by the grammar, but
 # its meta fleet_scope names the epic (ac-spawn records it at spawn time).
-printf 'window=crew:st\nbackend=herdr\nfleet_scope=ep\n' >"$state/st.meta"
+printf 'window=crew:st\nbackend=orca\nfleet_scope=ep\n' >"$state/st.meta"
 seed_pane st pST1 tST1
-printf 'done: story work\n' >>"$(fake_pane_buf st)"
+printf 'done: story work\n' >>"$(fake_orca_buf st)"
 
 # Coverage LIVE (epic roomchief live + fresh EPIC beacon) -> the fleet SKIPS
 # the story pane: its epic's own scoped watcher owns it, so a done with no
@@ -2117,7 +2122,7 @@ assert_no_file "$state/.seen-st" "the shared dedup marker is untouched, so the e
 
 # Coverage GONE (epic roomchief torn down) -> the fleet RE-COVERS the story
 # pane, so the story's no-ac-done completion is never stranded.
-rm -f "$FAKE_HERDR/panes/pEPC.buf" "$FAKE_HERDR/tabs/tEPC" "$state/.pane-ep-chief" \
+rm -f "$FAKE_ORCA/terminals/pEPC".* "$state/.pane-ep-chief" \
   "$state/ep-chief.meta"
 out="$(AC_WATCH_SKIP=ep bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "report:st" "a story pane whose epic roomchief is gone is covered directly"
@@ -2637,7 +2642,7 @@ reset_state
 # ac_task_dir (the nested data/<family>/<stage>/ shape), never guessed.
 mkdir -p "$AC_HOME/data/aw/plan"
 printf '# brief\n' >"$AC_HOME/data/aw/plan/brief.md"
-printf 'window=crew:aw-plan\nbackend=herdr\n' >"$state/aw-plan.meta"
+printf 'window=crew:aw-plan\nbackend=orca\n' >"$state/aw-plan.meta"
 seed_pane aw-plan pAW1 tAW1
 
 # (1) report.md appears, pane says NOTHING -> actionable exit + durable wake.
@@ -2666,7 +2671,7 @@ assert_contains "$(fleet_spool)" "aw-plan" "the revision wake is published too"
 # consumes the tail change), since a repeat marker on a pane that just MOVED is
 # a wake in its own right - the marker re-wake channel below.
 rm -rf "$state"/.wake-spool*
-printf 'done: plan ready\n' >>"$(fake_pane_buf aw-plan)"
+printf 'done: plan ready\n' >>"$(fake_orca_buf aw-plan)"
 printf 'done: plan ready\n' >"$state/.seen-aw-plan"
 bash "$BIN/ac-watch.sh" --once >/dev/null
 rm -rf "$state"/.wake-spool*
@@ -2685,7 +2690,7 @@ assert_contains "$(fleet_spool)" "report.md" "the suppressed-marker pass still p
 # with the report as it finally stands.
 rm -rf "$state"/.wake-spool*
 anchored="$(cat "$state/.report-hash-aw-plan")"
-printf 'esc to interrupt\n' >>"$(fake_pane_buf aw-plan)"
+printf 'esc to interrupt\n' >>"$(fake_orca_buf aw-plan)"
 for n in 1 2 3 4 5; do
   printf 'revision round, edit %s\n' "$n" >>"$AC_HOME/data/aw/plan/report.md"
   assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "check:quiet" \
@@ -2723,7 +2728,7 @@ assert_eq "$(wc -c <"$grepcount" | tr -d ' ')" "1" \
   "the AC_BUSY_RE predicate is forked exactly once per pane per poll, not once per branch that reads it"
 
 # ... and the moment the round ends, ONE wake carrying the report as it now is.
-printf 'done: plan ready\n' >"$(fake_pane_buf aw-plan)"
+printf 'done: plan ready\n' >"$(fake_orca_buf aw-plan)"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "report:aw-plan" \
   "the first quiet poll after the round wakes"
 assert_eq "$(fleet_spool | grep -c 'report.md' || true)" "1" \
@@ -2738,14 +2743,14 @@ assert_eq "$(cat "$state/.report-hash-aw-plan")" \
 # very next poll - no quiet period, no delay.
 mkdir -p "$AC_HOME/data/aw2/plan"
 printf '# brief\n' >"$AC_HOME/data/aw2/plan/brief.md"
-printf 'window=crew:aw2-plan\nbackend=herdr\n' >"$state/aw2-plan.meta"
+printf 'window=crew:aw2-plan\nbackend=orca\n' >"$state/aw2-plan.meta"
 seed_pane aw2-plan pAW2 tAW2
-printf 'esc to interrupt\n' >>"$(fake_pane_buf aw2-plan)"
+printf 'esc to interrupt\n' >>"$(fake_orca_buf aw2-plan)"
 rm -rf "$state"/.wake-spool*
 printf '# report, still being written\n' >"$AC_HOME/data/aw2/plan/report.md"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "check:quiet" \
   "a report APPEARING under a busy pane is deferred like any other write"
-: >"$(fake_pane_buf aw2-plan)"
+: >"$(fake_orca_buf aw2-plan)"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "report:aw2-plan" \
   "the same report on a SILENT pane wakes on the very first poll (the crashed-scout case)"
 reset_state
@@ -2759,9 +2764,9 @@ rm -rf "$AC_HOME/data/aw" "$AC_HOME/data/aw2"
 # pane moved since the chief was last told. A STATIC parked pane and a BUSY one
 # still carrying an old marker in its tail stay silent.
 mkdir -p "$AC_HOME/data/mrw"
-printf 'window=crew:mrw\nbackend=herdr\n' >"$state/mrw.meta"
+printf 'window=crew:mrw\nbackend=orca\n' >"$state/mrw.meta"
 seed_pane mrw pMRW tMRW
-printf 'done: report ready\n' >>"$(fake_pane_buf mrw)"
+printf 'done: report ready\n' >>"$(fake_orca_buf mrw)"
 
 # The first announce is today's behavior, and it records the pane hash and
 # arms the REWAKE LATCH immediately - the chief was just told, so a cosmetic
@@ -2786,11 +2791,11 @@ assert_no_file "$state/.wake-spool" "a parked pane publishes no duplicate wake"
 # BYTE-IDENTICAL marker -> a SECOND wake, once a busy poll crosses it - the
 # latch armed at the announce above means an unsteered revision with NO busy
 # sample in between is now the RESIDUAL (below), not this case.
-printf 'esc to interrupt\n' >>"$(fake_pane_buf mrw)"
+printf 'esc to interrupt\n' >>"$(fake_orca_buf mrw)"
 bash "$BIN/ac-watch.sh" --once >/dev/null
 rm -rf "$state"/.wake-spool*
-: >"$(fake_pane_buf mrw)"
-printf 'revising the report\ndone: report ready\n' >>"$(fake_pane_buf mrw)"
+: >"$(fake_orca_buf mrw)"
+printf 'revising the report\ndone: report ready\n' >>"$(fake_orca_buf mrw)"
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "report:mrw" "a repeat marker after new pane work wakes again, once a busy poll crosses it"
 assert_contains "$(fleet_spool)" "done: report ready" "the re-wake is published durably"
@@ -2800,7 +2805,7 @@ assert_eq "$(cat "$state/.seen-mrw")" "done: report ready" \
 # (3) A BUSY pane still carrying the old marker in its tail: no extra wake,
 # however much its tail moves.
 rm -rf "$state"/.wake-spool*
-printf 'esc to interrupt\n' >>"$(fake_pane_buf mrw)"
+printf 'esc to interrupt\n' >>"$(fake_orca_buf mrw)"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "check:quiet" \
   "a busy pane still showing an old marker never re-wakes"
 assert_no_file "$state/.wake-spool" "a working pane publishes no wake"
@@ -2821,33 +2826,33 @@ rm -rf "$AC_HOME/data/mrw"
 # enough to finish inside one poll stays suppressed until a later round is
 # sampled busy, or is itself steered - tested in ac-send.test.sh).
 mkdir -p "$AC_HOME/data/mrc"
-printf 'window=crew:mrc\nbackend=herdr\n' >"$state/mrc.meta"
+printf 'window=crew:mrc\nbackend=orca\n' >"$state/mrc.meta"
 seed_pane mrc pMRC tMRC
-printf 'paused: waiting on review\n' >>"$(fake_pane_buf mrc)"
+printf 'paused: waiting on review\n' >>"$(fake_orca_buf mrc)"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "report:mrc" "the marker announces as always"
 assert_file "$state/.rewake-mrc" "the re-wake latch is armed on the announce itself"
 rm -rf "$state"/.wake-spool*
 
-printf 'Compacting conversation…\n' >>"$(fake_pane_buf mrc)"
+printf 'Compacting conversation…\n' >>"$(fake_orca_buf mrc)"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "check:quiet" \
   "the FIRST spinner-frame churn after the announce is already anchored, not just the second"
-printf '⏺ Compacted while idle, before the prompt cache expired\n' >>"$(fake_pane_buf mrc)"
+printf '⏺ Compacted while idle, before the prompt cache expired\n' >>"$(fake_orca_buf mrc)"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "check:quiet" \
   "the settling message is the same kind of redraw, still suppressed"
 assert_no_file "$state/.wake-spool" "no cosmetic redraw costs a wake once the marker is announced"
 
-: >"$(fake_pane_buf mrc)"
-printf 'esc to interrupt\npaused: waiting on review\n' >>"$(fake_pane_buf mrc)"
+: >"$(fake_orca_buf mrc)"
+printf 'esc to interrupt\npaused: waiting on review\n' >>"$(fake_orca_buf mrc)"
 bash "$BIN/ac-watch.sh" --once >/dev/null
 assert_no_file "$state/.rewake-mrc" "a genuine busy edge clears the re-wake latch"
-: >"$(fake_pane_buf mrc)"
-printf 'revised the review notes\npaused: waiting on review\n' >>"$(fake_pane_buf mrc)"
+: >"$(fake_orca_buf mrc)"
+printf 'revised the review notes\npaused: waiting on review\n' >>"$(fake_orca_buf mrc)"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "report:mrc" \
   "a genuinely new turn after a busy edge still re-wakes - the fix never silences that case"
 assert_file "$state/.rewake-mrc" "that re-wake re-arms the latch, with no busy poll since"
 rm -rf "$state"/.wake-spool*
 
-printf 'Compacting conversation…\n' >>"$(fake_pane_buf mrc)"
+printf 'Compacting conversation…\n' >>"$(fake_orca_buf mrc)"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "check:quiet" \
   "the first churn after THAT re-wake is anchored too, the same as after any announce"
 rm -rf "$state"/.wake-spool*
@@ -2855,13 +2860,13 @@ rm -rf "$state"/.wake-spool*
 # A brand-new marker always wakes on its own dedup, and arms ITS OWN latch
 # the same way the first announce did above - the old marker's latch is
 # retired with it, never left standing to misjudge the new marker's hash.
-printf 'done: moved on to a new task\n' >>"$(fake_pane_buf mrc)"
+printf 'done: moved on to a new task\n' >>"$(fake_orca_buf mrc)"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "report:mrc" \
   "a brand-new marker wakes on its own dedup regardless of the old latch"
 assert_file "$state/.rewake-mrc" "and arms its own latch immediately, same as any announce"
 rm -rf "$state"/.wake-spool*
 
-printf 'Compacting conversation…\n' >>"$(fake_pane_buf mrc)"
+printf 'Compacting conversation…\n' >>"$(fake_orca_buf mrc)"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "check:quiet" \
   "the new marker's own first churn is anchored too - nothing is inherited OR exempt"
 reset_state
@@ -2873,29 +2878,29 @@ rm -rf "$AC_HOME/data/mrc"
 # per turn end and the earlier ones stay in scrollback. The re-wake is DEFERRED,
 # never dropped - once a later turn ends clean, the moved pane wakes once.
 mkdir -p "$AC_HOME/data/mrb"
-printf 'window=crew:mrb\nbackend=herdr\n' >"$state/mrb.meta"
+printf 'window=crew:mrb\nbackend=orca\n' >"$state/mrb.meta"
 seed_pane mrb pMRB tMRB
-printf '✻ Waiting for 1 background agent to finish\n⏺ Agent "lane 1" finished · 2m 3s\n✻ Worked for 2s · done 3:20 PM\npaused: waiting on CI\n✻ Cogitated for 4s · done 3:28 PM · 1 shell still running\n' >>"$(fake_pane_buf mrb)"
+printf '✻ Waiting for 1 background agent to finish\n⏺ Agent "lane 1" finished · 2m 3s\n✻ Worked for 2s · done 3:20 PM\npaused: waiting on CI\n✻ Cogitated for 4s · done 3:28 PM · 1 shell still running\n' >>"$(fake_orca_buf mrb)"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "report:mrb" "the paused marker wakes once"
 rm -rf "$state"/.wake-spool*
-printf '› Message from @lane2 (ctrl+o to expand)\n' >>"$(fake_pane_buf mrb)"
+printf '› Message from @lane2 (ctrl+o to expand)\n' >>"$(fake_orca_buf mrb)"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "check:quiet" \
   "a pane moving under a live background shell does not re-wake"
-printf '✻ Waiting for 2 background agents to finish\n  ⎿ code-reviewer (3 tool uses)\n' >>"$(fake_pane_buf mrb)"
+printf '✻ Waiting for 2 background agents to finish\n  ⎿ code-reviewer (3 tool uses)\n' >>"$(fake_orca_buf mrb)"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "check:quiet" \
   "... nor under live background agents"
 assert_no_file "$state/.wake-spool" "a background-running pane publishes no wake"
 # Whatever kind of work claude lists as still running defers alike - the line
 # below is lab's live p2-e2e-ci-fast tail (a Monitor), which no shell/agent
 # wording matched.
-printf '⏺ paused: waiting on CI\n✻ Baked for 2s · done 5:01 PM · 1 monitor still running\n' >>"$(fake_pane_buf mrb)"
+printf '⏺ paused: waiting on CI\n✻ Baked for 2s · done 5:01 PM · 1 monitor still running\n' >>"$(fake_orca_buf mrb)"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "check:quiet" \
   "... nor under a live monitor"
-printf '  ⎿ run 38232082566 in_progress\n' >>"$(fake_pane_buf mrb)"
+printf '  ⎿ run 38232082566 in_progress\n' >>"$(fake_orca_buf mrb)"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "check:quiet" \
   "... however the pane moves under it"
 assert_no_file "$state/.wake-spool" "a monitor-waiting pane publishes no wake"
-printf '⏺ Agent "code-reviewer" finished · 6m 2s\n✻ Worked for 9s · done 3:52 PM\n' >>"$(fake_pane_buf mrb)"
+printf '⏺ Agent "code-reviewer" finished · 6m 2s\n✻ Worked for 9s · done 3:52 PM\n' >>"$(fake_orca_buf mrb)"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "report:mrb" \
   "the deferred re-wake fires once the last turn ended with nothing in the background"
 assert_contains "$(fleet_spool)" "paused: waiting on CI (pane advanced since the last wake)" "the deferred re-wake payload"
@@ -2915,14 +2920,14 @@ rm -rf "$AC_HOME/data/mrb"
 # case gate returns false for every non-chief id, so a crewmate whose only
 # channel to its chief IS this pane keeps waking loudly at the DEFAULT AC_STALE.
 mkdir -p "$AC_HOME/data/elw"
-printf 'window=crew:elw\nbackend=herdr\n' >"$state/elw.meta"
+printf 'window=crew:elw\nbackend=orca\n' >"$state/elw.meta"
 seed_pane elw pELW tELW
-printf 'summarising the change\nshould I also drop the legacy path?\n' >>"$(fake_pane_buf elw)"
-printf 'window=crew:elw2\nbackend=herdr\n' >"$state/elw2.meta"
+printf 'summarising the change\nshould I also drop the legacy path?\n' >>"$(fake_orca_buf elw)"
+printf 'window=crew:elw2\nbackend=orca\n' >"$state/elw2.meta"
 seed_pane elw2 pELW2 tELW2
 # Neither tail matches AC_BUSY_RE - that render heuristic is exactly what these
 # two panes look identical under, which is why the agent status decides.
-printf 'comparing the two candidate paths\n' >>"$(fake_pane_buf elw2)"
+printf 'comparing the two candidate paths\n' >>"$(fake_orca_buf elw2)"
 # Settle both panes: one pass records their tail hashes and change stamps, so
 # the backdating below is the only thing that makes them stale.
 bash "$BIN/ac-watch.sh" --once >/dev/null
@@ -2932,41 +2937,39 @@ printf '%s\n' "$(( now - 1000 ))" >"$state/.change-elw"
 printf '%s\n' "$(( now - 1000 ))" >"$state/.change-elw2"
 
 # (1) An IDLE (ended-turn) pane wakes LOUDLY and is stamped BLOCKED.
-printf 'idle\n' >"$FAKE_HERDR/panes/pELW.status"
+printf '\xe2\x9c\xb3 fake\n' >"$FAKE_ORCA/terminals/pELW.title"
 # (2) A WORKING pane keeps today's soft stale: and nothing more. Both panes are
 # stale in the SAME pass, so the two paths are compared under one clock.
-printf 'working\n' >"$FAKE_HERDR/panes/pELW2.status"
+printf '\xe2\x97\x90 fake\n' >"$FAKE_ORCA/terminals/pELW2.title"
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "ended:elw" "an ended-turn pane wakes loudly, not as stale:"
 case "$out" in *stale:elw*) fail "an ended turn must never report as stale: - that is the signal chiefs discount" ;; esac
 assert_contains "$(fleet_spool)" "ended its turn" "the loud wake is published durably"
-assert_eq "$(cat "$FAKE_HERDR/panes/pELW.reported")" "blocked" \
-  "the ended-turn pane is stamped BLOCKED in the herdr UI"
-assert_file "$state/.captain-wait-elw" "stamp ownership recorded"
+assert_file "$state/.captain-wait-elw" "the ended-turn pane is stamped - stamp ownership recorded"
 assert_contains "$(cat "$state/elw.status")" "ended its turn" "the ended turn is in the task's status log"
 # The loud pass exits on its own wake, so drive the second pane's pass now.
 rm -rf "$state"/.wake-spool*
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "stale:elw2" "a working pane still produces today's stale:"
 case "$out" in *ended:elw2*) fail "a working pane must never produce the loud ended: wake" ;; esac
-assert_no_file "$FAKE_HERDR/panes/pELW2.reported" "a merely-quiet working pane is never stamped"
+assert_no_file "$state/.captain-wait-elw2" "a merely-quiet working pane is never stamped"
 assert_contains "$(fleet_spool)" "quiet for" "the stale wake payload is unchanged"
 
 # USAGE LIMIT: a claude pane that ended its turn on the provider's usage-limit
 # error (the exact line a drydock agent got on 2026-09-20) is waiting on the
 # reset, not on the chief - `limited:` with the reset text, never `ended:`. The
 # same words in the agent's own prose are no limit.
-printf 'window=crew:lim\nbackend=herdr\n' >"$state/lim.meta"
+printf 'window=crew:lim\nbackend=orca\n' >"$state/lim.meta"
 seed_pane lim pLIM tLIM
-printf "  \xe2\x8e\xbf  You've hit your weekly limit \xc2\xb7 resets 10pm (Asia/Saigon)\n" >>"$(fake_pane_buf lim)"
-printf 'window=crew:lim2\nbackend=herdr\n' >"$state/lim2.meta"
+printf "  \xe2\x8e\xbf  You've hit your weekly limit \xc2\xb7 resets 10pm (Asia/Saigon)\n" >>"$(fake_orca_buf lim)"
+printf 'window=crew:lim2\nbackend=orca\n' >"$state/lim2.meta"
 seed_pane lim2 pLIM2 tLIM2
-printf "You've hit your weekly limit, so the watcher should say so.\n" >>"$(fake_pane_buf lim2)"
+printf "You've hit your weekly limit, so the watcher should say so.\n" >>"$(fake_orca_buf lim2)"
 bash "$BIN/ac-watch.sh" --once >/dev/null
 rm -rf "$state"/.wake-spool*
 now="$(date +%s)"
 printf '%s\n' "$(( now - 1000 ))" >"$state/.change-lim"
-printf 'idle\n' >"$FAKE_HERDR/panes/pLIM.status"
+printf '\xe2\x9c\xb3 fake\n' >"$FAKE_ORCA/terminals/pLIM.title"
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "limited:lim" "a pane stopped by the usage limit wakes as limited:"
 case "$out" in *ended:lim*) fail "a limited pane is not an ended turn waiting on the chief" ;; esac
@@ -2974,7 +2977,7 @@ assert_contains "$(fleet_spool)" "resets 10pm (Asia/Saigon)" "the reset time rid
 assert_contains "$(cat "$state/lim.status")" "usage limit" "the limit is in the task's status log"
 rm -rf "$state"/.wake-spool*
 printf '%s\n' "$(( now - 1000 ))" >"$state/.change-lim2"
-printf 'idle\n' >"$FAKE_HERDR/panes/pLIM2.status"
+printf '\xe2\x9c\xb3 fake\n' >"$FAKE_ORCA/terminals/pLIM2.title"
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "ended:lim2" "the limit's words in prose are an ordinary ended turn"
 rm -f "$state/lim.meta" "$state/lim2.meta"
@@ -2986,13 +2989,13 @@ rm -f "$state/lim.meta" "$state/lim2.meta"
 # never `ended:`. Codex's sentences carry no `·`, so they count only on a
 # codex pane.
 lim_case() {  # lim_case <id> <harness> <line> <reason>
-  printf 'window=crew:%s\nbackend=herdr\nharness=%s\n' "$1" "$2" >"$state/$1.meta"
+  printf 'window=crew:%s\nbackend=orca\nharness=%s\n' "$1" "$2" >"$state/$1.meta"
   seed_pane "$1" "p$1" "t$1"
-  printf '%s\n' "$3" >>"$(fake_pane_buf "$1")"
+  printf '%s\n' "$3" >>"$(fake_orca_buf "$1")"
   bash "$BIN/ac-watch.sh" --once >/dev/null
   rm -rf "$state"/.wake-spool*
   printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-$1"
-  printf 'idle\n' >"$FAKE_HERDR/panes/p$1.status"
+  printf '\xe2\x9c\xb3 fake\n' >"$FAKE_ORCA/terminals/p$1.title"
   out="$(bash "$BIN/ac-watch.sh" --once)"
   assert_contains "$out" "$4:$1" "a $2 pane ending on '$3' wakes as $4:"
   rm -f "$state/$1.meta"
@@ -3016,13 +3019,13 @@ printf 'compact=advise score=0.912 floor=0.575 usage=0.75\n'
 FAKE
 chmod +x "$TMP/fake-compact"
 mkdir -p "$AC_CLAUDE_TRANSCRIPT_ROOT/wt-cmp"; : >"$AC_CLAUDE_TRANSCRIPT_ROOT/wt-cmp/sess-cmp.jsonl"
-printf 'window=crew:cmp\nbackend=herdr\nsession_id=sess-cmp\n' >"$state/cmp.meta"
+printf 'window=crew:cmp\nbackend=orca\nsession_id=sess-cmp\n' >"$state/cmp.meta"
 seed_pane cmp pCMP tCMP
-printf 'all tests green, committed\n' >>"$(fake_pane_buf cmp)"
+printf 'all tests green, committed\n' >>"$(fake_orca_buf cmp)"
 bash "$BIN/ac-watch.sh" --once >/dev/null
 rm -rf "$state"/.wake-spool*
 printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-cmp"
-printf 'working\n' >"$FAKE_HERDR/panes/pCMP.status"
+printf '\xe2\x97\x90 fake\n' >"$FAKE_ORCA/terminals/pCMP.title"
 TMP_CALLS="$TMP/compact-calls" AC_COMPACT_ADVISE="$TMP/fake-compact" bash "$BIN/ac-watch.sh" --once >/dev/null
 assert_contains "$(fleet_spool)" "compact=advise score=0.912" "the quiet wake carries the compact advice"
 assert_contains "$(cat "$TMP/compact-calls" 2>/dev/null)" "sess-cmp.jsonl --role crew" "the adviser judges the crewmate's own transcript as crew"
@@ -3035,13 +3038,13 @@ rm -f "$state/cmp.meta" "$TMP/compact-calls"; rm -rf "$state"/.wake-spool*
 printf 'on\n' >"$AC_HOME/config/compact-auto"
 for cmk in ship roomchief crewdeputy; do
   reset_state
-  printf 'window=crew:cma\nbackend=herdr\nkind=%s\nsession_id=sess-cmp\n' "$cmk" >"$state/cma.meta"
+  printf 'window=crew:cma\nbackend=orca\nkind=%s\nsession_id=sess-cmp\n' "$cmk" >"$state/cma.meta"
   seed_pane cma pCMA tCMA
-  printf 'all tests green, committed\n' >>"$(fake_pane_buf cma)"
+  printf 'all tests green, committed\n' >>"$(fake_orca_buf cma)"
   bash "$BIN/ac-watch.sh" --once >/dev/null
   rm -rf "$state"/.wake-spool*
   printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-cma"
-  printf 'working\n' >"$FAKE_HERDR/panes/pCMA.status"
+  printf '\xe2\x97\x90 fake\n' >"$FAKE_ORCA/terminals/pCMA.title"
   TMP_CALLS="$TMP/compact-calls" AC_COMPACT_ADVISE="$TMP/fake-compact" bash "$BIN/ac-watch.sh" --once >/dev/null
   want="sess-cmp.jsonl --role crew"; [ "$cmk" != ship ] || want="$want --auto cma"
   assert_eq "$(sed 's|.*/||' "$TMP/compact-calls" 2>/dev/null)" "$want" "compact-auto=on names a $cmk pane to the adviser only when it is a crewmate's"
@@ -3061,11 +3064,11 @@ rm -rf "$AC_HOME/data/elw"
 # once-only shape as the push-channel anchor. But a GENUINELY NEW completion
 # must still wake, and a re-task must re-arm the ended-turn net.
 mkdir -p "$AC_HOME/data/dbu"
-printf 'window=crew:dbu\nbackend=herdr\n' >"$state/dbu.meta"
+printf 'window=crew:dbu\nbackend=orca\n' >"$state/dbu.meta"
 seed_pane dbu pDBU tDBU
 
 # First sight: a fresh done: wakes and is recorded seen (invariant B, first half).
-printf 'done: shipped the change\n' >>"$(fake_pane_buf dbu)"
+printf 'done: shipped the change\n' >>"$(fake_orca_buf dbu)"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "report:dbu" "a fresh completion wakes on first sight"
 assert_eq "$(cat "$state/.seen-dbu")" "done: shipped the change" "the completion is recorded seen"
 rm -rf "$state"/.wake-spool*
@@ -3073,23 +3076,23 @@ rm -rf "$state"/.wake-spool*
 # The marker scrolls out of the tail (a redraw leaves only later, marker-free
 # scrollback). That redraw changes the tail hash, which clears .stale-<id> - the
 # exact re-arm that made the loud ended: wake re-fire every quiet window.
-: >"$(fake_pane_buf dbu)"
-printf 'reviewing the final diff\nall the checks are green now\n' >>"$(fake_pane_buf dbu)"
+: >"$(fake_orca_buf dbu)"
+printf 'reviewing the final diff\nall the checks are green now\n' >>"$(fake_orca_buf dbu)"
 bash "$BIN/ac-watch.sh" --once >/dev/null       # settle the redrawn tail hash
 rm -rf "$state"/.wake-spool*
 now="$(date +%s)"
 printf '%s\n' "$(( now - 1000 ))" >"$state/.change-dbu"
-printf 'idle\n' >"$FAKE_HERDR/panes/pDBU.status"
+printf '\xe2\x9c\xb3 fake\n' >"$FAKE_ORCA/terminals/pDBU.title"
 
 # (A) The done-but-unreaped pane does NOT re-emit a hard wake; it anchors quiet.
 out="$(bash "$BIN/ac-watch.sh" --once)"
 case "$out" in *ended:dbu*) fail "invariant A: a done pane whose marker scrolled out must not re-fire ended:" ;; esac
 assert_eq "$(fleet_spool)" "" "invariant A: no wake published for an already-reported completion"
 assert_file "$state/.stale-dbu" "invariant A: the completion is anchored silently"
-assert_no_file "$FAKE_HERDR/panes/pDBU.reported" "invariant A: no BLOCKED stamp for an already-reported completion"
+assert_no_file "$state/.captain-wait-dbu" "invariant A: no BLOCKED stamp for an already-reported completion"
 
 # (B) A genuinely NEW completion printed back into the tail still wakes.
-printf 'done: shipped the follow-up\n' >>"$(fake_pane_buf dbu)"
+printf 'done: shipped the follow-up\n' >>"$(fake_orca_buf dbu)"
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "report:dbu" "invariant B: a genuinely new completion still wakes"
 assert_contains "$(fleet_spool)" "done: shipped the follow-up" "invariant B: the new completion is published"
@@ -3098,14 +3101,14 @@ rm -rf "$state"/.wake-spool*
 # (residual) A re-task busies the pane (its completion marker already scrolled
 # out): the completion memory is forgotten, so a later PROSE-only ask still wakes
 # the chief - done -> quiet, but re-task -> busy -> new work re-arms the net.
-: >"$(fake_pane_buf dbu)"
-printf 'esc to interrupt\n' >>"$(fake_pane_buf dbu)"
-printf 'working\n' >"$FAKE_HERDR/panes/pDBU.status"
+: >"$(fake_orca_buf dbu)"
+printf 'esc to interrupt\n' >>"$(fake_orca_buf dbu)"
+printf '\xe2\x97\x90 fake\n' >"$FAKE_ORCA/terminals/pDBU.title"
 bash "$BIN/ac-watch.sh" --once >/dev/null        # observes BUSY -> forgets the completion
 assert_no_file "$state/.seen-dbu" "residual: a re-task busies the pane and forgets the reported completion"
-: >"$(fake_pane_buf dbu)"
-printf 'summarising the change\nshould I also migrate the old rows?\n' >>"$(fake_pane_buf dbu)"
-printf 'idle\n' >"$FAKE_HERDR/panes/pDBU.status"
+: >"$(fake_orca_buf dbu)"
+printf 'summarising the change\nshould I also migrate the old rows?\n' >>"$(fake_orca_buf dbu)"
+printf '\xe2\x9c\xb3 fake\n' >"$FAKE_ORCA/terminals/pDBU.title"
 bash "$BIN/ac-watch.sh" --once >/dev/null        # settle the prose-only tail hash
 rm -rf "$state"/.wake-spool*
 printf '%s\n' "$(( now - 1000 ))" >"$state/.change-dbu"
@@ -3125,14 +3128,14 @@ rm -rf "$AC_HOME/data/dbu"
 # again every quiet window forever (the lab order this closes: ~10 identical
 # wakes on one roomchief pane in 23h, 4 on one crewmate pane, 2026-10-16).
 mkdir -p "$AC_HOME/data/ebl"
-printf 'window=crew:ebl\nbackend=herdr\n' >"$state/ebl.meta"
+printf 'window=crew:ebl\nbackend=orca\n' >"$state/ebl.meta"
 seed_pane ebl pEBL tEBL
-printf 'summarising the change\nshould I also migrate the legacy rows?\n' >>"$(fake_pane_buf ebl)"
+printf 'summarising the change\nshould I also migrate the legacy rows?\n' >>"$(fake_orca_buf ebl)"
 bash "$BIN/ac-watch.sh" --once >/dev/null        # settle the prose-only tail hash
 rm -rf "$state"/.wake-spool*
 now="$(date +%s)"
 printf '%s\n' "$(( now - 1000 ))" >"$state/.change-ebl"
-printf 'idle\n' >"$FAKE_HERDR/panes/pEBL.status"
+printf '\xe2\x9c\xb3 fake\n' >"$FAKE_ORCA/terminals/pEBL.title"
 
 # (A) First sight: the prose-only ask wakes LOUDLY (same as the elw case
 # above) and the busy latch is armed.
@@ -3145,12 +3148,12 @@ rm -rf "$state"/.wake-spool*
 # masking agent_status until a real state transition reasserts it. Releasing
 # the stamp here stands in for that transition, so the next poll's idle read
 # is genuine, the same precondition the lab's redraw-only panes met for real.
-rm -f "$FAKE_HERDR/panes/pEBL.reported"
+rm -f "$state/.captain-wait-ebl"
 
 # (B) claude's own idle auto-compaction redraw - the EXACT tail this closes -
 # changes the tail hash (clearing .stale-<id>, same as any cosmetic redraw)
 # but is not a new turn: the pane must NOT re-fire ended:.
-printf '⏺ Compacted while idle, before the prompt cache expired\n' >>"$(fake_pane_buf ebl)"
+printf '⏺ Compacted while idle, before the prompt cache expired\n' >>"$(fake_orca_buf ebl)"
 bash "$BIN/ac-watch.sh" --once >/dev/null        # settle the redrawn tail hash
 rm -rf "$state"/.wake-spool*
 printf '%s\n' "$(( now - 1000 ))" >"$state/.change-ebl"
@@ -3160,8 +3163,8 @@ assert_eq "$(fleet_spool)" "" "no wake published for a redraw-only repoll"
 assert_file "$state/.stale-ebl" "the redraw is anchored silently, same shape as a marker completion"
 
 # (B2) The recap-line variant: same redraw-only shape, same suppression.
-rm -f "$FAKE_HERDR/panes/pEBL.reported"
-printf '\xe2\x80\xbb recap: nothing new, still waiting on the captain\n' >>"$(fake_pane_buf ebl)"
+rm -f "$state/.captain-wait-ebl"
+printf '\xe2\x80\xbb recap: nothing new, still waiting on the captain\n' >>"$(fake_orca_buf ebl)"
 bash "$BIN/ac-watch.sh" --once >/dev/null        # settle the recap tail hash
 rm -rf "$state"/.wake-spool*
 printf '%s\n' "$(( now - 1000 ))" >"$state/.change-ebl"
@@ -3173,14 +3176,14 @@ assert_eq "$(fleet_spool)" "" "no wake published for the recap redraw either"
 # prose-only ask after it still wakes the chief loudly - the fix must not
 # silence real asks. The buffer is CLEARED first: the BUSY_RE match must
 # scroll out of view on its own, or it would hold the pane busy forever.
-: >"$(fake_pane_buf ebl)"
-printf 'esc to interrupt\n' >>"$(fake_pane_buf ebl)"
-printf 'working\n' >"$FAKE_HERDR/panes/pEBL.status"
+: >"$(fake_orca_buf ebl)"
+printf 'esc to interrupt\n' >>"$(fake_orca_buf ebl)"
+printf '\xe2\x97\x90 fake\n' >"$FAKE_ORCA/terminals/pEBL.title"
 bash "$BIN/ac-watch.sh" --once >/dev/null        # observes BUSY -> clears the latch
 assert_no_file "$state/.ended-ebl" "a genuine busy edge clears the latch"
-: >"$(fake_pane_buf ebl)"
-printf 'summarising the follow-up\nshould I also drop the old index?\n' >>"$(fake_pane_buf ebl)"
-printf 'idle\n' >"$FAKE_HERDR/panes/pEBL.status"
+: >"$(fake_orca_buf ebl)"
+printf 'summarising the follow-up\nshould I also drop the old index?\n' >>"$(fake_orca_buf ebl)"
+printf '\xe2\x9c\xb3 fake\n' >"$FAKE_ORCA/terminals/pEBL.title"
 bash "$BIN/ac-watch.sh" --once >/dev/null        # settle the new prose-only tail hash
 rm -rf "$state"/.wake-spool*
 printf '%s\n' "$(( now - 1000 ))" >"$state/.change-ebl"
@@ -3195,9 +3198,9 @@ assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "ended:ebl" \
 # poll-sampled signal that can miss it entirely).
 assert_file "$state/.captain-wait-ebl" "the second ended: fire parked the pane again"
 "$BIN/ac-send.sh" ebl 'drop the old index' >/dev/null   # the answering steer - no busy poll in between
-: >"$(fake_pane_buf ebl)"
-printf 'summarising the result\nshould I also update the docs?\n' >>"$(fake_pane_buf ebl)"
-printf 'idle\n' >"$FAKE_HERDR/panes/pEBL.status"
+: >"$(fake_orca_buf ebl)"
+printf 'summarising the result\nshould I also update the docs?\n' >>"$(fake_orca_buf ebl)"
+printf '\xe2\x9c\xb3 fake\n' >"$FAKE_ORCA/terminals/pEBL.title"
 bash "$BIN/ac-watch.sh" --once >/dev/null        # settle the new prose-only tail hash
 rm -rf "$state"/.wake-spool*
 printf '%s\n' "$(( now - 1000 ))" >"$state/.change-ebl"
@@ -3216,20 +3219,20 @@ rm -rf "$AC_HOME/data/ebl"
 # suppression is a LIVE question re-asked every poll (ac_chief_gate_parked's
 # sibling), never a remembered marker.
 mkdir -p "$AC_HOME/data/scq"
-printf 'window=crew:scq-chief\nbackend=herdr\n' >"$state/scq-chief.meta"
+printf 'window=crew:scq-chief\nbackend=orca\n' >"$state/scq-chief.meta"
 seed_pane scq-chief pSCQC tSCQC
 # A member by its meta fleet_scope: `-t1` is in no closed suffix rule, so the
 # id names no family - the shape of an epic STORY pane, whose scope ac-spawn.sh
 # records on disk (bin/ac-spawn.sh's fleet_scope meta write). Membership is read from that, never
 # from an id prefix.
-printf 'window=crew:scq-t1\nbackend=herdr\nfleet_scope=scq\n' >"$state/scq-t1.meta"
+printf 'window=crew:scq-t1\nbackend=orca\nfleet_scope=scq\n' >"$state/scq-t1.meta"
 seed_pane scq-t1 pSCQ1 tSCQ1
 # The chief reads WORKING, not idle: the ended turn is the OTHER arm, and case
 # (4) below pins that this suppression now guards it too.
-printf 'working\n' >"$FAKE_HERDR/panes/pSCQC.status"
-printf 'working\n' >"$FAKE_HERDR/panes/pSCQ1.status"
-printf 'waiting on scq-t1\n' >>"$(fake_pane_buf scq-chief)"
-printf 'editing the file\n' >>"$(fake_pane_buf scq-t1)"
+printf '\xe2\x97\x90 fake\n' >"$FAKE_ORCA/terminals/pSCQC.title"
+printf '\xe2\x97\x90 fake\n' >"$FAKE_ORCA/terminals/pSCQ1.title"
+printf 'waiting on scq-t1\n' >>"$(fake_orca_buf scq-chief)"
+printf 'editing the file\n' >>"$(fake_orca_buf scq-t1)"
 # Settle both panes (one pass records their tail hashes and change stamps), then
 # backdate ONLY the chief - the crewmate is working and must not be stale yet.
 bash "$BIN/ac-watch.sh" --once >/dev/null
@@ -3248,7 +3251,7 @@ assert_no_file "$state/.stale-scq-chief" "the suppressed pass consumes no dedup 
 # (2) THE RE-TRIP, closed: the chief takes a turn (its own output is exactly what
 # removes .stale-<id>) and goes quiet again. Under a dedup-marker fix this is the
 # pass that wakes the chief a second time with the same non-news.
-printf 'still waiting on scq-t1\n' >>"$(fake_pane_buf scq-chief)"
+printf 'still waiting on scq-t1\n' >>"$(fake_orca_buf scq-chief)"
 bash "$BIN/ac-watch.sh" --once >/dev/null           # absorbs the chief's own turn
 printf '%s\n' "$(( now - 1000 ))" >"$state/.change-scq-chief"
 out="$(bash "$BIN/ac-watch.sh" --once)"
@@ -3274,20 +3277,20 @@ case "$out" in *scq-chief*) fail "the supervising chief still must not wake" ;; 
 # non-chief id, so case (1) of the ended-turn block above still pins the loud
 # wake at the DEFAULT threshold for the crewmate case the wake was built for.
 rm -rf "$state"/.wake-spool*
-printf 'idle\n' >"$FAKE_HERDR/panes/pSCQC.status"
+printf '\xe2\x9c\xb3 fake\n' >"$FAKE_ORCA/terminals/pSCQC.title"
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "check:quiet" "a chief that ENDED its turn while its crewmate is live is not news either"
 case "$out" in *scq-chief*) fail "an ended-turn supervising chief must not cost a hard wake" ;; esac
 assert_no_file "$state/.wake-spool" "no wake is published for an ended-turn supervising chief"
 assert_no_file "$state/.stale-scq-chief" "the suppressed ended-turn pass consumes no dedup marker either"
-assert_no_file "$FAKE_HERDR/panes/pSCQC.reported" "... and the pane is never stamped BLOCKED for it"
+assert_no_file "$state/.captain-wait-scq-chief" "... and the pane is never stamped BLOCKED for it"
 
 # (4b) THE LOOP, CLOSED - the defect itself, at the DEFAULT AC_STALE and never a
 # raised one: the chief acks in PROSE (no AC_CAPTAIN_RE marker, hence no
 # .seen-<id> and no COMPLETION-ALREADY-REPORTED anchor), and its own ack output
 # is the pane change that clears .stale-<id>. Before the fix that re-armed the
 # loud wake every quiet window, forever.
-printf 'acked, still waiting on scq-t1\n' >>"$(fake_pane_buf scq-chief)"
+printf 'acked, still waiting on scq-t1\n' >>"$(fake_orca_buf scq-chief)"
 bash "$BIN/ac-watch.sh" --once >/dev/null           # absorbs the chief's own ack
 assert_no_file "$state/.seen-scq-chief" "a chief reporting in PROSE has no completion marker to anchor on"
 printf '%s\n' "$(( now - 1000 ))" >"$state/.change-scq-chief"
@@ -3298,7 +3301,7 @@ assert_no_file "$state/.wake-spool" "... and publishes nothing the second time e
 # (5) FAILS TOWARD WAKING, on BOTH arms now: the last family task dies and the
 # very next quiet window wakes the chief with nothing swallowed - the suppression
 # held no marker back. The ENDED arm first (the chief pane is still idle).
-rm -f "$FAKE_HERDR/panes/pSCQ1.buf" "$FAKE_HERDR/tabs/tSCQ1"
+rm -f "$FAKE_ORCA/terminals/pSCQ1".*
 rm -rf "$state"/.wake-spool*
 printf '%s\n' "$(( now - 1000 ))" >"$state/.change-scq-chief"
 out="$(bash "$BIN/ac-watch.sh" --once)"
@@ -3306,9 +3309,9 @@ assert_contains "$out" "ended:scq-chief" "the poll after the last family task di
 assert_contains "$(fleet_spool)" "ended its turn" "the loud wake is published durably"
 
 # ... and the stale arm, unchanged: a merely-quiet chief with no live family.
-rm -f "$FAKE_HERDR/panes/pSCQC.reported"            # release the ended-turn stamp
-printf 'working\n' >"$FAKE_HERDR/panes/pSCQC.status"
-printf 'scq-t1 handed back\n' >>"$(fake_pane_buf scq-chief)"
+rm -f "$state/.captain-wait-scq-chief"            # release the ended-turn stamp
+printf '\xe2\x97\x90 fake\n' >"$FAKE_ORCA/terminals/pSCQC.title"
+printf 'scq-t1 handed back\n' >>"$(fake_orca_buf scq-chief)"
 bash "$BIN/ac-watch.sh" --once >/dev/null           # absorbs the chief turn, reports gone:
 rm -rf "$state"/.wake-spool*
 printf '%s\n' "$(( now - 1000 ))" >"$state/.change-scq-chief"
@@ -3324,11 +3327,11 @@ assert_contains "$(fleet_spool)" "quiet for" "the stale wake payload is unchange
 # OPPOSITE and worse direction: a blocked action announces itself, silence does
 # not.
 rm -rf "$state"/.wake-spool*
-printf 'window=crew:scq-curate-automation\nbackend=herdr\n' >"$state/scq-curate-automation.meta"
+printf 'window=crew:scq-curate-automation\nbackend=orca\n' >"$state/scq-curate-automation.meta"
 seed_pane scq-curate-automation pSCQA tSCQA
-printf 'working\n' >"$FAKE_HERDR/panes/pSCQA.status"
-printf 'editing the file\n' >>"$(fake_pane_buf scq-curate-automation)"
-printf 'still nothing back\n' >>"$(fake_pane_buf scq-chief)"
+printf '\xe2\x97\x90 fake\n' >"$FAKE_ORCA/terminals/pSCQA.title"
+printf 'editing the file\n' >>"$(fake_orca_buf scq-curate-automation)"
+printf 'still nothing back\n' >>"$(fake_orca_buf scq-chief)"
 bash "$BIN/ac-watch.sh" --once >/dev/null           # absorbs both panes' turns
 rm -rf "$state"/.wake-spool*
 printf '%s\n' "$(( now - 1000 ))" >"$state/.change-scq-chief"
@@ -3350,14 +3353,14 @@ rm -rf "$AC_HOME/data/scq"
 # (family-of-id-suffix-collision) - a real vfy-review task always has one,
 # since ac-brief.sh mkdirs it before any crewmate can commit.
 mkdir -p "$AC_HOME/data/vfy/review"
-printf 'kind=roomchief\nwindow=crew:vfy-chief\nbackend=herdr\n' >"$state/vfy-chief.meta"
+printf 'kind=roomchief\nwindow=crew:vfy-chief\nbackend=orca\n' >"$state/vfy-chief.meta"
 seed_pane vfy-chief pVFC tVFC
-printf 'kind=verify-codereview\nwindow=crew:vfy-review\nbackend=herdr\n' >"$state/vfy-review.meta"
+printf 'kind=verify-codereview\nwindow=crew:vfy-review\nbackend=orca\n' >"$state/vfy-review.meta"
 seed_pane vfy-review pVFR tVFR
-printf 'working\n' >"$FAKE_HERDR/panes/pVFC.status"
-printf 'working\n' >"$FAKE_HERDR/panes/pVFR.status"
-printf 'waiting on the reviewer\n' >>"$(fake_pane_buf vfy-chief)"
-printf 'reading the diff\n' >>"$(fake_pane_buf vfy-review)"
+printf '\xe2\x97\x90 fake\n' >"$FAKE_ORCA/terminals/pVFC.title"
+printf '\xe2\x97\x90 fake\n' >"$FAKE_ORCA/terminals/pVFR.title"
+printf 'waiting on the reviewer\n' >>"$(fake_orca_buf vfy-chief)"
+printf 'reading the diff\n' >>"$(fake_orca_buf vfy-review)"
 bash "$BIN/ac-watch.sh" --once >/dev/null          # settle both panes
 rm -rf "$state"/.wake-spool*
 now="$(date +%s)"
@@ -3366,7 +3369,7 @@ out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "stale:vfy-chief" "a live VERIFIER is not a live family child"
 # ... and the same pane under a crewmate kind DOES suppress it, so the skip is
 # the class and not a broken predicate.
-printf 'kind=ship\nwindow=crew:vfy-review\nbackend=herdr\n' >"$state/vfy-review.meta"
+printf 'kind=ship\nwindow=crew:vfy-review\nbackend=orca\n' >"$state/vfy-review.meta"
 rm -f "$state/.stale-vfy-chief"
 rm -rf "$state"/.wake-spool*
 printf '%s\n' "$(( now - 1000 ))" >"$state/.change-vfy-chief"
@@ -3377,9 +3380,9 @@ case "$out" in *stale:vfy-chief*) fail "a live CREWMATE child must still suppres
 # produces gone: - the accounting split must never blind the watcher to it.
 rm -f "$state/vfy-chief.meta" "$state/.pane-vfy-chief" "$state/.change-vfy-chief" \
   "$state/.stale-vfy-chief" "$state/.hash-vfy-chief"
-rm -f "$FAKE_HERDR/panes/pVFC.buf" "$FAKE_HERDR/tabs/tVFC"
-printf 'kind=verify-codereview\nwindow=crew:vfy-review\nbackend=herdr\n' >"$state/vfy-review.meta"
-rm -f "$FAKE_HERDR/panes/pVFR.buf" "$FAKE_HERDR/tabs/tVFR"
+rm -f "$FAKE_ORCA/terminals/pVFC".*
+printf 'kind=verify-codereview\nwindow=crew:vfy-review\nbackend=orca\n' >"$state/vfy-review.meta"
+rm -f "$FAKE_ORCA/terminals/pVFR".*
 rm -rf "$state"/.wake-spool*
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "gone:vfy-review" "a verifier is still POLLED: its vanished window wakes the chief"
@@ -3469,7 +3472,7 @@ reset_state
 # brings far inside the bound, while the heartbeat stays far past it.
 outf="$TMP/push-orphan.out"
 seed_pane famL-chief pFL tFL
-printf 'kind=roomchief\nwindow=crew:famL-chief\nbackend=herdr\n' >"$state/famL-chief.meta"
+printf 'kind=roomchief\nwindow=crew:famL-chief\nbackend=orca\n' >"$state/famL-chief.meta"
 AC_LOCK_PID=$$ AC_POLL=1 AC_HEARTBEAT="$push_hb" bash "$BIN/ac-watch.sh" >"$outf" 2>/dev/null &
 wpid=$!
 await_poll_wait || fail "the watcher never armed into its poll wait"
@@ -3504,10 +3507,10 @@ reset_state
 # including the TUI glyph the pane renders it behind, which the pushed marker
 # text cannot carry.
 mkdir -p "$AC_HOME/data/pd1"
-printf 'window=crew:pd1\nbackend=herdr\n' >"$state/pd1.meta"
+printf 'window=crew:pd1\nbackend=orca\n' >"$state/pd1.meta"
 seed_pane pd1 pPD1 tPD1
 env -u AC_HOME -u AC_SCOPE AC_FLEET_STATE="$state" "$BIN/ac-done.sh" pd1 'done: pushed and printed' >/dev/null
-printf '⏺ done: pushed and printed\n' >>"$(fake_pane_buf pd1)"
+printf '⏺ done: pushed and printed\n' >>"$(fake_orca_buf pd1)"
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "check:quiet" "the pane marker of an already-pushed completion wakes nobody twice"
 assert_eq "$(fleet_spool | grep -c 'pushed and printed' || true)" "1" \
@@ -3524,12 +3527,12 @@ assert_file "$state/.rewake-pd1" "PUSH ADOPT arms the re-wake latch too (watch-m
 # that does new work and re-prints the same marker still wakes, once a busy
 # poll crosses it - the latch PUSH ADOPT armed means an unsteered revision
 # with no busy sample in between is the RESIDUAL, same as any other announce.
-: >"$(fake_pane_buf pd1)"
-printf 'esc to interrupt\n⏺ done: pushed and printed\n' >>"$(fake_pane_buf pd1)"
+: >"$(fake_orca_buf pd1)"
+printf 'esc to interrupt\n⏺ done: pushed and printed\n' >>"$(fake_orca_buf pd1)"
 bash "$BIN/ac-watch.sh" --once >/dev/null
 rm -rf "$state"/.wake-spool*
-: >"$(fake_pane_buf pd1)"
-printf 'revising\n⏺ done: pushed and printed\n' >>"$(fake_pane_buf pd1)"
+: >"$(fake_orca_buf pd1)"
+printf 'revising\n⏺ done: pushed and printed\n' >>"$(fake_orca_buf pd1)"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "report:pd1" \
   "a pushed marker re-printed after new pane work still wakes, once a busy poll crosses it"
 reset_state
@@ -3546,7 +3549,7 @@ rm -rf "$AC_HOME/data/pd1"
 # ONE record.)
 mkdir -p "$AC_HOME/data/pd2"
 printf 'window=crew:pd2\nbackend=herdr\n' >"$state/pd2.meta"
-seed_pane pd2 pPD2 tPD2
+seed_pane pd2 pPD2 tPD2 herdr
 # Indented exactly as a real capture renders it - the pushed text is the bare
 # line, so the stamp the push leaves is a SUFFIX of what the pane shows.
 printf '   needs-decision: keep or drop the cache?\n' >>"$(fake_pane_buf pd2)"
@@ -3576,7 +3579,7 @@ rm -rf "$AC_HOME/data/pd2"
 # its poll wait before the report and the push land, so the exit is the push's.
 mkdir -p "$AC_HOME/data/pa/plan"
 printf '# brief\n' >"$AC_HOME/data/pa/plan/brief.md"
-printf 'window=crew:pa-plan\nbackend=herdr\n' >"$state/pa-plan.meta"
+printf 'window=crew:pa-plan\nbackend=orca\n' >"$state/pa-plan.meta"
 seed_pane pa-plan pPA1 tPA1
 outf="$TMP/push-artifact.out"
 AC_LOCK_PID=$$ AC_POLL=30 AC_HEARTBEAT=25 bash "$BIN/ac-watch.sh" >"$outf" 2>/dev/null &
@@ -3614,20 +3617,19 @@ rm -rf "$AC_HOME/data/pa"
 reset_state
 rm -f "$state"/.captain-wait-* "$state"/*.status
 . "$BIN/ac-lib.sh"                          # AC_CAPTAIN_RE, to prove the new line is not one
-printf 'window=crew:ss1\nbackend=herdr\n' >"$state/ss1.meta"
+printf 'window=crew:ss1\nbackend=orca\n' >"$state/ss1.meta"
 seed_pane ss1 pSS1 tSS1
-printf 'needs-decision: keep or drop the cache?\n' >>"$(fake_pane_buf ss1)"
+printf 'needs-decision: keep or drop the cache?\n' >>"$(fake_orca_buf ss1)"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "report:ss1" "the marker wakes and parks the pane"
 assert_file "$state/.captain-wait-ss1" "the pane is stamped"
 
 # The EVIDENCE of later progress: BUSY while the fleet's own wait stamp still
 # stands - disk + tail, both already in hand each poll.
 rm -rf "$state"/.wake-spool*
-printf 'esc to interrupt\n' >>"$(fake_pane_buf ss1)"
+printf 'esc to interrupt\n' >>"$(fake_orca_buf ss1)"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "check:quiet" \
   "supersession tells the chief nothing new - it never wakes"
-assert_no_file "$state/.captain-wait-ss1" "the herdr wait stamp is released"
-assert_no_file "$FAKE_HERDR/panes/pSS1.reported" "... and the pane's reported state with it"
+assert_no_file "$state/.captain-wait-ss1" "the wait stamp is released"
 sup_line="$(tail -n1 "$state/ss1.status" | cut -d' ' -f2-)"   # what both renderers show
 assert_contains "$sup_line" "superseded" "the newest status line supersedes the marker"
 case "$sup_line" in "needs-decision:"*) \
@@ -3640,7 +3642,7 @@ fi
 # captain-wait marker still sitting in the tail the moment the pane reads
 # non-busy - without the durable per-marker record it would re-park the pane
 # supersession had just freed.
-printf 'needs-decision: keep or drop the cache?\nthe run carries on\n' >"$(fake_pane_buf ss1)"
+printf 'needs-decision: keep or drop the cache?\nthe run carries on\n' >"$(fake_orca_buf ss1)"
 bash "$BIN/ac-watch.sh" --once >/dev/null
 assert_no_file "$state/.captain-wait-ss1" \
   "a superseded marker must never re-park the pane it just freed"
@@ -3648,14 +3650,14 @@ assert_no_file "$state/.captain-wait-ss1" \
 # The record is per-MARKER, never a permanent immunity: a NEW captain-wait
 # marker parks the pane again...
 rm -rf "$state"/.wake-spool*
-printf 'needs-decision: which branch do I target?\n' >>"$(fake_pane_buf ss1)"
+printf 'needs-decision: which branch do I target?\n' >>"$(fake_orca_buf ss1)"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "report:ss1" "a new marker still wakes"
 assert_file "$state/.captain-wait-ss1" "a new captain-wait marker re-parks a superseded pane"
 # ...and the superseded marker itself becomes news again the moment the pane
 # RE-ANNOUNCES it: the record must die with it, or the answering steer's clear
 # could never be reconciled back to a stamp.
 rm -rf "$state"/.wake-spool*
-printf 'needs-decision: keep or drop the cache?\n' >>"$(fake_pane_buf ss1)"
+printf 'needs-decision: keep or drop the cache?\n' >>"$(fake_orca_buf ss1)"
 bash "$BIN/ac-watch.sh" --once >/dev/null
 "$BIN/ac-send.sh" ss1 'keep the cache' >/dev/null   # the answering steer clears the stamp
 bash "$BIN/ac-watch.sh" --once >/dev/null
@@ -3667,13 +3669,13 @@ assert_file "$state/.captain-wait-ss1" \
 # real captain-wait, which is the worse error.
 reset_state
 rm -f "$state"/.captain-wait-* "$state"/*.status
-printf 'window=crew:ss2\nbackend=herdr\n' >"$state/ss2.meta"
+printf 'window=crew:ss2\nbackend=orca\n' >"$state/ss2.meta"
 seed_pane ss2 pSS2 tSS2
-printf 'blocked: waiting on the captain\n' >>"$(fake_pane_buf ss2)"
+printf 'blocked: waiting on the captain\n' >>"$(fake_orca_buf ss2)"
 bash "$BIN/ac-watch.sh" --once >/dev/null
 assert_file "$state/.captain-wait-ss2" "a parked pane is stamped"
 rm -rf "$state"/.wake-spool*
-printf 'nothing new here\n' >>"$(fake_pane_buf ss2)"
+printf 'nothing new here\n' >>"$(fake_orca_buf ss2)"
 bash "$BIN/ac-watch.sh" --once >/dev/null
 assert_file "$state/.captain-wait-ss2" "a quiet pane keeps its stamp - no evidence of progress"
 assert_contains "$(tail -n1 "$state/ss2.status")" "blocked: waiting on the captain" \
@@ -3687,7 +3689,7 @@ rm -f "$state"/.captain-wait-* "$state"/*.status
 # agents of a family `failed: window gone` within 50s - one of them went on to
 # commit its fix through the same blind transport. The backend being unreadable
 # is no evidence about the pane, so it may produce no failure state.
-printf 'window=crew:ub1\nbackend=herdr\n' >"$state/ub1.meta"
+printf 'window=crew:ub1\nbackend=orca\n' >"$state/ub1.meta"
 seed_pane ub1 pUB1 tUB1
 bash "$BIN/ac-watch.sh" --once >/dev/null    # settle the pane
 rm -rf "$state"/.wake-spool*
@@ -3695,9 +3697,9 @@ rm -f "$state"/*.status
 
 # DISPUTED: whether the backend can answer. HELD-CONSTANT: the pane's own files
 # (handle, tab, buffer) are untouched - the pane is demonstrably still there.
-touch "$FAKE_HERDR/.unreachable"
+touch "$FAKE_ORCA/.unreachable"
 out="$(bash "$BIN/ac-watch.sh" --once)"
-rm -f "$FAKE_HERDR/.unreachable"
+rm -f "$FAKE_ORCA/.unreachable"
 assert_contains "$out" "unobservable:ub1" "an unreadable backend wakes the chief as UNOBSERVABLE"
 case "$out" in *gone:ub1*) fail "an unreadable backend must never be reported as a gone pane" ;; esac
 assert_contains "$(cat "$state/ub1.status")" "unobservable:" "the status records what actually happened"
@@ -3708,9 +3710,9 @@ assert_no_file "$state/.gone-ub1" "the gone dedup marker is untouched - a real d
 
 # Once-only while the outage lasts: the watcher keeps polling and stays quiet.
 rm -rf "$state"/.wake-spool*
-touch "$FAKE_HERDR/.unreachable"
+touch "$FAKE_ORCA/.unreachable"
 out="$(bash "$BIN/ac-watch.sh" --once)"
-rm -f "$FAKE_HERDR/.unreachable"
+rm -f "$FAKE_ORCA/.unreachable"
 case "$out" in *unobservable:ub1*) fail "a standing outage must not re-wake every poll" ;; esac
 assert_eq "$(grep -c 'unobservable:' "$state/ub1.status")" "1" "one outage, one status line"
 
@@ -3718,15 +3720,15 @@ assert_eq "$(grep -c 'unobservable:' "$state/ub1.status")" "1" "one outage, one 
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_no_file "$state/.unobservable-ub1" "a readable backend clears the outage marker"
 rm -rf "$state"/.wake-spool*
-touch "$FAKE_HERDR/.unreachable"
+touch "$FAKE_ORCA/.unreachable"
 out="$(bash "$BIN/ac-watch.sh" --once)"
-rm -f "$FAKE_HERDR/.unreachable"
+rm -f "$FAKE_ORCA/.unreachable"
 assert_contains "$out" "unobservable:ub1" "a LATER outage wakes the chief again"
 
 # THE OTHER HALF: a real death is still detected, and still says so.
 rm -rf "$state"/.wake-spool*
 rm -f "$state"/*.status "$state/.unobservable-ub1"
-rm -f "$FAKE_HERDR/panes/pUB1.buf" "$FAKE_HERDR/tabs/tUB1"
+rm -f "$FAKE_ORCA/terminals/pUB1".*
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "gone:ub1" "a reachable backend that does not know the pane is still GONE"
 assert_contains "$(cat "$state/ub1.status")" "failed: window gone" "a real death still records the failure"
@@ -3741,7 +3743,7 @@ seed_pane ub1 pUB1 tUB1              # "recovery": the window is alive again
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_no_file "$state/.gone-ub1" "a recovered (alive) pane clears the gone dedup marker"
 rm -rf "$state"/.wake-spool*
-rm -f "$FAKE_HERDR/panes/pUB1.buf" "$FAKE_HERDR/tabs/tUB1"    # the second death
+rm -f "$FAKE_ORCA/terminals/pUB1".*    # the second death
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "gone:ub1" "a SECOND death after recovery wakes again"
 assert_contains "$(fleet_spool)" "gone	ub1" "the second gone wake is published durably"
@@ -3759,7 +3761,7 @@ assert_contains "$(fleet_spool)" "gone	ub1" "the second gone wake is published d
 # unobservable read with herdr absent from PATH (the liveness ladder's 2).
 reset_state
 rm -f "$state"/*.status
-printf 'window=crew:lf1\nbackend=herdr\n' >"$state/lf1.meta"
+printf 'window=crew:lf1\nbackend=orca\n' >"$state/lf1.meta"
 seed_pane lf1 pLF1 tLF1
 nh_path="$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin:/sbin"
 if [ -z "$(PATH="$nh_path" command -v herdr || true)" ]; then
@@ -3804,9 +3806,9 @@ printf 'command:%s\n' "$notify_hook" >"$AC_HOME/config/wedge-alarm"
 notified() { grep -c "^crew $1\$" "$notify_log" 2>/dev/null || true; }
 
 # report (the ordinary marker path).
-printf 'window=crew:nk-rep\nbackend=herdr\n' >"$state/nk-rep.meta"
+printf 'window=crew:nk-rep\nbackend=orca\n' >"$state/nk-rep.meta"
 seed_pane nk-rep pNKR tNKR
-printf 'done: shipped\n' >>"$(fake_pane_buf nk-rep)"
+printf 'done: shipped\n' >>"$(fake_orca_buf nk-rep)"
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "report:nk-rep" "report still wakes"
 assert_contains "$(fleet_spool)" "done: shipped" "report wake still publishes durably"
@@ -3815,9 +3817,9 @@ rm -rf "$state"/.wake-spool*
 
 # gone.
 rm -f "$state"/*.meta
-printf 'window=crew:nk-gone\nbackend=herdr\n' >"$state/nk-gone.meta"
+printf 'window=crew:nk-gone\nbackend=orca\n' >"$state/nk-gone.meta"
 seed_pane nk-gone pNKG tNKG
-rm -f "$FAKE_HERDR/panes/pNKG.buf" "$FAKE_HERDR/tabs/tNKG"
+rm -f "$FAKE_ORCA/terminals/pNKG".*
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "gone:nk-gone" "gone still wakes"
 assert_contains "$(fleet_spool)" "gone	nk-gone" "gone wake still publishes durably"
@@ -3826,26 +3828,26 @@ rm -rf "$state"/.wake-spool*
 
 # ask.
 rm -f "$state"/*.meta
-printf 'window=crew:nk-ask\nbackend=herdr\n' >"$state/nk-ask.meta"
+printf 'window=crew:nk-ask\nbackend=orca\n' >"$state/nk-ask.meta"
 seed_pane nk-ask pNKA tNKA
-printf 'blocked\n' >"$FAKE_HERDR/panes/pNKA.status"
+: >"$FAKE_ORCA/terminals/pNKA.agentwait"
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "ask:nk-ask" "ask still wakes"
 assert_contains "$(fleet_spool)" "ask	nk-ask" "ask wake still publishes durably"
 assert_eq "$(notified ask)" "0" "ask no longer notifies (chief-owned, not blocked-by-captain)"
 rm -rf "$state"/.wake-spool*
-rm -f "$FAKE_HERDR/panes/pNKA.status"
+rm -f "$FAKE_ORCA/terminals/pNKA.agentwait"
 
 # stale (working, quiet past AC_STALE).
 rm -f "$state"/*.meta
 mkdir -p "$AC_HOME/data/nk-stale"
-printf 'window=crew:nk-stale\nbackend=herdr\n' >"$state/nk-stale.meta"
+printf 'window=crew:nk-stale\nbackend=orca\n' >"$state/nk-stale.meta"
 seed_pane nk-stale pNKS tNKS
-printf 'comparing candidate paths\n' >>"$(fake_pane_buf nk-stale)"
+printf 'comparing candidate paths\n' >>"$(fake_orca_buf nk-stale)"
 bash "$BIN/ac-watch.sh" --once >/dev/null   # settle the tail hash/change stamp
 rm -rf "$state"/.wake-spool*
 printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-nk-stale"
-printf 'working\n' >"$FAKE_HERDR/panes/pNKS.status"
+printf '\xe2\x97\x90 fake\n' >"$FAKE_ORCA/terminals/pNKS.title"
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "stale:nk-stale" "stale still wakes"
 assert_contains "$(fleet_spool)" "quiet for" "stale wake still publishes durably"
@@ -3855,13 +3857,13 @@ rm -rf "$state"/.wake-spool*
 # ended (idle, quiet past AC_STALE).
 rm -f "$state"/*.meta
 mkdir -p "$AC_HOME/data/nk-ended"
-printf 'window=crew:nk-ended\nbackend=herdr\n' >"$state/nk-ended.meta"
+printf 'window=crew:nk-ended\nbackend=orca\n' >"$state/nk-ended.meta"
 seed_pane nk-ended pNKE tNKE
-printf 'summarising the change\n' >>"$(fake_pane_buf nk-ended)"
+printf 'summarising the change\n' >>"$(fake_orca_buf nk-ended)"
 bash "$BIN/ac-watch.sh" --once >/dev/null
 rm -rf "$state"/.wake-spool*
 printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-nk-ended"
-printf 'idle\n' >"$FAKE_HERDR/panes/pNKE.status"
+printf '\xe2\x9c\xb3 fake\n' >"$FAKE_ORCA/terminals/pNKE.title"
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "ended:nk-ended" "ended still wakes"
 assert_contains "$(fleet_spool)" "ended its turn" "ended wake still publishes durably"
@@ -3873,14 +3875,14 @@ rm -rf "$state"/.wake-spool*
 # ask/gone - it is chief-owned (the chief checks the backend), not
 # captain-approval.
 rm -f "$state"/*.meta
-printf 'window=crew:nk-unobs\nbackend=herdr\n' >"$state/nk-unobs.meta"
+printf 'window=crew:nk-unobs\nbackend=orca\n' >"$state/nk-unobs.meta"
 seed_pane nk-unobs pNKU tNKU
 bash "$BIN/ac-watch.sh" --once >/dev/null   # settle the pane
 rm -rf "$state"/.wake-spool*
 rm -f "$state"/*.status
-touch "$FAKE_HERDR/.unreachable"
+touch "$FAKE_ORCA/.unreachable"
 out="$(bash "$BIN/ac-watch.sh" --once)"
-rm -f "$FAKE_HERDR/.unreachable"
+rm -f "$FAKE_ORCA/.unreachable"
 assert_contains "$out" "unobservable:nk-unobs" "unobservable still wakes"
 assert_contains "$(fleet_spool)" "unobservable	nk-unobs" "unobservable wake still publishes durably"
 assert_eq "$(notified unobservable)" "0" "unobservable no longer notifies (chief-owned, not blocked-by-captain)"
@@ -3904,9 +3906,9 @@ printf 'off\n' >"$AC_HOME/config/wedge-alarm"
 # Pane A stays blocked: the needs-decision line is unchanged and true.
 rm -f "$state"/*.meta
 mkdir -p "$AC_HOME/data/ral-b"
-printf 'window=crew:ral-b\nbackend=herdr\n' >"$state/ral-b.meta"
+printf 'window=crew:ral-b\nbackend=orca\n' >"$state/ral-b.meta"
 seed_pane ral-b pRALB tRALB
-printf 'blocked\n' >"$FAKE_HERDR/panes/pRALB.status"
+: >"$FAKE_ORCA/terminals/pRALB.agentwait"
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "ask:ral-b" "a still-blocked pane still wakes ask:"
 assert_contains "$(cat "$state/ral-b.status")" "needs-decision: pane blocked on an interactive prompt" \
@@ -3917,13 +3919,14 @@ rm -rf "$state"/.wake-spool*
 # Pane B was blocked, then its turn ended (idle): a DIFFERENT line from A.
 rm -f "$state"/*.meta
 mkdir -p "$AC_HOME/data/ral-i"
-printf 'window=crew:ral-i\nbackend=herdr\n' >"$state/ral-i.meta"
+printf 'window=crew:ral-i\nbackend=orca\n' >"$state/ral-i.meta"
 seed_pane ral-i pRALI tRALI
-printf 'blocked\n' >"$FAKE_HERDR/panes/pRALI.status"
+: >"$FAKE_ORCA/terminals/pRALI.agentwait"
 bash "$BIN/ac-watch.sh" --once >/dev/null
 rm -rf "$state"/.wake-spool*
 assert_file "$state/.ask-ral-i" "pane B latched blocked before it resumed"
-printf 'idle\n' >"$FAKE_HERDR/panes/pRALI.status"
+rm -f "$FAKE_ORCA/terminals/pRALI.agentwait"
+printf '\xe2\x9c\xb3 fake\n' >"$FAKE_ORCA/terminals/pRALI.title"
 bash "$BIN/ac-watch.sh" --once >/dev/null
 assert_no_file "$state/.ask-ral-i" "resuming clears the ask latch"
 # Message only, timestamp stripped (ac_status_append's own "<ts> <line>"
@@ -3950,12 +3953,13 @@ rm -rf "$state"/.wake-spool*
 # distinguishable from both A and B.
 rm -f "$state"/*.meta
 mkdir -p "$AC_HOME/data/ral-w"
-printf 'window=crew:ral-w\nbackend=herdr\n' >"$state/ral-w.meta"
+printf 'window=crew:ral-w\nbackend=orca\n' >"$state/ral-w.meta"
 seed_pane ral-w pRALW tRALW
-printf 'blocked\n' >"$FAKE_HERDR/panes/pRALW.status"
+: >"$FAKE_ORCA/terminals/pRALW.agentwait"
 bash "$BIN/ac-watch.sh" --once >/dev/null
 rm -rf "$state"/.wake-spool*
-printf 'working\n' >"$FAKE_HERDR/panes/pRALW.status"
+rm -f "$FAKE_ORCA/terminals/pRALW.agentwait"
+printf '\xe2\x97\x90 fake\n' >"$FAKE_ORCA/terminals/pRALW.title"
 bash "$BIN/ac-watch.sh" --once >/dev/null
 assert_no_file "$state/.ask-ral-w" "resuming clears the ask latch (working too)"
 working_line="$(tail -n1 "$state/ral-w.status" | cut -d' ' -f2-)"
@@ -3984,16 +3988,15 @@ fi
 # (resumed while still blocked).
 rm -f "$state"/*.meta
 mkdir -p "$AC_HOME/data/ral-cw"
-printf 'window=crew:ral-cw\nbackend=herdr\n' >"$state/ral-cw.meta"
+printf 'window=crew:ral-cw\nbackend=orca\n' >"$state/ral-cw.meta"
 seed_pane ral-cw pRALCW tRALCW
-printf 'blocked\n' >"$FAKE_HERDR/panes/pRALCW.status"
+: >"$FAKE_ORCA/terminals/pRALCW.agentwait"
 bash "$BIN/ac-watch.sh" --once >/dev/null
 rm -rf "$state"/.wake-spool*
 assert_file "$state/.ask-ral-cw" "pane latched blocked before the captain-wait stamp lands"
 
 # The stamp lands (bin/ac-room.sh cmd_post's backend_mark_wait, simulated
-# directly): herdr reports the pane blocked and the wait file is touched.
-printf 'blocked\n' >"$FAKE_HERDR/panes/pRALCW.reported"
+# directly): the wait file is touched.
 touch "$state/.captain-wait-ral-cw"
 before="$(wc -l <"$state/ral-cw.status")"
 bash "$BIN/ac-watch.sh" --once >/dev/null
@@ -4007,8 +4010,8 @@ esac
 rm -rf "$state"/.wake-spool*
 
 # The stamp clears AND the pane has genuinely resumed: the honest line lands.
-rm -f "$FAKE_HERDR/panes/pRALCW.reported" "$state/.captain-wait-ral-cw"
-printf 'idle\n' >"$FAKE_HERDR/panes/pRALCW.status"
+rm -f "$state/.captain-wait-ral-cw" "$FAKE_ORCA/terminals/pRALCW.agentwait"
+printf '\xe2\x9c\xb3 fake\n' >"$FAKE_ORCA/terminals/pRALCW.title"
 bash "$BIN/ac-watch.sh" --once >/dev/null
 assert_no_file "$state/.ask-ral-cw" "a genuine resume after the stamp clears finally releases the latch"
 resumed_line="$(tail -n1 "$state/ral-cw.status" | cut -d' ' -f2-)"
@@ -4031,10 +4034,10 @@ rm -f "$state"/*.status
 rm -rf "$state"/.wake-spool*
 
 mkdir -p "$AC_HOME/data/bs-hung"
-printf 'window=crew:bs-hung\nbackend=herdr\n' >"$state/bs-hung.meta"
+printf 'window=crew:bs-hung\nbackend=orca\n' >"$state/bs-hung.meta"
 seed_pane bs-hung pBSH tBSH
-printf 'Working… (esc to interrupt)\n' >>"$(fake_pane_buf bs-hung)"
-printf 'working\n' >"$FAKE_HERDR/panes/pBSH.status"
+printf 'Working… (esc to interrupt)\n' >>"$(fake_orca_buf bs-hung)"
+printf '\xe2\x97\x90 fake\n' >"$FAKE_ORCA/terminals/pBSH.title"
 
 out="$(bash "$BIN/ac-watch.sh" --once)"
 case "$out" in *bs-hung*) fail "a freshly-busy pane must not wake" ;; esac
@@ -4068,22 +4071,22 @@ assert_eq "$(fleet_spool)" "" "no second durable record for the same busy run"
 
 # A CHANGING tail does not re-arm it either - the anchor is keyed to the busy
 # run, not to the pane text (the hash clock is exactly what cannot be trusted).
-printf 'Working… (esc to interrupt) 42s\n' >>"$(fake_pane_buf bs-hung)"
+printf 'Working… (esc to interrupt) 42s\n' >>"$(fake_orca_buf bs-hung)"
 out="$(bash "$BIN/ac-watch.sh" --once)"
 case "$out" in *bs-hung*) fail "a redrawn busy footer must not re-fire the busy-stall wake" ;; esac
 
 # The run ENDS when the pane goes non-busy: both files clear, so the next busy
 # run is bounded afresh.
-: >"$(fake_pane_buf bs-hung)"
-printf 'comparing candidate paths\n' >>"$(fake_pane_buf bs-hung)"
+: >"$(fake_orca_buf bs-hung)"
+printf 'comparing candidate paths\n' >>"$(fake_orca_buf bs-hung)"
 bash "$BIN/ac-watch.sh" --once >/dev/null
 assert_no_file "$state/.busy-bs-hung" "the busy-run stamp clears when the pane stops being busy"
 assert_no_file "$state/.busy-stalled-bs-hung" "the busy-stall anchor clears with its run"
 rm -rf "$state"/.wake-spool*
 
 # 0 disables the bound outright.
-: >"$(fake_pane_buf bs-hung)"
-printf 'Working… (esc to interrupt)\n' >>"$(fake_pane_buf bs-hung)"
+: >"$(fake_orca_buf bs-hung)"
+printf 'Working… (esc to interrupt)\n' >>"$(fake_orca_buf bs-hung)"
 AC_BUSY_MAX=0 bash "$BIN/ac-watch.sh" --once >/dev/null
 printf '%s\n' "$(( $(date +%s) - 3000 ))" >"$state/.busy-bs-hung"
 out="$(AC_BUSY_MAX=0 bash "$BIN/ac-watch.sh" --once)"
@@ -4097,10 +4100,10 @@ rm -rf "$state"/.wake-spool*
 reset_state
 rm -rf "$state"/.wake-spool*
 mkdir -p "$AC_HOME/data/bs-decl"
-printf 'window=crew:bs-decl\nbackend=herdr\n' >"$state/bs-decl.meta"
+printf 'window=crew:bs-decl\nbackend=orca\n' >"$state/bs-decl.meta"
 seed_pane bs-decl pBSD tBSD
-printf 'Working… (esc to interrupt)\n' >>"$(fake_pane_buf bs-decl)"
-printf 'working\n' >"$FAKE_HERDR/panes/pBSD.status"
+printf 'Working… (esc to interrupt)\n' >>"$(fake_orca_buf bs-decl)"
+printf '\xe2\x97\x90 fake\n' >"$FAKE_ORCA/terminals/pBSD.title"
 bash "$BIN/ac-watch.sh" --once >/dev/null
 printf '%s\n' "$(( $(date +%s) - 3000 ))" >"$state/.busy-bs-decl"
 printf '%s\n' "$(( $(date +%s) + 300 ))" >"$state/.chief-busy-until.bs-decl"
@@ -4136,10 +4139,10 @@ stale_pane() {
   # stale_pane <id> <p> <t> - a working crewmate pane settled and backdated
   # past AC_STALE, one poll away from today's stale: wake.
   mkdir -p "$AC_HOME/data/$1"
-  printf 'window=crew:%s\nbackend=herdr\n' "$1" >"$state/$1.meta"
+  printf 'window=crew:%s\nbackend=orca\n' "$1" >"$state/$1.meta"
   seed_pane "$1" "$2" "$3"
-  printf 'comparing candidate paths\n' >>"$(fake_pane_buf "$1")"
-  printf 'working\n' >"$FAKE_HERDR/panes/$2.status"
+  printf 'comparing candidate paths\n' >>"$(fake_orca_buf "$1")"
+  printf '\xe2\x97\x90 fake\n' >"$FAKE_ORCA/terminals/$2.title"
   bash "$BIN/ac-watch.sh" --once >/dev/null
   rm -rf "$state"/.wake-spool*
   printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-$1"
@@ -4301,7 +4304,7 @@ out="$(AC_STALE_MAX_WAKES=2 bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "stale:cap" "wake 1 of 2"
 assert_no_file "$state/.stale-capped-cap" "not capped yet"
 rm -rf "$state"/.wake-spool*
-printf 'redraw 1\n' >"$(fake_pane_buf cap)"
+printf 'redraw 1\n' >"$(fake_orca_buf cap)"
 out="$(AC_STALE_MAX_WAKES=2 bash "$BIN/ac-watch.sh" --once)"
 case "$out" in *stale:cap*) fail "the redraw itself is anchored" ;; esac
 printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-cap"
@@ -4310,18 +4313,18 @@ assert_contains "$out" "stale:cap" "wake 2 of 2 - capped"
 assert_file "$state/.stale-capped-cap" "the cap marker"
 assert_contains "$(fleet_spool)" "PERMANENTLY-STALE" "the cap's clause"
 rm -rf "$state"/.wake-spool*
-printf 'redraw 2\n' >"$(fake_pane_buf cap)"
+printf 'redraw 2\n' >"$(fake_orca_buf cap)"
 out="$(AC_STALE_MAX_WAKES=2 bash "$BIN/ac-watch.sh" --once)"
 case "$out" in *stale:cap*) fail "the redraw after capping is anchored too" ;; esac
 printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-cap"
 out="$(AC_STALE_MAX_WAKES=2 bash "$BIN/ac-watch.sh" --once)"
 case "$out" in *stale:cap*) fail "capped - no third wake despite the window elapsing again" ;; esac
-printf 'esc to interrupt\n' >"$(fake_pane_buf cap)"
+printf 'esc to interrupt\n' >"$(fake_orca_buf cap)"
 out="$(AC_STALE_MAX_WAKES=2 bash "$BIN/ac-watch.sh" --once)"
 case "$out" in *stale:cap*) fail "a busy poll is quiet, not stale" ;; esac
 assert_no_file "$state/.stale-count-cap" "a busy poll resets the count"
 rm -f "$state/.stale-capped-cap"
-printf 'redraw 3\n' >"$(fake_pane_buf cap)"
+printf 'redraw 3\n' >"$(fake_orca_buf cap)"
 out="$(AC_STALE_MAX_WAKES=2 bash "$BIN/ac-watch.sh" --once)"
 case "$out" in *stale:cap*) fail "the redraw back to idle is anchored" ;; esac
 printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-cap"
@@ -4337,8 +4340,8 @@ out="$(AC_STALE_MAX_WAKES=1 bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "stale:capI1" "wake 1 of 1 - capped"
 assert_file "$state/.stale-capped-capI1" "the cap marker"
 rm -rf "$state"/.wake-spool*
-printf 'idle now\n' >"$(fake_pane_buf capI1)"
-printf 'idle\n' >"$FAKE_HERDR/panes/pCAPI1.status"
+printf 'idle now\n' >"$(fake_orca_buf capI1)"
+printf '\xe2\x9c\xb3 fake\n' >"$FAKE_ORCA/terminals/pCAPI1.title"
 out="$(AC_STALE_MAX_WAKES=1 bash "$BIN/ac-watch.sh" --once)"
 case "$out" in *stale:capI1*|*ended:capI1*) fail "the redraw itself is anchored" ;; esac
 printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-capI1"
@@ -4353,7 +4356,7 @@ stale_pane capI2 pCAPI2 tCAPI2
 out="$(AC_STALE_MAX_WAKES=2 bash "$BIN/ac-watch.sh" --once)"
 assert_contains "$out" "stale:capI2" "wake 1 of 2"
 rm -rf "$state"/.wake-spool*
-printf 'redraw 1\n' >"$(fake_pane_buf capI2)"
+printf 'redraw 1\n' >"$(fake_orca_buf capI2)"
 out="$(AC_STALE_MAX_WAKES=2 bash "$BIN/ac-watch.sh" --once)"
 case "$out" in *stale:capI2*) fail "the redraw is anchored" ;; esac
 printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-capI2"
@@ -4362,7 +4365,7 @@ assert_contains "$out" "stale:capI2" "wake 2 of 2 - capped"
 assert_file "$state/.stale-capped-capI2" "the cap marker"
 rm -rf "$state"/.wake-spool*
 rm -f "$state/.stale-capped-capI2"
-printf 'redraw 2\n' >"$(fake_pane_buf capI2)"
+printf 'redraw 2\n' >"$(fake_orca_buf capI2)"
 out="$(AC_STALE_MAX_WAKES=2 bash "$BIN/ac-watch.sh" --once)"
 case "$out" in *stale:capI2*) fail "the redraw after removing the marker is anchored" ;; esac
 printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-capI2"
@@ -4395,10 +4398,10 @@ printf '%s needs-decision: waiting on review\n' "$(date -u +%FT%TZ)" >"$state/dw
 out="$(bash "$BIN/ac-watch.sh" --once)"
 case "$out" in *stale:dw2*) fail "a declared wait defers" ;; esac
 assert_eq "$(defer_lines dw2)" "1" "logged once"
-printf 'esc to interrupt\n' >"$(fake_pane_buf dw2)"
+printf 'esc to interrupt\n' >"$(fake_orca_buf dw2)"
 out="$(bash "$BIN/ac-watch.sh" --once)"
 assert_eq "$out" "check:quiet" "the busy edge itself"
-printf 'quiet again\n' >"$(fake_pane_buf dw2)"
+printf 'quiet again\n' >"$(fake_orca_buf dw2)"
 out="$(bash "$BIN/ac-watch.sh" --once)"
 case "$out" in *stale:dw2*) fail "the redraw back to idle is anchored" ;; esac
 printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-dw2"
