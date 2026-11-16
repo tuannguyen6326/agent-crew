@@ -186,8 +186,8 @@ lease="$TMP/verifier-tree"
 git clone -q "$repo" "$lease"
 
 # verifyLease/returnLeases/verifyDropBranch (src/verify.ts) always lease
-# through orcaWorktreeLease/orcaWorktreeRelease now (T9 deleted the
-# non-orca branch): a fake `orca` ahead on PATH stands in for the CLI those
+# through orcaWorktreeLease/orcaWorktreeRelease: a fake `orca` ahead on PATH
+# stands in for the CLI those
 # two helpers shell out to. Unlike a real lease (fresh worktree, destroyed
 # on release), `worktree create` here hands back the SAME pre-made clone
 # every round and `worktree rm` is a no-op - the orca twin of the pool's own
@@ -2911,8 +2911,7 @@ for x in herdr claude codex opencode pi cursor-agent agy gemini docker codegraph
   printf '#!/bin/sh\nprintf "%%s %%s\\n" %s "$*" >>"$XW/log/refused.log"\nexit 99\n' "$x" >"$XS/$x"
 done
 # verifyLease/returnLeases/verifyDropBranch (src/verify.ts) always lease
-# through orcaWorktreeLease/orcaWorktreeRelease now (T9 deleted the
-# non-orca branch, along with AC_VERIFY_TREE_BIN): this fake `orca` is the
+# through orcaWorktreeLease/orcaWorktreeRelease: this fake `orca` is the
 # $XS twin of the persistent fixture the suite's own setup comment explains
 # above, keyed the same way xtree's old --id *-e2e* match was, on the
 # --name this file's own verifyLease(e2eRepoRoot, `${id}-e2e`) call mints.
@@ -2956,10 +2955,9 @@ make_fake_orca
 
 # verifyLease (src/verify.ts:2439-2446), returnLeases (src/verify.ts:683) and
 # verifyDropBranch (src/verify.ts:2455) always lease through
-# orcaWorktreeLease/orcaWorktreeRelease now (T9 deleted the orcaFleet()-gated
-# branch and AC_VERIFY_TREE_BIN) - the $XS/orca stub above stands in for the
-# CLI those two helpers shell out to, so every row needs backend=orca pinned
-# unless its own XE overrides it.
+# orcaWorktreeLease/orcaWorktreeRelease - the $XS/orca stub above stands in
+# for the CLI those two helpers shell out to, so every row needs backend=orca
+# pinned unless its own XE overrides it.
 xseed() { [ ! -e "$XW" ] || chmod -R u+w "$XW"; rm -rf "$XW"; mkdir -p "$XW/home/state" "$XW/home/config" "$XW/cwd" "$XW/tmp" "$XW/log"; printf 'orca\n' >"$XW/home/config/backend"; }
 xstd() {  # the standard world
   xseed

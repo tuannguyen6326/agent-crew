@@ -293,8 +293,8 @@ assert_contains "$err" "already exists" "a genuinely alive orphan pane still ref
 assert_no_file "$state/or1.meta" "the refused start leaves no task in flight"
 rm -f "$state/.pane-or1" "$FAKE_ORCA/terminals/pOR1.buf"
 
-# rc=2 (an unreadable backend) and rc=127 (a driver load failure) used to
-# refuse at the window-liveness check exactly like the rc=0 case above.
+# rc=2 (an unreadable backend) and rc=127 (a driver load failure) refuse at
+# the window-liveness check exactly like the rc=0 case above.
 # `.unreachable` (tests/sh/helpers.sh) fails the EARLIER lease first (step 2
 # precedes step 3, src/self-task.ts header) rather than isolating the check,
 # but a thin wrapper ahead of the real fake orca - failing only the two
@@ -622,8 +622,8 @@ xworld() {  # xworld - a fresh world: the home $XW/$XHN, the repo $XW/proj (one 
     "$XW/tmp" "$XW/stub" "$XW/hh" "$XW/cwd" "$XW/herdr/panes" "$XW/herdr/tabs" "$XW/orca/terminals" "$XW/.claude"
   printf 'off\n' >"$XW/$XHN/config/wedge-alarm"
   printf 'off\n' >"$XW/$XHN/config/brain-auto-sync"
-  # self-task.ts is orca-only now (T9 deleted the non-orca lease branch), so
-  # every row's world defaults to orca - xorca below is now a plain alias.
+  # self-task.ts is orca-only, so every row's world defaults to orca - xorca
+  # below is a plain alias.
   printf 'orca\n' >"$XW/$XHN/config/backend"
   printf 'the container crewmate layer\n' >"$XW/.claude/CLAUDE.md"
   printf '\342\234\263 fake\n' >"$XW/orca/.default-title"

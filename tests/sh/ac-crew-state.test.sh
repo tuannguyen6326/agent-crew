@@ -215,8 +215,7 @@ clive k2 pK2 'kind=self\n'
 crun k2; assert_eq "$(cout)" "idle" "4: a self task with a live pane reads its pane"
 cfmt home/state/k1.meta 'backend=tmux\n'
 crun k1; assert_eq "$C_RC:$(cout):$(cerr)" "1::$CBAD" "4: a stale tmux meta exits inside the route"
-# KNOWN DEFECT (not T9's to fix - metaBackend, src/lib.ts:1876-1884, outside
-# this story's write set): die()'s own contract (lib.ts:34-35) writes a
+# KNOWN DEFECT (metaBackend, src/lib.ts:1876-1884): die()'s own contract (lib.ts:34-35) writes a
 # Uint8Array verbatim but UTF-8-ENCODES a string - metaBackend passes the
 # latin1-decoded meta byte(s) straight into a template-literal string, so
 # they are encoded a SECOND time. A valid two-byte UTF-8 char comes back

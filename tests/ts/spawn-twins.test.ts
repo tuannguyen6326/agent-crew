@@ -568,27 +568,26 @@ test("orcaWorktreeLease leases an Orca worktree on the crew branch as orca_workt
   if (!ROOTED) same("the fence: a ledger that cannot be read", { ...LEASE, seed: (s) => (repo(s), fence(s), chmodSync(join(s, "home/records/backlog.md"), 0o000)) });
 }, 240000);
 
-// GAP (T9): every herdr-pinned row across this file's remaining herdr-labeled
-// test sections (backendWindowNew, backendDialogAnswer, backendAgentIdle,
-// backendSubmitVerified, backendStartupDialogs) used to exercise the live
-// driver through ac_backend_route's/backendRoute's full ladder. T8's cutover
-// made that ladder refuse "herdr" outright on both sides - the bash oracle
-// dies sourcing ac-backend.sh before the row's own call is ever reached, and
-// the TS twin's backendRoute() returns null before reaching the herdr branch
-// - so every seeded fixture variation (dozens of them, across all five
-// sections) now collapses to the SAME "unsupported backend 'herdr'" refusal
-// on both sides: same() itself still agrees, but the driver code the row was
-// written to exercise never runs. Each section guarded against exactly this
-// going unnoticed with an explicit `.o.log` match proving the driver fired -
-// that guard is what now fails, by design. T8's own bypass precedent (an
-// exported low-level primitive called directly, confined to
-// tests/ts/backend.test.ts and teardown.test.ts) has no equivalent entry
-// point for backend_window_new/backend_startup_dialogs's id-keyed callers:
-// their herdr arms are either inlined behind the unexported backendRoute()
-// or require resolving the id to a pane through a wrapper that itself routes
-// again. Every herdr-labeled row below is deleted rather than ported; the
-// matching orca-labeled and unsupported-backend rows in the same sections
-// stay, since those still run the real, current code.
+// GAP: a herdr-pinned row cannot exercise the live driver through
+// ac_backend_route's/backendRoute's full ladder in any of this file's
+// remaining herdr-labeled test sections (backendWindowNew, backendDialogAnswer,
+// backendAgentIdle, backendSubmitVerified, backendStartupDialogs). That
+// ladder refuses "herdr" outright on both sides - the bash oracle dies
+// sourcing ac-backend.sh before the row's own call is ever reached, and the
+// TS twin's backendRoute() returns null before reaching the herdr branch -
+// so every seeded fixture variation (dozens of them, across all five
+// sections) collapses to the SAME "unsupported backend 'herdr'" refusal on
+// both sides: same() itself still agrees, but the driver code the row was
+// written to exercise never runs. Each section's own explicit `.o.log` match
+// is what catches this and fails, by design. A bypass exists (an exported
+// low-level primitive called directly, confined to tests/ts/backend.test.ts
+// and teardown.test.ts) but has no equivalent entry point for
+// backend_window_new/backend_startup_dialogs's id-keyed callers: their herdr
+// arms are either inlined behind the unexported backendRoute() or require
+// resolving the id to a pane through a wrapper that itself routes again.
+// Every herdr-labeled row below is deleted rather than ported; the matching
+// orca-labeled and unsupported-backend rows in the same sections stay, since
+// those still run the real, current code.
 const WN: Row = { bash: `backend_window_new "$1" "$2"`, twin: `return L.backendWindowNew(A[0], A[1]).status;`, errexit: true, args: ["t1", "@S/wt"] };
 const wtDir = (s: string): void => mkdirSync(join(s, "wt"));
 
@@ -632,8 +631,8 @@ test("backendWindowNew orca: worktree panes under their node, home panes in thei
   // Homeless, the handle refused: bash re-expands a redirection it cannot open
   // to name it in its error, so the handle path's `$(ac_state_dir)` prints its
   // ERROR twice - a refusal printed twice (FAIL-PATH), not reproduced. Bash
-  // mechanics, not backend-specific; ported off the herdr pin this used to
-  // carry (see the GAP comment above WN).
+  // mechanics, not backend-specific - pinned to orca here (see the GAP
+  // comment above WN).
   if (!ROOTED) {
     const p = pair({ ...WN, homeless: true, env: { ...ORCA_, AC_FLEET_NAME: "fl" }, seed: wtDir });
     const once = p.o.err.replace(/^(ERROR: AC_HOME is not set.*\n)\1/m, "$1");
@@ -652,8 +651,7 @@ const OSHOW = (terminal: string): string => `{"ok":true,"result":{"terminal":${t
 test("backendDialogAnswer and its raw-pane form answer the named startup dialogs as the drivers did", () => {
   const id = verb("backend_dialog_answer", `L.backendDialogAnswer(A[0], ${IO})`, ["c1"]);
   const raw = verb("backend_dialog_answer_pane", `L.backendDialogAnswerPane(A[0], ${IO})`, ["p1"]);
-  // GAP (T9): the herdr-pinned rows this block once ran are gone - see the
-  // GAP comment above WN.
+  // GAP: this block has no herdr-pinned rows - see the GAP comment above WN.
   same("orca: no handle", { ...id, env: ORCA_ });
   same("orca: show fails", { ...id, env: ORCA_, seed: (s) => (O(s), put(s, "stub/terminal-show.rc", "1\n")) });
   same("orca: nothing pending", { ...id, env: ORCA_, seed: O });
@@ -667,8 +665,7 @@ test("backendDialogAnswer and its raw-pane form answer the named startup dialogs
 test("backendAgentIdle and its raw-pane form read idle as the drivers did", () => {
   const id = verb("backend_agent_idle", `L.backendAgentIdle(A[0], ${IO})`, ["c1"]);
   const raw = verb("backend_agent_idle_pane", `L.backendAgentIdlePane(A[0], ${IO})`, ["p1"]);
-  // GAP (T9): the herdr-pinned rows this block once ran are gone - see the
-  // GAP comment above WN.
+  // GAP: this block has no herdr-pinned rows - see the GAP comment above WN.
   same("orca: no handle", { ...id, env: ORCA_ });
   same("orca: claude's idle glyph", { ...id, env: ORCA_, seed: (s) => (O(s), put(s, "stub/terminal-show.out", lat(OSHOW('{"connected":true,"title":"✳ Claude Code"}')))) });
   same("orca: a spinner", { ...id, env: ORCA_, seed: (s) => (O(s), put(s, "stub/terminal-show.out", lat(OSHOW('{"connected":true,"title":"◐ working"}')))) });
@@ -684,8 +681,7 @@ test("backendAgentIdle and its raw-pane form read idle as the drivers did", () =
 
 test("backendSubmitVerified presses Enter once and reads the render as the drivers did", () => {
   const sv = verb("backend_submit_verified", `L.backendSubmitVerified(A[0], A[1] ?? "", ${IO})`, ["c1", "hello"]);
-  // GAP (T9): the herdr-pinned rows this block once ran are gone - see the
-  // GAP comment above WN.
+  // GAP: this block has no herdr-pinned rows - see the GAP comment above WN.
   same("orca: a dialog owns the pane", { ...sv, env: ORCA_, seed: (s) => (O(s), put(s, "stub/terminal-show.out", OSHOW('{"agentWait":{"reason":"x"}}'))) });
   same("orca: the render reacts", { ...sv, env: ORCA_, seed: (s) => (O(s), put(s, "stub/terminal-read.1.out", '{"ok":true,"result":{"terminal":{"tail":["a"]}}}\n'), put(s, "stub/terminal-read.out", '{"ok":true,"result":{"terminal":{"tail":["b"]}}}\n')) });
   same("an unsupported backend", { ...sv, env: { AC_BACKEND: "tmux" }, seed: H });
@@ -693,9 +689,8 @@ test("backendSubmitVerified presses Enter once and reads the render as the drive
 
 test("backendStartupDialogs runs ac_startup_dialogs' sequence over the id-keyed verbs", () => {
   const sd: Row = { bash: `backend_startup_dialogs "$1" "$2"`, twin: `return L.backendStartupDialogs(A[0], A[1], ${IO}).status;`, errexit: true, args: ["c1", "codex"] };
-  // GAP (T9): the herdr-pinned rows this block once ran (named/unnamed
-  // dialogs, the budget knobs, the sleep-fails row) are gone - see the GAP
-  // comment above WN.
+  // GAP: this block has no herdr-pinned rows (named/unnamed dialogs, the
+  // budget knobs, the sleep-fails row) - see the GAP comment above WN.
   same("orca: both codex prompts answered, then up", {
     ...sd,
     env: ORCA_,

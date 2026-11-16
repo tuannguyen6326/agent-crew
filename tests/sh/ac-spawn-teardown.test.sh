@@ -14,10 +14,10 @@
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
-# src/spawn.ts now leases every crew worktree through orca directly (T9
-# deleted the non-orca in-repo-pool branch), and backendName() refuses any
-# backend but orca before a spawn ever runs - so this whole suite drives the
-# fake orca CLI's lease and terminal model, never the pool fixture.
+# src/spawn.ts leases every crew worktree through orca directly, and
+# backendName() refuses any backend but orca before a spawn ever runs - so
+# this whole suite drives the fake orca CLI's lease and terminal model, never
+# the pool fixture.
 make_fake_orca
 printf '\342\234\263 fake\n' >"$FAKE_ORCA/.default-title"
 printf 'orca\n' >"$AC_HOME/config/backend"
@@ -389,7 +389,7 @@ assert_file "$AC_HOME/state/archive/t22/meta"
 # knob takes an optional PATTERN ("<count> kickoff") and drops only enters
 # whose composer text matches it, so the launch line (never named "kickoff")
 # always submits untouched while the knob strands the kickoff step alone.
-# make_fake_orca's `.drop-enters` (tests/sh/helpers.sh, T11's) takes no such
+# make_fake_orca's `.drop-enters` (tests/sh/helpers.sh) takes no such
 # pattern - it drops the terminal's NEXT N `--enter` calls unconditionally,
 # whichever text they carry. Measured directly against this fixture: the
 # launch line's own send has a hard two-attempt verified-submit ceiling of
@@ -675,8 +675,8 @@ assert_eq "$(archived_with 'routed order EPOCH2')" "1" "the second retirement is
 # pattern targets the LAUNCH line only (AC_HOME= never appears in the kickoff
 # prompt, which spells the same name out in prose).
 # A crewdeputy pane never leases, so its own terminal is the next one minted;
-# make_fake_orca's `.drop-enters` has no pattern filter like herdr's "<count>
-# AC_HOME=" (tests/sh/helpers.sh, T11's) - it drops the terminal's next N
+# make_fake_orca's `.drop-enters` has no pattern filter - it has no "<count>
+# AC_HOME=" shape (tests/sh/helpers.sh); it drops the terminal's next N
 # `--enter` calls unconditionally, but the LAUNCH LINE is the first enter a
 # fresh pane ever gets, so an overwhelming count still strands it directly.
 dhome2="$("$BIN/ac-home-seed.sh" dep2 --no-projects 2>/dev/null)"
@@ -717,10 +717,10 @@ rm -rf "$dhome3"
 # The --recover ladder's live-pane guard is NOT the meta-race orphan, so it stays
 # a REFUSAL: the ladder deliberately leaves state/.pane-<id> behind so this check
 # can still catch a LIVE deputy its own probe could not answer for. A meta
-# naming an unsupported backend used to be such an unanswerable probe; T8's
-# metaBackend now refuses it outright (`unsupported backend 'bogus'`) before
-# the ladder ever runs - still a dead stop, never a reap, so the invariant
-# under test (no double-spawn onto a living deputy's tab) still holds.
+# naming an unsupported backend is refused outright by metaBackend
+# (`unsupported backend 'bogus'`) before the ladder ever runs - still a dead
+# stop, never a reap, so the invariant under test (no double-spawn onto a
+# living deputy's tab) still holds.
 printf 'backend=bogus\nkind=crewdeputy\n' >"$AC_HOME/state/dep1.meta"
 err="$("$BIN/ac-spawn.sh" dep1 --crewdeputy --harness fake --recover 2>&1)" \
   && fail "--recover must refuse a window collision, never reap it"
@@ -734,7 +734,7 @@ assert_file "$AC_HOME/state/.pane-dep1" "the refused recovery left the live depu
 # LIVENESS in bin/ac-backend.sh). `.pane-api-down` is the partial outage that
 # makes this bite: the liveness probe is blind while `tab create` still works, so
 # an unguarded spawn really does create the second window. The meta's own
-# backend must read as valid first (T8's metaBackend refuses 'bogus' outright,
+# backend must read as valid first (metaBackend refuses 'bogus' outright,
 # proven above), so this and the next sub-test need their own fault, not that one.
 printf 'backend=orca\nkind=crewdeputy\n' >"$AC_HOME/state/dep1.meta"
 touch "$FAKE_ORCA/.terminal-api-down"
@@ -915,24 +915,24 @@ printf '# Crewdeputies\n\n' >"$AC_HOME/records/crewdeputies.md"
 assert_fails "$BIN/ac-spawn.sh" dep1 --crewdeputy --harness fake --recover
 
 # --- gone-window teardown: the durable index survives a death at the pane-kill -
-# Three recorded incidents ended ac-teardown.sh AT the pane-kill step (exit 144,
-# no output) - captain-caught twice. GAP, documented not silently dropped: this
-# fixture (`.kill-caller-on-tab-close` killing the caller mid-close, and the
-# herdr "tab stays, still labelled crew:<id>, so the kill gets its OWNERSHIP
-# PROOF" mechanic the next sub-test also relied on) has no orca counterpart.
-# Measured directly (src/lib.ts orcaKillWindow): orca's close is unconditional
-# - one pane IS one terminal, so there is no shared-tab label to prove
-# ownership against, and make_fake_orca's "close" verb (tests/sh/helpers.sh,
-# T11's) has no fault-injection knob at all (no `.terminal-close-fails`, no
-# kill-the-caller knob) to reproduce either "close fails but the pane survives"
-# or "the close step itself dies mid-run" on the orca path. Needs new fake_orca
-# knobs before this incident class can be proven again under orca.
+# GAP, documented not silently dropped: ac-teardown.sh can die AT the
+# pane-kill step (exit 144, no output), a fixture (`.kill-caller-on-tab-close`
+# killing the caller mid-close, and a "tab stays, still labelled crew:<id>, so
+# the kill gets its OWNERSHIP PROOF" mechanic a herdr-shaped fixture relied on)
+# that has no orca counterpart. Measured directly (src/lib.ts orcaKillWindow):
+# orca's close is unconditional - one pane IS one terminal, so there is no
+# shared-tab label to prove ownership against, and make_fake_orca's "close"
+# verb (tests/sh/helpers.sh) has no fault-injection knob at all (no
+# `.terminal-close-fails`, no kill-the-caller knob) to reproduce either "close
+# fails but the pane survives" or "the close step itself dies mid-run" on the
+# orca path. Needs new fake_orca knobs before this incident class can be
+# proven again under orca.
 
 # --- end-of-task pane-agent sweep ---------------------------------------------
 # The pane agents a task starts (the ship reviewer, the qa agent, the ship/qa
 # watch panes) and the qa serve process are retired only by ac-ship.sh /
-# ac-qa.sh finish - which a crewmate killed at the pane-kill step never reaches,
-# so they outlived teardown (captain-caught twice). Teardown owns that sweep,
+# ac-qa.sh finish - which a crewmate killed at the pane-kill step never
+# reaches, so they can outlive teardown. Teardown owns that sweep,
 # and it must run BEFORE the lease goes back: ac-tree.sh return rm -rf's
 # .crew/qa, so a sweep placed after it could never see the qa records at all.
 "$BIN/ac-brief.sh" t13 proj --mode local-only >/dev/null
@@ -999,7 +999,7 @@ printf 'pOTHERVERIFY tOV\n' >"$AC_HOME/state/.pane-other-verify-codereview"
 mkdir -p "$AC_HOME/state/.verify-t13-codereview.lock.d" "$AC_HOME/state/.verify-other-codereview.lock.d"
 # GAP, documented not silently dropped: "a pane the close does NOT take on,
 # which still resolves afterwards" has no fake_orca equivalent - its `close`
-# (tests/sh/helpers.sh, T11's) unconditionally deletes the terminal's files on
+# (tests/sh/helpers.sh) unconditionally deletes the terminal's files on
 # any successful call, with no knob to leave it looking connected afterward
 # (measured: pre-seeding the .buf just means close deletes it, reporting
 # closed - the opposite of "stuck"), so the pSTUCK sub-case is omitted here.

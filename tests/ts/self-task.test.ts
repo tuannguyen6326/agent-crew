@@ -1,9 +1,8 @@
 // self-task.test.ts - familyOwned's twin (src/lib.ts) held to the LIVE bash
 // ac_family_owned it twins, called in the context the bash self-task entry
 // gave it: inside an `if`. Compares stdout, stderr (less the shell's own
-// `line N:` lines), the status, the stub log and the side's tree. (The
-// backendWindowNew twin this file once held is gone - see the GAP comment
-// below.)
+// `line N:` lines), the status, the stub log and the side's tree.
+// backendWindowNew has no twin here - see the GAP comment below.
 //
 // DISPUTED: the implementation of ac_family_owned (the live bash vs src/lib.ts)
 // HELD-CONSTANT: one side root per side and row seeded alike (a home at <side>/home with state/ records/ data/ config/, the stubs' sentinels, call counters and log at <side>/stub, TMPDIR at <side>/tmp); argv; env (PATH = refusing claude/codex/opencode/pi/cursor-agent/docker/codegraph/gh/orca stand-ins, then sleep and date stubs, the host's jq and git, bun alone, /bin plus /usr/bin without those names - no row can reach a real backend or harness; LC_ALL=C; HOME an empty dir; STUB_DIR, TMPDIR, AC_HOME, the row's own names); cwd (the distro root, so ac_root and STARTED_BIN name one bin/); stdin (/dev/null).
@@ -173,18 +172,17 @@ test("familyOwned reads what ac_family_owned reads: an in-flight meta of the id'
   same("no state dir", { ...owned("fam"), args: ["fam", "@S/home/none"] });
 }, 120000);
 
-// GAP (T9): this block used to pin AC_BACKEND=herdr and run backend_window_new's
-// herdr arm (workspace/tab verbs) through both sides' dispatchers. T8's cutover
-// made both dispatchers refuse "herdr" outright: the bash oracle now dies
-// sourcing ac-backend.sh before backend_window_new is ever called, and the TS
-// twin's backendRoute() returns null before reaching the herdr branch - so
-// every one of the fixture's twelve seeded scenarios (tab-create failures,
-// workspace-list races, the missing-herdr-binary row) now collapses to the
-// SAME "unsupported backend 'herdr'" refusal on both sides, never exercising
-// backendWindowNew's herdr arm at all. T8's own precedent for this class of
-// problem is a driver-internal bypass that skips the dispatcher (confined to
-// tests/ts/backend.test.ts and tests/ts/teardown.test.ts, via the exported
-// herdrVerb/herdrKillWindow primitives) - but backendWindowNew's herdr branch
-// is inlined in that one function behind the unexported backendRoute(), with
-// no equivalent exported low-level entry point to call directly, so no bypass
-// is reachable from a test file alone. Deleted rather than ported.
+// GAP: backend_window_new's herdr arm (workspace/tab verbs) cannot be
+// exercised through either side's dispatcher pinned to AC_BACKEND=herdr: the
+// bash oracle dies sourcing ac-backend.sh before backend_window_new is ever
+// called, and the TS twin's backendRoute() returns null before reaching the
+// herdr branch - so every one of the fixture's twelve seeded scenarios
+// (tab-create failures, workspace-list races, the missing-herdr-binary row)
+// collapses to the SAME "unsupported backend 'herdr'" refusal on both sides,
+// never exercising backendWindowNew's herdr arm at all. A driver-internal
+// bypass that skips the dispatcher exists in tests/ts/backend.test.ts and
+// tests/ts/teardown.test.ts, via the exported herdrVerb/herdrKillWindow
+// primitives - but backendWindowNew's herdr branch is inlined in that one
+// function behind the unexported backendRoute(), with no equivalent exported
+// low-level entry point to call directly, so no bypass is reachable from a
+// test file alone. Not ported for this reason.
