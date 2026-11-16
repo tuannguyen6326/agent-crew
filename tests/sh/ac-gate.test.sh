@@ -6,7 +6,7 @@
 # validation failure / 4 disabled / other usage). The pane-agent one-shot arm is
 # STUBBED (AC_PANE_AGENT): ac-gate's contract with the arm is asserted by the
 # flags it hands over and the done-event/transcript it reads back; the arm's OWN
-# behavior (herdr, descriptor publication, per-engine flag shapes) is proven in
+# behavior (descriptor publication, per-engine flag shapes) is proven in
 # ac-pane-agent.test.sh. One execution path, one seam, tested from both sides.
 # shellcheck disable=SC2016
 
