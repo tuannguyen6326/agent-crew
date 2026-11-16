@@ -594,8 +594,16 @@ rm -f "$AC_HOME/config/remote-reply" "$AC_HOME/config/remote-mirror"
 # Room pending drives the promoted chief pane's CAPTAIN-WAIT STAMP
 # (ac-backend.sh contract): a pending GATE/ASK stamps <family>-chief BLOCKED
 # in the herdr UI, the settling DECIDED clears it - mechanically, off the
-# room grammar, no needs-decision: marker required.
+# room grammar, no needs-decision: marker required. cmd_post's mark_wait/
+# clear_wait calls route on the AMBIENT AC_BACKEND ladder, never the target
+# chief's own meta (unlike cmd_open, which sets it from taskBackend first -
+# src/room.ts:811) - so config/backend must say herdr explicitly too, not
+# only the meta, or this falls through to ac_backend()'s own orca default.
+# The pane-display half (.reported) is herdr-only: backend_mark_wait_orca
+# only touches the backend-neutral ac_wait_file stamp, with no pane-visible
+# "blocked" render of its own (no orca production signal to port here).
 make_fake_herdr
+printf 'herdr\n' >"$AC_HOME/config/backend"
 printf 'backend=herdr\nkind=roomchief\n' >"$AC_HOME/state/sfam-chief.meta"
 printf 'pR1 tR1\n' >"$AC_HOME/state/.pane-sfam-chief"
 printf 'pR1\n' >"$FAKE_HERDR/tabs/tR1"; : >"$FAKE_HERDR/panes/pR1.buf"
@@ -613,6 +621,7 @@ assert_file "$AC_HOME/state/.captain-wait-sfam-chief" "stamp ownership recorded"
 AC_SCOPE=sfam "$BIN/ac-room.sh" post sfam captain "DECIDED: a" >/dev/null
 assert_no_file "$FAKE_HERDR/panes/pR1.reported" "the settling DECIDED clears the stamp"
 assert_no_file "$AC_HOME/state/.captain-wait-sfam-chief" "ownership file removed"
+rm -f "$AC_HOME/config/backend"
 
 # A room with ZERO entries must not abort the entry lookups: `grep '^- \['`
 # matches nothing, and under pipefail that used to kill the caller (set -e).
@@ -1484,7 +1493,12 @@ assert_eq "$(rlast mf)" "- [$RTS] crewchief> GATE: vn date fails" "8: ...after t
 rat rm -f '$H/date.fail-vn' '$H/home/config/remote-mirror' '$H/home/config/remote-reply'
 
 # 9. the captain-wait stamp, through the FLEET backend (W19: an orca chief
-#    meta under a herdr fleet is stamped through herdr).
+#    meta under a herdr fleet is stamped through herdr). cmd_post's
+#    mark_wait/clear_wait route on the ambient AC_BACKEND ladder, never the
+#    target chief's own meta (src/room.ts:811's taskBackend pin is cmd_open
+#    only) - "a herdr fleet" must be pinned explicitly now that
+#    ac_backend()'s own default is orca.
+rat rcfg backend herdr
 rat rchief st
 RENV=(AC_SCOPE=st)
 : >"$RH/herdr/log"
@@ -1882,7 +1896,7 @@ exec "$TMP/stubbin/herdr" "\$@"
 STUB
 chmod +x "$TMP/rstdin/herdr"
 printf 'caller-stdin\n' >"$TMP/rstdin.in"
-rat rseed; rat rchief w6
+rat rseed; rat rcfg backend herdr; rat rchief w6
 RSTDIN="$TMP/rstdin.in"; rpath="PATH=$TMP/rstdin:$RSTUBS:$TMP/stubbin:$PATH"
 RENV=("$rpath"); rrefuse 1 "$(rguard w6)" post w6 crewchief 'TRIAGE: unscoped, the chief live'
 assert_eq "$(cat "$RH/stdin.log")" "herdr pane get pw6 stdin=[]" "19: the guard's herdr reads nothing"
