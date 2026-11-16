@@ -24,11 +24,10 @@
 //   ac-pane-agent.sh close --pane ID
 //   ac-pane-agent.sh reap-pane --pane ID  # close ONE known pane + tidy its tab/workspace
 //   ac-pane-agent.sh reap [--dry-run]   # close ac-*-agent panes whose cwd is gone
-//   ac-pane-agent.sh steer --agent HANDLE '<text>' [--pane ID]  # steer a live one
 //   ac-pane-agent.sh seed-trust|stop-hook|wrap-transcript|has-final-text|iso-epoch ...
 //     the five JSON helper subcommands (HELPER SUBCOMMANDS below)
 //
-// --kind K names the CALLER on every herdr surface (tab ac-<kind>-agent-
+// --kind K names the CALLER on every pane surface (tab ac-<kind>-agent-
 // <branch>, pane ac-<kind>-agent:<label>); default `ship`. Known callers:
 // codereview (the crew-ship reviewer, through ac-verify.sh), qa (ac-qa.sh
 // agent), learning (ac-learn.sh), gate (src/gate.ts, an --exec caller).
@@ -161,10 +160,10 @@
 // on the brief alone, with no harness-specific mechanism (harness-facts.md,
 // `codex` and `opencode` Completion bullets; the observations are in
 // `data/codex-crewmate/room.md` and `data/opencode-crewmate/room.md`). What the
-// crewmate arm gives up is the session: no resume, no session id, nothing to
-// steer - `steer` needs a live composer, and neither harness pins a
-// caller-minted session id (harness-facts.md Resume bullets), so `--resume` is
-// REFUSED here exactly as under --exec.
+// crewmate arm gives up is the session: no resume, no session id, and no live
+// composer to steer into, and neither harness pins a caller-minted session id
+// (harness-facts.md Resume bullets), so `--resume` is REFUSED here exactly as
+// under --exec.
 //
 // What the CREWMATE arm still owes, and how it discharges it:
 //   1. PROMPT DELIVERY - as its OWN TYPED LINE after the harness comes up, never
@@ -259,8 +258,8 @@
 // REAP OUTCOME (the authoritative contract): a retirement here is best-effort
 // and NEVER changes an exit status - `reap-pane` exits 0 by contract so it is
 // trap-safe, and `--replace-pane` must not fail a turn whose new pane is already
-// placed. That is why both VERIFY the close afterwards (herdr `pane get`, orca
-// `terminal show`'s connected) and publish `"closed":true|false` on their
+// placed. That is why both VERIFY the close afterwards (orca `terminal
+// show`'s connected) and publish `"closed":true|false` on their
 // event. The helper reports; the CALLER surfaces - a `"closed":false` a caller
 // swallows is an orphaned agent nobody was ever told about, which is exactly
 // how pane agents accumulated in the shared workspace (ac-learn.sh
@@ -295,54 +294,6 @@
 // durable per-run session pointer with an empty string and then died late on an
 // empty path. `source` is emitted on the ok events only: the non-ok statuses
 // assert no usable payload.
-//
-// STEER (the authoritative contract): a chief steers a LIVE pane agent through
-// `steer`, never by hand-crafting herdr commands. INTERACTIVE arm only - a
-// one-shot runs a command, not a composer, so there is nothing to steer. The
-// stable HANDLE is the pane NAME this module writes at creation -
-// ac-<kind>-agent:<label>, the `pane rename` of the herdr placement - and herdr
-// is where it is looked up again. HERDR ONLY: the orca arm names no pane that
-// way (orcaPlacePane titles it crew:<fleet>/...), so on an orca fleet the verb
-// refuses rather than resolve a same-named pane in herdr's default session -
-// another fleet's. That is deliberate: a handle file could not be found by both
-// sides, because the home forks (a crewmate-run caller - the ship reviewer, qa
-// - has no AC_HOME, so it resolves no state/ at all, while the steering chief's
-// is its fleet home's), whereas herdr's pane list is the ONE registry both
-// already share, and a chief that never launched the pane reads the same name
-// off the herdr sidebar. Ownership is PROVEN before delivery, the way the kill
-// proves a tab (ac-backend.sh KILL OWNERSHIP PROOF): the handle must resolve to
-// exactly ONE live pane still carrying an ac-<kind>-agent:<label> name, so a
-// dead or recycled pane refuses instead of steering a stranger. Two live panes
-// on one handle (two repos at ship-review-r1) is AMBIGUOUS and also refuses,
-// naming --pane <pane-id> as the way through; --pane takes the same ownership
-// proof, so it disambiguates without becoming a backdoor into a crewmate's
-// pane. Delivery is VERIFIED (backendSendLinePane): unacknowledged means a loud
-// non-zero refusal naming the pane, never a silent strand - and since that twin
-// prints nothing, its status is what the refusal reads: 2 means the pane could
-// not be READ (submit neither confirmed nor refuted, read it before resending),
-// anything else means the text is stranded in its composer (resubmit the
-// Enter). Unlike the pane a crewmate owns, this one is addressed by NOTHING the
-// caller had to hoard - the reviewer's review.pane and ac-qa.sh's
-// agent-<task>.pane stay their own business.
-//
-// GATE INDEPENDENCE GUARD, stated with its RESIDUAL in the same breath because
-// the two are one contract: a steer into an ac-gate-agent:<family>-<stage> pane
-// is REFUSED unless the caller declares --captain. The gate judge is the one
-// pane agent whose whole value is that the chief whose stage it judges did not
-// shape its turn, and what this refuses is the ACCIDENTAL steer - a chief
-// reaching for this helper without noticing that the handle names the judge
-// about to rule on its own work. Every OTHER pane agent steers unchanged: this
-// guards a judge, not every verification pane. WHO is steering is DECLARED by
-// the caller and never inferred from the environment - no tty sniffing, no
-// parent-process inspection, no AC_SCOPE reading; the precedent is ac-spawn.sh's
-// --captain-initiated. An inferred distinction would misfire in both directions
-// while READING as non-bypassable, which is worse than a guard that says what it
-// is. THE GUARD IS ADVISORY, AND A DETERMINED CHIEF CAN BYPASS IT: any chief may
-// invoke this with --captain, and a chief can write straight to the backend pane
-// without coming near it at all. It stops the accidental steer, not the
-// deliberate one. A later reader who finds a bypass has found DOCUMENTED
-// BEHAVIOUR, not a defect - so do not "harden" this into a proof it was never
-// ruled to be.
 //
 // Turn-end (SESSION arm): a Stop hook in DIR/.claude/settings.local.json touches
 // a per-invocation marker.
@@ -426,47 +377,25 @@
 // (ac-backend.sh FAMILY WORKSPACE GROUPING) - the caller (ac-verify.sh, the
 // gate) exports AC_WINDOW_FAMILY, and the "<fleet> · <family>" workspace is
 // resolved from it; absent/empty = the fleet ROOT workspace (the ac-self-task
-// case). Session: AC_HERDR_SESSION > config/herdr-session > default.
+// case).
 //
 // MECHANICS, in code order. Every verb first: an invalid backend
 // (AC_BACKEND > config/backend > the AC_FLEET_STATE/../config/backend rung)
-// refuses with `ERROR: unsupported backend '<b>' (valid backends: herdr, orca;
-// tmux/wezterm were removed 2026-07-17)`, exit 1; HOME unset refuses with
+// refuses with `ERROR: unsupported backend '<b>' (valid backend: orca)`,
+// exit 1; HOME unset refuses with
 // `ERROR: HOME is not set`, exit 1; PATH gains `:/opt/homebrew/bin:$HOME/.local/bin`
 // (callers may start from launchd with a minimal environment) for every child;
 // the session is read. A value flag with no value or an empty one, on every
 // verb, is `ERROR: <flag> needs a value`, exit 1. No verb, or an unknown one, is
 // the done error `usage: ac-pane-agent.sh run --cwd DIR --prompt-file F`.
-//   close: the last `--pane` value (any other word skipped) closed, best-effort
-//     and silent - orca `terminal close`, herdr raw `pane close`; exit 0.
-//   steer: `--agent H`, `--pane P`, `--captain`, one text; refusals on stderr
-//     (`ERROR: <text>`), exit 1, in order: `unknown arg <w>` for any `-*` word
-//     (a text starting with `-` included); `steer takes ONE line of text`;
-//     the usage line when neither --agent nor --pane names a pane; `refusing
-//     to steer with an empty message`; `steer is herdr-only: ...` on orca;
-//     `herdr not on PATH`. The handle resolves against herdr's raw `pane list`
-//     through jq: with --pane, that id's ownership (OK/NOTAGENT, --agent
-//     ignored); else the exact label (NONE/AMBIG/OK); the live agents' labels
-//     in herdr's order, joined `, `, name every refusal's list. Then the gate
-//     guard, the delivery (stdout `steered <label> (pane <id>)`, exit 0), or
-//     its UNVERIFIED (2) / NOT confirmed refusal.
-//   reap-pane: no id is `{"event":"reap-pane","note":"no pane id"}`; orca
+//   close: the last `--pane` value (any other word skipped) closed,
+//     best-effort and silent (orca `terminal close`); exit 0.
+//   reap-pane: no id is `{"event":"reap-pane","note":"no pane id"}`; else orca
 //     closes, polls `terminal show` up to eight times 0.25 s apart while the
 //     terminal stays connected, and reports `{"event":"reap-pane-done",
-//     "pane":"<id>","closed":true|false}`; without herdr on PATH
-//     `{"event":"reap-pane","note":"herdr not on PATH"}`; herdr plans from its
-//     raw tab and pane lists (one jq over both, split at ===AC-SPLIT===): the
-//     pane, then its tab when no sibling pane shares it and another tab lives
-//     in its workspace, or the workspace when the tab was its last; each close
-//     best-effort; `closed` is `pane get` failing. Exit 0.
-//   reap: orca answers `{"event":"reap","note":"dead-cwd sweep is herdr-only;
-//     orca panes reap by handle"}` before reading a word; `--dry-run` or an
-//     unknown arg's done error; no herdr is `{"event":"reap","panes":0,
-//     "tabs":0,"note":"herdr not on PATH"}`; else the panes of tabs labelled
-//     `\Aac-[a-z0-9-]+-agent(-|\Z)` whose cwd is no directory, each
-//     `{"event":"reap","pane":"<id>","cwd":"<cwd>","dry_run":0|1}` and closed
-//     unless dry, a tab left with no live pane closed, then
-//     `{"event":"reap-done","panes":<n>,"tabs":<n>,"dry_run":<d>}`. Exit 0.
+//     "pane":"<id>","closed":true|false}`. Exit 0.
+//   reap: answers `{"event":"reap","note":"dead-cwd sweep is herdr-only; orca
+//     panes reap by handle"}` without reading args. Exit 0.
 //   run: every flag above (repeats: the last wins; any other word the done
 //     error `unknown arg <w>`). Refusals in order, each a done error and
 //     exit 1, BEFORE any pane or rung: `--exec runs a one-shot command: there
@@ -489,8 +418,7 @@
 //     (`... see HARNESS ARMS in bin/ac-pane-agent.sh`) and agy's effort
 //     warning; `the crewmate arm runs '<h>', which Agent Crew cannot resume:
 //     there is no session to --resume`; `cwd missing: <cwd>`; `prompt file
-//     missing: <pf>`; for the interactive arms `orca not on PATH` / `herdr not
-//     on PATH`.
+//     missing: <pf>`; for the interactive arms `orca not on PATH`.
 //     PREPARATION: the transcript dir PROJ = claudeTranscriptRoot()/<cwd with
 //     every / and . as ->. The SESSION arm seeds trust; the marker dir is
 //     AC_FLEET_STATE/.pane-agent-tmp, else <home>/state/.pane-agent-tmp, else
@@ -508,7 +436,6 @@
 //     lock (10 one-second PATH sleeps; never fatal), merges the Stop hook
 //     (stop-hook below) and refuses `could not install the Stop hook into
 //     <settings>` when that failed; the transcripts already there are noted.
-//     The tab label is ac-<kind>-agent[-<AC_WINDOW_FAMILY>][-<branch, / as ->].
 //     ENVPIN: `AC_HOME=<%q of the physical home> ` when AC_HOME is set, else
 //     `AC_FLEET_NAME=<%q> ` when that is set, else nothing - a homeless caller
 //     has no home to pin and never fabricates one - behind claudeConfigEnv.
@@ -521,18 +448,13 @@
 //     are each read as the original's `$(...)` read them, trailing LFs cut.
 //     PLACEMENT: the ONE-SHOT rung is `sh -c <line>` in the background,
 //     started through /bin/sh with SIGINT and SIGQUIT ignored as an async job
-//     of a non-interactive shell was; ORCA is orcaPlacePane (`could not place
-//     orca pane`); HERDR resolves the family workspace, adopts a tab carrying
-//     the label in it (its first pane split right) or creates one there
-//     (once more after re-resolving the workspace), refuses `could not create
-//     herdr pane` / `could not resolve herdr tab for pane <p>`, renames the
-//     pane ac-<kind>-agent:<label> and closes the workspace's default `1`
-//     tabs. Then `--pane-file` (`<pane> <tab>` through an exclusive temp and
-//     mv; `pane-file directory does not exist: <dir>` and `could not publish
-//     pane identity: <file>`), `--observe` (the descriptor through an
-//     exclusive temp and `mv -f`, failures silent), herdr's `pane run`, and
-//     `--replace-pane` (close, verify, report). The deadline is the launch
-//     time plus --timeout.
+//     of a non-interactive shell was; the interactive arms place through
+//     orcaPlacePane (`could not place orca pane`). Then `--pane-file`
+//     (`<pane> <tab>` through an exclusive temp and mv; `pane-file directory
+//     does not exist: <dir>` and `could not publish pane identity: <file>`),
+//     `--observe` (the descriptor through an exclusive temp and `mv -f`,
+//     failures silent), and `--replace-pane` (close, verify, report). The
+//     deadline is the launch time plus --timeout.
 //     CREWMATE KICKOFF: came-up every 2 s up to 60 s (an exit marker refuses,
 //     a bare shell refuses `did not come up`, an unreadable pane is a note),
 //     the startup-dialog sequence, then the input-ready wait - per second a
@@ -544,8 +466,8 @@
 //     the pane's liveness (`pane_closed`); the idle fallback; the stall bound;
 //     at the deadline `{"event":"done","status":"timeout",...,"error":"turn
 //     did not end within <t>s"}`.
-// Exit: 0 an ok turn, close, reap-pane, reap, a steer delivered; 1 everything
-// else; 128+n when a signal ends the process.
+// Exit: 0 an ok turn, close, reap-pane, reap; 1 everything else; 128+n when a
+// signal ends the process.
 //
 // HELPER SUBCOMMANDS - each replaced a python3 snippet the bash original
 // started; the entry runs them in process, and bin/ac-lib.sh's
@@ -633,20 +555,18 @@
 //
 // The mechanics stay the original's by spawning what it ran at the same
 // points: jq (fail()'s encoding and every read the original piped through jq,
-// each program verbatim), raw `herdr --session <s>` for placement, liveness,
-// the closes and steer's list (herdr_cli's bounded twin elsewhere), orca
-// through orcaJson, git, grep -qxF, mkdir -p, mv, od, tr, sed-free readings of
-// sed's own patterns, date(1) for every clock read and the PATH's sleep for
-// every wait, so a suite's PATH stubs bind every one of them.
+// each program verbatim), orca through orcaJson, git, grep -qxF, mkdir -p, mv,
+// od, tr, sed-free readings of sed's own patterns, date(1) for every clock
+// read and the PATH's sleep for every wait, so a suite's PATH stubs bind every
+// one of them.
 //
 // AT PARITY with the bash original, and deliberately left unasserted by the
 // contract test (each until its own fix lands):
-// - W1: ONE failed liveness read is a dead pane - every fifth poll one raw
-//   `pane get` (orca `terminal show`'s connected) and ANY failure ends a live
-//   turn `pane_closed`, against ac-backend.sh's WINDOW LIVENESS three states.
-// - W2: the raw herdr calls (placement, liveness, --replace-pane, close,
-//   reap-pane, reap, steer's list) carry no bound, so --timeout bounds nothing
-//   they hang on; orca is unbounded by design.
+// - W1: ONE failed liveness read is a dead pane - every fifth poll one orca
+//   `terminal show`'s connected check, and ANY failure ends a live turn
+//   `pane_closed`, against ac-backend.sh's WINDOW LIVENESS three states.
+// - W2: orca calls (placement, liveness, --replace-pane, close, reap-pane)
+//   are unbounded by design, so --timeout bounds nothing they hang on.
 // - W3: the NDJSON events are built by raw interpolation, so a `"`, `\` or a
 //   control byte in a path, label, pane id or config value yields a line jq
 //   cannot parse (fail()'s refusals are jq-encoded).
@@ -658,8 +578,6 @@
 //   falling back to their documented default (2700, 6) on a refusal rather
 //   than disabling the stall bound or the settle re-reads.
 // - W6: the info/exclude append glues onto an unterminated last line.
-// - W8: raw calls name `--session <s>` with the literal `default` when nothing
-//   is set, while the bounded herdr calls name no session then.
 // - W9: the shell's [:space:] under the caller's locale decides a blank final
 //   message (grep and tr are spawned), while the any-final-text check keeps
 //   python's white space.
@@ -670,13 +588,12 @@
 // - W14: .pane-agent-tmp is never pruned; a dead Stop hook stays until the
 //   next merge in that cwd.
 // - W15: the arm refusals point at `HARNESS ARMS in bin/ac-pane-agent.sh`.
-// - Two same-label agents in one family workspace both adopt one tab; two
-//   session agents sharing a cwd each adopt the NEWEST new transcript.
+// - Two session agents sharing a cwd each adopt the NEWEST new transcript.
 //
 // ALSO:
 // - BUN (W11): every verb needs bun on the CALLER's PATH (the shim's `ERROR:
-//   required tool not found: bun`, exit 1, no NDJSON) - close, reap-pane, reap
-//   and steer included.
+//   required tool not found: bun`, exit 1, no NDJSON) - close, reap-pane and
+//   reap included.
 // - --timeout (Q3): anything but a sign and decimal digits - a name, an
 //   expression, a radix prefix, a fraction, a unit - is refused before any
 //   pane or rung.
@@ -716,7 +633,7 @@
 // bin/ac-qa.sh agent through it; src/gate.ts (`${AC_PANE_AGENT:-...} run --exec`,
 // then reap-pane); bin/ac-learn.sh (the scout in the background with
 // --deliverable and --pane-file, its EXIT-trap reap); src/ship.ts finish
-// (close); src/teardown.ts (reap-pane, no override); chiefs (steer, reap). The
+// (close); src/teardown.ts (reap-pane, no override); chiefs (reap). The
 // pane file `<pane> <tab>` is read by ac-verify and ac-learn while the turn
 // runs; the transcript by transcriptFinal (src/lib.ts). Each caller already
 // treats a non-zero or done-less run as a failed turn, and each already needs
@@ -739,8 +656,6 @@ import {
   enterCaller,
   exclusiveTemp,
   fileMtime,
-  herdrResolveWorkspace,
-  herdrTabOpen,
   lockAcquire,
   lockRelease,
   orcaJson,
@@ -754,7 +669,6 @@ import {
   tabFields,
   testInt,
   writeAll,
-  wsFamilyLabel,
 } from "./lib.ts";
 import { backendAgentIdlePane, buildLaunch, claudeConfigEnv, paneProfile } from "./lib-spawn.ts";
 import { backendAgentStatusPane, backendCapturePane, backendSendLinePane, harnessPaneArm, transcriptFinalEpoch } from "./lib-verify.ts";
@@ -1189,51 +1103,6 @@ export function effortFlag(e: string): string | null {
 }
 
 const FAIL_JQ = '{event:"done",status:"error",error:$e}';
-const STEER_JQ = String.raw`
-      # A pane agent is exactly a pane THIS helper named at creation.
-      [(try fromjson catch null) | .result?.panes?[]? | objects
-       | {id: .pane_id, label: (.label // "")}
-       | select(.label | type == "string" and startswith("ac-") and contains("-agent:"))] as $agents
-      | (if $pid != "" then
-           ([$agents[] | select(.id == $pid)] | if length > 0 then "OK \(.[0].id) \(.[0].label)" else "NOTAGENT" end)
-         else
-           ([$agents[] | select(.label == $want)]
-            | if length == 0 then "NONE"
-              elif length > 1 then "AMBIG \(length) \(map(.id) | join(" "))"
-              else "OK \(.[0].id) \(.[0].label)" end)
-         end),
-        ($agents[] | "KNOWN \(.label) \(.id)")`;
-const REAP_PANE_JQ = String.raw`
-      split("===AC-SPLIT===") as $raw
-      | [$raw[0] | try fromjson catch null | .result?.tabs?[]? | objects] as $tabs
-      | [$raw[1] // "" | try fromjson catch null | .result?.panes?[]? | objects] as $panes
-      | ([$panes[] | select(.pane_id == $rp) | .tab_id] | last) as $tab
-      | ([$tabs[] | select(.tab_id == $tab) | .workspace_id] | last) as $ws
-      # A sibling pane in the same tab keeps the tab; another tab in the same
-      # workspace (a co-tenant reviewer/qa run, or the bare default "1" tab) keeps
-      # the workspace. Close the workspace ONLY when the target tab is its last.
-      | "PANE \($rp)",
-        if ($tab // "") == "" or any($panes[]; .tab_id == $tab and .pane_id != $rp) then empty
-        elif ($ws // "") == "" then empty
-        elif any($tabs[]; .workspace_id == $ws and .tab_id != $tab) then "TAB \($tab)"
-        else "WS \($ws)" end`;
-const REAP_OURS = String.raw`split("===AC-SPLIT===") as $raw
-    | [$raw[1] // "" | try fromjson catch null | .result?.panes?[]? | objects] as $panes
-    | [$raw[0] | try fromjson catch null | .result?.tabs?[]? | objects
-       | select(.label // "" | type == "string" and test("\\Aac-[a-z0-9-]+-agent(-|\\Z)")) | .tab_id]
-    | reduce .[] as $t ([]; if any(.[]; . == $t) then . else . + [$t] end)
-    | map(. as $t | {tab: $t, panes: [$panes[] | select(.tab_id == $t)]})`;
-const REAP_CWDS = ' | .[].panes[] | .cwd // empty | select(. != "")';
-const REAP_PLAN = String.raw`
-    | ($gone | split("\n")) as $gone
-    | [.[].panes[] | select(.cwd // "" | . != "" and IN($gone[]))] as $dead
-    | ($dead[] | "PANE \(.pane_id) \(.cwd)"),
-      # A tab whose every pane is being reaped is left empty; close it too so the
-      # sidebar does not fill with stubs. A tab with a surviving pane stays.
-      (.[] | select(.panes != [] and all(.panes[]; .pane_id as $p | any($dead[]; .pane_id == $p))) | "TAB \(.tab)")`;
-const ADOPT_JQ = 'first(.result.tabs[]? | select(.label == $tl and ($ws == "" or .workspace_id == $ws))) | .tab_id // empty';
-const FIRST_PANE_JQ = "first(.result.panes[]? | select(.tab_id == $tab)) | .pane_id // empty";
-const DEFAULT_TABS_JQ = '.result.tabs[]? | select(.workspace_id == $ws and .label == "1") | .tab_id';
 const CONNECTED_JQ = ".result.terminal.connected == true";
 const FINAL_TEXT_JQ = `[.[] | select(.type == "assistant")] | last
           | if . == null then "" else
@@ -1310,26 +1179,6 @@ function baseName(p: string, suffix = ""): string {
   return (suffix !== "" && b !== suffix && b.endsWith(suffix) ? b.slice(0, -suffix.length) : b).replace(/\n+$/, "");
 }
 
-// `read -r a b ... rest` with the default IFS: blanks around dropped, fields
-// split at blank runs, the last name keeping the rest of the line.
-function ifsRead(line: string, n: number): string[] {
-  const out: string[] = [];
-  let rest = line.replace(/^[ \t\n]+/, "");
-  for (let i = 1; i < n && rest !== ""; i++) {
-    const m = /[ \t\n]+/.exec(rest);
-    if (!m) break;
-    out.push(rest.slice(0, m.index));
-    rest = rest.slice(m.index + m[0].length);
-  }
-  out.push(rest.replace(/[ \t\n]+$/, ""));
-  while (out.length < n) out.push("");
-  return out;
-}
-
-// The lines a `while read` loop reads: each LF-terminated one, an unterminated
-// tail never.
-const readLines = (b: Buffer): string[] => b.toString("utf8").split("\n").slice(0, -1);
-
 // `[ <a> -lt|-ge|-gt <b> ]`: false whenever either side is no integer.
 function test(a: string, op: "-lt" | "-ge" | "-gt", b: string): boolean {
   const x = testInt(a);
@@ -1367,13 +1216,8 @@ function valueOf(args: string[], i: number): string {
   return v;
 }
 
-let SES = "";
 let AT_CALLER = true;
 
-const herdr = (args: string[], stdout: Io = "ignore", stdin: "inherit" | "ignore" = "inherit"): { status: number; out: Buffer } =>
-  sh(["herdr", "--session", SES, ...args], stdin, stdout, "ignore");
-// `ac_backend 2>/dev/null || printf herdr`.
-const backendSoft = (): string => backendRoute("ignore") ?? "herdr";
 const orcaConnected = (h: string): boolean => {
   const out = orcaJson(["terminal", "show", "--terminal", h], "inherit");
   return out !== null && sh(["jq", "-e", CONNECTED_JQ], Buffer.from(`${out}\n`, "latin1"), "ignore", "ignore").status === 0;
@@ -1382,62 +1226,7 @@ const orcaConnected = (h: string): boolean => {
 function close(args: string[]): never {
   let cp = "";
   for (let i = 0; i < args.length; i++) if (args[i] === "--pane") cp = valueOf(args, i++);
-  if (cp !== "") {
-    if (backendSoft() === "orca") orcaJson(["terminal", "close", "--terminal", cp], "inherit");
-    else herdr(["pane", "close", cp]);
-  }
-  process.exit(0);
-}
-
-function steer(args: string[]): never {
-  let handle = "";
-  let paneArg = "";
-  let text = "";
-  let captain = false;
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i]!;
-    if (a === "--agent") handle = valueOf(args, i++);
-    else if (a === "--pane") paneArg = valueOf(args, i++);
-    else if (a === "--captain") captain = true;
-    else if (a.startsWith("-")) die(`unknown arg ${a}`);
-    else {
-      if (text !== "") die("steer takes ONE line of text");
-      text = a;
-    }
-  }
-  if (handle === "" && paneArg === "") die("usage: ac-pane-agent.sh steer --agent <handle> '<text>' [--pane <pane-id>]");
-  if (text === "") die("refusing to steer with an empty message");
-  if (backendSoft() === "orca") die("steer is herdr-only: an orca pane agent carries no ac-<kind>-agent:<label> name to resolve - address it in Orca itself");
-  if (!commandV("herdr")) die("herdr not on PATH");
-  // A dead or recycled pane is simply not in herdr's live list, so a stale
-  // handle can never steer a stranger.
-  const plan = subst(sh(["jq", "-Rrs", "--arg", "want", handle, "--arg", "pid", paneArg, STEER_JQ], herdr(["pane", "list"], "pipe").out, "pipe", "inherit").out);
-  const lines = plan.split("\n");
-  const known = lines
-    .flatMap((l) => {
-      const m = /^KNOWN ([\s\S]*) [^ ]*$/.exec(l);
-      return m ? [m[1]!] : [];
-    })
-    .join(",")
-    .replaceAll(",", ", ");
-  const [kind, pane, label] = ifsRead(lines[0]!, 3) as [string, string, string];
-  if (kind === "AMBIG") die(`handle '${handle}' matches ${pane} live panes (${label}) - re-run with --pane <pane-id> to name the one you mean`);
-  if (kind === "NOTAGENT") die(`pane '${paneArg}' is not a live pane agent (no ac-<kind>-agent:<label> name) - refusing to steer a stranger's pane; live pane agents: ${known || "none"}`);
-  if (kind !== "OK") die(`no live pane agent named '${handle}' - live pane agents: ${known || "none"}`);
-  // Applied after the pane RESOLVES, so --agent and --pane are guarded by the
-  // one check and the refusal can name the pane it stopped.
-  if (label.startsWith("ac-gate-agent:") && !captain) {
-    const fam = label.slice("ac-gate-agent:".length);
-    const cut = fam.lastIndexOf("-");
-    die(
-      `refusing to steer ${label} (pane ${pane}): it is the INDEPENDENT GATE JUDGE for family '${cut < 0 ? fam : fam.slice(0, cut)}' - the chief whose stage it judges must not shape the turn that rules on it. If you are the captain, say so: --captain (the captain outranks this property).`,
-    );
-  }
-  const sent = backendSendLinePane(pane, text, { stderr: "inherit" });
-  if (sent.exited) process.exit(sent.status);
-  if (sent.status === 2) die(`delivery UNVERIFIED for ${label} (pane ${pane}) - could not read the pane, so the submit was neither confirmed nor refuted: read it with 'herdr pane read ${pane}' before resending`);
-  if (sent.status !== 0) die(`delivery NOT confirmed for ${label} (pane ${pane}) - the text likely sits stranded unsubmitted in its composer: read it with 'herdr pane read ${pane}', resubmit with 'herdr pane send-keys ${pane} enter'`);
-  writeSync(1, Buffer.from(`steered ${label} (pane ${pane})\n`, "utf8"));
+  if (cp !== "") orcaJson(["terminal", "close", "--terminal", cp], "inherit");
   process.exit(0);
 }
 
@@ -1448,73 +1237,20 @@ function reapPane(args: string[]): never {
     emit('{"event":"reap-pane","note":"no pane id"}');
     process.exit(0);
   }
-  if (backendSoft() === "orca") {
-    // An orca pane closes ALONE - the family tab dies with its last pane by
-    // itself, so there is no tab/workspace cascade to plan.
-    orcaJson(["terminal", "close", "--terminal", rp], "inherit");
-    for (let i = 0; i < 8 && orcaConnected(rp); i++) pause("0.25");
-    emit(`{"event":"reap-pane-done","pane":"${rp}","closed":${orcaConnected(rp) ? "false" : "true"}}`);
-    process.exit(0);
-  }
-  if (!commandV("herdr")) {
-    emit('{"event":"reap-pane","note":"herdr not on PATH"}');
-    process.exit(0);
-  }
-  const tabs = herdr(["tab", "list"], "pipe").out.toString("latin1").replace(/\0/g, "").replace(/\n+$/, "");
-  const panes = herdr(["pane", "list"], "pipe").out.toString("latin1").replace(/\0/g, "").replace(/\n+$/, "");
-  const plan = sh(["jq", "-Rrs", "--arg", "rp", rp, REAP_PANE_JQ], Buffer.from(`${tabs}\n===AC-SPLIT===\n${panes}\n`, "latin1"), "pipe", "inherit");
-  for (const line of `${subst(plan.out)}\n`.split("\n")) {
-    const [kind, id] = ifsRead(line, 2) as [string, string];
-    if (kind === "PANE") herdr(["pane", "close", id], "ignore", "ignore");
-    else if (kind === "TAB") herdr(["tab", "close", id], "ignore", "ignore");
-    else if (kind === "WS") herdr(["workspace", "close", id], "ignore", "ignore");
-  }
-  emit(`{"event":"reap-pane-done","pane":"${rp}","closed":${herdr(["pane", "get", rp]).status === 0 ? "false" : "true"}}`);
+  // An orca pane closes ALONE - the family tab dies with its last pane by
+  // itself, so there is no tab/workspace cascade to plan.
+  orcaJson(["terminal", "close", "--terminal", rp], "inherit");
+  for (let i = 0; i < 8 && orcaConnected(rp); i++) pause("0.25");
+  emit(`{"event":"reap-pane-done","pane":"${rp}","closed":${orcaConnected(rp) ? "false" : "true"}}`);
   process.exit(0);
 }
 
-function reap(args: string[]): never {
-  if (backendSoft() === "orca") {
-    emit('{"event":"reap","note":"dead-cwd sweep is herdr-only; orca panes reap by handle"}');
-    process.exit(0);
-  }
-  let dry = 0;
-  for (const a of args) {
-    if (a === "--dry-run") dry = 1;
-    else fail(`unknown arg ${a}`);
-  }
-  if (!commandV("herdr")) {
-    emit('{"event":"reap","panes":0,"tabs":0,"note":"herdr not on PATH"}');
-    process.exit(0);
-  }
-  const tabs = herdr(["tab", "list"], "pipe").out.toString("latin1").replace(/\0/g, "").replace(/\n+$/, "");
-  const panes = herdr(["pane", "list"], "pipe").out.toString("latin1").replace(/\0/g, "").replace(/\n+$/, "");
-  const lists = Buffer.from(`${tabs}\n===AC-SPLIT===\n${panes}`, "latin1");
-  // jq cannot stat, so our panes' cwds are checked here and the gone ones
-  // handed back. A cwd holding a newline never matches one, so it is never
-  // reaped.
-  const gone = readLines(sh(["jq", "-Rrs", REAP_OURS + REAP_CWDS], lists, "pipe", "inherit").out)
-    .filter((c) => !isDir(c))
-    .join("\n");
-  const plan = sh(["jq", "-Rrs", "--arg", "gone", gone, REAP_OURS + REAP_PLAN], lists, "pipe", "inherit");
-  let np = 0;
-  let nt = 0;
-  for (const line of `${subst(plan.out)}\n`.split("\n")) {
-    const [kind, id, rest] = ifsRead(line, 3) as [string, string, string];
-    if (kind === "PANE") {
-      emit(`{"event":"reap","pane":"${id}","cwd":"${rest}","dry_run":${dry}}`);
-      if (!dry) herdr(["pane", "close", id], "ignore", "ignore");
-      np++;
-    } else if (kind === "TAB") {
-      if (!dry) herdr(["tab", "close", id], "ignore", "ignore");
-      nt++;
-    }
-  }
-  emit(`{"event":"reap-done","panes":${np},"tabs":${nt},"dry_run":${dry}}`);
+function reap(_args: string[]): never {
+  emit('{"event":"reap","note":"dead-cwd sweep is herdr-only; orca panes reap by handle"}');
   process.exit(0);
 }
 
-const RUN_FLAGS = ["--cwd", "--prompt-file", "--resume", "--label", "--kind", "--timeout", "--replace-pane", "--pane-file", "--model", "--effort", "--harness", "--observe", "--deliverable", "--await-file"];
+const RUN_FLAGS =["--cwd", "--prompt-file", "--resume", "--label", "--kind", "--timeout", "--replace-pane", "--pane-file", "--model", "--effort", "--harness", "--observe", "--deliverable", "--await-file"];
 
 // `ac_state_dir 2>/dev/null`: <physical home>/state, minted when it can be;
 // "" homeless or where cd cannot enter the home.
@@ -1540,7 +1276,6 @@ async function run(args: string[]): Promise<never> {
   const CWD = flag("--cwd");
   const PF = flag("--prompt-file");
   const SID = flag("--resume");
-  const LABEL = flag("--label");
   const KIND = flag("--kind");
   const TIMEOUT = flag("--timeout");
   const REPLACE = flag("--replace-pane");
@@ -1646,13 +1381,7 @@ async function run(args: string[]): Promise<never> {
   if (!isFile(PF)) fail(`prompt file missing: ${PF}`);
   // A one-shot needs no backend at all: its callers were panes carrying no
   // AC_HOME, and resolving one here opened herdr panes for an orca fleet.
-  let PA_BACKEND = "";
-  if (ARM !== "oneshot") {
-    PA_BACKEND = backendSoft();
-    if (PA_BACKEND === "orca") {
-      if (!commandV("orca")) fail("orca not on PATH");
-    } else if (!commandV("herdr")) fail("herdr not on PATH");
-  }
+  if (ARM !== "oneshot" && !commandV("orca")) fail("orca not on PATH");
 
   const PROJ = `${(claudeTranscriptRoot() ?? "").replace(/\n+$/, "")}/${CWD.replace(/[/.]/g, "-").replace(/\n+$/, "")}`;
   const files = helperFiles(AT_CALLER);
@@ -1727,14 +1456,6 @@ async function run(args: string[]): Promise<never> {
     for (const n of readdirSync(PROJ)) if (!n.startsWith(".") && n.endsWith(".jsonl")) BEFORE.add(n);
   } catch {}
 
-  // The family rides the label because adoption is by label SESSION-WIDE: a
-  // verifier lease sits on a detached checkout with no branch, and a second
-  // family's verifier once adopted the first family's tab.
-  const BRANCH = subst(sh(["git", "-C", CWD, "symbolic-ref", "--short", "HEAD"], "inherit", "pipe", "ignore").out);
-  let TABLABEL = `ac-${KIND}-agent`;
-  if (process.env.AC_WINDOW_FAMILY) TABLABEL += `-${process.env.AC_WINDOW_FAMILY}`;
-  if (BRANCH) TABLABEL += `-${BRANCH.replaceAll("/", "-")}`;
-
   // A fresh pane inherits NOTHING. A homed caller pins its physical home; a
   // homeless one passes the fleet NAME alone when it was told one, so the
   // pane's own ac-*.sh calls land their tabs in the fleet's group - and
@@ -1758,47 +1479,12 @@ async function run(args: string[]): Promise<never> {
     // ignored and stdin /dev/null, and every harness it execs inherits that.
     rung = spawnShell(["/bin/sh", "-c", 'trap "" INT QUIT; exec sh -c "$0"', RUNCMD], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
     rung.unref();
-  } else if (PA_BACKEND === "orca") {
+  } else {
     const placed = orcaPlacePane(CWD, RUNCMD, `ac-${KIND}`);
     if (placed === null) fail("could not place orca pane");
     const at = u8(placed).indexOf(" ");
     P = at < 0 ? u8(placed) : u8(placed).slice(0, at);
     TAB = at < 0 ? u8(placed) : u8(placed).slice(at + 1);
-  } else {
-    // The workspace is resolved FIRST and scopes the adoption: a tab carrying
-    // the right label in the WRONG workspace is never adopted. An unresolvable
-    // workspace falls back to label-only adoption.
-    let WS = "";
-    const resolveWs = (): void => {
-      WS = u8(herdrResolveWorkspace(wsFamilyLabel(lat(process.env.AC_WINDOW_FAMILY ?? "")).replace(/\n+$/, ""), true) ?? "");
-    };
-    const tabOpen = (): void => {
-      const created = herdrTabOpen(lat(SES), lat(TABLABEL), lat(CWD), lat(WS));
-      if (created === null) return;
-      const c = u8(created);
-      const at = c.indexOf(" ");
-      P = at < 0 ? c : c.slice(0, at);
-      TAB = at < 0 ? c : c.slice(at + 1);
-    };
-    resolveWs();
-    TAB = subst(sh(["jq", "-r", "--arg", "tl", TABLABEL, "--arg", "ws", WS, ADOPT_JQ], herdr(["tab", "list"], "pipe").out, "pipe", "ignore").out);
-    if (TAB) {
-      const first = subst(sh(["jq", "-r", "--arg", "tab", TAB, FIRST_PANE_JQ], herdr(["pane", "list"], "pipe").out, "pipe", "ignore").out);
-      const split = herdr(["pane", "split", first, "--direction", "right", "--no-focus"], "pipe").out.toString("utf8");
-      P = split.split("\n").map((l) => /^[^\n]*"pane_id":"([^"]*)"[^\n]*$/.exec(l)?.[1]).find((id) => id !== undefined) ?? "";
-    } else {
-      if (WS) tabOpen();
-      if (!P) {
-        resolveWs();
-        if (WS) tabOpen();
-      }
-    }
-    if (!P) fail("could not create herdr pane");
-    if (!TAB) fail(`could not resolve herdr tab for pane ${P}`);
-    herdr(["pane", "rename", P, `ac-${KIND}-agent:${LABEL}`]);
-    // herdr spawns a workspace with a default "1" tab that lingers as sidebar
-    // junk once a real tab lives there.
-    if (WS) for (const jt of readLines(sh(["jq", "-r", "--arg", "ws", WS, DEFAULT_TABS_JQ], herdr(["tab", "list"], "pipe").out, "pipe", "ignore").out)) herdr(["tab", "close", jt.replace(/^[ \t]+|[ \t]+$/g, "")], "ignore", "ignore");
   }
 
   // The live identity is published before the agent launches, so the
@@ -1834,19 +1520,12 @@ async function run(args: string[]): Promise<never> {
       }
       sh(["mv", "-f", t.path, OBSERVE], "inherit", "inherit", "ignore");
     } catch {}
-  if (ARM !== "oneshot" && PA_BACKEND !== "orca") herdr(["pane", "run", P, RUNCMD]);
 
   // Best-effort and never fatal - the new pane is already placed - but the
   // outcome is REPORTED, as reap-pane reports its own.
   if (REPLACE) {
-    let closed: boolean;
-    if (PA_BACKEND === "orca") {
-      orcaJson(["terminal", "close", "--terminal", REPLACE], "inherit");
-      closed = !orcaConnected(REPLACE);
-    } else {
-      herdr(["pane", "close", REPLACE]);
-      closed = herdr(["pane", "get", REPLACE]).status !== 0;
-    }
+    orcaJson(["terminal", "close", "--terminal", REPLACE], "inherit");
+    const closed = !orcaConnected(REPLACE);
     emit(`{"event":"replace-pane","pane":"${REPLACE}","closed":${closed}}`);
   }
 
@@ -2101,7 +1780,7 @@ async function run(args: string[]): Promise<never> {
         process.exit(1);
       }
     } else if (i % 5 === 4) {
-      const live = PA_BACKEND === "orca" ? orcaConnected(P) : herdr(["pane", "get", P]).status === 0;
+      const live = orcaConnected(P);
       if (!live) {
         emit(`{"event":"done","status":"pane_closed","session_id":"${NEWSID}","transcript":"${TRANSCRIPT}","pane":"${P}","error":"pane closed while turn in flight"}`);
         process.exit(1);
@@ -2152,10 +1831,8 @@ async function entry(args: string[]): Promise<never> {
   if (backendRoute("inherit") === null) process.exit(1);
   if (process.env.HOME === undefined) die("HOME is not set");
   process.env.PATH = `${process.env.PATH ?? ""}:/opt/homebrew/bin:${process.env.HOME}/.local/bin`;
-  SES = process.env.AC_HERDR_SESSION || configReadSoft("herdr-session", "default");
   const [verb, ...rest] = args;
   if (verb === "close") close(rest);
-  if (verb === "steer") steer(rest);
   if (verb === "reap-pane") reapPane(rest);
   if (verb === "reap") reap(rest);
   if (verb === "run") return run(rest);

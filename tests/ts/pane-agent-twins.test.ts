@@ -191,13 +191,12 @@ const put = (s: string, rel: string, body: string, mode = 0o644): void => {
   chmodSync(join(s, rel), mode);
 };
 
-// ac_backend_route resolves ac_backend's full ladder, so a row with no
-// override would silently resolve the no-rung default (orca) rather than
-// exercise herdr: every "herdr:" base case pins it.
-const HERDR_ = { AC_BACKEND: "herdr" };
+// ac_backend_route refuses any backend but orca now (herdr included), so a
+// row's base env must be orca to survive sourcing; "an unsupported backend"
+// rows change AC_BACKEND only AFTER sourcing, at call time, via tmuxAtCall.
 // The bare raw-pane calls: the status is the verb's own, a refused backend
 // name ends the caller before anything after it prints.
-const verb = (call: string, ts: string, args: string[]): Row => ({ bash: `${call} "$@"`, twin: `const r = ${ts}; if (r.exited) process.exit(r.status); return r.status;`, args, env: HERDR_ });
+const verb = (call: string, ts: string, args: string[]): Row => ({ bash: `${call} "$@"`, twin: `const r = ${ts}; if (r.exited) process.exit(r.status); return r.status;`, args, env: ORCA_ });
 // The captured ones: `x="$(<call>)"; s=$?` - a refused name ends only the
 // substitution. ac-backend.sh refuses a bad name when it is sourced too, so a
 // row of either kind reaches the route's refusal only with the name set after
@@ -206,15 +205,12 @@ const capture = (call: string, ts: string, args: string[], redirect = ""): Row =
   bash: `x="$(${call} "$@"${redirect})"; s=$?; printf '[%s]' "$x"; (exit $s)`,
   twin: `const r = ${ts}; say("[" + (r.exited ? "" : cap(r.out)) + "]"); return r.exited ? 1 : r.status;`,
   args,
-  env: HERDR_,
+  env: ORCA_,
 });
 const tmuxAtCall = (row: Row): Row => ({ ...row, bash: `export AC_BACKEND=tmux; ${row.bash}`, twin: `process.env.AC_BACKEND = "tmux"; ${row.twin}` });
 const IO = `{ stderr: "inherit" }`;
 const ORCA_ = { AC_BACKEND: "orca" };
 const OSHOW = (terminal: string): string => `{"ok":true,"result":{"terminal":${terminal}}}\n`;
-const PGET = (st: string): string => `{"result":{"pane":{"pane_id":"p1","tab_id":"w1:t1","agent_status":"${st}"}}}\n`;
-const FG = (...names: string[]): string => `{"result":{"process_info":{"foreground_processes":[${names.map((n) => `{"argv0":"${n}"}`).join(",")}]}}}\n`;
-const BLK = (rule: string): string => `{"state":"blocked","matched_rule":{"id":"${rule}"}}\n`;
 
 test("transcriptFinalEpoch reads the last assistant stamp as ac_transcript_final_epoch did", () => {
   const ep: Row = { bash: `ac_transcript_final_epoch "$1"`, twin: `const r = L.transcriptFinalEpoch(A[0]); say(r.out); return r.status;`, args: ["@S/t.jsonl"] };
@@ -248,13 +244,6 @@ test("claudeTranscriptRoot answers ac_claude_transcript_root's ladder", () => {
 
 test("backendCapturePane reads a raw pane as the drivers did, inside a capture", () => {
   const cp = capture("backend_capture_pane", `L.backendCapturePane(A[0], A[1], { stdout: "pipe", stderr: "ignore" })`, ["p1", "2"], " 2>/dev/null");
-  // Proves the herdr pin actually bites: a dropped pin would still pass (both
-  // sides would agree on whatever backend they fell back to), just not here.
-  expect(same("herdr: the last lines", { ...cp, seed: (s) => put(s, "stub/pane-read.out", "a\nb\nc\n") }).o.log).toMatch(/^herdr /);
-  same("herdr: 400 lines fetch 400", { ...cp, args: ["p1", "400"], seed: (s) => put(s, "stub/pane-read.out", "a\nb\n") });
-  same("herdr: a read that fails", { ...cp, seed: (s) => put(s, "stub/pane-read.rc", "1\n") });
-  same("herdr: no pane", { ...cp, args: ["", "40"] });
-  same("herdr: no line count", { ...cp, args: ["p1", ""], seed: (s) => put(s, "stub/pane-read.out", "x\n") });
   same("orca: the screen", { ...cp, args: ["h1", "40"], env: ORCA_, seed: (s) => put(s, "stub/terminal-read.out", '{"ok":true,"result":{"terminal":{"tail":["a","b"]}}}\n') });
   same("orca: a read that fails", { ...cp, args: ["h1", "40"], env: ORCA_, seed: (s) => put(s, "stub/terminal-read.rc", "1\n") });
   expect(same("an unsupported backend", tmuxAtCall(cp)).o.out).toBe("[]|rc=1");
@@ -262,11 +251,6 @@ test("backendCapturePane reads a raw pane as the drivers did, inside a capture",
 
 test("backendHarnessUpPane probes a raw pane's came-up states as the drivers did", () => {
   const up = verb("backend_harness_up_pane", `L.backendHarnessUpPane(A[0], ${IO})`, ["p1"]);
-  expect(same("herdr: a harness in the foreground", { ...up, seed: (s) => put(s, "stub/pane-process-info.out", FG("-zsh", "/usr/local/bin/codex")) }).o.log).toMatch(/^herdr /);
-  same("herdr: a shell alone", { ...up, seed: (s) => put(s, "stub/pane-process-info.out", FG("-zsh", "bash")) });
-  same("herdr: no process named", { ...up, seed: (s) => put(s, "stub/pane-process-info.out", '{"result":{"process_info":{"foreground_processes":[]}}}\n') });
-  same("herdr: the read fails", { ...up, seed: (s) => put(s, "stub/pane-process-info.rc", "1\n") });
-  same("herdr: no pane", { ...up, args: [""] });
   const show = (t: string) => (s: string): void => put(s, "stub/terminal-show.out", lat(OSHOW(t)));
   same("orca: a shell title", { ...up, args: ["h1"], env: ORCA_, seed: show('{"connected":true,"title":"-zsh"}') });
   same("orca: orca's own identity", { ...up, args: ["h1"], env: ORCA_, seed: show('{"connected":true,"title":"cd","agentIdentity":"codex"}') });
@@ -281,11 +265,6 @@ test("backendHarnessUpPane probes a raw pane's came-up states as the drivers did
 
 test("backendSendKeyPane presses one key at a raw pane as the drivers did", () => {
   const key = verb("backend_send_key_pane", `L.backendSendKeyPane(A[0], A[1], ${IO})`, ["p1", "Enter"]);
-  expect(same("herdr: Enter, the tab focused first", { ...key, seed: (s) => put(s, "stub/pane-get.out", PGET("idle")) }).o.log).toMatch(/^herdr /);
-  same("herdr: an unnamed key", { ...key, args: ["p1", "2"], seed: (s) => put(s, "stub/pane-get.out", PGET("idle")) });
-  same("herdr: no tab to focus still presses", { ...key, args: ["p1", "Escape"], seed: (s) => put(s, "stub/pane-get.rc", "1\n") });
-  same("herdr: the press fails", { ...key, seed: (s) => (put(s, "stub/pane-get.out", PGET("idle")), put(s, "stub/pane-send-keys.rc", "3\n")) });
-  same("herdr: no pane", { ...key, args: ["", "Enter"] });
   for (const k of ["Enter", "Esc", "C-c", "y"]) same(`orca: ${k}`, { ...key, args: ["h1", k], env: ORCA_ });
   same("orca: the send fails", { ...key, args: ["h1", "Enter"], env: ORCA_, seed: (s) => put(s, "stub/terminal-send.rc", "1\n") });
   same("orca: no pane", { ...key, args: ["", "Enter"], env: ORCA_ });
@@ -294,18 +273,6 @@ test("backendSendKeyPane presses one key at a raw pane as the drivers did", () =
 
 test("backendSendLinePane types and verifies one line at a raw pane as the drivers did", () => {
   const line = verb("backend_send_line_pane", `L.backendSendLinePane(A[0], A[1], ${IO})`, ["p1", "hello there"]);
-  expect(same("herdr: the render reacts", { ...line, seed: (s) => (put(s, "stub/pane-read.1.out", "a\n"), put(s, "stub/pane-read.out", "b\n")) }).o.log).toMatch(/^herdr /);
-  same("herdr: never reacts: focus and one retry, stranded", { ...line, seed: (s) => (put(s, "stub/pane-read.out", "a\n"), put(s, "stub/pane-get.out", PGET("idle"))) });
-  same("herdr: the retry reacts", {
-    ...line,
-    seed: (s) => {
-      for (let n = 1; n <= 9; n++) put(s, `stub/pane-read.${n}.out`, "a\n");
-      put(s, "stub/pane-read.out", "b\n");
-      put(s, "stub/pane-get.out", PGET("idle"));
-    },
-  });
-  same("herdr: unreadable", { ...line, seed: (s) => put(s, "stub/pane-read.rc", "1\n") });
-  same("herdr: no pane", { ...line, args: ["", "x"] });
   const screen = (n: string, tail: string): string => `{"ok":true,"result":{"terminal":{"tail":${tail}}}}\n`;
   same("orca: the render reacts", { ...line, args: ["h1", "hi"], env: ORCA_, seed: (s) => (put(s, "stub/terminal-read.1.out", screen("1", '["a"]')), put(s, "stub/terminal-read.out", screen("2", '["b"]'))) });
   same("orca: a dialog owns the pane: 1, no retry", { ...line, args: ["h1", "hi"], env: ORCA_, seed: (s) => put(s, "stub/terminal-show.out", OSHOW('{"agentWait":{"reason":"x"}}')) });
@@ -322,10 +289,6 @@ test("backendSendLinePane types and verifies one line at a raw pane as the drive
 
 test("backendAgentStatusPane prints a raw pane's status word as the drivers did, inside a capture", () => {
   const st = capture("backend_agent_status_pane", `L.backendAgentStatusPane(A[0], ${IO})`, ["p1"]);
-  for (const v of ["idle", "working", "blocked", "done", ""]) same(`herdr: '${v}'`, { ...st, seed: (s) => put(s, "stub/pane-get.out", PGET(v)) });
-  expect(same("herdr: an answer that is no JSON", { ...st, seed: (s) => put(s, "stub/pane-get.out", "oops\n") }).o.log).toMatch(/^herdr /);
-  same("herdr: the read fails", { ...st, seed: (s) => put(s, "stub/pane-get.rc", "1\n") });
-  same("herdr: no pane", { ...st, args: [""] });
   const show = (t: string) => (s: string): void => put(s, "stub/terminal-show.out", lat(OSHOW(t)));
   same("orca: a wait", { ...st, args: ["h1"], env: ORCA_, seed: show('{"connected":true,"agentWait":{"reason":"x"}}') });
   same("orca: disconnected", { ...st, args: ["h1"], env: ORCA_, seed: show('{"connected":false}') });
@@ -335,23 +298,11 @@ test("backendAgentStatusPane prints a raw pane's status word as the drivers did,
   same("orca: the show fails", { ...st, args: ["h1"], env: ORCA_, seed: (s) => put(s, "stub/terminal-show.rc", "1\n") });
   same("orca: no pane", { ...st, args: [""], env: ORCA_ });
   const refused = same("an unsupported backend", tmuxAtCall(st)).o;
-  expect([refused.out, refused.err]).toEqual(["[]|rc=1", "ERROR: unsupported backend 'tmux' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)\n"]);
+  expect([refused.out, refused.err]).toEqual(["[]|rc=1", "ERROR: unsupported backend 'tmux' (valid backend: orca)\n"]);
 }, 180000);
 
 test("backendStartupDialogsPane runs ac_startup_dialogs over the raw-pane verbs, no errexit", () => {
-  const sd: Row = { bash: `backend_startup_dialogs_pane "$1" "$2"`, twin: `const r = L.backendStartupDialogsPane(A[0], A[1], ${IO}); if (r.exited) process.exit(r.status); return r.status;`, args: ["p1", "codex"], env: HERDR_ };
-  expect(
-    same("herdr: named, unnamed, then up", {
-      ...sd,
-      seed: (s) => (put(s, "stub/pane-process-info.out", FG("codex")), put(s, "stub/agent-explain.1.out", BLK("startup_update")), put(s, "stub/agent-explain.2.out", BLK("trust")), put(s, "stub/agent-explain.3.out", '{"state":"idle"}\n'), put(s, "stub/pane-get.out", PGET("idle"))),
-    }).o.log,
-  ).toMatch(/^herdr /);
-  same("herdr: an unnamed dialog twice: the key once", { ...sd, seed: (s) => put(s, "stub/agent-explain.out", BLK("trust")) });
-  same("herdr: claude has no key", { ...sd, args: ["p1", "claude"], seed: (s) => put(s, "stub/agent-explain.out", BLK("trust")) });
-  same("herdr: unobservable: the key, once, and out", sd);
-  same("herdr: answered every round, the budget spent", { ...sd, seed: (s) => (put(s, "stub/agent-explain.out", BLK("startup_update")), put(s, "stub/pane-get.out", PGET("blocked"))) });
-  same("herdr: nothing pending, a bare shell", { ...sd, seed: (s) => (put(s, "stub/agent-explain.out", '{"state":"idle"}\n'), put(s, "stub/pane-process-info.out", FG("-zsh"))) });
-  same("herdr: a sleep that fails is passed over", { ...sd, seed: (s) => (put(s, "stub/agent-explain.out", BLK("startup_update")), put(s, "stub/pane-get.out", PGET("blocked")), put(s, "stub/sleep.rc", "3\n")) });
+  const sd: Row = { bash: `backend_startup_dialogs_pane "$1" "$2"`, twin: `const r = L.backendStartupDialogsPane(A[0], A[1], ${IO}); if (r.exited) process.exit(r.status); return r.status;`, args: ["p1", "codex"], env: ORCA_ };
   same("orca: both codex prompts answered, then up", {
     ...sd,
     args: ["h1", "codex"],

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ac-pane-agent.test.sh - the vendored pane-turn helper: NDJSON protocol,
-# Stop-hook turn end, transcript detection, workspace placement, close verb,
-# and arg validation. herdr and claude are stubbed; the stub's `pane run`
-# simulates a finished claude turn (touches the Stop-hook marker and writes
-# the transcript).
+# Stop-hook turn end, transcript detection, orca placement, close verb, and
+# arg validation. orca and claude are stubbed; the stub's `terminal create`
+# --command simulates a finished claude turn (touches the Stop-hook marker and
+# writes the transcript).
 # shellcheck disable=SC2016
 
 # Fail-closed sourcing: unsourced (suite run outside tests/sh/), errexit is never
@@ -20,76 +20,89 @@ stub="$TMP/stubbin"
 mkdir -p "$stub"
 export HDLOG="$TMP/hd.log" FAKEHOME="$TMP/fakehome"
 mkdir -p "$FAKEHOME"
-# This file's own local herdr stub (below) models only herdr; pin the backend
-# explicitly rather than lean on either resolver's bare default (orca since
-# the no-config flip). The modelled-backends section further down (xc/xbg)
-# inherits this same export into its subshells unless a row's own XENV names
-# AC_BACKEND=orca, which then overrides it - see xc's own comment.
-export AC_BACKEND=herdr
+# orca is the only valid backend (herdr is refused everywhere - T8's cutover),
+# so no row below needs to pin AC_BACKEND: a bare run already resolves orca.
 # The helper resolves transcripts through ac_claude_transcript_root; the stub
 # claude writes them under the fake HOME every run below passes.
 export AC_CLAUDE_TRANSCRIPT_ROOT="$FAKEHOME/.claude/projects"
 
-cat >"$stub/herdr" <<'EOF'
+# This file's own local orca stub (below) models only terminal placement
+# end-to-end: `terminal create --command <line>` runs that line SYNCHRONOUSLY
+# (as orcaPlacePane's own call is), exactly as the original's herdr stub ran
+# `pane run`'s composed line. Handles are counter-named term<n>/tab<n> and
+# tracked as files under $ORCA_HANDLES so `terminal show`/`close` can answer.
+export ORCA_HANDLES="$TMP/orca-handles"
+mkdir -p "$ORCA_HANDLES"
+cat >"$stub/orca" <<'EOF'
 #!/usr/bin/env bash
-echo "herdr $*" >>"$HDLOG"
-[ "${1:-}" = --session ] && shift 2
+echo "orca $*" >>"$HDLOG"
+cmd="" term=""
+args=("$@"); i=0
+while [ $i -lt ${#args[@]} ]; do
+  case "${args[$i]}" in
+    --command) i=$((i+1)); cmd="${args[$i]}" ;;
+    --terminal) i=$((i+1)); term="${args[$i]}" ;;
+  esac
+  i=$((i+1))
+done
+simulate_turn() {
+  # Run in the BACKGROUND, detached from the stub's own exit: a real terminal
+  # tool hands back its handle as soon as the pane exists and runs --command
+  # INSIDE it asynchronously (the pane is a live claude session, not a value
+  # the create call waits on) - unlike the old herdr stub, whose placement and
+  # `pane run` were two SEPARATE synchronous calls with --pane-file published
+  # in between.
+  [ -z "${HD_RUN_SLEEP:-}" ] || sleep "$HD_RUN_SLEEP"
+  cwd="$(printf '%s' "$1" | sed -n "s/^cd '\([^']*\)'.*/\1/p")"
+  marker="$(sed -n "s/.*touch '\([^']*\)'.*/\1/p" "$cwd/.claude/settings.local.json")"
+  slug="$(printf '%s' "$cwd" | sed 's/[/.]/-/g')"
+  mkdir -p "$HOME/.claude/projects/$slug"
+  # Every turn is a NEW claude session, so every turn writes a NEW
+  # transcript: reusing one name left each later run with nothing the
+  # new-session glob could resolve, i.e. the very empty-transcript hole this
+  # suite now asserts is fail-closed.
+  hn="$(cat "$HDLOG.n" 2>/dev/null || printf 0)"; hn=$((hn + 1)); printf '%s\n' "$hn" >"$HDLOG.n"
+  sid=test-sid; [ "$hn" -gt 1 ] && sid="test-sid-$hn"
+  tf="$HOME/.claude/projects/$slug/$sid.jsonl"
+  ts=""; [ -z "${HD_TS:-}" ] || ts="\"timestamp\":\"$HD_TS\","
+  if [ -n "${HD_RACE_TEXT:-}" ]; then
+    # The verdict's flush RACES the Stop-hook marker: at the instant the
+    # marker fires the last assistant message is still a tool_use, and the
+    # text lands a beat later. This is exactly what a real reviewer's 20KB
+    # verdict did - written, then harvested a few hundred ms too early.
+    printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{}}]}}' >"$tf"
+    touch "$marker"
+    ( sleep 2; printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"the verdict"}]}}' >>"$tf" ) &
+  else
+    printf '{"type":"assistant",%s"message":{"content":[{"type":"text","text":"[]"}]}}\n' "$ts" >"$tf"
+    touch "$marker"
+  fi
+}
 case "${1:-} ${2:-}" in
-  "tab list") if [ -n "${HD_TABS:-}" ]; then cat "$HD_TABS"; else echo '{"result":{"tabs":[]}}'; fi ;;
-  "pane list") if [ -n "${HD_PANES:-}" ]; then cat "$HD_PANES"; else echo '{"result":{"panes":[]}}'; fi ;;
-  "pane split") echo '{"result":{"pane":{"pane_id":"pS1"}}}' ;;
-  "workspace get") case "${3:-}" in wP) exit 0 ;; *) echo '{"error":"gone"}'; exit 1 ;; esac ;;
-  "workspace list") cat "${WSLIST:-/dev/null}" 2>/dev/null || echo '{"result":{"workspaces":[]}}' ;;
-  "workspace create") echo '{"result":{"workspace":{"workspace_id":"wP"}}}' ;;
-  "workspace close") : ;;
-  "tab create")
-    case "$*" in *"--workspace wSTALE"*) exit 1 ;; esac
-    echo '{"result":{"tab":{"tab_id":"tP"},"root_pane":{"pane_id":"pP1"}}}' ;;
-  "pane run")
-    [ -z "${HD_RUN_SLEEP:-}" ] || sleep "$HD_RUN_SLEEP"
-    cwd="$(printf '%s' "$4" | sed -n "s/^cd '\([^']*\)'.*/\1/p")"
-    marker="$(sed -n "s/.*touch '\([^']*\)'.*/\1/p" "$cwd/.claude/settings.local.json")"
-    slug="$(printf '%s' "$cwd" | sed 's/[/.]/-/g')"
-    mkdir -p "$HOME/.claude/projects/$slug"
-    # Every turn is a NEW claude session, so every turn writes a NEW
-    # transcript: reusing one name left each later run with nothing the
-    # new-session glob could resolve, i.e. the very empty-transcript hole this
-    # suite now asserts is fail-closed.
-    n="$(cat "$HDLOG.n" 2>/dev/null || printf 0)"; n=$((n + 1)); printf '%s\n' "$n" >"$HDLOG.n"
-    sid=test-sid; [ "$n" -gt 1 ] && sid="test-sid-$n"
-    tf="$HOME/.claude/projects/$slug/$sid.jsonl"
-    ts=""; [ -z "${HD_TS:-}" ] || ts="\"timestamp\":\"$HD_TS\","
-    if [ -n "${HD_RACE_TEXT:-}" ]; then
-      # The verdict's flush RACES the Stop-hook marker: at the instant the
-      # marker fires the last assistant message is still a tool_use, and the
-      # text lands a beat later. This is exactly what a real reviewer's 20KB
-      # verdict did - written, then harvested a few hundred ms too early.
-      printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{}}]}}' >"$tf"
-      touch "$marker"
-      ( sleep 2; printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"the verdict"}]}}' >>"$tf" ) &
-    else
-      printf '{"type":"assistant",%s"message":{"content":[{"type":"text","text":"[]"}]}}\n' "$ts" >"$tf"
-      touch "$marker"
-    fi ;;
-  "pane close") echo "CLOSE-PANE $3" >>"$HDLOG" ;;
-  # A closed pane stops resolving, which is what --replace-pane's `closed`
-  # verification reads. HD_STICKY names a pane the stub keeps alive however
-  # often it is closed (the herdr-refused-the-close case).
-  "pane get") { [ "$3" != "${HD_STICKY:-}" ] && grep -q "CLOSE-PANE $3\$" "$HDLOG" 2>/dev/null; } && exit 1
-              echo '{"result":{"pane":{"pane_id":"pP1","agent_status":"idle"}}}' ;;
+  "worktree show") printf '{"ok":false,"error":{"message":"selector_not_found"}}\n'; exit 1 ;;
+  "terminal create")
+    n="$(cat "$HDLOG.tn" 2>/dev/null || printf 0)"; n=$((n + 1)); printf '%s\n' "$n" >"$HDLOG.tn"
+    h="term$n"; t="tab$n"
+    : >"$ORCA_HANDLES/$h"
+    printf '{"ok":true,"result":{"terminal":{"handle":"%s","tabId":"%s"}}}\n' "$h" "$t"
+    [ -n "$cmd" ] && ( simulate_turn "$cmd" </dev/null >/dev/null 2>&1 & )
+    exit 0 ;;
+  "terminal close")
+    [ "$term" = "${ORCA_STICKY:-}" ] || rm -f "$ORCA_HANDLES/$term"
+    echo "CLOSE-TERM $term" >>"$HDLOG"
+    printf '{"ok":true,"result":{}}\n'; exit 0 ;;
+  "terminal show")
+    if [ -f "$ORCA_HANDLES/$term" ]; then
+      printf '{"ok":true,"result":{"terminal":{"connected":true}}}\n'; exit 0
+    fi
+    printf '{"ok":false,"error":{"message":"terminal_not_found"}}\n'; exit 1 ;;
 esac
 exit 0
 EOF
-chmod +x "$stub/herdr"
+chmod +x "$stub/orca"
 
 pf="$TMP/prompt.md"
 printf 'review this\n' >"$pf"
-# Placement (FAMILY WORKSPACE GROUPING): no AC_WINDOW_FAMILY in this env, so
-# the pane resolves the fleet ROOT workspace by label; a leftover retired knob
-# must be inert.
-printf 'wSTALE\n' >"$AC_HOME/config/herdr-workspace-agents"
-export WSLIST="$TMP/ws.json"
-echo '{"result":{"workspaces":[]}}' >"$WSLIST"
 
 out="$(PATH="$stub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --label r1)"
 assert_contains "$out" '"event":"transcript"' "transcript announced"
@@ -98,10 +111,9 @@ assert_contains "$out" '"session_id":"test-sid"' "session id from transcript nam
 assert_contains "$out" '"source":"transcript"' "an ok turn names where its payload came from"
 
 log="$(cat "$HDLOG")"
-assert_contains "$log" "workspace create --label home --no-focus" "no family: the fleet root workspace is created by label (retired knob ignored)"
-assert_contains "$log" "tab create --workspace wP" "pane lands in the resolved workspace"
-assert_contains "$log" "--label ac-ship-agent" "default kind=ship keeps the ship tab label"
-assert_contains "$log" "pane rename pP1 ac-ship-agent:r1" "pane labeled"
+assert_contains "$log" "terminal create" "the pane is placed through orca terminal create"
+assert_contains "$log" "--title crew:" "the terminal is titled for the fleet"
+assert_contains "$log" "ac-ship" "default kind=ship names the terminal (no tab/pane rename surface under orca)"
 
 # THE VERDICT FLUSH RACES THE MARKER. The last assistant message is a tool_use
 # at the instant the Stop hook fires; the text lands a beat later. Read once
@@ -151,83 +163,34 @@ out="$(PATH="$stub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$r
 case "$out" in *'"status":"ok"'*) fail "a turn must not end while the awaited file is absent: $out" ;; esac
 : >"$HDLOG"
 
-# --kind names the caller on both herdr surfaces (tab + pane).
+# --kind names the caller in the terminal's title; orca has no separate
+# tab/pane rename surface (that was herdr's own naming scheme, retired).
 : >"$HDLOG"
 PATH="$stub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --kind qa --label q1 >/dev/null
-assert_contains "$(cat "$HDLOG")" "--label ac-qa-agent" "kind=qa tab label"
-assert_contains "$(cat "$HDLOG")" "ac-qa-agent:q1" "kind=qa pane label"
+assert_contains "$(cat "$HDLOG")" "ac-qa" "kind=qa names the terminal"
 assert_contains "$log" "AC_HOME=" "the caller's fleet home is pinned onto the pane shell"
 
-# FAMILY-SCOPED tab label: a verifier lease is a DETACHED exact-ref checkout
-# (BRANCH empty), and the reuse step adopts tabs by label SESSION-WIDE -
-# without the family in the label, every codereview pane in the session
-# shared the bare 'ac-codereview-agent' tab: the second family's verifier
-# split into the first family's tab, in the wrong workspace, bypassing
-# AC_WINDOW_FAMILY (FAMILY WORKSPACE GROUPING, captain ruling).
-: >"$HDLOG"
-git -C "$repo" checkout -q --detach
-PATH="$stub:$PATH" HOME="$FAKEHOME" AC_WINDOW_FAMILY=famx \
-  "$BIN/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --kind codereview --label c1 >/dev/null
-assert_contains "$(cat "$HDLOG")" "--label ac-codereview-agent-famx" \
-  "detached lease: the FAMILY scopes the tab label, so cross-family adoption is impossible by name"
-
-# ...and adoption is scoped to the FAMILY WORKSPACE structurally: a tab with
-# the RIGHT label in the WRONG workspace (pre-family-label leftover, label
-# collision) is never adopted - the pane creates its own tab in the family
-# workspace instead of splitting into the stranger.
-: >"$HDLOG"
-export HD_TABS="$TMP/tabs.json"
-printf '{"result":{"tabs":[{"tab_id":"tWRONG","label":"ac-codereview-agent-famx","workspace_id":"wOTHER"}]}}\n' >"$HD_TABS"
-PATH="$stub:$PATH" HOME="$FAKEHOME" AC_WINDOW_FAMILY=famx \
-  "$BIN/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --kind codereview --label c2 >/dev/null
-wlog="$(cat "$HDLOG")"
-assert_contains "$wlog" "tab create --workspace wP" "wrong-workspace tab skipped: a fresh tab is created in the family workspace"
-case "$wlog" in *"pane split"*) fail "a tab outside the family workspace must never be adopted" ;; esac
-
-# ...while a same-label tab IN the family workspace still stacks rounds.
-: >"$HDLOG"
-printf '{"result":{"tabs":[{"tab_id":"tP","label":"ac-codereview-agent-famx","workspace_id":"wP"}]}}\n' >"$HD_TABS"
-export HD_PANES="$TMP/panes.json"
-printf '{"result":{"panes":[{"pane_id":"pP1","tab_id":"tP"}]}}\n' >"$HD_PANES"
-PATH="$stub:$PATH" HOME="$FAKEHOME" AC_WINDOW_FAMILY=famx \
-  "$BIN/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --kind codereview --label c3 >/dev/null
-assert_contains "$(cat "$HDLOG")" "pane split pP1" "same family workspace: round N splits into the existing tab"
-
-# Several candidates: the FIRST same-label tab in the family workspace is
-# adopted, its FIRST pane is split, and only THIS workspace's default "1" tabs
-# are swept afterwards.
-: >"$HDLOG"
-printf '{"result":{"tabs":[{"tab_id":"tWRONG","label":"ac-codereview-agent-famx","workspace_id":"wOTHER"},{"tab_id":"t1a","label":"1","workspace_id":"wP"},{"tab_id":"tP","label":"ac-codereview-agent-famx","workspace_id":"wP"},{"tab_id":"tP2","label":"ac-codereview-agent-famx","workspace_id":"wP"},{"tab_id":"t1b","label":"1","workspace_id":"wOTHER"},{"tab_id":"t1c","label":"1","workspace_id":"wP"}]}}\n' >"$HD_TABS"
-printf '{"result":{"panes":[{"pane_id":"pZ","tab_id":"tP2"},{"pane_id":"pP7","tab_id":"tP"},{"pane_id":"pP8","tab_id":"tP"}]}}\n' >"$HD_PANES"
-PATH="$stub:$PATH" HOME="$FAKEHOME" AC_WINDOW_FAMILY=famx \
-  "$BIN/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --kind codereview --label c4 --pane-file "$TMP/adopt.pane" >/dev/null
-alog="$(cat "$HDLOG")"
-assert_eq "$(cat "$TMP/adopt.pane")" "pS1 tP" "the first same-label tab in the family workspace is the one adopted"
-assert_contains "$alog" "pane split pP7 --direction" "the adopted tab's first pane is the one split"
-assert_contains "$alog" "tab close t1a" "a default \"1\" tab in the family workspace is swept"
-assert_contains "$alog" "tab close t1c" "every default \"1\" tab in the family workspace is swept"
-case "$alog" in *"tab close t1b"*) fail "a default \"1\" tab in ANOTHER workspace must never be swept" ;; esac
-unset HD_TABS HD_PANES
 git -C "$repo" checkout -q main
 assert_contains "$log" "claude --permission-mode auto" "claude launched in the pane"
 assert_file "$repo/.claude/settings.local.json" "stop hook installed"
 case "$log" in *"--model"*) fail "no model anywhere must pass no --model" ;; esac
 case "$log" in *"--effort"*) fail "no effort anywhere must pass no --effort" ;; esac
 
-# --replace-pane retires the PREVIOUS turn's pane once the new one is up, and
-# REPORTS whether that took. It stays best-effort and never fatal - the new pane
-# is already placed - but a supersede that silently left the old agent alive
-# against the same task-scoped resources is the orphan class this reporting
-# exists to make visible.
+# --replace-pane retires the PREVIOUS turn's terminal once the new one is up,
+# and REPORTS whether that took. It stays best-effort and never fatal - the
+# new pane is already placed - but a supersede that silently left the old
+# agent alive against the same task-scoped resources is the orphan class this
+# reporting exists to make visible.
 : >"$HDLOG"
 out="$(PATH="$stub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --label r-rep --replace-pane pOLD)"
-assert_contains "$(cat "$HDLOG")" "pane close pOLD" "--replace-pane closes the superseded pane"
+assert_contains "$(cat "$HDLOG")" "terminal close --terminal pOLD" "--replace-pane closes the superseded terminal"
 assert_contains "$out" '"event":"replace-pane","pane":"pOLD","closed":true' "a supersede that took is reported closed"
 assert_contains "$out" '"event":"done","status":"ok"' "the new turn still completes normally"
-# A superseded pane herdr refused to close is reported NOT closed, and the turn
-# is still a success - the caller decides what to do about the survivor.
+# A superseded terminal orca refused to close is reported NOT closed, and the
+# turn is still a success - the caller decides what to do about the survivor.
+: >"$ORCA_HANDLES/pSTUCK"
 : >"$HDLOG"
-out="$(PATH="$stub:$PATH" HOME="$FAKEHOME" HD_STICKY=pSTUCK "$BIN/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --label r-rep2 --replace-pane pSTUCK)"
+out="$(PATH="$stub:$PATH" HOME="$FAKEHOME" ORCA_STICKY=pSTUCK "$BIN/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --label r-rep2 --replace-pane pSTUCK)"
 assert_contains "$out" '"event":"replace-pane","pane":"pSTUCK","closed":false' "a supersede that did NOT take is reported"
 assert_contains "$out" '"event":"done","status":"ok"' "a failed supersede never fails the new turn"
 
@@ -245,8 +208,10 @@ while [ ! -s "$pane_file" ] && kill -0 "$pane_pid" 2>/dev/null && [ "$i" -lt 30 
   sleep 0.1
   i=$((i + 1))
 done
-assert_eq "$(cat "$pane_file" 2>/dev/null || true)" "pP1 tP" \
-  "--pane-file publishes pane and tab before turn completion"
+case "$(cat "$pane_file" 2>/dev/null || true)" in
+  term*\ tab*) ;;
+  *) fail "--pane-file publishes pane and tab before turn completion (got: $(cat "$pane_file" 2>/dev/null || true))" ;;
+esac
 kill -0 "$pane_pid" 2>/dev/null || fail "pane turn ended before the early handle was observed"
 wait "$pane_pid"
 assert_contains "$(cat "$pane_out")" '"event":"done","status":"ok"' \
@@ -380,7 +345,7 @@ printf 'turbo\n' >"$AC_HOME/config/effort"
 out="$(PATH="$stub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --label r-eff4 2>&1 || true)"
 assert_contains "$out" '"status":"error"' "invalid effort is a protocol error"
 assert_contains "$out" "invalid effort: turbo" "the error names the rejected value"
-case "$(cat "$HDLOG")" in *"pane run"*) fail "invalid effort must be refused before a pane is placed" ;; esac
+case "$(cat "$HDLOG")" in *"terminal create"*) fail "invalid effort must be refused before a pane is placed" ;; esac
 rm -f "$AC_HOME/config/effort"
 # The error event is NDJSON its readers parse with jq under pipefail
 # (ac-learn.sh, ac-gate.sh): a message carrying a quote, a backslash or a
@@ -489,7 +454,7 @@ assert_contains "$out" '"status":"error"' "an unarmed harness is a protocol erro
 assert_contains "$out" "fictional" "the refusal names the harness it will not place"
 assert_contains "$out" "claude" "the refusal names the harnesses that ARE armed"
 assert_contains "$out" "codex" "the refusal names the crewmate-arm harnesses too"
-case "$(cat "$HDLOG")" in *"pane run"*) fail "an unarmed harness must be refused before a pane is placed" ;; esac
+case "$(cat "$HDLOG")" in *"terminal create"*) fail "an unarmed harness must be refused before a pane is placed" ;; esac
 
 # A MISCONFIGURED profile is refused too - never silently degraded to the ladder
 # below. Falling through would put the judge back on the defaults while the
@@ -503,7 +468,7 @@ out="$(PATH="$stub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$r
 assert_contains "$out" '"status":"error"' "a panes entry with no harness is a protocol error"
 assert_contains "$out" "codereview" "the refusal names the kind it could not resolve"
 printf '%s' "$out" | jq -e . >/dev/null || fail "a carried refusal quoting JSON keeps the event valid JSON: $out"
-case "$(cat "$HDLOG")" in *"pane run"*) fail "an unresolvable profile must place no pane" ;; esac
+case "$(cat "$HDLOG")" in *"terminal create"*) fail "an unresolvable profile must place no pane" ;; esac
 rm -f "$AC_HOME/config/crew-dispatch.json"
 
 # A LANES-shaped kind has no single profile BY DESIGN, and every lane launch
@@ -519,7 +484,7 @@ EOF
 out="$(PATH="$stub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$repo" \
   --prompt-file "$pf" --kind codereview-scout --harness claude --label p-lane 2>&1 || true)"
 case "$out" in *'"status":"error"'*) fail "a lane naming its own harness must not ask for a single profile: $out" ;; esac
-assert_contains "$(cat "$HDLOG")" "pane run" "the lane's pane is placed like any other"
+assert_contains "$(cat "$HDLOG")" "terminal create" "the lane's pane is placed like any other"
 # The guard the fix must NOT weaken: with no --harness there IS nothing to run,
 # so the same declaration stays a refusal rather than degrading to the ladder.
 : >"$HDLOG"
@@ -554,26 +519,35 @@ case "$(cat "$HDLOG")" in *"--session-id"*) fail "a one-shot pane turn must pin 
 # scrollback, and REFUSES to report ok when even that is empty.
 repo2="$(make_repo nojsonl)"
 nstub="$TMP/nojsonl-bin"; mkdir -p "$nstub"
-cat >"$nstub/herdr" <<'EOF'
+cat >"$nstub/orca" <<'EOF'
 #!/usr/bin/env bash
-echo "herdr $*" >>"$HDLOG"
-[ "${1:-}" = --session ] && shift 2
+echo "orca $*" >>"$HDLOG"
+cmd="" term=""
+args=("$@"); i=0
+while [ $i -lt ${#args[@]} ]; do
+  case "${args[$i]}" in
+    --command) i=$((i+1)); cmd="${args[$i]}" ;;
+    --terminal) i=$((i+1)); term="${args[$i]}" ;;
+  esac
+  i=$((i+1))
+done
 case "${1:-} ${2:-}" in
-  "tab list") echo '{"result":{"tabs":[]}}' ;;
-  "workspace list") echo '{"result":{"workspaces":[]}}' ;;
-  "workspace create") echo '{"result":{"workspace":{"workspace_id":"wP"}}}' ;;
-  "tab create") echo '{"result":{"tab":{"tab_id":"tP"},"root_pane":{"pane_id":"pP1"}}}' ;;
-  # the turn ENDS (marker touched) but no transcript is ever written
-  "pane run")
-    cwd="$(printf '%s' "$4" | sed -n "s/^cd '\([^']*\)'.*/\1/p")"
+  "worktree show") printf '{"ok":false,"error":{"message":"selector_not_found"}}\n'; exit 1 ;;
+  "terminal create")
+    printf '{"ok":true,"result":{"terminal":{"handle":"pP1","tabId":"tP"}}}\n'
+    # the turn ENDS (marker touched) but no transcript is ever written
+    cwd="$(printf '%s' "$cmd" | sed -n "s/^cd '\([^']*\)'.*/\1/p")"
     marker="$(sed -n "s/.*touch '\([^']*\)'.*/\1/p" "$cwd/.claude/settings.local.json")"
-    touch "$marker" ;;
-  "pane get") echo '{"result":{"pane":{"pane_id":"pP1","agent_status":"idle"}}}' ;;
-  "pane read") cat "${SCROLLBACK:-/dev/null}" ;;
+    touch "$marker"
+    exit 0 ;;
+  "terminal read")
+    out="" sep=""
+    while IFS= read -r l; do out="$out$sep\"$l\""; sep=","; done <"${SCROLLBACK:-/dev/null}"
+    printf '{"ok":true,"result":{"terminal":{"tail":[%s]}}}\n' "$out" ;;
 esac
 exit 0
 EOF
-chmod +x "$nstub/herdr"
+chmod +x "$nstub/orca"
 export SCROLLBACK=/dev/null
 out="$(PATH="$nstub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$repo2" --prompt-file "$pf" --label nofile 2>&1 || true)"
 case "$out" in *'"status":"ok"'*) fail "an unresolvable transcript must never report ok" ;; esac
@@ -608,20 +582,23 @@ assert_contains "$(tfinal "$tr_path")" \
 # on disk looking current.
 repo3="$(make_repo toolend)"
 tstub="$TMP/toolend-bin"; mkdir -p "$tstub"
-cat >"$tstub/herdr" <<'EOF'
+cat >"$tstub/orca" <<'EOF'
 #!/usr/bin/env bash
-echo "herdr $*" >>"$HDLOG"
-[ "${1:-}" = --session ] && shift 2
+echo "orca $*" >>"$HDLOG"
+cmd=""
+args=("$@"); i=0
+while [ $i -lt ${#args[@]} ]; do
+  case "${args[$i]}" in --command) i=$((i+1)); cmd="${args[$i]}" ;; esac
+  i=$((i+1))
+done
 case "${1:-} ${2:-}" in
-  "tab list") echo '{"result":{"tabs":[]}}' ;;
-  "workspace list") echo '{"result":{"workspaces":[]}}' ;;
-  "workspace create") echo '{"result":{"workspace":{"workspace_id":"wP"}}}' ;;
-  "tab create") echo '{"result":{"tab":{"tab_id":"tP"},"root_pane":{"pane_id":"pP1"}}}' ;;
-  # The turn ENDS on the Stop-hook marker, and the transcript it leaves behind
-  # is the shape a session killed mid-pass leaves: assistant text EARLIER in the
-  # turn, then a bare tool_use as the LAST assistant message.
-  "pane run")
-    cwd="$(printf '%s' "$4" | sed -n "s/^cd '\([^']*\)'.*/\1/p")"
+  "worktree show") printf '{"ok":false,"error":{"message":"selector_not_found"}}\n'; exit 1 ;;
+  "terminal create")
+    printf '{"ok":true,"result":{"terminal":{"handle":"pP1","tabId":"tP"}}}\n'
+    # The turn ENDS on the Stop-hook marker, and the transcript it leaves behind
+    # is the shape a session killed mid-pass leaves: assistant text EARLIER in the
+    # turn, then a bare tool_use as the LAST assistant message.
+    cwd="$(printf '%s' "$cmd" | sed -n "s/^cd '\([^']*\)'.*/\1/p")"
     marker="$(sed -n "s/.*touch '\([^']*\)'.*/\1/p" "$cwd/.claude/settings.local.json")"
     slug="$(printf '%s' "$cwd" | sed 's/[/.]/-/g')"
     mkdir -p "$HOME/.claude/projects/$slug"
@@ -629,13 +606,13 @@ case "${1:-} ${2:-}" in
     printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"reading the sources"}]}}' >"$t"
     printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{}}]}}' >>"$t"
     printf '%s\n' '{"type":"user","message":{"content":[{"type":"tool_result","content":"..."}]}}' >>"$t"
-    touch "$marker" ;;
-  "pane get") echo '{"result":{"pane":{"pane_id":"pP1","agent_status":"idle"}}}' ;;
-  "pane read") echo '' ;;
+    touch "$marker"
+    exit 0 ;;
+  "terminal read") printf '{"ok":true,"result":{"terminal":{"tail":[]}}}\n' ;;
 esac
 exit 0
 EOF
-chmod +x "$tstub/herdr"
+chmod +x "$tstub/orca"
 trc=0
 out="$(PATH="$tstub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$repo3" --prompt-file "$pf" --label toolend 2>&1)" || trc=$?
 assert_eq "$trc" "1" "a turn ending on a bare tool_use exits non-zero"
@@ -651,30 +628,11 @@ assert_eq "$(tfinal "$tr_path")" ""   "transcriptFinal finds no final message in
 # close verb retires the pane; bad args fail with a protocol error event.
 : >"$HDLOG"
 PATH="$stub:$PATH" "$BIN/ac-pane-agent.sh" close --pane pP1
-assert_contains "$(cat "$HDLOG")" "pane close pP1" "close verb"
+assert_contains "$(cat "$HDLOG")" "terminal close --terminal pP1" "close verb"
 out="$(PATH="$stub:$PATH" "$BIN/ac-pane-agent.sh" run --prompt-file "$pf" 2>&1 || true)"
 assert_contains "$out" '"status":"error"' "missing cwd is a protocol error"
 out="$(PATH="$stub:$PATH" "$BIN/ac-pane-agent.sh" bogus 2>&1 || true)"
 assert_contains "$out" '"status":"error"' "unknown verb rejected"
-
-# Adopt-by-label: with a live labeled workspace in the list, no create happens.
-# The twin is swept only on PROOF of emptiness - the stub's `tab list` answers
-# [] for it, which herdr_ws_tabs_state reads as all-default (vacuously "1"-only).
-echo '{"result":{"workspaces":[{"workspace_id":"wOLD","label":"home","tab_count":3},{"workspace_id":"wTWIN","label":"home","tab_count":1}]}}' >"$WSLIST"
-: >"$HDLOG"
-out="$(PATH="$stub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --label r2)"
-assert_contains "$(cat "$HDLOG")" "tab create --workspace wOLD" "busiest labeled workspace adopted"
-case "$(cat "$HDLOG")" in *"workspace create"*) fail "must adopt, not create a twin group" ;; esac
-assert_contains "$(cat "$HDLOG")" "workspace close wTWIN" "twin group swept"
-
-# FAMILY placement: an exported AC_WINDOW_FAMILY routes the pane into that
-# family's workspace (the ac-verify.sh / ac-gate.sh contract).
-echo '{"result":{"workspaces":[]}}' >"$WSLIST"
-: >"$HDLOG"
-AC_WINDOW_FAMILY=fam7 PATH="$stub:$PATH" HOME="$FAKEHOME" \
-  "$BIN/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --label r3 >/dev/null
-assert_contains "$(cat "$HDLOG")" "workspace create --label home · fam7 --no-focus" \
-  "AC_WINDOW_FAMILY routes the pane into the family workspace"
 
 # --- no AC_HOME: fixed group label, nothing written into the checkout ----------
 # Pane agents are launched from crewmate panes, which carry no AC_HOME by
@@ -686,12 +644,10 @@ fake="$TMP/fakecheckout"
 mkdir -p "$fake/bin" "$fake/src"
 cp "$BIN/ac-lib.sh" "$BIN/ac-harness.sh" "$BIN/ac-backend.sh" "$BIN/ac-backend-orca.sh" "$BIN/ac-pane-agent.sh" "$BIN/ac-dispatch-select.sh" "$BIN/ac-bun.sh" "$fake/bin/"
 cp "$ROOT/src/dispatch-select.ts" "$ROOT"/src/lib*.ts "$ROOT/src/backlog.ts" "$ROOT/src/pane-agent.ts" "$fake/src/"
-echo '{"result":{"workspaces":[]}}' >"$WSLIST"
 : >"$HDLOG"
 env -u AC_HOME PATH="$stub:$PATH" HOME="$FAKEHOME" \
   "$fake/bin/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --label nohome >/dev/null
-assert_contains "$(cat "$HDLOG")" "workspace create --label agent-crew --no-focus" \
-  "no AC_HOME: the fixed fleet's root workspace, never the checkout basename"
+assert_contains "$(cat "$HDLOG")" "terminal create" "no AC_HOME: the pane still places, homeless"
 assert_no_file "$fake/config" "no AC_HOME: no config/ minted inside the checkout"
 # ...and NOT ONE BYTE on stderr. This script's stdout+stderr are ONE stream to
 # its caller: ac-verify.sh (main pane launch) launches it as `"$pane_bin" ... >"$result"
@@ -733,12 +689,9 @@ esac
 # qa start's watch_open above all - fell back to the group every fleet on the box
 # shares: the qa agent's tab in the fleet's group, the qa-watch tab it opens in
 # the shared one. What the caller cannot DERIVE it can still have been TOLD.
-echo '{"result":{"workspaces":[]}}' >"$WSLIST"
 : >"$HDLOG"
 env -u AC_HOME AC_FLEET_NAME=drydock PATH="$stub:$PATH" HOME="$FAKEHOME" \
   "$fake/bin/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --label told >/dev/null
-assert_contains "$(cat "$HDLOG")" "workspace create --label drydock --no-focus" \
-  "homeless but told: the pane agent's own tab lands in ITS fleet's root workspace"
 assert_contains "$(cat "$HDLOG")" "AC_FLEET_NAME=drydock" \
   "homeless but told: the name is passed on, so the pane's own tabs group there too"
 case "$(cat "$HDLOG")" in
@@ -795,7 +748,7 @@ out="$(env -u AC_HOME AC_FLEET_PROFILE_QA=$'harness=fictional\tmodel=\teffort=' 
   "$fake/bin/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --kind qa --label prof-arm 2>&1 || true)"
 assert_contains "$out" '"status":"error"' "a threaded unarmed harness is refused too"
 assert_contains "$out" "fictional" "the homeless refusal names the harness"
-case "$(cat "$HDLOG")" in *"pane run"*) fail "a threaded unarmed harness must place no pane" ;; esac
+case "$(cat "$HDLOG")" in *"terminal create"*) fail "a threaded unarmed harness must place no pane" ;; esac
 
 # THE ENV RUNG IS THE ONE PLACE A LEGACY VALUE STILL ARRIVES. A crewmate is
 # long-lived: one spawned before the wire became TAB-separated carries the old
@@ -831,17 +784,19 @@ mkdir -p "$repo4/.claude"
 printf '%s\n' '{"permissions":{"allow":["Bash(ls:*)"]}}' >"$repo4/.claude/settings.local.json"
 cstub="$TMP/concbin"; mkdir -p "$cstub"
 export CBIN="$BIN" CPF="$pf" BOUT="$TMP/b.out"
-cat >"$cstub/herdr" <<'EOF'
+cat >"$cstub/orca" <<'EOF'
 #!/usr/bin/env bash
-[ "${1:-}" = --session ] && shift 2
+cmd=""
+args=("$@"); i=0
+while [ $i -lt ${#args[@]} ]; do
+  case "${args[$i]}" in --command) i=$((i+1)); cmd="${args[$i]}" ;; esac
+  i=$((i+1))
+done
 case "${1:-} ${2:-}" in
-  "tab list") echo '{"result":{"tabs":[]}}' ;;
-  "workspace list") echo '{"result":{"workspaces":[]}}' ;;
-  "workspace create") echo '{"result":{"workspace":{"workspace_id":"wP"}}}' ;;
-  "tab create") echo '{"result":{"tab":{"tab_id":"tP"},"root_pane":{"pane_id":"pP1"}}}' ;;
-  "pane get") echo '{"result":{"pane":{"pane_id":"pP1","agent_status":"idle"}}}' ;;
-  "pane run")
-    cwd="$(printf '%s' "$4" | sed -n "s/^cd '\([^']*\)'.*/\1/p")"
+  "worktree show") printf '{"ok":false,"error":{"message":"selector_not_found"}}\n'; exit 1 ;;
+  "terminal create")
+    printf '{"ok":true,"result":{"terminal":{"handle":"pP1","tabId":"tP"}}}\n'
+    cwd="$(printf '%s' "$cmd" | sed -n "s/^cd '\([^']*\)'.*/\1/p")"
     slug="$(printf '%s' "$cwd" | sed 's/[/.]/-/g')"
     mkdir -p "$HOME/.claude/projects/$slug"
     [ -n "${AC_TEST_AGENT_B:-}" ] \
@@ -854,11 +809,12 @@ case "${1:-} ${2:-}" in
     # The turn ends by firing whatever Stop hooks the file carries NOW - which
     # is precisely what the other agent's write used to destroy.
     grep -o "touch '[^']*'" "$cwd/.claude/settings.local.json" \
-      | sed "s/^touch '//;s/'\$//" | while read -r m; do touch "$m"; done ;;
+      | sed "s/^touch '//;s/'\$//" | while read -r m; do touch "$m"; done
+    exit 0 ;;
 esac
 exit 0
 EOF
-chmod +x "$cstub/herdr"
+chmod +x "$cstub/orca"
 # `|| true`: a lost hook ends this run as a timeout (exit 1), and the suite's
 # errexit would kill the script before the assertion could say so.
 out="$(PATH="$cstub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$repo4" --prompt-file "$pf" --label a --timeout 30 || true)"
@@ -955,394 +911,52 @@ rm -f "$tjson"
 trun trust-none
 assert_no_file "$tjson" "a missing ~/.claude.json is never created"
 
-# --- reap: close OUR panes whose launch cwd is gone -----------------------------
-# A dedicated herdr stub with canned tab/pane lists, kept out of the shared stub
-# above: reap needs `pane list` (with cwd) and `tab close`, which the run/close
-# stub does not model. LIVEDIR exists ($repo); DEADDIR never does.
-rstub="$TMP/reapbin"; mkdir -p "$rstub"
-export RLOG="$TMP/reap.log" RTABS="$TMP/tabs.json" RPANES="$TMP/panes.json"
-deaddir="$TMP/gone-worktree"; rm -rf "$deaddir"   # the removed worktree
-cat >"$rstub/herdr" <<'EOF'
-#!/usr/bin/env bash
-echo "herdr $*" >>"$RLOG"
-[ "${1:-}" = --session ] && shift 2
-case "${1:-} ${2:-}" in
-  "tab list")   cat "$RTABS" ;;
-  "pane list")  cat "$RPANES" ;;
-  "pane close") echo "CLOSE-PANE $3" >>"$RLOG" ;;
-  "tab close")  echo "CLOSE-TAB $3" >>"$RLOG" ;;
-esac
-exit 0
-EOF
-chmod +x "$rstub/herdr"
-# tA: ours, only pane dead   -> reap pane + close empty tab
-# tB: ours, pane live        -> untouched
-# tC: NOT ours, pane dead    -> untouched (wrong label)
-# tD: ours, one dead one live -> reap the dead pane, KEEP the tab (a pane survives)
-cat >"$RTABS" <<EOF
-{"result":{"tabs":[
- {"tab_id":"tA","label":"ac-ship-agent-crew-foo"},
- {"tab_id":"tB","label":"ac-ship-agent"},
- {"tab_id":"tC","label":"crew:foo"},
- {"tab_id":"tD","label":"ac-ship-agent-x"},
- {"tab_id":"tQ","label":"ac-qa-agent-crew-bar"}]}}
-EOF
-cat >"$RPANES" <<EOF
-{"result":{"panes":[
- {"pane_id":"pA","tab_id":"tA","cwd":"$deaddir"},
- {"pane_id":"pB","tab_id":"tB","cwd":"$repo"},
- {"pane_id":"pC","tab_id":"tC","cwd":"$deaddir"},
- {"pane_id":"pD1","tab_id":"tD","cwd":"$deaddir"},
- {"pane_id":"pD2","tab_id":"tD","cwd":"$repo"},
- {"pane_id":"pQ","tab_id":"tQ","cwd":"$deaddir"}]}}
-EOF
+# --- reap: dead-cwd sweep is herdr-only; orca panes reap by handle --------------
+# `reap` never reads an argument and never touches any backend: it always
+# answers the fixed note below and exits 0 - reap-pane (next) is how an orca
+# pane agent is actually retired.
+out="$("$BIN/ac-pane-agent.sh" reap)"
+assert_eq "$out" '{"event":"reap","note":"dead-cwd sweep is herdr-only; orca panes reap by handle"}' \
+  "reap is a fixed no-op note"
+out="$("$BIN/ac-pane-agent.sh" reap --dry-run --an-otherwise-unknown-arg)"
+assert_eq "$out" '{"event":"reap","note":"dead-cwd sweep is herdr-only; orca panes reap by handle"}' \
+  "reap never reads its args, not even an unknown one"
 
-# Dry-run: names the dead pane, touches nothing.
-: >"$RLOG"
-out="$(PATH="$rstub:$PATH" AC_HERDR_SESSION=test "$BIN/ac-pane-agent.sh" reap --dry-run)"
-assert_contains "$out" '"pane":"pA"' "dry-run names the dead pane"
-assert_contains "$out" '"dry_run":1' "dry-run flagged"
-case "$(cat "$RLOG")" in *CLOSE-*) fail "dry-run must close nothing" ;; esac
+# --- reap-pane: retire ONE known orca terminal, VERIFYING the close -------------
+# Targets a KNOWN pane id: closes it through orca `terminal close`, then
+# VERIFIES by polling `terminal show` up to eight times 0.25s apart while it
+# stays connected, and reports whichever way it landed.
+make_fake_orca
+mk_term() {  # mk_term <handle> - a live orca terminal the stub answers for.
+  : >"$FAKE_ORCA/terminals/$1.buf"; : >"$FAKE_ORCA/terminals/$1.in"
+  printf 'tab-%s\n' "$1" >"$FAKE_ORCA/terminals/$1.tab"
+}
 
-# Real run: exactly the dead OURS panes close; the empty tab closes with them.
-: >"$RLOG"
-out="$(PATH="$rstub:$PATH" AC_HERDR_SESSION=test "$BIN/ac-pane-agent.sh" reap)"
-log="$(cat "$RLOG")"
-assert_contains "$log" "CLOSE-PANE pA" "dead pane in our tab reaped"
-assert_contains "$log" "CLOSE-TAB tA" "the tab left empty is closed"
-assert_contains "$log" "CLOSE-PANE pD1" "a dead pane is reaped even when a sibling survives"
-assert_contains "$log" "CLOSE-PANE pQ" "a dead qa-kind pane is ours too (ac-<kind>-agent matcher)"
-assert_contains "$log" "CLOSE-TAB tQ" "the emptied qa tab closes with it"
-assert_contains "$out" '"panes":3,"tabs":2' "three dead panes, two emptied tabs"
-case "$log" in *"CLOSE-PANE pB"*) fail "a live-cwd pane must never be reaped" ;; esac
-case "$log" in *"CLOSE-TAB tD"*) fail "a tab with a surviving pane must not be closed" ;; esac
-case "$log" in *"pC"*|*"tC"*) fail "a pane whose tab is not ours must never be touched" ;; esac
-# (the no-herdr branch is left untested on purpose: line-35 PATH-hardening
-# appends /opt/homebrew/bin, so a PATH without herdr cannot be forced here
-# without also driving reap at the operator's REAL live session.)
-
-# The matcher is ANCHORED and exact: ac-<lowercase kind>-agent, then "-" or the
-# end. A regular FILE where the cwd should be is gone too; a pane with no
-# recorded cwd is never reaped and keeps its tab. Events come in tab order,
-# then pane order, and every tab close follows every pane close.
-cat >"$RTABS" <<EOF
-{"result":{"tabs":[
- {"tab_id":"tX1","label":"ac-ship-agentX"},
- {"tab_id":"tX2","label":"ac--agent"},
- {"tab_id":"tX3","label":"ac-Ship-agent"},
- {"tab_id":"tX4","label":"xac-ship-agent"},
- {"tab_id":"tH"},
- {"tab_id":"tE","label":"ac-n-agent"},
- {"tab_id":"tF","label":"ac-qa-agent-f"},
- {"tab_id":"tG","label":"ac-qa-agent-g"}]}}
-EOF
-cat >"$RPANES" <<EOF
-{"result":{"panes":[
- {"pane_id":"pX1","tab_id":"tX1","cwd":"$deaddir"},
- {"pane_id":"pX2","tab_id":"tX2","cwd":"$deaddir"},
- {"pane_id":"pX3","tab_id":"tX3","cwd":"$deaddir"},
- {"pane_id":"pX4","tab_id":"tX4","cwd":"$deaddir"},
- {"pane_id":"pH","tab_id":"tH","cwd":"$deaddir"},
- {"pane_id":"pG1","tab_id":"tG"},
- {"pane_id":"pF1","tab_id":"tF","cwd":"$pf"},
- {"pane_id":"pE","tab_id":"tE","cwd":"$deaddir/with space"},
- {"pane_id":"pF2","tab_id":"tF","cwd":"$deaddir"},
- {"pane_id":"pG2","tab_id":"tG","cwd":"$deaddir"}]}}
-EOF
-out="$(PATH="$rstub:$PATH" AC_HERDR_SESSION=test "$BIN/ac-pane-agent.sh" reap --dry-run)"
-want="$(printf '{"event":"reap","pane":"%s","cwd":"%s","dry_run":1}\n' pE "$deaddir/with space" pF1 "$pf" pF2 "$deaddir" pG2 "$deaddir")
-{\"event\":\"reap-done\",\"panes\":4,\"tabs\":2,\"dry_run\":1}"
-assert_eq "$out" "$want" "reap plans exactly our dead panes, in tab then pane order"
-: >"$RLOG"
-PATH="$rstub:$PATH" AC_HERDR_SESSION=test "$BIN/ac-pane-agent.sh" reap >/dev/null
-assert_eq "$(grep CLOSE- "$RLOG" | tr '\n' ' ')" \
-  "CLOSE-PANE pE CLOSE-PANE pF1 CLOSE-PANE pF2 CLOSE-PANE pG2 CLOSE-TAB tE CLOSE-TAB tF " \
-  "the dead panes close first, then only the tabs they emptied"
-
-# --- reap-pane: retire ONE known pane + tidy its tab / the shared workspace -----
-# Unlike `reap` (dead-cwd keyed), this targets a KNOWN pane id and adds the
-# last-tab-in-workspace close ac-learn.sh's scout needs. The pane-agent
-# workspace is SHARED, so it closes ONLY that pane: its tab only if that empties
-# it, and the workspace ONLY when the pane's tab was the last one there.
-pstub="$TMP/panereapbin"; mkdir -p "$pstub"
-export PRLOG="$TMP/panereap.log" PRTABS="$TMP/pr-tabs.json" PRPANES="$TMP/pr-panes.json"
-cat >"$pstub/herdr" <<'EOF'
-#!/usr/bin/env bash
-echo "herdr $*" >>"$PRLOG"
-[ "${1:-}" = --session ] && shift 2
-case "${1:-} ${2:-}" in
-  "tab list")        cat "$PRTABS" ;;
-  "pane list")       cat "$PRPANES" ;;
-  "pane close")      echo "CLOSE-PANE $3" >>"$PRLOG" ;;
-  "tab close")       echo "CLOSE-TAB $3" >>"$PRLOG" ;;
-  "workspace close") echo "CLOSE-WS $3" >>"$PRLOG" ;;
-  # A closed pane stops resolving - what reap-pane's `closed` verification
-  # reads. PR_STICKY names a pane this stub keeps ALIVE however often it is
-  # closed (the herdr-refused-the-close case).
-  "pane get")        { [ "$3" != "${PR_STICKY:-}" ] && grep -q "CLOSE-PANE $3\$" "$PRLOG" 2>/dev/null; } && exit 1
-                     echo '{"result":{"pane":{"pane_id":"'"$3"'"}}}' ;;
-esac
-exit 0
-EOF
-chmod +x "$pstub/herdr"
-# wLAST: only tT              -> pT is the last tab's sole pane   (workspace close)
-# wSHARED: tS + co-tenant tCo -> pS alone in tS, tCo keeps WS up  (tab close only)
-# wSIB: tSib holds pSib+pOther -> a sibling survives             (pane close only)
-cat >"$PRTABS" <<'EOF'
-{"result":{"tabs":[
- {"tab_id":"tT","workspace_id":"wLAST","label":"ac-learning-agent-x"},
- {"tab_id":"tS","workspace_id":"wSHARED","label":"ac-learning-agent-y"},
- {"tab_id":"tCo","workspace_id":"wSHARED","label":"ac-ship-agent-z"},
- {"tab_id":"tSib","workspace_id":"wSIB","label":"ac-learning-agent-w"}]}}
-EOF
-cat >"$PRPANES" <<'EOF'
-{"result":{"panes":[
- {"pane_id":"pT","tab_id":"tT"},
- {"pane_id":"pS","tab_id":"tS"},
- {"pane_id":"pCoP","tab_id":"tCo"},
- {"pane_id":"pSib","tab_id":"tSib"},
- {"pane_id":"pOther","tab_id":"tSib"}]}}
-EOF
-
-# Scenario A - last tab in the workspace: pane close + workspace close (no tab close).
-: >"$PRLOG"
-out="$(PATH="$pstub:$PATH" AC_HERDR_SESSION=test "$BIN/ac-pane-agent.sh" reap-pane --pane pT)"
-log="$(cat "$PRLOG")"
-assert_contains "$log" "CLOSE-PANE pT" "reap-pane closes the target pane"
-assert_contains "$log" "CLOSE-WS wLAST" "the last tab in a workspace triggers workspace close"
-case "$log" in *"CLOSE-TAB"*) fail "reap-pane must not tab-close the workspace's last tab" ;; esac
+mk_term pT
+: >"$FAKE_ORCA/log"
+out="$("$BIN/ac-pane-agent.sh" reap-pane --pane pT)"
+assert_contains "$(cat "$FAKE_ORCA/log")" "orca terminal close --terminal pT" "reap-pane closes the target terminal"
 assert_contains "$out" '"event":"reap-pane-done"' "reap-pane emits its done event"
+assert_contains "$out" '"pane":"pT"' "the event names the pane"
 assert_contains "$out" '"closed":true' "reap-pane VERIFIES the close and reports it took"
-
-# A reap that did NOT take says so. reap-pane keeps its always-exit-0 contract
-# (callers arm it as an EXIT trap), so `closed` is the ONLY channel a caller has
-# to tell a retired pane from an orphaned one - the silence that let pane agents
-# orphan unnoticed.
-: >"$PRLOG"
-set +e
-out="$(PATH="$pstub:$PATH" PR_STICKY=pT AC_HERDR_SESSION=test "$BIN/ac-pane-agent.sh" reap-pane --pane pT)"
-rc=$?
-set -e
-assert_eq "$rc" "0" "a pane that survived the close still exits 0 (trap-safe contract intact)"
-assert_contains "$out" '"closed":false' "a pane still alive after the close is reported NOT closed"
-
-# Scenario B - co-tenant tab present: pane close + tab close, NEVER workspace close.
-: >"$PRLOG"
-PATH="$pstub:$PATH" AC_HERDR_SESSION=test "$BIN/ac-pane-agent.sh" reap-pane --pane pS >/dev/null
-log="$(cat "$PRLOG")"
-assert_contains "$log" "CLOSE-PANE pS" "reap-pane closes the target pane (co-tenant case)"
-assert_contains "$log" "CLOSE-TAB tS" "an emptied tab is closed when a co-tenant keeps the workspace alive"
-case "$log" in *"CLOSE-WS"*) fail "co-tenant guard: a workspace with another live tab is never closed" ;; esac
-
-# Scenario C - a sibling pane shares the tab: pane close only.
-: >"$PRLOG"
-PATH="$pstub:$PATH" AC_HERDR_SESSION=test "$BIN/ac-pane-agent.sh" reap-pane --pane pSib >/dev/null
-log="$(cat "$PRLOG")"
-assert_contains "$log" "CLOSE-PANE pSib" "reap-pane closes the target pane (sibling case)"
-case "$log" in *"CLOSE-TAB"*) fail "a tab with a surviving sibling pane must not be closed" ;; esac
-case "$log" in *"CLOSE-WS"*) fail "a tab with a surviving sibling pane must not trigger workspace close" ;; esac
-
-# Best-effort: every herdr close failing still exits 0 (safe to arm as an EXIT trap).
-failstub="$TMP/panereapfail"; mkdir -p "$failstub"
-cat >"$failstub/herdr" <<'EOF'
-#!/usr/bin/env bash
-[ "${1:-}" = --session ] && shift 2
-case "${1:-} ${2:-}" in
-  "tab list")  cat "$PRTABS" ;;
-  "pane list") cat "$PRPANES" ;;
-  *) exit 1 ;;
-esac
-EOF
-chmod +x "$failstub/herdr"
-set +e
-PATH="$failstub:$PATH" AC_HERDR_SESSION=test "$BIN/ac-pane-agent.sh" reap-pane --pane pT >/dev/null 2>&1
-rc=$?
-set -e
-assert_eq "$rc" "0" "reap-pane exits 0 even when every herdr close fails"
+[ ! -f "$FAKE_ORCA/terminals/pT.buf" ] || fail "a closed terminal must not survive"
 
 # No pane id -> a clean no-op, exit 0.
 set +e
-out="$(PATH="$pstub:$PATH" AC_HERDR_SESSION=test "$BIN/ac-pane-agent.sh" reap-pane)"
+out="$("$BIN/ac-pane-agent.sh" reap-pane)"
 rc=$?
 set -e
 assert_eq "$rc" "0" "reap-pane with no pane id is a clean no-op"
 assert_contains "$out" '"note":"no pane id"' "reap-pane notes the missing pane id"
 
-# Whatever herdr's lists cannot place, only the pane itself closes: a pane in
-# no listed tab, a tab in no workspace, or lists that do not parse. A pane id
-# listed twice belongs to its LAST tab, and a tab id listed twice to its LAST
-# workspace.
-cat >"$TMP/pr-tabs2.json" <<'EOF'
-{"result":{"tabs":[
- {"tab_id":"tNoWs","label":"ac-learning-agent-v"},
- {"tab_id":"tDup","workspace_id":"wOld"},
- {"tab_id":"tDup","workspace_id":"wDup"},
- {"tab_id":"tDupCo","workspace_id":"wDup"}]}}
-EOF
-cat >"$TMP/pr-panes2.json" <<'EOF'
-{"result":{"panes":[
- {"pane_id":"pNoWs","tab_id":"tNoWs"},
- {"pane_id":"pDup","tab_id":"tElse"},
- {"pane_id":"pDup","tab_id":"tDup"}]}}
-EOF
-printf 'not json\n' >"$TMP/pr-garbage.json"
-prun() {
-  : >"$PRLOG"
-  PATH="$pstub:$PATH" PRTABS="$1" PRPANES="$2" AC_HERDR_SESSION=test \
-    "$BIN/ac-pane-agent.sh" reap-pane --pane "$3" >/dev/null
-  grep CLOSE- "$PRLOG" | tr '\n' ' '
-}
-assert_eq "$(prun "$TMP/pr-tabs2.json" "$TMP/pr-panes2.json" pNope)" "CLOSE-PANE pNope " "an unlisted pane closes alone"
-assert_eq "$(prun "$TMP/pr-tabs2.json" "$TMP/pr-panes2.json" pNoWs)" "CLOSE-PANE pNoWs " "a tab in no workspace is left alone"
-assert_eq "$(prun "$TMP/pr-tabs2.json" "$TMP/pr-panes2.json" pDup)" "CLOSE-PANE pDup CLOSE-TAB tDup " \
-  "a twice-listed pane and tab each resolve to their last entry"
-assert_eq "$(prun "$TMP/pr-garbage.json" "$TMP/pr-garbage.json" pT)" "CLOSE-PANE pT " "unparseable lists close the pane alone"
-
-# --- steer: a chief steers a LIVE pane agent by its stable handle ----------------
-# The handle IS the pane label ac-<kind>-agent:<label> the run verb writes at
-# pane creation (`pane rename`, above) - so a chief that did NOT launch the pane
-# resolves it from herdr itself, with no caller-private .pane file. The shared
-# fake herdr (tests/sh/helpers.sh) is used from here on: its composer model is what
-# proves a submit landed, and it reports pane labels the way real herdr does.
-make_fake_herdr
-
-mk_agent_pane() {
-  # mk_agent_pane <pane> <tab> [<label>] - a live pane, labeled like a pane agent.
-  printf '%s\n' "$1" >"$FAKE_HERDR/tabs/$2"
-  : >"$FAKE_HERDR/panes/$1.buf"
-  printf '%s\n' "$2" >"$FAKE_HERDR/panes/$1.tab"
-  [ -n "${3:-}" ] && printf '%s\n' "$3" >"$FAKE_HERDR/panes/$1.label"
-  return 0
-}
-
-mk_agent_pane pS1 tS1 "ac-codereview-agent:ship-review-r1"
-out="$("$BIN/ac-pane-agent.sh" steer --agent ac-codereview-agent:ship-review-r1 'report your findings now')"
-assert_contains "$out" "steered" "the steer confirms delivery"
-assert_contains "$out" "pS1" "the confirmation names the pane it reached"
-assert_contains "$(cat "$FAKE_HERDR/panes/pS1.buf")" "report your findings now" \
-  "the line is SUBMITTED into the live pane agent, not left in the composer"
-
-# An unknown handle is refused loudly - and the refusal NAMES the live handles,
-# so a chief that mistyped one does not fall back to raw herdr to find it.
-err="$("$BIN/ac-pane-agent.sh" steer --agent ac-qa-agent:nope 'hello' 2>&1)" \
-  && fail "an unknown handle must be refused"
-assert_contains "$err" "no live pane agent" "the refusal says the handle resolved to nothing"
-assert_contains "$err" "ac-codereview-agent:ship-review-r1" "the refusal names the handles that DO exist"
-
-# A pane that is not a pane agent is never steered through this verb: --pane is
-# a disambiguator, not a backdoor into a crewmate's pane.
-mk_agent_pane pC1 tC1
-err="$("$BIN/ac-pane-agent.sh" steer --pane pC1 'not yours' 2>&1)" \
-  && fail "a pane with no pane-agent label must be refused"
-assert_contains "$err" "not a live pane agent" "the refusal says why"
-case "$(cat "$FAKE_HERDR/panes/pC1.buf")" in *"not yours"*) fail "a refused steer must never reach the pane" ;; esac
-
-# A stale handle - a pane id that is dead or was recycled away - fails loudly
-# instead of steering whatever answers to that id now.
-err="$("$BIN/ac-pane-agent.sh" steer --pane pGONE 'ghost' 2>&1)" \
-  && fail "a dead pane id must be refused"
-assert_contains "$err" "pGONE" "the refusal names the pane it could not prove"
-
-# Two live panes sharing a handle (two repos at ship-review-r1) is AMBIGUOUS:
-# refuse rather than steer a stranger's pane, and name the way through.
-mk_agent_pane pS2 tS2 "ac-codereview-agent:ship-review-r1"
-err="$("$BIN/ac-pane-agent.sh" steer --agent ac-codereview-agent:ship-review-r1 'which one' 2>&1)" \
-  && fail "an ambiguous handle must be refused"
-assert_contains "$err" "2 live panes" "the refusal counts the matches"
-assert_contains "$err" "--pane" "the refusal names the disambiguator"
-case "$(cat "$FAKE_HERDR/panes/pS1.buf")" in *"which one"*) fail "an ambiguous steer must reach no pane" ;; esac
-out="$("$BIN/ac-pane-agent.sh" steer --pane pS2 'this one')"
-assert_contains "$(cat "$FAKE_HERDR/panes/pS2.buf")" "this one" "--pane disambiguates and delivers"
-
-# Delivery NOT confirmed is a LOUD failure, never a silent strand: non-zero,
-# an actionable stderr line, and the text honestly still in the composer.
-mk_agent_pane pS3 tS3 "ac-qa-agent:probe-task"
-printf '99\n' >"$FAKE_HERDR/panes/pS3.drop-enters"
-err="$("$BIN/ac-pane-agent.sh" steer --agent ac-qa-agent:probe-task 'lost steer' 2>&1)" \
-  && fail "an unacknowledged submit must exit non-zero"
-assert_contains "$err" "delivery NOT confirmed" "the strand is named"
-assert_contains "$err" "pS3" "the failure names the pane, so the chief can peek and resubmit"
-case "$err" in *"steered"*) fail "a stranded steer must not claim delivery" ;; esac
-assert_contains "$(cat "$FAKE_HERDR/panes/pS3.in")" "lost steer" "the text sits in the composer, reported honestly"
-
-# Steer is HERDR-ONLY: the handle is the pane NAME the herdr arm writes, and an
-# orca pane agent carries none. On an orca fleet the verb refuses saying so -
-# never by resolving a same-named pane in herdr's default session (another
-# fleet's) and sending to it through the orca driver.
-: >"$FAKE_HERDR/log"
-err="$(AC_BACKEND=orca "$BIN/ac-pane-agent.sh" steer --agent ac-qa-agent:probe-task 'orca steer' 2>&1)" \
-  && fail "steer on an orca fleet must refuse"
-assert_contains "$err" "herdr-only" "the refusal names the real reason"
-case "$err" in *"herdr pane read"*|*"delivery"*) fail "an orca steer must not reach any pane: $err" ;; esac
-grep -q 'pane list\|send' "$FAKE_HERDR/log" && fail "an orca steer must not query or type into herdr: $(cat "$FAKE_HERDR/log")"
-
-# --- steer: the GATE JUDGE independence guard ------------------------------------
-# The gate judge is the ONE pane agent whose whole value is that the chief whose
-# stage it judges did not shape its turn, so a CHIEF steer into it is refused and
-# only a DECLARED captain gets through. The pane below is SYNTHETIC and
-# LONG-LIVED - nothing here creates or reaps it the way ac-gate.sh reaps its own
-# ephemeral judge - so the guard is proven in the shape a long-lived gate pane
-# will have, with no second change owed.
-mk_agent_pane pG1 tG1 "ac-gate-agent:widget-flow-spec"
-
-err="$("$BIN/ac-pane-agent.sh" steer --agent ac-gate-agent:widget-flow-spec 'approve it' 2>&1)" \
-  && fail "a chief steer into a gate pane must be refused"
-assert_contains "$err" "pG1" "the refusal names the pane"
-assert_contains "$err" "family 'widget-flow'" "the refusal names the family whose gate it is"
-assert_contains "$err" "INDEPENDENT GATE JUDGE" "the refusal names the role it protects"
-assert_contains "$err" "must not shape" "the refusal states the property, not only the role"
-assert_contains "$err" "--captain" "the refusal names the captain's way through"
-case "$(cat "$FAKE_HERDR/panes/pG1.buf" 2>/dev/null || true)" in
-  *"approve it"*) fail "a refused gate steer must never be submitted into the pane" ;;
-esac
-case "$(cat "$FAKE_HERDR/panes/pG1.in" 2>/dev/null || true)" in
-  *"approve it"*) fail "a refused gate steer must not even reach the composer" ;;
-esac
-
-# The CAPTAIN outranks the property and must not be locked out - and the way
-# through is a DECLARATION by the caller, never an inference about who is asking.
-out="$("$BIN/ac-pane-agent.sh" steer --captain --agent ac-gate-agent:widget-flow-spec 'approve it')"
-assert_contains "$out" "steered" "a captain steer into a gate pane is delivered"
-assert_contains "$(cat "$FAKE_HERDR/panes/pG1.buf")" "approve it" "the captain's line lands in the gate pane"
-
-# --pane is a disambiguator, not a backdoor around the guard - and the SAME live
-# pane refuses again after the captain used it, which is what makes this a guard
-# on the judge rather than on a pane that was about to be reaped anyway.
-err="$("$BIN/ac-pane-agent.sh" steer --pane pG1 'and again' 2>&1)" \
-  && fail "--pane must not bypass the gate guard"
-assert_contains "$err" "pG1" "the --pane refusal names the pane too"
-case "$(cat "$FAKE_HERDR/panes/pG1.buf")" in
-  *"and again"*) fail "a refused gate steer must never be submitted into the pane" ;;
-esac
-
-# This guards a JUDGE, not every verification pane: a qa pane steers with no
-# --captain exactly as it did before (the codereview case above is its twin).
-mk_agent_pane pQ1 tQ1 "ac-qa-agent:widget-flow"
-out="$("$BIN/ac-pane-agent.sh" steer --agent ac-qa-agent:widget-flow 'run case 3')"
-assert_contains "$out" "steered" "a qa pane agent still steers without --captain"
-assert_contains "$(cat "$FAKE_HERDR/panes/pQ1.buf")" "run case 3" "the qa steer is unchanged"
-
-# The live-agent registry is exactly the panes named ac-<kind>-agent:<label>,
-# in herdr's order; a label may carry spaces, and a pane list herdr cannot
-# serve is an EMPTY registry - the refusal still names which check failed.
-mk_agent_pane pW1 tW1 "ac-qa-agent:two words"
-mk_agent_pane pN1 tN1 "crew:not-an-agent"
-mk_agent_pane pN2 tN2 "ac-qa-agent-nocolon"
-err="$("$BIN/ac-pane-agent.sh" steer --agent ac-qa-agent:nope 'x' 2>&1)" && fail "an unknown handle must be refused"
-assert_contains "$err" "live pane agents: ac-gate-agent:widget-flow-spec, ac-qa-agent:widget-flow, ac-codereview-agent:ship-review-r1, ac-codereview-agent:ship-review-r1, ac-qa-agent:probe-task, ac-qa-agent:two words" \
-  "the refusal lists every live pane agent and nothing else, in herdr's order"
-err="$("$BIN/ac-pane-agent.sh" steer --agent ac-codereview-agent:ship-review-r1 'x' 2>&1)" && fail "an ambiguous handle must be refused"
-assert_contains "$err" "matches 2 live panes (pS1 pS2)" "the ambiguity names every matching pane"
-assert_eq "$("$BIN/ac-pane-agent.sh" steer --pane pW1 'spaced')" "steered ac-qa-agent:two words (pane pW1)" \
-  "a label with spaces resolves whole"
-: >"$FAKE_HERDR/.pane-api-down"
-err="$("$BIN/ac-pane-agent.sh" steer --pane pQ1 'x' 2>&1)" && fail "no pane list must refuse --pane"
-assert_contains "$err" "pane 'pQ1' is not a live pane agent" "without a pane list, --pane is refused as not an agent"
-assert_contains "$err" "live pane agents: none" "without a pane list, no agent is live"
-err="$("$BIN/ac-pane-agent.sh" steer --agent ac-qa-agent:widget-flow 'x' 2>&1)" && fail "no pane list must refuse --agent"
-assert_contains "$err" "no live pane agent named 'ac-qa-agent:widget-flow' - live pane agents: none" \
-  "without a pane list, a handle resolves to nothing"
-rm -f "$FAKE_HERDR/.pane-api-down"
+# Best-effort and trap-safe: a pane id orca never heard of (already gone, or a
+# stranger) still exits 0 and is reported closed - nothing left to verify.
+set +e
+out="$("$BIN/ac-pane-agent.sh" reap-pane --pane pGONE)"
+rc=$?
+set -e
+assert_eq "$rc" "0" "reap-pane exits 0 even for an unknown pane"
+assert_contains "$out" '"closed":true' "an already-gone terminal reports closed"
 
 # --- the ONE-SHOT COMMAND arm (--exec) -------------------------------------------
 # A harness whose one-shot form is non-interactive (codex exec / claude -p /
@@ -1645,62 +1259,51 @@ rm -f "$AC_HOME/config/crew-dispatch.json"
 cstate="$TMP/crew-state"; mkdir -p "$cstate"
 kstub="$TMP/crewbin"; mkdir -p "$kstub"
 export CSTATE="$cstate" CLOG="$TMP/crew-harness.log"
-cat >"$kstub/herdr" <<'EOF'
+# The real orca terminal mechanics (title/agentIdentity liveness, composer
+# send/enter, idle wait) are the shared make_fake_orca fixture's own job -
+# reimplementing that here would just re-litigate it with less rigor. This
+# wraps it ONLY to run a terminal's --command (which make_fake_orca's own
+# `create` does not execute): everything else passes straight through.
+make_fake_orca
+mv "$TMP/stubbin/orca" "$TMP/stubbin/orca.real"
+cat >"$TMP/stubbin/orca" <<EOF
 #!/usr/bin/env bash
-echo "herdr $*" >>"$HDLOG"
-[ "${1:-}" = --session ] && shift 2
-d="$CSTATE"
-case "${1:-} ${2:-}" in
-  "tab list") echo '{"result":{"tabs":[]}}' ;;
-  "workspace list") echo '{"result":{"workspaces":[]}}' ;;
-  "workspace create") echo '{"result":{"workspace":{"workspace_id":"wC"}}}' ;;
-  "tab create") echo '{"result":{"tab":{"tab_id":"tC"},"root_pane":{"pane_id":"pC1"}}}' ;;
-  "pane run") printf '%s\n' "$4" >>"$HDLOG.cmd"; sh -c "$4" >/dev/null 2>&1 & ;;
-  "pane get")
-    printf '{"result":{"pane":{"pane_id":"pC1","tab_id":"tC","agent_status":"idle"}}}\n' ;;
-  "pane process-info")
-    fg=-zsh; [ -f "$d/harness.up" ] && fg=harness
-    printf '{"result":{"process_info":{"foreground_processes":[{"argv0":"%s","name":"v"}]}}}\n' "$fg" ;;
-  "pane read")
-    if [ -f "$d/delay-input-ready" ] && [ ! -f "$d/input-ready" ]; then
-      n="$(cat "$d/boot-reads" 2>/dev/null || echo 0)"; n=$((n + 1)); echo "$n" >"$d/boot-reads"
-      if [ "$n" -ge 3 ] && [ ! -f "$d/never-input-ready" ]; then
-        touch "$d/input-ready"
-        printf 'composer ready\n'
-      else
-        printf 'boot render %s\n' "$n"
-      fi
-    else
-      printf 'composer ready\n'
-      cat "$d/buf" 2>/dev/null || true
-      [ -s "$d/in" ] && { printf '> '; cat "$d/in"; printf '\n'; }
-    fi ;;
-  "pane send-text")
-    p="$3"; shift 3
-    if [ -f "$d/delay-input-ready" ] && [ ! -f "$d/input-ready" ]; then
-      printf 'dropped-before-input-ready\n' >>"$HDLOG"
-    else
-      printf '%s' "$*" >>"$d/in"
-    fi ;;
-  "pane send-keys")
-    if [ "${4:-}" = enter ]; then
-      if [ -s "$d/in" ]; then cat "$d/in" >>"$d/buf"; printf '\n' >>"$d/buf"; : >"$d/in"
-      else printf 'BARE-ENTER\n' >>"$d/buf"; fi
-    fi ;;
-esac
-exit 0
+cmd="" rest=()
+args=("\$@"); i=0
+while [ \$i -lt \${#args[@]} ]; do
+  case "\${args[\$i]}" in
+    --command) i=\$((i+1)); cmd="\${args[\$i]}" ;;
+    *) rest+=("\${args[\$i]}") ;;
+  esac
+  i=\$((i+1))
+done
+echo "orca \$*" >>"$HDLOG"
+out="\$("$TMP/stubbin/orca.real" "\${rest[@]}")"
+printf '%s\n' "\$out"
+if [ "\$1 \$2" = "terminal create" ] && [ -n "\$cmd" ]; then
+  h="\$(printf '%s' "\$out" | sed -n 's/.*"handle":"\([^"]*\)".*/\1/p')"
+  printf '%s\n' "\$cmd" >>"$HDLOG.cmd"
+  ORCA_HANDLE="\$h" sh -c "\$cmd" >/dev/null 2>&1 &
+fi
 EOF
-# The fake harness IS a crewmate: it comes up, waits for its typed instruction,
-# writes the verdict where told, then announces completion with the exact
-# command the instruction named. Fault-injection files drive the failure legs.
+chmod +x "$TMP/stubbin/orca"
+# The fake harness IS a crewmate: it comes up (claiming its own terminal's
+# title, which flips harnessUp off the shell default), waits for its typed
+# instruction (flushed into the SAME terminal's .buf by the real make_fake_orca
+# send+enter), writes the verdict where told, then announces completion with
+# the exact command the instruction named. Fault-injection files drive the
+# failure legs.
 cat >"$kstub/codex" <<'EOF'
 #!/usr/bin/env bash
 echo "codex $*" >>"$CLOG"
 d="$CSTATE"
+t="$FAKE_ORCA/terminals/$ORCA_HANDLE"
 [ -f "$d/die-at-launch" ] && exit 9
-: >"$d/harness.up"
-for _ in $(seq 1 400); do grep -q 'touch ' "$d/buf" 2>/dev/null && break; sleep 0.05; done
-line="$(tr '\n' ' ' <"$d/buf")"
+printf 'codex\n' >"$t.title"
+printf 'codex\n' >"$t.agent"
+printf 'codex ready\n' >>"$t.buf"
+for _ in $(seq 1 400); do grep -q 'touch ' "$t.buf" 2>/dev/null && break; sleep 0.05; done
+line="$(tr '\n' ' ' <"$t.buf")"
 vf="$(printf '%s' "$line" | sed -n 's/.*WRITE it to the file \([^ ]*\).*/\1/p' | head -1)"
 mk="$(printf '%s' "$line" | sed -n "s/.*command: touch '\([^']*\)'.*/\1/p" | head -1)"
 [ -f "$d/no-verdict" ] || printf '%s\n' "${CVERDICT:-verdict: passed - written by the crewmate}" >"$vf"
@@ -1708,9 +1311,9 @@ mk="$(printf '%s' "$line" | sed -n "s/.*command: touch '\([^']*\)'.*/\1/p" | hea
 exec sleep "${CSLEEP:-5}"
 EOF
 cp "$kstub/codex" "$kstub/opencode"
-chmod +x "$kstub/herdr" "$kstub/codex" "$kstub/opencode"
+chmod +x "$kstub/codex" "$kstub/opencode"
 crepo="$(make_repo crewarm)"
-creset() { rm -f "$cstate"/*; : >"$cstate/buf"; : >"$cstate/in"; : >"$HDLOG"; : >"$HDLOG.cmd"; : >"$CLOG"; }
+creset() { rm -f "$cstate"/*; : >"$HDLOG"; : >"$HDLOG.cmd"; : >"$CLOG"; rm -rf "$FAKE_ORCA/terminals"; mkdir -p "$FAKE_ORCA/terminals"; : >"$FAKE_ORCA/.n"; }
 crun() { PATH="$kstub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$crepo" --prompt-file "$pf" --timeout 40 "$@"; }
 
 # The happy path: a codex verification turn completes through the file contract.
@@ -1726,13 +1329,10 @@ case "$(cat "$HDLOG.cmd")" in *"codex exec"*) fail "the crewmate arm must not la
 case "$(cat "$CLOG")" in *"$pf"*) fail "the prompt must never ride argv - the crewmate contract types it" ;; esac
 # The prompt is TYPED as its own line, and it names all three parts of the
 # contract: where to read the brief, where to write the verdict, how to announce.
-buf="$(cat "$cstate/buf")"
+buf="$(cat "$FAKE_ORCA/terminals/term1.buf")"
 assert_contains "$buf" "$pf" "the typed line points the agent at the prompt file"
 assert_contains "$buf" "WRITE it to the file" "the typed line redirects the final message to a file"
 assert_contains "$buf" "this exact command: touch '" "the typed line names the completion announcement, path quoted so it stays runnable"
-# codex's startup dialog is answered exactly as the crewmate path answers it -
-# a bare Enter FIRST, never the prompt (an 'n' in the text picks "2. No, quit").
-assert_eq "$(head -1 "$cstate/buf")" "BARE-ENTER" "a built-in codex pane gets the bare Enter before any text"
 # The verdict file IS the final message, read back through the caller's own
 # reader - so ac-ship.sh/ac-qa.sh parse it exactly as they parse a claude turn.
 tr_path="$(printf '%s\n' "$out" | sed -n 's/.*"event":"done".*"transcript":"\([^"]*\)".*/\1/p')"
@@ -1752,7 +1352,6 @@ creset
 out="$(crun --harness opencode --kind qa --label c2)"
 assert_contains "$out" '"event":"done","status":"ok"' "an opencode verification turn completes on the same arm"
 assert_contains "$(cat "$HDLOG.cmd")" "opencode" "opencode launches through the shared mote too"
-case "$(head -1 "$cstate/buf")" in BARE-ENTER) fail "only codex gets the startup-dialog Enter" ;; esac
 
 # The per-role AGENT knob resolves a NON-claude harness with NO --harness flag -
 # codereview-agent resolves codex (the design of
@@ -1848,82 +1447,62 @@ out="$(crun --kind qa --label c-agent-qa-noscope)"
 case "$out" in *'"event":"warning"'*) fail "qa's config-vs-profile disagreement is out of scope for this check" ;; esac
 rm -f "$AC_HOME/config/qa-agent" "$AC_HOME/config/crew-dispatch.json"
 
-# PROCESS-UP IS NOT INPUT-READY. A live OpenCode process can hold the pane while
-# its TUI is still rendering and has no composer yet. Typing during that window
-# is dropped; worse, the boot render itself keeps changing, so the generic
-# render-change submit verifier can mistake that unrelated redraw for an
-# accepted prompt. This is the live Kimi K3 failure: the pane stayed idle with
-# an empty composer until the caller's 180s timeout, while the same prompt sent
-# after the TUI was ready worked immediately.
+# PROCESS-UP IS NOT INPUT-READY. A live harness process can hold the pane
+# while its TUI is still rendering and has no composer yet. Typing during that
+# window is dropped; worse, the boot render itself keeps changing, so the
+# generic render-change submit verifier can mistake that unrelated redraw for
+# an accepted prompt. This is the live Kimi K3 failure: the pane stayed idle
+# with an empty composer until the caller's 180s timeout, while the same
+# prompt sent after the TUI was ready worked immediately. The gate (pane-agent
+# run's readiness loop) is the SAME for every crewmate harness: idle AND a
+# non-blank render held stable three reads running, before anything is typed.
 #
-# The stub exposes the harness process and `agent_status=idle` at once - the
-# same false signal the live Kimi proof observed - while changing its boot
-# render on every capture and dropping any text sent before that render settles.
-# The verifier must require a non-empty stable render as well as idle before it
-# types anything.
-# --timeout 20, matching the codex c-ready sibling below: crewmate_wait_input_ready
-# (bin/ac-pane-agent.sh) gates BOTH harnesses through the identical
-# observation loop, and the codex arm was MEASURED at ~8s of overhead on this
-# same stub (records/repo-knowledge/agent-crew.md, by:
-# pane-agent-codex-lacks-the-input-surface-ready-gate, 2026-07-26) - opencode,
-# gated by the same code and measured faster, had no business sitting at a
-# bound near that cost with ~zero margin. The prior `8` predates that
-# measurement entirely (git log -S, initial release commit fd1b532) and was
-# never revisited once the gate's real cost became known.
-creset; : >"$cstate/delay-input-ready"
+# make_fake_orca's own delay-ready-secs knob models exactly this: a spinner
+# title (not idle) and dropped sends until the clocked delay elapses, then the
+# idle glyph. creset leaves the next terminal deterministically named term1.
+creset
+: >"$FAKE_ORCA/terminals/term1.delay-ready-secs"; printf '1\n' >"$FAKE_ORCA/terminals/term1.delay-ready-secs"
 out="$(PATH="$kstub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$crepo" \
   --prompt-file "$pf" --timeout 20 --harness opencode --kind qa --label c2-ready 2>&1 || true)"
 assert_contains "$out" '"event":"done","status":"ok"' \
   "an OpenCode verifier waits for its input surface before delivering the prompt"
-case "$(cat "$HDLOG")" in *dropped-before-input-ready*) \
-  fail "the kickoff must not be typed merely because the OpenCode process is up" ;; esac
-assert_contains "$(cat "$cstate/buf")" "$pf" \
+assert_contains "$(cat "$FAKE_ORCA/terminals/term1.buf")" "$pf" \
   "the readiness-gated kickoff reaches the OpenCode transcript"
 
-# If herdr never observes the input surface, the verifier fails closed with the
-# readiness diagnosis and types nothing. It must not degrade back to the generic
-# full-turn timeout that hid the live failure.
-creset; : >"$cstate/delay-input-ready"; : >"$cstate/never-input-ready"
+# If the input surface never becomes ready, the verifier fails closed with the
+# readiness diagnosis and types nothing. It must not degrade back to the
+# generic full-turn timeout that hid the live failure.
+creset
+printf '9999\n' >"$FAKE_ORCA/terminals/term1.delay-ready-secs"
 out="$(PATH="$kstub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$crepo" \
   --prompt-file "$pf" --timeout 2 --harness opencode --kind qa --label c2-not-ready 2>&1 || true)"
 assert_contains "$out" '"status":"error"' \
   "an OpenCode verifier fails closed when its input surface never becomes ready"
 assert_contains "$out" "input surface did not become ready" \
   "the refusal names input readiness instead of reporting a generic turn timeout"
-case "$(cat "$HDLOG")" in *"pane send-text"*) \
+case "$(cat "$HDLOG")" in *"terminal send"*"--text"*) \
   fail "a verifier with no input-ready evidence must type no kickoff" ;; esac
 
-# CODEX HAS NO EQUIVALENT GATE (data/pane-agent-codex-lacks-the-input-surface-
-# ready-gate). Unlike OpenCode above, the codex crewmate arm answers the
-# startup-dialog Enter and then just sleeps a fixed ${AC_SEND_SETTLE:-0.4}s
-# before typing the kickoff line - no observation of the composer at all. The
-# stub reproduces the same delayed-input-surface fault OpenCode was proven
-# against: typing before readiness is DROPPED, and the composer only becomes
-# ready on its 3rd read. A codex arm that types on a fixed sleep, rather than
-# waiting for that observation, delivers into a still-dropping composer and
-# the kickoff never reaches the transcript.
-creset; : >"$cstate/delay-input-ready"
+# The SAME gate binds the codex arm too (the two harnesses share one
+# readiness loop in the pane agent).
+creset
+printf '1\n' >"$FAKE_ORCA/terminals/term1.delay-ready-secs"
 out="$(PATH="$kstub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$crepo" \
   --prompt-file "$pf" --timeout 20 --harness codex --kind codereview --label c-ready 2>&1 || true)"
 assert_contains "$out" '"event":"done","status":"ok"' \
   "a codex verifier waits for its input surface before delivering the prompt"
-case "$(cat "$HDLOG")" in *dropped-before-input-ready*) \
-  fail "the kickoff must not be typed merely because the codex process is up" ;; esac
-assert_contains "$(cat "$cstate/buf")" "$pf" \
+assert_contains "$(cat "$FAKE_ORCA/terminals/term1.buf")" "$pf" \
   "the readiness-gated kickoff reaches the codex transcript"
 
-# If herdr never observes the input surface, the codex arm must fail closed
-# with the same readiness diagnosis OpenCode gives, and type nothing - never
-# degrade to a generic full-turn timeout that hides which surface never came
-# up.
-creset; : >"$cstate/delay-input-ready"; : >"$cstate/never-input-ready"
+creset
+printf '9999\n' >"$FAKE_ORCA/terminals/term1.delay-ready-secs"
 out="$(PATH="$kstub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$crepo" \
   --prompt-file "$pf" --timeout 2 --harness codex --kind codereview --label c-not-ready 2>&1 || true)"
 assert_contains "$out" '"status":"error"' \
   "a codex verifier fails closed when its input surface never becomes ready"
 assert_contains "$out" "input surface did not become ready" \
   "the refusal names input readiness instead of reporting a generic turn timeout"
-case "$(cat "$HDLOG")" in *"pane send-text"*) \
+case "$(cat "$HDLOG")" in *"terminal send"*"--text"*) \
   fail "a codex verifier with no input-ready evidence must type no kickoff" ;; esac
 
 # FAIL CLOSED (a) - the agent announced its turn but wrote no verdict. A turn
@@ -1962,7 +1541,7 @@ creset
 out="$(crun --harness codex --kind codereview --label c6 --resume sid-abc 2>&1 || true)"
 assert_contains "$out" '"status":"error"' "--resume on the crewmate arm is a protocol error"
 assert_contains "$out" "resume" "the refusal names the flag it will not honour"
-case "$(cat "$HDLOG")" in *"pane run"*) fail "a refused --resume must place no pane" ;; esac
+case "$(cat "$HDLOG")" in *"terminal create"*) fail "a refused --resume must place no pane" ;; esac
 
 # --- the IDLE FALLBACK never reports ok without a DECLARED deliverable --------
 # The turn-end exit is arm-specific and FAIL-CLOSED: each arm must PRODUCE a
@@ -1986,20 +1565,27 @@ case "$(cat "$HDLOG")" in *"pane run"*) fail "a refused --resume must place no p
 # this file four 92s waits without changing one decision taken.
 irepo="$(make_repo idlefb)"
 istub="$TMP/idle-bin"; mkdir -p "$istub"
-cat >"$istub/herdr" <<'EOF'
+cat >"$istub/orca" <<'EOF'
 #!/usr/bin/env bash
-echo "herdr $*" >>"$HDLOG"
-[ "${1:-}" = --session ] && shift 2
+echo "orca $*" >>"$HDLOG"
+cmd=""
+args=("$@"); i=0
+while [ $i -lt ${#args[@]} ]; do
+  case "${args[$i]}" in --command) i=$((i+1)); cmd="${args[$i]}" ;; esac
+  i=$((i+1))
+done
 case "${1:-} ${2:-}" in
-  "tab list") echo '{"result":{"tabs":[]}}' ;;
-  "workspace list") echo '{"result":{"workspaces":[]}}' ;;
-  "workspace create") echo '{"result":{"workspace":{"workspace_id":"wP"}}}' ;;
-  "tab create") echo '{"result":{"tab":{"tab_id":"tP"},"root_pane":{"pane_id":"pP1"}}}' ;;
-  # A pane whose Stop hook stayed SILENT and then went idle: a transcript with
-  # final assistant text, backdated past the mtime gate, and NO marker. A fresh
-  # session id per leg, so the next leg's new-session glob still resolves it.
-  "pane run")
-    cwd="$(printf '%s' "$4" | sed -n "s/^cd '\([^']*\)'.*/\1/p")"
+  "worktree show") printf '{"ok":false,"error":{"message":"selector_not_found"}}\n'; exit 1 ;;
+  "terminal create")
+    # The idle glyph title is BOTH harnessUp's and orcaAgentIdle's "up and
+    # idle" signal: this models a pane that is live and idle, never a Stop
+    # hook firing.
+    printf '{"ok":true,"result":{"terminal":{"handle":"pP1","tabId":"tP"}}}\n'
+    # A pane whose Stop hook stayed SILENT and then went idle: a transcript
+    # with final assistant text, backdated past the mtime gate, and NO
+    # marker. A fresh session id per leg, so the next leg's new-session glob
+    # still resolves it.
+    cwd="$(printf '%s' "$cmd" | sed -n "s/^cd '\([^']*\)'.*/\1/p")"
     slug="$(printf '%s' "$cwd" | sed 's/[/.]/-/g')"
     n="$(cat "$HDLOG.i" 2>/dev/null || printf 0)"; n=$((n + 1)); printf '%s\n' "$n" >"$HDLOG.i"
     mkdir -p "$HOME/.claude/projects/$slug"
@@ -2009,13 +1595,14 @@ case "${1:-} ${2:-}" in
     # and no text, exactly what a session killed after a Read leaves behind.
     [ -f "$HDLOG.toolend" ] && printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{}}]}}' >>"$t"
     [ -z "${IDLE_TX:-}" ] || cp "$IDLE_TX" "$t"
-    touch -t 200001010000 "$t" ;;
-  "pane get") echo '{"result":{"pane":{"pane_id":"pP1","agent_status":"idle"}}}' ;;
-  "pane read") echo 'idle pane scrollback' ;;
+    touch -t 200001010000 "$t"
+    exit 0 ;;
+  "terminal show") printf '{"ok":true,"result":{"terminal":{"connected":true,"title":"\xe2\x9c\xb3 fake"}}}\n' ;;
+  "terminal read") printf '{"ok":true,"result":{"terminal":{"tail":["idle pane scrollback"]}}}\n' ;;
 esac
 exit 0
 EOF
-chmod +x "$istub/herdr"
+chmod +x "$istub/orca"
 nosleep="$TMP/nosleep-bin"; mkdir -p "$nosleep"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$nosleep/sleep"
 chmod +x "$nosleep/sleep"
@@ -2120,10 +1707,6 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"\\ufeff
 out="$(IDLE_TX="$itx" irun --label hft-bom || true)"
 assert_contains "$out" 'idle-fallback used' "a lone U+FEFF is text, so the fallback fires"
 
-# Arg validation: no text, and no target, are usage errors.
-assert_fails "$BIN/ac-pane-agent.sh" steer --agent ac-qa-agent:probe-task
-assert_fails "$BIN/ac-pane-agent.sh" steer 'orphan text'
-
 # --- BUSY-STALL BOUND: busy is not unbounded proof of liveness --------------
 # A pane hung INSIDE one tool call keeps a busy agent_status and a static
 # transcript, so the marker, the idle fallback (gated on idle/done), and pane
@@ -2134,31 +1717,38 @@ assert_fails "$BIN/ac-pane-agent.sh" steer 'orphan text'
 #   never touched, sleep stubbed to a no-op, the same cwd/prompt.
 srepo="$(make_repo stallfb)"
 sstub="$TMP/stall-bin"; mkdir -p "$sstub"
-cat >"$sstub/herdr" <<'EOF'
+cat >"$sstub/orca" <<'EOF'
 #!/usr/bin/env bash
-[ "${1:-}" = --session ] && shift 2
+cmd=""
+args=("$@"); i=0
+while [ $i -lt ${#args[@]} ]; do
+  case "${args[$i]}" in --command) i=$((i+1)); cmd="${args[$i]}" ;; esac
+  i=$((i+1))
+done
 case "${1:-} ${2:-}" in
-  "tab list") echo '{"result":{"tabs":[]}}' ;;
-  "workspace list") echo '{"result":{"workspaces":[]}}' ;;
-  "workspace create") echo '{"result":{"workspace":{"workspace_id":"wP"}}}' ;;
-  "tab create") echo '{"result":{"tab":{"tab_id":"tP"},"root_pane":{"pane_id":"pP1"}}}' ;;
-  "pane run")
-    cwd="$(printf '%s' "$4" | sed -n "s/^cd '\([^']*\)'.*/\1/p")"
+  "worktree show") printf '{"ok":false,"error":{"message":"selector_not_found"}}\n'; exit 1 ;;
+  "terminal create")
+    printf '{"ok":true,"result":{"terminal":{"handle":"pP1","tabId":"tP"}}}\n'
+    cwd="$(printf '%s' "$cmd" | sed -n "s/^cd '\([^']*\)'.*/\1/p")"
     slug="$(printf '%s' "$cwd" | sed 's/[/.]/-/g')"
     mkdir -p "$HOME/.claude/projects/$slug"
     printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"working"}]}}' \
-      >"$HOME/.claude/projects/$slug/stall-sid.jsonl" ;;
-  "pane get") echo '{"result":{"pane":{"pane_id":"pP1","agent_status":"busy"}}}' ;;
-  "pane read") echo 'Working...' ;;
+      >"$HOME/.claude/projects/$slug/stall-sid.jsonl"
+    exit 0 ;;
+  # A spinner-glyph title is backendAgentStatusPane's orca "working" (busy):
+  # not a shell, not the idle glyph, and agentIdentity/agentWait stay null so
+  # orcaAgentIdle's screen-stability leg (codex-only) never fires either.
+  "terminal show") printf '{"ok":true,"result":{"terminal":{"connected":true,"title":"\xe2\x97\x90 fake"}}}\n' ;;
+  "terminal read") printf '{"ok":true,"result":{"terminal":{"tail":["Working..."]}}}\n' ;;
 esac
 exit 0
 EOF
-chmod +x "$sstub/herdr"
+chmod +x "$sstub/orca"
 src=0; out="$(AC_PANE_STALL_MAX=1 PATH="$nosleep:$sstub:$PATH" HOME="$FAKEHOME" \
   "$BIN/ac-pane-agent.sh" run --cwd "$srepo" --prompt-file "$pf" --label stall --timeout 60 2>&1)" || src=$?
 assert_contains "$out" '"status":"error"' "a stalled busy pane escalates instead of burning the caller's timeout"
 assert_contains "$out" "no transcript progress" "the escalation names the stall"
-assert_contains "$out" "agent_status=busy" "the escalation carries the busy status for diagnosis"
+assert_contains "$out" "agent_status=working" "the escalation carries the busy status for diagnosis"
 assert_contains "$out" '"pane":"pP1"' "the escalation carries the pane, so the caller can still reap it"
 assert_eq "$src" "1" "the stall escalation exits non-zero"
 case "$out" in *'"status":"timeout"'*) fail "the stall bound must fire before the caller's timeout" ;; esac
@@ -2198,7 +1788,7 @@ chmod +x "$sdate/date"
 src=0; out="$(AC_PANE_STALL_MAX=abc PATH="$sdate:$nosleep:$sstub:$PATH" HOME="$FAKEHOME" \
   timeout 15 "$BIN/ac-pane-agent.sh" run --cwd "$sfbrepo" --prompt-file "$pf" --label stall-fallback --timeout 20000 2>&1)" || src=$?
 assert_contains "$out" "no transcript progress for over 2700s" "a malformed AC_PANE_STALL_MAX falls back to the documented default, 2700 - never a 1s/0 bound"
-assert_contains "$out" "agent_status=busy" "the fallback escalation still carries the busy status for diagnosis"
+assert_contains "$out" "agent_status=working" "the fallback escalation still carries the busy status for diagnosis"
 assert_eq "$src" "1" "the fallback bound escalates, exiting non-zero"
 
 # --- the entry end to end against modelled backends, one scenario per row -----
@@ -2311,7 +1901,8 @@ d="$XSTUB"
 v="${1:-}-${2:-}"
 n=$(($(cat "$d/$v.n" 2>/dev/null || echo 0) + 1)); echo "$n" >"$d/$v.n"
 for f in "$v.$n" "$v"; do
-  if [ -e "$d/$f.out" ] || [ -e "$d/$f.rc" ]; then
+  if [ -e "$d/$f.out" ] || [ -e "$d/$f.rc" ] || [ -e "$d/$f.sleep" ]; then
+    [ ! -e "$d/$f.sleep" ] || /bin/sleep "$(cat "$d/$f.sleep")"
     [ ! -e "$d/$f.out" ] || cat "$d/$f.out"
     exit "$(cat "$d/$f.rc" 2>/dev/null || echo 0)"
   fi
@@ -2375,11 +1966,9 @@ xs() { mkdir -p "$XW/stub"; printf '%b' "${2-}" >"$XW/stub/$1"; }   # xs <stub f
 XLC=C; XENV=(); XPATH=""; XHOME=""; XCWD=cwd; XIN=/dev/null
 xpath() { printf '%s' "${XPATH:-$XSTUBS:$XNOSLEEP:$PATH}"; }
 xc() {  # xc <args...> - one pane-agent call, its transcript appended
-  # AC_BACKEND is NOT in the -u list below: it rides the ambient default this
-  # file exports (herdr) unless a row's own XENV names AC_BACKEND=orca, which
-  # then overrides it in e[] below - every row stays explicit about which
-  # backend it is proving, never the no-config default ac_backend() itself
-  # resolves to.
+  # AC_BACKEND is NOT in the -u list below: it rides the no-config default
+  # (orca) unless a row's own XENV names a backend, which then overrides it
+  # in e[] below.
   local rc=0 x v
   local e=("LC_ALL=$XLC" "PATH=$(xpath)" "HOME=$XW/hd" "TMPDIR=$XW/tmp" "XSTUB=$XW/stub"
     "AC_CLAUDE_TRANSCRIPT_ROOT=$XW/tr" "AC_FLEET_STATE=$XW/st")
@@ -2406,7 +1995,7 @@ xbg() {  # xbg <signal> <wait-for text in a stub log> <args...> - one call in th
     </dev/null >"$TMP/x.out" 2>"$TMP/x.err" &
   pid=$!
   printf '%s\n' "$pid" >>"$TMP/xpids"
-  while ! grep -qF -- "$want" "$XW/stub/herdr.log" "$XW/stub/harness.log" 2>/dev/null && [ "$i" -lt 200 ]; do /bin/sleep 0.05; i=$((i + 1)); done
+  while ! grep -qF -- "$want" "$XW/stub/orca.log" "$XW/stub/harness.log" 2>/dev/null && [ "$i" -lt 200 ]; do /bin/sleep 0.05; i=$((i + 1)); done
   case "$sig" in -*) kill "-${sig#-}" -- "-$pid" 2>/dev/null ;; *) kill "-$sig" "$pid" 2>/dev/null ;; esac
   wait "$pid" 2>/dev/null || rc=$?
   { printf '== %s %s\nrc=%s\n-- out\n' "$sig" "$*" "$rc"; cat "$TMP/x.out"; printf -- '-- err\n'; cat "$TMP/x.err"; } >>"$TMP/xt"
@@ -2442,7 +2031,6 @@ xwhas() { assert_contains "$(cat "$TMP/xsnap2")" "$1" "pane-agent world at line 
 xwlacks() { case "$(cat "$TMP/xsnap2")" in *"$1"*) fail "pane-agent world at line $(xrow): '$1' found" ;; esac; }
 xnone() { :; }
 xerr() { sed -n '/^-- err$/,$p' "$TMP/xt2" | sed 1d; }   # xerr - a one-call row's stderr
-xbytes() { LC_ALL=C grep -qF -- "$(printf '%b' "$1")" "$TMP/xsnap2" || fail "pane-agent world at line $(xrow): bytes '$1' not found"; }
 xwithout() {  # xwithout <tool> - the leg's stubs and PATH with every dir holding <tool> mirrored without it
   local dirs d f key mirror out=""
   IFS=: read -r -a dirs <<<"$XSTUBS:$XNOSLEEP:$PATH"
@@ -2473,12 +2061,12 @@ xone xnone 'xc bogus --pane p1'
 xrc 1; xhas '{"event":"done","status":"error","error":"usage: ac-pane-agent.sh run --cwd DIR --prompt-file F"}'
 xone xnone 'xc run'
 xrc 1; xhas '{"event":"done","status":"error","error":"cwd missing: "}'
-for v in "close --pane p1" "steer --agent a hi" "reap-pane --pane p1" "reap" "run --cwd @W/cwd"; do
+for v in "close --pane p1" "bogus --agent a hi" "reap-pane --pane p1" "reap" "run --cwd @W/cwd"; do
   XENV=(AC_BACKEND=tmux); xone xnone "xc $v"; XENV=()
-  assert_eq "$(xerr)" "ERROR: unsupported backend 'tmux' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)" "an invalid backend refuses first: $v"
+  assert_eq "$(xerr)" "ERROR: unsupported backend 'tmux' (valid backend: orca)" "an invalid backend refuses first: $v"
   xrc 1; xwlacks '[pane] [run]'
 done
-for v in "run --cwd" "run --cwd @W/cwd --timeout ''" "steer --agent"; do
+for v in "run --cwd" "run --cwd @W/cwd --timeout ''"; do
   xone xnone "xc $v"
   xrc 1; xhas "needs a value"; xwlacks '[pane] [run]'
 done
@@ -2536,18 +2124,17 @@ xrc 0; xwhas 'claude [-p] [--effort] [xhigh] [review this]'
 xone xnone 'xc run --cwd @W/cwd --prompt-file @W/nope'
 xrc 1; xhas "\"error\":\"prompt file missing: $XW/nope\""
 
-# 3. SESSION on herdr: a Stop hook that cannot be installed, a lock another
-#    live pid holds, a ~/.claude.json that is no object, the exclude lines,
-#    placement and labels, ENVPIN, the session, --pane-file's directory, the
-#    idle fallback on a `done` pane, and the --timeout grammar.
-# Every case in this row places a SESSION pane on herdr; pinned explicitly
-# here (redundant with the file-wide export above, which XENV=() would
-# otherwise inherit) so this row stays correct on its own if that export
-# ever moves.
-XENV=(AC_BACKEND=herdr)
+# 3. SESSION, backend-neutral mechanics: a Stop hook that cannot be
+#    installed, a lock another live pid holds, a ~/.claude.json that is no
+#    object, the exclude lines, ENVPIN, --pane-file's directory, and the
+#    --timeout grammar - none of this depends on which backend places the
+#    pane, so it runs once, under the ambient (orca) default. The herdr-only
+#    placement/label naming and AC_HERDR_SESSION this row used to cover have
+#    no orca counterpart and are retired with herdr; the orca placement,
+#    label and home-arm equivalents are row 4, next.
 xsettingsdir() { mkdir -p "$XW/cwd/.claude/settings.local.json"; }
 xone xsettingsdir 'xrun'
-xrc 1; xhas "{\"event\":\"done\",\"status\":\"error\",\"error\":\"could not install the Stop hook into $XW/cwd/.claude/settings.local.json\"}"; xwlacks '[pane] [run]'
+xrc 1; xhas "{\"event\":\"done\",\"status\":\"error\",\"error\":\"could not install the Stop hook into $XW/cwd/.claude/settings.local.json\"}"; xwlacks '[terminal] [create]'
 xlockheld() { mkdir -p "$XW/cwd/.claude/.ac-pane-agent.lock"; printf '%s\n' "$$" >"$XW/cwd/.claude/.ac-pane-agent.lock/pid"; }
 xone xlockheld 'xrun'
 xrc 0; xhas '"event":"done","status":"ok"'
@@ -2560,30 +2147,17 @@ xone xexcl 'xrun'
 assert_eq "$(grep -c '^\.claude/' "$XW/cwd/.git/info/exclude")" 2 "a line the exclude already holds is not appended again"
 xone 'rm -rf "$XW/cwd/.git/info"' 'xrun'
 assert_eq "$(cat "$XW/cwd/.git/info/exclude")" $'.claude/settings.local.json\n.claude/.ac-pane-agent.lock' "a missing info/ gets both exclude lines"
-XENV=(AC_BACKEND=herdr AC_WINDOW_FAMILY=fam1); xone 'git -C "$XW/cwd" checkout -qb crew/fam1-x' 'xrun --kind codereview'; XENV=(AC_BACKEND=herdr)
-xwhas 'herdr [workspace] [create] [--label] [agent-crew · fam1] [--no-focus]'
-xwhas '[tab] [create] [--workspace] [wP] [--label] [ac-codereview-agent-fam1-crew-fam1-x]'
-xwhas '[pane] [rename] [pP1] [ac-codereview-agent:r1]'
-XHOME=1; xone xnone 'xrun'; XHOME=""
-xwhas 'herdr [workspace] [create] [--label] [home] [--no-focus]'
-xwhas "CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 AC_HOME=$XW/home claude --permission-mode auto"
-XENV=(AC_BACKEND=herdr AC_FLEET_NAME=fl CLAUDE_CONFIG_DIR=@W/cfg); xone xnone 'xrun'; XENV=(AC_BACKEND=herdr)
+XENV=(AC_FLEET_NAME=fl CLAUDE_CONFIG_DIR=@W/cfg); xone xnone 'xrun'; XENV=()
 xwhas "[cd '$XW/cwd' && CLAUDE_CONFIG_DIR=$XW/cfg CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 AC_FLEET_NAME=fl claude --permission-mode auto"
-XENV=(AC_BACKEND=herdr AC_HERDR_SESSION=s9); xone xnone 'xrun'; XENV=(AC_BACKEND=herdr)
-xrc 0; xwhas 'herdr [--session] [s9] [pane] [run] [pP1]'
 xone xnone 'xrun --pane-file @W/nodir/pane'
 xrc 1; xhas "{\"event\":\"done\",\"status\":\"error\",\"error\":\"pane-file directory does not exist: $XW/nodir\"}"
-xidledone() { xs no-marker; xs backdate; xs transcript '{"type":"assistant","message":{"content":[{"type":"text","text":"final"}]}}\n'; xs status done; }
-xone xidledone 'xrun --timeout 400'
-xrc 0; xhas '{"event":"note","path":"idle-fallback used (agent_status=done)"}'; xhas '"event":"done","status":"ok"'
 # Q3: every --timeout but a sign and decimal digits is refused before any pane
 # or rung.
 for t in abc 1+1 0x3 1.5 10m ' 5'; do
   xone 'xs no-marker' "xrun --timeout '$t'"
   xrc 1; xhas "\"error\":\"timeout must be a whole number of seconds: $t\""
-  xwlacks '[pane] [run]'
+  xwlacks '[terminal] [create]'
 done
-XENV=()
 
 # 4. SESSION on orca: the worker placement, a terminal that disconnects,
 #    --replace-pane, a placement that fails, and the home arm.
@@ -2624,41 +2198,39 @@ xone 'xs no-marker; xs backdate; xs transcript "{\"type\":\"assistant\",\"messag
 xrc 0; xhas '{"event":"note","path":"idle-fallback used (agent_status=idle)"}'; xhas '"event":"done","status":"ok"'
 XENV=()
 
-# 5. CREWMATE on herdr and orca: each harness's TUI launch, a bare shell that
-#    never came up, an unreadable pane, a named startup dialog, the input-ready
-#    wait cut at the deadline, the stranded kickoff, an empty verdict, orca's
-#    turn and its never-ready surface.
+# 5. CREWMATE: each harness's TUI launch, a bare shell that never came up, an
+#    unreadable pane, a named startup dialog answered automatically, the
+#    input-ready wait cut at the deadline, the stranded kickoff, an empty
+#    verdict, and the never-ready surface.
 xcrew() { xs run.mode crew; }
-XENV=(AC_BACKEND=herdr)
 xone xcrew 'xrun --harness codex --kind codereview --model gpt-5.6-sol --effort xhigh'
-xrc 0; xhas '"source":"file"'
+xrc 0; xhas '"source":"file","pane":"h1"'
 xwhas "[cd '$XW/cwd' && CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 codex -c check_for_update_on_startup=false -m gpt-5.6-sol -c model_reasoning_effort=xhigh; printf %s \$? >"
-xwhas "[pane] [send-text] [pP1] [Read and follow the instructions in $XW/pf."
+xwhas "orca [terminal] [send] [--terminal] [h1] [--text] [Read and follow the instructions in $XW/pf."
 xone xcrew 'xrun --harness opencode --model m1 --effort high'
 xrc 0; xwhas "CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 opencode -m m1; printf"
 xone xcrew 'xrun --harness pi --model m1 --effort high'
 xrc 0; xwhas "CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 pi --tui-mode regular --model m1 --thinking high; printf"
 xone xcrew 'xrun --harness cursor --model m1 --effort high'
 xrc 0; xwhas "CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 cursor-agent --yolo --model m1; printf"
-xone 'xcrew; xs fg -zsh' 'xrun --harness codex'
+xone 'xcrew; xs terminal-show.out "{\"ok\":true,\"result\":{\"terminal\":{\"connected\":true,\"title\":\"zsh\"}}}\n"' 'xrun --harness codex'
 xrc 1; xhas "\"error\":\"harness 'codex' did not come up in its pane within 60s - every foreground process is a shell, so no prompt is delivered and the turn is REFUSED\""
-xwlacks '[pane] [send-text]'
-xone 'xcrew; xs pane-process-info.rc 1' 'xrun --harness codex'
-xrc 0; xhas '{"event":"note","path":"could not read the pane to verify codex came up - delivering the prompt anyway"}'; xhas '"source":"file"'
-xone 'xcrew; xs agent-explain.1.out "{\"state\":\"blocked\",\"matched_rule\":{\"id\":\"startup_update\"}}\n"' 'xrun --harness codex'
-xrc 0; xhas '"source":"file"'; xwhas 'herdr [pane] [send-keys] [pP1] [2] {}'
+xwlacks '[terminal] [send]'
+xone 'xcrew; xs terminal-show.rc 1' 'xrun --harness codex'
+xrc 1; xhas '{"event":"note","path":"could not read the pane to verify codex came up - delivering the prompt anyway"}'
+xhas "\"error\":\"harness 'codex' came up but its input surface did not become ready within 60s - no prompt was delivered\""
+# A dialog orca can NAME is answered on its own - no blind key, unlike the
+# retired herdr arm's registry guess.
+xone 'xcrew; xs terminal-show.2.out "{\"ok\":true,\"result\":{\"terminal\":{\"connected\":true,\"title\":\"codex\",\"agentIdentity\":\"codex\",\"agentWait\":{\"reason\":\"codex-update-prompt\"}}}}\n"' 'xrun --harness codex'
+xrc 0; xhas '"source":"file"'; xwhas 'orca [terminal] [send] [--terminal] [h1] [--text] [2] [--json]'
 xone 'xcrew; xs render.n 0' 'xrun --harness codex --timeout 8'
 xrc 1; xhas "\"error\":\"harness 'codex' came up but its input surface did not become ready within 7s - no prompt was delivered\""
 xone 'xcrew; xs strand' 'xrun --harness codex'
 xrc 1; xhas "\"error\":\"the verification prompt was NOT accepted by the pane: it sits unsubmitted in the composer of 'codex', so no turn will ever start - REFUSED rather than waited out\""
 xone 'xcrew; xs empty-verdict' 'xrun --harness opencode'
 xrc 1; xhas "\"error\":\"verification agent 'opencode' produced no verdict: the agent announced its turn but left no verdict at $XW/st/.pane-agent-tmp/ac-pane-verdict.cwd.PID1\""
-XENV=(AC_BACKEND=orca)
-xone xcrew 'xrun --harness codex'
-xrc 0; xhas '"source":"file","pane":"h1"'; xwhas 'orca [terminal] [send] [--terminal] [h1] [--enter] [--json]'
 xone 'xcrew; xs terminal-show.out "{\"ok\":true,\"result\":{\"terminal\":{\"connected\":true,\"title\":\"codex\",\"agentIdentity\":\"codex\",\"agentWait\":{\"reason\":\"other\"}}}}\n"' 'xrun --harness codex --timeout 20'
 xrc 1; xhas "\"error\":\"harness 'codex' came up but its input surface did not become ready within 19s - no prompt was delivered\""
-XENV=()
 
 # 6. ONE-SHOT: pi's and cursor's forms with and without a model and an effort,
 #    the rung dying without its marker, and the rung's INT/QUIT dispositions.
@@ -2676,12 +2248,10 @@ xrc 1; xhas '"error":"the one-shot process died without ending its turn - no mar
 xone 'xs signals' 'xrun --exec --harness codex --kind gate'
 xrc 0; xwhas 'INT=IGNORE QUIT=IGNORE'
 
-# 7. close, reap-pane and reap: close with no pane and orca's close past an
-#    unknown word, orca's reap-pane taken and not, reap's orca note and its
-#    unknown arg on herdr.
+# 7. close, reap-pane and reap: close with no pane and close past an unknown
+#    word, reap-pane taken and not, reap's no-op note regardless of its args.
 xone xnone 'xc close'
 xrc 0; assert_eq "$(xerr)" "" "close with no pane is silent"; xwlacks '[close]'
-XENV=(AC_BACKEND=orca)
 xone xnone 'xc close --pane h1 --bogus'
 xrc 0; xwhas 'orca [terminal] [close] [--terminal] [h1] [--json]'
 xone xnone 'xc reap-pane --pane h1'
@@ -2690,52 +2260,28 @@ xone 'xs sticky h1' 'xc reap-pane --pane h1'
 xrc 0; xhas '{"event":"reap-pane-done","pane":"h1","closed":false}'
 xone xnone 'xc reap --bogus'
 xrc 0; xhas '{"event":"reap","note":"dead-cwd sweep is herdr-only; orca panes reap by handle"}'
-XENV=()
-xone xnone 'xc reap --bogus'
-xrc 1; xhas '{"event":"done","status":"error","error":"unknown arg --bogus"}'
 
-# 8. steer: a label carrying `, `, --pane winning over --agent, the argument
-#    refusals, a pane list herdr cannot answer, and a delivery it cannot read.
-xagents() { xs pane-list.out '{"result":{"panes":[{"pane_id":"pA","label":"ac-codereview-agent:fam1-r1"},{"pane_id":"pB","label":"ac-gate-agent:fam1-spec"},{"pane_id":"pC","label":"crew:t1"},{"pane_id":"pD","label":"ac-qa-agent:a b, c"},{"pane_id":"pE","label":"ac-qa-agent:dup"},{"pane_id":"pF","label":"ac-qa-agent:dup"}]}}\n'; }
-xone xagents "xc steer --agent 'ac-qa-agent:a b, c' hi"
-xrc 0; xhas $'-- out\nsteered ac-qa-agent:a b, c (pane pD)\n'; xwhas 'herdr [pane] [send-text] [pD] [hi]'
-xone xagents 'xc steer --pane pA --agent nobody hi'
-xrc 0; xhas $'-- out\nsteered ac-codereview-agent:fam1-r1 (pane pA)\n'
-for v in "--agent a -x:unknown arg -x" "--agent a one two:steer takes ONE line of text" "--agent a '':refusing to steer with an empty message" \
-         "hi:usage: ac-pane-agent.sh steer --agent <handle> '<text>' [--pane <pane-id>]"; do
-  xone xagents "xc steer ${v%%:*}"
-  xrc 1; assert_eq "$(xerr)" "ERROR: ${v#*:}" "steer refuses: ${v%%:*}"; xwlacks '[send-text]'
-done
-xone 'xs pane-list.rc 1' 'xc steer --agent a hi'
-xrc 1; assert_eq "$(xerr)" "ERROR: no live pane agent named 'a' - live pane agents: none" "an unreadable pane list names no live agent"
-xone 'xagents; xs pane-read.rc 1' 'xc steer --agent ac-codereview-agent:fam1-r1 hello'
-xrc 1; xhas "ERROR: delivery UNVERIFIED for ac-codereview-agent:fam1-r1 (pane pA) - could not read the pane, so the submit was neither confirmed nor refuted: read it with 'herdr pane read pA' before resending"
-
-# 9. A byte that is no UTF-8 in an argument reaches the children as U+FFFD.
-xone xnone "xrun --label \$'\\xe9'"
-xrc 0; xbytes 'ac-ship-agent:\xef\xbf\xbd]'
-
-# 10. Signals: TERM and HUP end the run at once (143, 129), the pane or the
-#     rung left running; INT to the pid alone ends it 130 with no done event; a
-#     group INT leaves the rung, which ignores it.
-# The stub's `pane run` holds 3 s, so the signal lands while the entry waits
-# on it.
-xstall() { xs no-marker; xs pane-run.sleep 3; }
-xone xstall "xbg TERM '[pane] [run]' run --cwd $XW/cwd --prompt-file $XW/pf --label r1 --timeout 100000"
+# 8. Signals: TERM and HUP end the run at once (143, 129), the pane or the
+#    rung left running; INT to the pid alone ends it 130 with no done event; a
+#    group INT leaves the rung, which ignores it.
+# The stub's `terminal create` holds 3 s, so the signal lands while the entry
+# waits on it.
+xstall() { xs no-marker; xs terminal-create.sleep 3; }
+xone xstall "xbg TERM '[terminal] [create]' run --cwd $XW/cwd --prompt-file $XW/pf --label r1 --timeout 100000"
 xhas 'rc=143'; xlacks '"event":"done"'
-xone xstall "xbg HUP '[pane] [run]' run --cwd $XW/cwd --prompt-file $XW/pf --label r1 --timeout 100000"
+xone xstall "xbg HUP '[terminal] [create]' run --cwd $XW/cwd --prompt-file $XW/pf --label r1 --timeout 100000"
 xhas 'rc=129'; xlacks '"event":"done"'
 xslowrung() { xs answer.sleep 1; }
 xone xslowrung "xbg TERM 'codex [exec]' run --cwd $XW/cwd --prompt-file $XW/pf --exec --harness codex --kind gate --timeout 100000; /bin/sleep 2"
 xhas 'rc=143'; xwhas '{"verdict":"approve"}'
 XPATH="$XSTUBS:$PATH"
-xone xstall "xbg INT '[pane] [run]' run --cwd $XW/cwd --prompt-file $XW/pf --label r1 --timeout 4"
+xone xstall "xbg INT '[terminal] [create]' run --cwd $XW/cwd --prompt-file $XW/pf --label r1 --timeout 4"
 xhas 'rc=130'; xlacks '"event":"done"'
 xone xslowrung "xbg -INT 'codex [exec]' run --cwd $XW/cwd --prompt-file $XW/pf --exec --harness codex --kind gate --timeout 100000; /bin/sleep 2"
 xhas 'rc=130'; xwhas '{"verdict":"approve"}'
 XPATH=""
 
-# 11. The helper subcommands are verbs reached through the shim.
+# 9. The helper subcommands are verbs reached through the shim.
 xone xnone 'xc iso-epoch 2026-01-01T00:00:00Z; xc seed-trust @W/cwd; xc has-final-text @W/nope'
 xhas $'== iso-epoch 2026-01-01T00:00:00Z\nrc=0\n-- out\n1767225600\n'
 xhas $'== seed-trust @W/cwd\nrc=0\n'
