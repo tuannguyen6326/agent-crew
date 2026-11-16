@@ -96,7 +96,7 @@ ac_path_copies() {
 # prints, on any line (shellcheck's version sits on line 2, not line 1) so
 # one regex covers every shape measured on this fleet: `git version 2.55.0`,
 # `jq-1.7.1-apple`, `gh version 2.51.0 (2024-06-13)`, `v22.19.0`,
-# `herdr 0.8.0`, `1.3.13`, `Docker version 29.4.0, build 9d7ad9f`. Empty
+# `1.3.13`, `Docker version 29.4.0, build 9d7ad9f`. Empty
 # means the copy would not answer with anything version-shaped - a check
 # failure the caller must report, never treat as "older" or "newer".
 #
