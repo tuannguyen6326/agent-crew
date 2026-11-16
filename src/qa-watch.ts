@@ -7,17 +7,12 @@
 // role, src/watch-dash.ts's header that of the body it shares with
 // src/ship-watch.ts. tests/sh/ac-qa-watch.test.sh is the role's contract test.
 //
-//   ac-qa-watch.sh [--repo DIR] [--self-pane ID] [--interval SECS] [--once]
+//   ac-qa-watch.sh [--repo DIR] [--interval SECS] [--once]
 //
-// Auto-open/auto-close contract (mirrors ac-ship-watch): ac-qa.sh start used
-// to open this in a herdr tab (label ac-qa-watch) and record the pane in
-// <run>/watch.pane; herdr is retired, so no run opens one now - operators run
-// it in any terminal. With a --self-pane the watch SELF-CLOSES its pane when
-// the run finishes (outcome != running, after a short linger) or when the run
-// goes idle for AC_QA_WATCH_IDLE secs (default 1800); without it, it just
-// exits (foreground use). ac-qa.sh finish also closes a pre-cutover fleet's
-// stale <run>/watch.pane belt-and-suspenders.
-// Session: AC_HERDR_SESSION > config/herdr-session > default.
+// Nothing opens this board automatically; an operator runs it in any
+// terminal. It exits (never closes a pane) when the run finishes (outcome
+// != running, after a short linger) or when the run goes idle for
+// AC_QA_WATCH_IDLE secs (default 1800).
 //
 // ROLE: the run base <repo>/.crew/qa; the status column `%-12s`; only running
 // and fixing are ACTIVE (an `awaiting_approval` step holds no finished qa run
@@ -51,11 +46,9 @@
 //
 // A non-empty ledger that cannot be read prints nothing on stderr.
 //
-// CALLERS: src/qa.ts used to auto-launch this through watchOpen in a herdr
-// pane; herdr is retired, so no run opens one now - operators run it in any
-// terminal; src/qa.ts's finish closes a pre-cutover fleet's stale
-// <run>/watch.pane. tests/sh/ac-qa.test.sh, ac-qa-watch.test.sh and
-// ac-watch-dash.test.sh read its --once frames as text.
+// CALLERS: nothing auto-launches this - operators run it in any terminal.
+// tests/sh/ac-qa.test.sh, ac-qa-watch.test.sh and ac-watch-dash.test.sh read
+// its --once frames as text.
 import { enterCaller } from "./lib.ts";
 import { type Role, b8, baseName, C, meta, nonEmpty, pad, readBytes, watchDashArgs, watchDashMain } from "./watch-dash.ts";
 

@@ -6,17 +6,12 @@
 // src/watch-dash.ts's header that of the body it shares with src/qa-watch.ts.
 // tests/sh/ac-ship-watch.test.sh is the role's contract test.
 //
-//   ac-ship-watch.sh [--repo DIR] [--self-pane ID] [--interval SECS] [--once]
+//   ac-ship-watch.sh [--repo DIR] [--interval SECS] [--once]
 //
-// Auto-open/auto-close contract: ac-ship.sh start used to open this in a
-// herdr tab (label ac-ship-watch) and record the pane in <run>/watch.pane;
-// herdr is retired, so no run opens one now - operators run it in any
-// terminal. With a --self-pane the watch SELF-CLOSES its pane when the run
-// finishes (outcome != running, after a short linger) or when the run goes
-// idle for AC_SHIP_WATCH_IDLE secs (default 1800); without it, it just exits
-// instead of closing anything (foreground use). ac-ship.sh finish also
-// closes a pre-cutover fleet's stale <run>/watch.pane belt-and-suspenders.
-// Session: AC_HERDR_SESSION > config/herdr-session > default.
+// Nothing opens this board automatically; an operator runs it in any
+// terminal. It exits (never closes a pane) when the run finishes (outcome
+// != running, after a short linger) or when the run goes idle for
+// AC_SHIP_WATCH_IDLE secs (default 1800).
 //
 // ROLE: the run base <repo>/.crew/ship; the status column `%-18s`; a step
 // `awaiting_approval` is ACTIVE too (a ship run waiting on it is not
@@ -37,27 +32,20 @@
 // color: `running` cyan, anything holding `passed-with-override` yellow,
 // `checks-passed`/`passed` green, `failed` red, else dim.
 //
-// FINISH (the live loop's only): when <run>/review.pane is a regular file and
-// herdr is on PATH, `herdr --session <session> pane close <the file as a
-// spawned cat gave it>` (stdout and stderr dropped, status ignored) and a
-// spawned `rm -f` of the file - with or without --self-pane (SW3), raw herdr
-// whatever the backend: a reviewer pane a reopened run's last round left.
+// FINISH (the live loop's only): no-op - the role has no finish hook.
 //
 // AT PARITY with the bash original (each until its own fix lands): the body's
-// (see src/watch-dash.ts) and SW2 (the override list's shapes), SW3 (a
-// foreground board closes the reviewer pane, raw herdr), SW6 (the intent cut in
-// BYTES may split a character).
+// (see src/watch-dash.ts) and SW2 (the override list's shapes), SW6 (the
+// intent cut in BYTES may split a character).
 //
 // An override line holding a byte that is no UTF-8 is listed as bytes whatever
 // the locale, and an override that cannot be read prints nothing on stderr.
 //
-// CALLERS: src/ship.ts used to auto-launch this through watchOpen in a herdr
-// pane; herdr is retired, so no run opens one now - operators run it in any
-// terminal; src/ship.ts's finish closes a pre-cutover fleet's stale
-// <run>/watch.pane. tests/sh/ac-ship.test.sh, ac-ship-watch.test.sh and
-// ac-watch-dash.test.sh read its --once frames as text.
-import { commandV, enterCaller } from "./lib.ts";
-import { type Role, b8, baseName, C, isFile, meta, readBytes, run, subst, watchDashArgs, watchDashMain } from "./watch-dash.ts";
+// CALLERS: nothing auto-launches this - operators run it in any terminal.
+// tests/sh/ac-ship.test.sh, ac-ship-watch.test.sh and ac-watch-dash.test.sh
+// read its --once frames as text.
+import { enterCaller } from "./lib.ts";
+import { type Role, b8, baseName, C, isFile, meta, readBytes, subst, watchDashArgs, watchDashMain } from "./watch-dash.ts";
 
 const { args, atCaller } = enterCaller(process.argv.slice(2));
 const a = watchDashArgs(args, atCaller);
@@ -96,13 +84,7 @@ const role: Role = {
     return `${C.b}ac-ship${C.r} ${C.cyn}${branch}${C.r}  ${C.dim}run ${id}${C.r}  [${outcomeColor(outcome)}${outcome}${C.r}]\n${C.dim}intent:${C.r} ${intent.slice(0, 110)}\n\n`;
   },
   renderExtra: () => "",
-  onFinish(rd, ses) {
-    const f = `${rd}/review.pane`;
-    if (!isFile(f) || !commandV("herdr")) return;
-    const pane = subst(run(["cat", f]).out);
-    run(["herdr", "--session", ses, "pane", "close", pane], { stdout: "ignore", stderr: "ignore" });
-    run(["rm", "-f", f], { stdout: "inherit" });
-  },
+  onFinish: () => {},
 };
 
 await watchDashMain(a, role);

@@ -2,9 +2,9 @@
 // and src/qa-watch.ts: arg parsing, colors, the step table, findings/log
 // rendering, paint, and the idle/refresh main loop. A module only, never an
 // entry: the two entries bin/ac-ship-watch.sh and bin/ac-qa-watch.sh stay real
-// paths (shims) because a herdr `pane run` string and the tests both embed
-// them, and each entry's header states its role's auto-open/auto-close
-// contract. THIS header is the authoritative spec of the shared body;
+// paths (shims) because the tests embed them, and each entry's header states
+// its role's auto-open/auto-close contract. THIS header is the authoritative
+// spec of the shared body;
 // tests/sh/ac-watch-dash.test.sh, ac-ship-watch.test.sh and ac-qa-watch.test.sh
 // hold it through the two boards.
 //
@@ -15,16 +15,14 @@
 // clock also watches, the no-run/waiting texts, the idle-limit knob, and its
 // header/extra/finish hooks), then awaits watchDashMain.
 //
-// ARGS, scanned in order: `--repo DIR` (default the cwd), `--self-pane ID`,
+// ARGS, scanned in order: `--repo DIR` (default the cwd),
 // `--interval SECS` (default 2), `--once`; the last one wins; a missing or
 // EMPTY value is `ERROR: <flag> needs a value`, exit 1, at that flag; any
 // other word, `-h` included, is `ERROR: unknown arg: <word>`, exit 1. Then the
 // repo is the stdout of a spawned `git rev-parse --show-toplevel` run in DIR
 // (resolved against the cwd, no CDPATH; a subdir reads its toplevel), stderr
 // dropped; DIR that cannot be entered or no repo is `ERROR: not a git repo: `
-// with the name EMPTY (WD1). Then the session: AC_HERDR_SESSION, else
-// config/herdr-session (configReadSoft), else `default`; a homeless run is
-// legitimate. stdin is never read.
+// with the name EMPTY (WD1); a homeless run is legitimate. stdin is never read.
 //
 // COLORS only when stdout is a tty: reset `\033[0m`, bold `\033[1m`, dim
 // `\033[2m`, green `\033[32m`, cyan `\033[36m`, yellow `\033[33m`, magenta
@@ -74,22 +72,21 @@
 // frame (trailing LFs cut, NULs dropped as `$(...)` read it) painted only when
 // it differs from the last one painted - `\033[H`, every line followed by
 // `\033[K`, `\033[J\n`; finished -> `run finished: <outcome>\n`, the role's
-// finish hook, a spawned `sleep 5`, the self-close; else idle when now (nowRaw,
+// finish hook, a spawned `sleep 5`, exit 0; else idle when now (nowRaw,
 // a spawned `date +%s`) minus the newest mtime of steps.tsv, logs/run.log and
 // the role's extra files (fileMtime, 0 when unstattable) is a `[ -gt ]` integer
 // past the role's idle limit (no integer: never) -> `\nrun idle too long -
-// closing watch\n`, `sleep 2`, the self-close. With no run, the role's waiting
+// closing watch\n`, `sleep 2`, exit 0. With no run, the role's waiting
 // text painted once, `waited` grown by the interval as `$((waited +
 // INTERVAL))` read it (arithValue: `010` is 8, `0` and `00` add nothing, a
-// negative shrinks it), and past 300 the self-close - before that tick's
+// negative shrinks it), and past 300 exit 0 - before that tick's
 // sleep; an interval that is no arithmetic operand ends the board there, the
 // cursor restored: exit 1 (`5abc`, `0.5`, `08`), exit 0 for a name (`abc` -
 // set -u ended the script with the status of the assignment before it). Each
 // tick ends in a spawned `sleep <interval as typed>` (stdio inherited, a PATH
 // stub fast-forwards it, its failure ignored: an interval sleep refuses spins
-// the loop while a run is shown - WD4). The self-close: with --self-pane and
-// herdr on PATH, `herdr --session <session> pane close <id>` (stdout and stderr
-// dropped, status ignored, whatever the backend - WD5), then exit 0.
+// the loop while a run is shown - WD4). Nothing closes the board's own pane;
+// an operator closes it like any other terminal.
 //
 // SIGNALS: the live loop restores the cursor on HUP, INT and TERM and exits
 // 128+n; --once registers no handler.
@@ -98,9 +95,7 @@
 // - WD1: `--repo` naming no repo refuses with an empty name.
 // - WD2: the log cut counts bytes and may split a character before `…`.
 // - WD4: an interval sleep refuses (`abc`, `0`) spins the loop while a run is
-//   shown; with no run, `0`/`00` never self-close and a non-operand ends it.
-// - WD5: the self-close is RAW herdr whatever the backend - an orca fleet's
-//   board never closes its pane.
+//   shown; with no run, `0`/`00` never idle out and a non-operand ends it.
 // - The 4-column steps.tsv fold, the step table's TAB-run collapse beside the
 //   awk readers' single-TAB fields, a non-integer idle limit never idling.
 //
@@ -118,14 +113,14 @@
 //   a number ends the board at its first no-run tick.
 // - An AC_HOME that cannot be entered is the session default with nothing
 //   printed; a relative --repo is resolved without CDPATH.
-// - argv arrives decoded and config/herdr-session is read as UTF-8, so a
-//   --repo, interval or pane id byte that is no UTF-8 is U+FFFD.
+// - argv arrives decoded, so a --repo or interval byte that is no UTF-8 is
+//   U+FFFD.
 // - The board's pane runs bun; without it the shim's `ERROR: required tool not
-//   found: bun` is all the pane shows until the run's finish closes it.
+//   found: bun` is all the pane shows.
 // - A caller whose cwd has no name is `ERROR: not a git repo: ` with no --repo.
 import { readFileSync, readdirSync, readlinkSync, lstatSync, statSync, writeSync } from "node:fs";
 import { isatty } from "node:tty";
-import { arithValue, commandV, configReadSoft, die, fileMtime, metaGet, nowRaw, physicalDir, shellStatus, spawnShell, spawnShellSync, tabFields, testInt } from "./lib.ts";
+import { arithValue, die, fileMtime, metaGet, nowRaw, physicalDir, shellStatus, spawnShell, spawnShellSync, tabFields, testInt } from "./lib.ts";
 
 // Byte strings (latin1) carry what the bash held as bytes; argv, the env and
 // the lib's paths are UTF-8 strings and cross over here.
@@ -217,11 +212,10 @@ export function baseName(p: string, suffix = ""): string {
   return b.replace(/\n+$/, "");
 }
 
-export type Args = { repo: string; self: string; interval: string; once: boolean; ses: string };
+export type Args = { repo: string; interval: string; once: boolean };
 
 export function watchDashArgs(args: string[], atCaller: boolean): Args {
   let repo: string | null = atCaller ? process.cwd() : null;
-  let self = "";
   let interval = "2";
   let once = false;
   for (let i = 0; i < args.length; i++) {
@@ -232,7 +226,6 @@ export function watchDashArgs(args: string[], atCaller: boolean): Args {
       return v;
     };
     if (a === "--repo") repo = value();
-    else if (a === "--self-pane") self = b8(value());
     else if (a === "--interval") interval = b8(value());
     else if (a === "--once") once = true;
     else die(`unknown arg: ${a}`);
@@ -246,8 +239,7 @@ export function watchDashArgs(args: string[], atCaller: boolean): Args {
     } catch {}
   }
   if (top === null) die("not a git repo: ");
-  const ses = b8(process.env.AC_HERDR_SESSION || configReadSoft("herdr-session", "default"));
-  return { repo: top, self, interval, once, ses };
+  return { repo: top, interval, once };
 }
 
 export type Role = {
@@ -262,7 +254,7 @@ export type Role = {
   idleLimit: () => string;
   renderHeader: (rd: string) => string;
   renderExtra: (rd: string) => string;
-  onFinish: (rd: string, ses: string) => void;
+  onFinish: (rd: string) => void;
 };
 
 const GLYPHS: Record<string, [string, keyof typeof C]> = {
@@ -380,10 +372,6 @@ export async function nap(secs: string): Promise<void> {
   }
 }
 
-function selfClose(a: Args): never {
-  if (a.self !== "" && commandV("herdr")) run(["herdr", "--session", a.ses, "pane", "close", a.self], { stdout: "ignore", stderr: "ignore" });
-  process.exit(0);
-}
 
 export async function watchDashMain(a: Args, role: Role): Promise<never> {
   if (!a.once) {
@@ -420,9 +408,9 @@ export async function watchDashMain(a: Args, role: Role): Promise<never> {
       if (outcome !== "running" && active === "") {
         out(`run finished: ${outcome}\n`);
         if (a.once) process.exit(0);
-        role.onFinish(rd, a.ses);
+        role.onFinish(rd);
         await nap("5");
-        selfClose(a);
+        process.exit(0);
       }
       if (a.once) process.exit(0);
       let idle: bigint;
@@ -435,7 +423,7 @@ export async function watchDashMain(a: Args, role: Role): Promise<never> {
       if (limit !== null && idle > limit) {
         out("\nrun idle too long - closing watch\n");
         await nap("2");
-        selfClose(a);
+        process.exit(0);
       }
     } else {
       if (a.once) {
@@ -451,7 +439,7 @@ export async function watchDashMain(a: Args, role: Role): Promise<never> {
       } catch (e) {
         process.exit((e as { code?: string }).code === "EUNBOUND" ? 0 : 1);
       }
-      if (waited > 300n) selfClose(a);
+      if (waited > 300n) process.exit(0);
     }
     await nap(a.interval);
   }

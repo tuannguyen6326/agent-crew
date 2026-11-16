@@ -11,7 +11,6 @@
 //                                  becomes active
 //     [--family F] [--stage S] [--round 1|2]
 //                                     optional simple pins
-//     [--self-pane ID]             DASHBOARD MODE ONLY: a pane to close on idle
 //     [--interval SECS] [--once]
 //
 // Data sources - ACTIVE runs ONLY: data/<family>/.gate-running.<pid> (the marker
@@ -42,20 +41,13 @@
 // means exactly what it always did - the model reasoned little enough that
 // `auto` chose not to summarize, never a harness or board defect.
 //
-// Auto-open: ac-gate.sh opens a board pane PER RUN, ac-ship-watch style
-// (gate-watch is per-family, like ac-ship-watch - superseding the earlier
-// always-open fleet board): label ac-gate-watch:<family>, in the
-// FAMILY's workspace, IN --tail MODE pinned --family - the exact prompt plus
-// the live emitted output, not the row dashboard. The board is retired WITH the
-// run by ac-gate.sh's own exit; the tail loop itself still never
-// self-closes and is still handed no --self-pane, so nothing here claims a
-// close the tail loop cannot perform. Self-close is DASHBOARD-ONLY: run
-// without --tail, it exits after AC_GATE_WATCH_IDLE secs (default 1800) with no
-// active gate, closing the pane named by --self-pane when one was given.
-// Session: AC_HERDR_SESSION > config/herdr-session > default.
+// Nothing opens this board automatically; an operator runs it by hand (the
+// tail loop never self-closes, and the dashboard loop just exits, no pane
+// closed, once AC_GATE_WATCH_IDLE secs - default 1800 - pass with no active
+// gate).
 //
 // ARGS, scanned in order: `--tail`; `--family`/`--stage`/`--round`/
-// `--self-pane`/`--interval` each take the next word (the last one wins; a
+// `--interval` each take the next word (the last one wins; a
 // missing or EMPTY value is `ERROR: <flag> needs a value`, exit 1, at that
 // flag); `--once`; a word starting with a digit is the interval AS TYPED
 // (`5abc`, `00`, `010` are taken - the loops below say what they make of
@@ -68,10 +60,8 @@
 // data/ is `/data`, the fleet name AC_FLEET_NAME else `agent-crew`, exit 0 as
 // ever (GW3). One cd cannot enter prints `ERROR: AC_HOME is not a readable
 // directory: <AC_HOME>` and goes on the same way with an empty fleet name.
-// Then the session is read (configReadSoft: an unreadable config/herdr-session
-// is head's own line and ""), then jq: absent from PATH (`command -v`) is
-// `ERROR: ac-gate-watch needs jq`, exit 1. Nothing is ever written under the
-// home.
+// Then jq: absent from PATH (`command -v`) is `ERROR: ac-gate-watch needs
+// jq`, exit 1. Nothing is ever written under the home.
 //
 // COLORS only when stdout is a tty: bold `\033[1m`, reset `\033[0m`, dim
 // `\033[2m`, cyan `\033[36m`, green `\033[32m`; piped, every code is "".
@@ -138,10 +128,8 @@
 // idles out); an interval that is no arithmetic operand (`5abc`, `0.5`, `08`,
 // `abc`) ends the board 1 at its first idle tick (GW2, GW8). Once `waited`
 // exceeds AC_GATE_WATCH_IDLE (unset or empty: 1800; no `[ -gt ]` integer:
-// never) the board prints `\nno active gate - closing watch\n`, sleeps 2, closes
-// the pane --self-pane named - `herdr --session <session> pane close <id>` when
-// herdr is on PATH, stdout and stderr dropped, its status ignored, whatever the
-// backend - and exits 0. Each tick ends in a spawned `sleep <interval as
+// never) the board prints `\nno active gate - closing watch\n`, sleeps 2, and
+// exits 0. Each tick ends in a spawned `sleep <interval as
 // typed>` (stdio inherited, a PATH stub fast-forwards it; its failure is
 // ignored, so an interval sleep refuses spins the loop while a gate is
 // active).
@@ -163,7 +151,7 @@
 // cannot be opened prints nothing) passed its offset prints a spawned `tail -c
 // +<offset+1>` of it, stdout inherited, and the offset becomes that size - out
 // wrapped in green on a tty. Then the tick's sleep. The tail loop never ends
-// on its own (no --self-pane is ever handed to it).
+// on its own.
 //
 // SIGNALS: the dashboard loop (not --once) restores the cursor on HUP, INT
 // and TERM and exits 128+n; --once and --tail register no handler and end on
@@ -180,8 +168,6 @@
 //   its terminal.
 // - An unreadable marker warns on every pass over the markers (twice a
 //   dashboard tick).
-// - The self-close is RAW herdr whatever the backend, so an orca fleet's
-//   board never closes its pane.
 // - A TAB inside a marker value shifts the row's columns.
 //
 // ALSO:
@@ -204,17 +190,15 @@
 // - INTERVAL ARITHMETIC: an interval that is a whole expression (`1+1`) or
 //   names a variable holding a number (`waited`, `SECONDS`) ends the
 //   dashboard 1 at its first idle tick.
-// - BYTES: argv arrives decoded and config/herdr-session is read as UTF-8, so
-//   a pin, an interval, a pane id or a session byte that is no UTF-8 is
-//   U+FFFD; a marker value naming a path with such a byte reaches jq, tail and
-//   cat decoded.
+// - BYTES: argv arrives decoded, so a pin or an interval byte that is no
+//   UTF-8 is U+FFFD; a marker value naming a path with such a byte reaches
+//   jq, tail and cat decoded.
 // - BUN IN THE PANE: the board's pane runs bun; without it on the pane's PATH
 //   the shim's `ERROR: required tool not found: bun` is all the pane shows.
 // - A caller whose cwd has no name reads relative descriptor paths (and `-`)
 //   from the distro root.
 //
-// CALLERS: src/gate.ts used to auto-launch this through watchOpen in a herdr
-// pane; herdr is retired, so no run opens one now - operators run it by hand.
+// CALLERS: nothing auto-launches this - operators run it by hand.
 // Nothing parses what it prints: tests/sh/ac-gate-watch.test.sh reads it as
 // text.
 import { closeSync, fstatSync, openSync, readSync, readdirSync, statSync, unlinkSync, writeSync } from "node:fs";
@@ -223,7 +207,6 @@ import {
   NO_HOME,
   arithValue,
   commandV,
-  configReadSoft,
   die,
   enterCaller,
   fileMtime,
@@ -282,7 +265,6 @@ const { args } = enterCaller(process.argv.slice(2));
 let mode = "dashboard";
 let interval = "2";
 let once = false;
-let self = "";
 let pinFam = "";
 let pinStage = "";
 let pinRound = "";
@@ -297,7 +279,6 @@ for (let i = 0; i < args.length; i++) {
   else if (a === "--family") pinFam = value();
   else if (a === "--stage") pinStage = value();
   else if (a === "--round") pinRound = value();
-  else if (a === "--self-pane") self = value();
   else if (a === "--interval") interval = value();
   else if (a === "--once") once = true;
   else if (/^[0-9]/.test(a)) interval = b8(a);
@@ -314,7 +295,6 @@ else {
   else home = b8(p);
 }
 const data = `${home}/data`;
-const ses = b8(process.env.AC_HERDR_SESSION || configReadSoft("herdr-session", "default"));
 if (!commandV("jq")) die("ac-gate-watch needs jq");
 
 const tty = isatty(1);
@@ -656,7 +636,6 @@ async function dashboard(): Promise<never> {
       if (idle !== null && waited > idle) {
         out("\nno active gate - closing watch\n");
         await nap("2");
-        if (self !== "" && commandV("herdr")) run(["herdr", "--session", ses, "pane", "close", self], "ignore");
         process.exit(0);
       }
     }

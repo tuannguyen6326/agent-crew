@@ -67,8 +67,8 @@ assert_contains "$qframe" "run finished: unverifiable" \
 # `sleep` from PATH once a tick, so every live row is driven by the leg's sleep
 # stub: it logs each call, runs the row's hook for that call, and from call
 # XKILL on signals its parent and waits for it to go - a row ends after an
-# exact number of ticks, never on a wall clock. Beside it a logging herdr and a
-# date answering 1767225600 for %s.
+# exact number of ticks, never on a wall clock. Beside it a date answering
+# 1767225600 for %s.
 XW="$TMP/xw"; XS="$TMP/xstubs"
 mkdir -p "$XS"
 cat >"$XS/sleep" <<'STUB'
@@ -83,11 +83,6 @@ if [ "$n" -ge "${XKILL:-999}" ]; then
 fi
 exit 0
 STUB
-cat >"$XS/herdr" <<'STUB'
-#!/bin/sh
-printf '%s\n' "$*" >>"$XW/log/herdr.log"
-exit 0
-STUB
 cat >"$XS/date" <<'STUB'
 #!/bin/sh
 case "$*" in *%s*) echo 1767225600 ;; *) exec /bin/date "$@" ;; esac
@@ -100,7 +95,7 @@ import os, signal, sys
 signal.signal(signal.SIGINT, signal.SIG_DFL)
 os.execvp(sys.argv[1], sys.argv[1:])
 STUB
-chmod +x "$XS/sleep" "$XS/herdr" "$XS/date" "$XS/int-default"
+chmod +x "$XS/sleep" "$XS/date" "$XS/int-default"
 
 XLC=C; XTERMV=xterm; XHOMELESS=0; XE=""; XPATH=""; XWRAP=""; XTTY=0; XKILL=999; XSIG=TERM; XCWD=repo; XRC=0
 xside() {  # xside <bin> <entry> <prefix> <args...> - one run in the current world (XTTY=1: on a pty, stderr in stdout), SIGKILLed past 30 s
@@ -111,7 +106,7 @@ xside() {  # xside <bin> <entry> <prefix> <args...> - one run in the current wor
   [ "$XTERMV" = unset ] || e+=("TERM=$XTERMV")
   [ "$XHOMELESS" = 1 ] || e+=("AC_HOME=$XW/home")
   for x in $XE; do e+=("$x"); done
-  local u=(-u AC_HOME -u TERM -u AC_HERDR_SESSION -u AC_SHIP_WATCH_IDLE -u AC_QA_WATCH_IDLE -u AC_FLEET_STATE -u AC_SCOPE
+  local u=(-u AC_HOME -u TERM -u AC_SHIP_WATCH_IDLE -u AC_QA_WATCH_IDLE -u AC_FLEET_STATE -u AC_SCOPE
     -u LANG -u LC_CTYPE -u COLUMNS -u LINES -u CDPATH -u EPOCHSECONDS)
   rm -f "$TMP/$p.pid" "$TMP/$p.done"
   ( n=0 x="" id=""
@@ -134,7 +129,6 @@ xside() {  # xside <bin> <entry> <prefix> <args...> - one run in the current wor
   : >"$TMP/$p.done"
   wait "$dog" 2>/dev/null || true
   cat "$XW/log/sleep.log" >"$TMP/$p.sleep" 2>/dev/null || : >"$TMP/$p.sleep"
-  cat "$XW/log/herdr.log" >"$TMP/$p.herdr" 2>/dev/null || : >"$TMP/$p.herdr"
   (cd "$XW/repo" && find .crew -print 2>/dev/null | LC_ALL=C sort) >"$TMP/$p.world" || true
   XRC=$rc
 }
@@ -258,11 +252,12 @@ assert_eq "$XN_RC:$(tail -n 1 "$TMP/xn.out")" "0:run finished: failed" "row 3: n
 
 # 4. arguments: refusals in scan order; a value flag with no value or an empty
 #    one; --repo naming no repo and a path that cannot be entered; a subdir and
-#    the cwd's subdir read the toplevel; --self-pane is never called by --once.
+#    the cwd's subdir read the toplevel; --once never sleeps.
 xrefuse "ERROR: unknown arg: --bogus" w_none ac-ship-watch.sh --bogus
 xrefuse "ERROR: unknown arg: -h" w_none ac-qa-watch.sh -h
 xrefuse "ERROR: unknown arg: x" w_none ac-ship-watch.sh --once x
-for f in --repo --self-pane --interval; do
+xrefuse "ERROR: unknown arg: --self-pane" w_none ac-ship-watch.sh --self-pane p1
+for f in --repo --interval; do
   xrefuse "ERROR: $f needs a value" w_none ac-ship-watch.sh --once "$f"
   xrefuse "ERROR: $f needs a value" w_none ac-ship-watch.sh "$f" '' --once
 done
@@ -275,8 +270,8 @@ xrun w_none ac-ship-watch.sh --repo "$XW/repo/sub" --once
 assert_eq "$XN_RC:$(xout)" "0:no active crew-ship run in $XW/repo" "row 4: a subdir reads its toplevel"
 XCWD=repo/sub xrun w_none ac-qa-watch.sh --once
 assert_eq "$XN_RC:$(xout)" "0:no active qa run in $XW/repo" "row 4: the cwd's subdir reads its toplevel"
-xrun w_running ac-ship-watch.sh --interval 1 --interval 5 --once --self-pane p1
-assert_eq "$XN_RC:$(cat "$TMP/xn.herdr"):$(cat "$TMP/xn.sleep")" "0::" "row 4: --once never sleeps or closes a pane"
+xrun w_running ac-ship-watch.sh --interval 1 --interval 5 --once
+assert_eq "$XN_RC:$(cat "$TMP/xn.sleep")" "0:" "row 4: --once never sleeps"
 
 # 5. the live loop with a run: the prelude, one paint while the frame is
 #    unchanged, a second when steps.tsv changes, TERM and HUP restoring the
@@ -296,44 +291,33 @@ XTTY=1 XE=AC_SHIP_WATCH_IDLE=99999999999 XKILL=1 xrun w_live ac-ship-watch.sh --
 assert_eq "$XN_RC" "143" "row 5: a painted tty frame ends on TERM"
 assert_contains "$(xout)" $' \033[36m\xe2\x96\xb6\033[0m a          \033[36mrunning ' "row 5: ...and is painted in color"
 
-# 6. the live finish and the self-close: `run finished: <outcome>`, `sleep 5`,
-#    the raw herdr close of --self-pane through the session ladder
-#    (AC_HERDR_SESSION > config/herdr-session > default; homeless: default),
-#    and none without --self-pane.
+# 6. the live finish: `run finished: <outcome>`, `sleep 5`, exit - no pane of
+#    its own to close.
 w_done() { xseed; xrd qa q1; printf 'outcome=passed\n' >"$XRD/run.meta"; printf 'a\tcompleted\t0\n' >"$XRD/steps.tsv"; }
-w_donecfg() { w_done; printf ' s2 \n' >"$XW/home/config/herdr-session"; }
-XKILL=9 xrun w_done ac-qa-watch.sh --self-pane p9
-assert_eq "$XN_RC:$(tr '\n' ' ' <"$TMP/xn.sleep"):$(cat "$TMP/xn.herdr")" "0:5 :--session default pane close p9" "row 6: finish, sleep 5, the close"
-assert_contains "$(xout)" $'run finished: passed\n\033[?25h' "row 6: the finish line, then the restore"
 XKILL=9 xrun w_done ac-qa-watch.sh
-assert_eq "$XN_RC:$(cat "$TMP/xn.herdr")" "0:" "row 6: no --self-pane, no herdr call"
-XE=AC_HERDR_SESSION=s1 XKILL=9 xrun w_donecfg ac-qa-watch.sh --self-pane p9
-assert_eq "$(cat "$TMP/xn.herdr")" "--session s1 pane close p9" "row 6: AC_HERDR_SESSION first"
-XKILL=9 xrun w_donecfg ac-qa-watch.sh --self-pane p9
-assert_eq "$(cat "$TMP/xn.herdr")" "--session s2 pane close p9" "row 6: config/herdr-session, trimmed"
-XHOMELESS=1 XKILL=9 xrun w_donecfg ac-qa-watch.sh --self-pane p9
-assert_eq "$(cat "$TMP/xn.herdr")" "--session default pane close p9" "row 6: homeless reads the default"
+assert_eq "$XN_RC:$(tr '\n' ' ' <"$TMP/xn.sleep")" "0:5 " "row 6: finish, sleep 5, exit"
+assert_contains "$(xout)" $'run finished: passed\n\033[?25h' "row 6: the finish line, then the restore"
 
 # 7. idle, from the date stub's instant: old steps/log close after the default
-#    1800 (`sleep 2`, the close); fresh ones never idle.
+#    1800 (`sleep 2`, exit); fresh ones never idle.
 w_old() { w_live; xold "$XRD/steps.tsv" "$XRD/logs/run.log"; }
 w_fresh() { w_live; xnow "$XRD/steps.tsv" "$XRD/logs/run.log"; }
-XKILL=9 xrun w_old ac-ship-watch.sh --self-pane p9
-assert_eq "$XN_RC:$(tr '\n' ' ' <"$TMP/xn.sleep"):$(cat "$TMP/xn.herdr")" "0:2 :--session default pane close p9" "row 7: idle past 1800"
+XKILL=9 xrun w_old ac-ship-watch.sh
+assert_eq "$XN_RC:$(tr '\n' ' ' <"$TMP/xn.sleep")" "0:2 " "row 7: idle past 1800"
 assert_contains "$(xout)" $'\nrun idle too long - closing watch\n' "row 7: the idle line"
 XKILL=3 xrun w_fresh ac-ship-watch.sh --interval 1
 assert_eq "$XN_RC" "143" "row 7: a fresh run never idles"
 
-# 8. no run, live: the waiting text painted once; `waited` past 300 closes
+# 8. no run, live: the waiting text painted once; `waited` past 300 exits
 #    before that tick's sleep (`301`: no sleep; `100`: three; `010` adds 8:
 #    thirty-seven); `-1` shrinks it.
-xrun w_none ac-ship-watch.sh --interval 301 --self-pane p1
-assert_eq "$XN_RC:$(cat "$TMP/xn.sleep"):$(cat "$TMP/xn.herdr")" "0::--session default pane close p1" "row 8: 301 closes before any sleep"
+xrun w_none ac-ship-watch.sh --interval 301
+assert_eq "$XN_RC:$(cat "$TMP/xn.sleep")" "0:" "row 8: 301 exits before any sleep"
 assert_contains "$(xout)" "waiting for a crew-ship run in $XW/repo ..." "row 8: the waiting text"
-XKILL=9 xrun w_none ac-qa-watch.sh --interval 100 --self-pane p2
-assert_eq "$(tr '\n' ' ' <"$TMP/xn.sleep"):$(cat "$TMP/xn.herdr")" "100 100 100 :--session default pane close p2" "row 8: 100 closes after three sleeps"
-XKILL=99 xrun w_none ac-qa-watch.sh --interval 010 --self-pane p2
-assert_eq "$XN_RC:$(wc -l <"$TMP/xn.sleep" | tr -d ' '):$(cat "$TMP/xn.herdr")" "0:37:--session default pane close p2" "row 8: 010 adds 8 a tick"
+XKILL=9 xrun w_none ac-qa-watch.sh --interval 100
+assert_eq "$(tr '\n' ' ' <"$TMP/xn.sleep")" "100 100 100 " "row 8: 100 exits after three sleeps"
+XKILL=99 xrun w_none ac-qa-watch.sh --interval 010
+assert_eq "$XN_RC:$(wc -l <"$TMP/xn.sleep" | tr -d ' ')" "0:37" "row 8: 010 adds 8 a tick"
 for iv in 2 -1; do
   XKILL=3 xrun w_none ac-ship-watch.sh --interval "$iv"
   assert_eq "$XN_RC:$(xcount $'\033[H' "$TMP/xn.out"):$(tr '\n' ' ' <"$TMP/xn.sleep")" "143:2:$iv $iv $iv " "row 8: interval $iv - one paint, no close within three ticks"
