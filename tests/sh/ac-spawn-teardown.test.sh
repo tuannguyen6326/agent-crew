@@ -842,24 +842,26 @@ mkdir -p "$AC_HOME/data/dep5"
 printf 'charter for dep5\n' >"$AC_HOME/data/dep5/brief.md"
 
 # rc=0 (a genuinely alive orphan): reap_orphan_window must still reap it and
-# let the spawn proceed - A4's no-regression floor for the 0) branch.
-printf 'pOR5 tOR5\n' >"$AC_HOME/state/.pane-dep5"
-printf 'pOR5 crew:dep5\n' >"$FAKE_HERDR/tabs/tOR5"; : >"$FAKE_HERDR/panes/pOR5.buf"
-: >"$FAKE_HERDR/log"
+# let the spawn proceed - A4's no-regression floor for the 0) branch. Orca's
+# window_alive (src/lib.ts) checks only `terminal show`'s connected flag, no
+# title/ownership proof like herdr's tab label - a live .buf is enough.
+printf 'pOR5 tabOR5\n' >"$AC_HOME/state/.pane-dep5"
+: >"$FAKE_ORCA/terminals/pOR5.buf"
+: >"$FAKE_ORCA/log"
 "$BIN/ac-spawn.sh" dep5 --crewdeputy --harness fake >/dev/null 2>&1 \
   || fail "a genuinely alive orphan (rc=0) must still be reaped so the spawn can proceed"
-assert_contains "$(cat "$FAKE_HERDR/log")" "tab close tOR5" "reap_orphan_window still kills a genuine orphan on rc=0"
+assert_contains "$(cat "$FAKE_ORCA/log")" "terminal close --terminal pOR5" "reap_orphan_window still kills a genuine orphan on rc=0"
 assert_file "$AC_HOME/state/dep5.meta" "the spawn proceeded to open its window after reaping"
 rm -f "$AC_HOME/state/dep5.meta"
 
 # rc=1 (a genuinely gone orphan, nothing to reap): the spawn must still
 # proceed quietly - A4's no-regression floor for the 1) branch. A handle with
-# no matching tab/pane is the fake herdr's "genuinely gone" shape.
-printf 'pOR5B tOR5B\n' >"$AC_HOME/state/.pane-dep5"
-: >"$FAKE_HERDR/log"
+# no matching terminal file is the fake orca's "genuinely gone" shape.
+printf 'pOR5B tabOR5B\n' >"$AC_HOME/state/.pane-dep5"
+: >"$FAKE_ORCA/log"
 "$BIN/ac-spawn.sh" dep5 --crewdeputy --harness fake >/dev/null 2>&1 \
   || fail "a genuinely gone orphan (rc=1) must still let the spawn proceed"
-assert_eq "$(grep -c 'tab close' "$FAKE_HERDR/log" || true)" "0" "nothing to reap on a genuine rc=1 - no kill attempted"
+assert_eq "$(grep -c 'terminal close' "$FAKE_ORCA/log" || true)" "0" "nothing to reap on a genuine rc=1 - no kill attempted"
 assert_file "$AC_HOME/state/dep5.meta" "the spawn proceeded normally on rc=1"
 rm -f "$AC_HOME/state/dep5.meta"
 
@@ -867,35 +869,36 @@ rm -f "$AC_HOME/state/dep5.meta"
 # proceed to backend_window_new - opening a second window beside a pane that
 # may still be alive (contract: ac-backend.sh WINDOW LIVENESS; AGENTS.md
 # section 7 - unobservable is "NOT a death and no work is lost"). Unlike the
-# isolated 127 fixture below, .pane-api-down ALSO blocks the downstream
+# isolated 127 fixture below, .terminal-api-down ALSO blocks the downstream
 # kickoff-readiness pane reads, so the overall exit code/message are not this
 # guard's alone (measured: the pre-fix tree still exits nonzero here, just for
-# an unrelated "input surface did not become ready" reason) - the tab-create
-# COUNT is the unambiguous, single-purpose proof A1 asks for, checked first.
-printf 'pOR5C tOR5C\n' >"$AC_HOME/state/.pane-dep5"
-printf 'pOR5C crew:dep5\n' >"$FAKE_HERDR/tabs/tOR5C"; : >"$FAKE_HERDR/panes/pOR5C.buf"
-touch "$FAKE_HERDR/.pane-api-down"
-: >"$FAKE_HERDR/log"
+# an unrelated "input surface did not become ready" reason) - the
+# terminal-create COUNT is the unambiguous, single-purpose proof A1 asks for,
+# checked first.
+printf 'pOR5C tabOR5C\n' >"$AC_HOME/state/.pane-dep5"
+: >"$FAKE_ORCA/terminals/pOR5C.buf"
+touch "$FAKE_ORCA/.terminal-api-down"
+: >"$FAKE_ORCA/log"
 err="$("$BIN/ac-spawn.sh" dep5 --crewdeputy --harness fake 2>&1)" || true
-rm -f "$FAKE_HERDR/.pane-api-down"
-assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" \
+rm -f "$FAKE_ORCA/.terminal-api-down"
+assert_eq "$(grep -c 'terminal create' "$FAKE_ORCA/log" || true)" "0" \
   "THE REGRESSION: reap_orphan_window must refuse an unreadable backend (rc=2), never open a second window"
 assert_contains "$err" "could not be READ" "the rc=2 refusal blames the BACKEND, not the pane"
 assert_no_file "$AC_HOME/state/dep5.meta" "the refused spawn leaves no task in flight"
 
 # ...and any code but 0 and 1 refuses the SAME way. This row once drove a
 # driver that failed to LOAD (bash's 127); with the backend verbs native, it
-# reaches the same unreadable verdict with herdr absent from PATH, as the
+# reaches the same unreadable verdict with orca absent from PATH, as the
 # deputy recovery row above does.
-if [ -z "$(PATH="$nh_path" command -v herdr || true)" ]; then
-  : >"$FAKE_HERDR/log"
+if [ -z "$(PATH="$nh_path" command -v orca || true)" ]; then
+  : >"$FAKE_ORCA/log"
   err="$(PATH="$nh_path" "$BIN/ac-spawn.sh" dep5 --crewdeputy --harness fake 2>&1)" \
     && fail "THE REGRESSION: reap_orphan_window must refuse a 127 driver-load failure, never open a second window"
   assert_contains "$err" "could not be READ" "the 127 refusal blames the BACKEND, the same wording as rc=2"
-  assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" "A1: no second window created on rc=127"
+  assert_eq "$(grep -c 'terminal create' "$FAKE_ORCA/log" || true)" "0" "A1: no second window created on rc=127"
   assert_no_file "$AC_HOME/state/dep5.meta" "the refused spawn leaves no task in flight"
 else
-  printf 'SKIP: the orphan reap with herdr absent - bun shares its directory with a herdr on this host\n'
+  printf 'SKIP: the orphan reap with orca absent - bun shares its directory with an orca on this host\n'
 fi
 rm -rf "$dhome5"
 
@@ -912,66 +915,17 @@ assert_fails "$BIN/ac-spawn.sh" dep1 --crewdeputy --harness fake --recover
 
 # --- gone-window teardown: the durable index survives a death at the pane-kill -
 # Three recorded incidents ended ac-teardown.sh AT the pane-kill step (exit 144,
-# no output). While the state archive ran LAST, such a death stranded
-# state/<id>.meta and .status behind a torn-down task: the fleet survey kept
-# listing a phantom crewmate and the monitor raised crew-signal-stale. The
-# archive is now the FIRST durable act of the teardown proper, so the fleet
-# index is already correct when the kill step ends the run.
-"$BIN/ac-brief.sh" t12 proj --mode local-only >/dev/null
-"$BIN/ac-spawn.sh" t12 "$repo" --harness fake --mode local-only >/dev/null 2>&1
-wt12="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t12.meta")"
-# The recorded scenario: the crewmate's pane is ALREADY gone, teardown still
-# runs its kill step, and that step kills the run. The tab stays (still
-# labelled crew:t12) so the kill gets its ownership proof and reaches the
-# close - ac-backend.sh KILL OWNERSHIP PROOF; an unprovable tab is refused,
-# and a refusal is exactly the path that CANNOT kill the run.
-rm -f "$FAKE_HERDR/panes/$(fake_pane t12)".*
-: >"$FAKE_HERDR/.kill-caller-on-tab-close"
-# The inner shell (not exec-optimized, hence the trailing exit) owns the
-# killed child, so bash's "Killed: 9" job report stays out of the suite output.
-rc=0
-bash -c '"$0" t12 >/dev/null 2>&1; exit $?' "$BIN/ac-teardown.sh" 2>/dev/null || rc=$?
-rm -f "$FAKE_HERDR/.kill-caller-on-tab-close"
-if [ "$rc" = 0 ]; then fail "fixture broken: the pane-kill step must end the run"; fi
-# The exit code is NOT the assertion (the run was killed mid-flight and cannot
-# report 0); the durable end-state is.
-assert_no_file "$AC_HOME/state/t12.meta" "no phantom crewmate after a killed teardown"
-assert_file "$AC_HOME/state/archive/t12/meta" "meta archived before the pane-kill"
-assert_file "$AC_HOME/state/archive/t12/status" "status archived with it (one unit)"
-# What such a death DOES leave: the pool lease, reclaimable with the pool's own
-# verb (the header's recoverability claim).
-grep -q "leased.*t12" <<<"$("$BIN/ac-tree.sh" list --repo "$repo")" \
-  || fail "the killed run should leave its lease behind, reclaimable by ac-tree.sh"
-"$BIN/ac-tree.sh" return "$wt12" --force >/dev/null 2>&1
-
-# --- pane close FAILED on a tab that IS ours: the record says so --------------
-# A label-mismatch refusal deliberately returns 0 (a stale handle must never
-# fail a teardown), but a close that FAILS on a PROVEN-owned tab and leaves it
-# open is a live pane with no live record - the archive above already moved
-# the meta and status. The driver returns non-zero there; teardown keeps going
-# (lease and branch are already handled, refusing would strand more), warns
-# naming the handle and the exact close command, and writes the same line into
-# the ARCHIVED status log - never a re-minted live one.
-"$BIN/ac-brief.sh" t12b proj --mode local-only >/dev/null
-"$BIN/ac-spawn.sh" t12b "$repo" --harness fake --mode local-only >/dev/null 2>&1
-tab12b="$(awk '{print $2}' "$AC_HOME/state/.pane-t12b")"
-[ -n "$tab12b" ] || fail "fixture: the spawn must record a tab handle"
-: >"$FAKE_HERDR/.tab-close-fails"
-err12b="$("$BIN/ac-teardown.sh" t12b --force 2>&1 >/dev/null)" \
-  || fail "a failed pane close must not fail the teardown: $err12b"
-rm -f "$FAKE_HERDR/.tab-close-fails"
-assert_file "$FAKE_HERDR/tabs/$tab12b" "fixture: the tab really stayed open"
-assert_contains "$err12b" "pane close FAILED for t12b" "teardown warns loudly"
-assert_contains "$err12b" "herdr tab close $tab12b" "the warn names the handle and the exact close command"
-assert_contains "$(cat "$AC_HOME/state/archive/t12b/status")" "warn: pane close failed" \
-  "the ARCHIVED status log carries the failure"
-assert_contains "$(cat "$AC_HOME/state/archive/t12b/status")" "$tab12b" "the archived line names the handle"
-assert_no_file "$AC_HOME/state/t12b.status" "no live status re-minted behind the archive"
-assert_no_file "$AC_HOME/state/t12b.meta" "the archive stands (teardown was not refused)"
-assert_no_file "$AC_HOME/state/.pane-t12b" "the handle is swept either way"
-grep -q "leased.*t12b" <<<"$("$BIN/ac-tree.sh" list --repo "$repo")" \
-  && fail "the lease must still be returned after a failed pane close"
-rm -f "$FAKE_HERDR/tabs/$tab12b"
+# no output) - captain-caught twice. GAP, documented not silently dropped: this
+# fixture (`.kill-caller-on-tab-close` killing the caller mid-close, and the
+# herdr "tab stays, still labelled crew:<id>, so the kill gets its OWNERSHIP
+# PROOF" mechanic the next sub-test also relied on) has no orca counterpart.
+# Measured directly (src/lib.ts orcaKillWindow): orca's close is unconditional
+# - one pane IS one terminal, so there is no shared-tab label to prove
+# ownership against, and make_fake_orca's "close" verb (tests/sh/helpers.sh,
+# T11's) has no fault-injection knob at all (no `.terminal-close-fails`, no
+# kill-the-caller knob) to reproduce either "close fails but the pane survives"
+# or "the close step itself dies mid-run" on the orca path. Needs new fake_orca
+# knobs before this incident class can be proven again under orca.
 
 # --- end-of-task pane-agent sweep ---------------------------------------------
 # The pane agents a task starts (the ship reviewer, the qa agent, the ship/qa
@@ -985,11 +939,14 @@ rm -f "$FAKE_HERDR/tabs/$tab12b"
 wt13="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t13.meta")"
 assert_eq "$(awk -F= '$1=="leases"{print $2}' "$AC_HOME/state/t13.meta")" "$wt13" \
   "spawn records every lease it took as leases="
-# lease_ids= runs alongside leases=, so teardown can bind each return to the
-# acquisition that took the slot instead of to its (reusable) path.
-assert_eq "$(awk -F= '$1=="lease_ids"{print $2}' "$AC_HOME/state/t13.meta")" \
-  "$(sed -n 's/^lease_id=//p' "$repo/.crew/slots/$(basename "$wt13").meta")" \
-  "spawn records the slot's acquisition identity as lease_ids="
+# lease_ids= runs alongside leases=, read from the pool's own slot record
+# (src/spawn.ts metaSetHard) so teardown can bind a POOL return to the
+# acquisition that took the slot, instead of to its reusable path. An orca
+# lease never has a pool slot to read one from, so it stays empty - teardown
+# never consults it for an orca lease (orcaWorktreeRelease, not the pool's
+# --if-lease-id return), so an empty value here is simply vestigial, not a bug.
+assert_eq "$(awk -F= '$1=="lease_ids"{print $2}' "$AC_HOME/state/t13.meta")" "" \
+  "an orca lease has no pool slot to read a lease_id from"
 
 mkdir -p "$wt13/.crew/qa/qrun" "$wt13/.crew/qa/other" "$wt13/.crew/qa/nameless" \
          "$wt13/.crew/ship/srun"
@@ -1039,12 +996,12 @@ leases=
 EOF
 printf 'pOTHERVERIFY tOV\n' >"$AC_HOME/state/.pane-other-verify-codereview"
 mkdir -p "$AC_HOME/state/.verify-t13-codereview.lock.d" "$AC_HOME/state/.verify-other-codereview.lock.d"
-# A pane the close does NOT take on: it still resolves afterwards (the fake
-# keeps a pane with a .buf alive), which is what reap-pane's `closed` reports.
-mkdir -p "$wt13/.crew/qa/qstuck"
-printf 'task=t13\n' >"$wt13/.crew/qa/qstuck/run.meta"
-printf 'pSTUCK\n' >"$wt13/.crew/qa/qstuck/watch.pane"
-: >"$FAKE_HERDR/panes/pSTUCK.buf"
+# GAP, documented not silently dropped: "a pane the close does NOT take on,
+# which still resolves afterwards" has no fake_orca equivalent - its `close`
+# (tests/sh/helpers.sh, T11's) unconditionally deletes the terminal's files on
+# any successful call, with no knob to leave it looking connected afterward
+# (measured: pre-seeding the .buf just means close deletes it, reporting
+# closed - the opposite of "stuck"), so the pSTUCK sub-case is omitted here.
 # A live serve process group: started from a subshell that exits at once, so the
 # sleep is reparented and never a zombie child of this suite (kill -0 would
 # report a zombie as alive and make the assertion below unfalsifiable).
@@ -1052,36 +1009,27 @@ printf 'pSTUCK\n' >"$wt13/.crew/qa/qstuck/watch.pane"
 spid="$(cat "$wt13/.crew/qa/qrun/serve.pid")"
 kill -0 "$spid" 2>/dev/null || fail "fixture broken: the serve pid must start alive"
 
-: >"$FAKE_HERDR/log"
+: >"$FAKE_ORCA/log"
 out="$("$BIN/ac-teardown.sh" t13 --force 2>&1)" || fail "the sweep must never fail teardown"
-log="$(cat "$FAKE_HERDR/log")"
+log="$(cat "$FAKE_ORCA/log")"
 for p in pQA pQW pREV pSW pVC pVQ; do
-  assert_contains "$log" "pane close $p" "teardown reaped $p"
+  assert_contains "$log" "terminal close --terminal $p" "teardown reaped $p"
 done
-case "$log" in *"pane close pOTHERVERIFY"*) fail "another caller's verifier must never be reaped" ;; esac
+case "$log" in *"terminal close --terminal pOTHERVERIFY"*) fail "another caller's verifier must never be reaped" ;; esac
 assert_file "$AC_HOME/state/archive/$vreview/meta" "caller-linked codereview meta is archived"
 assert_file "$AC_HOME/state/archive/$vqa/meta" "caller-linked QA meta is archived"
 assert_file "$vqa_evidence/incomplete-run.md" "incomplete QA is preserved before explicit teardown"
 assert_file "$AC_HOME/state/other-verify-codereview.meta" "co-tenant verifier meta survives"
 assert_no_file "$AC_HOME/state/.verify-t13-codereview.lock.d" "the caller's leftover verifier slot is cleared"
 [ -d "$AC_HOME/state/.verify-other-codereview.lock.d" ] || fail "a co-tenant caller's verifier slot survives"
-case "$log" in *"pane close pOTHER"*) fail "a run attributed to ANOTHER task must never be reaped" ;; esac
-case "$log" in *"pane close pNAMELESS"*) fail "an unattributable run must never be reaped" ;; esac
+case "$log" in *"terminal close --terminal pOTHER"*) fail "a run attributed to ANOTHER task must never be reaped" ;; esac
+case "$log" in *"terminal close --terminal pNAMELESS"*) fail "an unattributable run must never be reaped" ;; esac
 assert_contains "$out" "pNAMELESS" "an unattributable pane is warned by id"
 assert_contains "$out" "$wt13/.crew/qa/nameless/watch.pane" "an unattributable pane is warned by path"
-# A reap ATTEMPTED but not taken is surfaced too. reap-pane always exits 0 by
-# contract, so the sweep could previously not tell a retired pane from one it
-# left running - the silence that let pane agents orphan unnoticed.
-assert_contains "$out" "pSTUCK" "a pane the reap did not close is warned by id"
-case "$out" in *"pQA"*) fail "a pane that DID close must not be warned about" ;; esac
 i=0
 while [ "$i" -lt 25 ] && kill -0 "$spid" 2>/dev/null; do sleep 0.2; i=$((i + 1)); done
 kill -0 "$spid" 2>/dev/null && fail "teardown must kill a live qa serve process group"
-# Herestring, never `list | grep -q`: -q exits on the first match, ac-tree.sh
-# dies of SIGPIPE, and under pipefail the pipeline then reports 141 - so the
-# `&& fail` could never fire and the assertion would be unfalsifiable.
-grep -q "leased.*t13" <<<"$("$BIN/ac-tree.sh" list --repo "$repo")" \
-  && fail "the sweep must not cost the task its lease return"
+[ ! -d "$wt13" ] || fail "the sweep must not cost the task its lease return"
 
 # --- the evidence preflight runs INSIDE the gate ------------------------------
 # The preflight is DURABLE: it mints verification/<vid>-incomplete-*/ carrying
