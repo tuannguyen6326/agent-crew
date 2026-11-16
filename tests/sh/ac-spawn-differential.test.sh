@@ -10,14 +10,13 @@
 
 # The world ($XW): a home (config/, records/, data/, state/, projects/proj
 # linking the repo), the repo $XW/proj made under one git identity and one
-# commit date, the container's .claude/CLAUDE.md, the fake herdr's and fake
-# orca's dirs, HOME=$XW/hh, TMPDIR=$XW/tmp, AC_CLAUDE_TRANSCRIPT_ROOT=$XW/cp and
-# AC_GUARD_ROOT=$XW/cwd (no repo: the guard's distro checks stay silent). Each
-# call runs from $XW/cwd with stdin /dev/null, LC_ALL=C unless a row names
-# en_US.UTF-8, and PATH stubs ahead of the fakes: date answering one instant,
-# sleep returning at once (holding where a row says), uuidgen answering one
-# uuid, every harness CLI a never-run stand-in.
-make_fake_herdr
+# commit date, the container's .claude/CLAUDE.md, fake orca's dir, HOME=$XW/hh,
+# TMPDIR=$XW/tmp, AC_CLAUDE_TRANSCRIPT_ROOT=$XW/cp and AC_GUARD_ROOT=$XW/cwd (no
+# repo: the guard's distro checks stay silent). Each call runs from $XW/cwd
+# with stdin /dev/null, LC_ALL=C unless a row names en_US.UTF-8, and PATH
+# stubs ahead of the fakes: date answering one instant, sleep returning at
+# once (holding where a row says), uuidgen answering one uuid, every harness
+# CLI a never-run stand-in.
 make_fake_orca
 cd "$TMP" || fail "cd TMP"
 XW="$TMP/xw"; XSTUBS="$TMP/xstubs"; mkdir -p "$XSTUBS"
@@ -48,17 +47,15 @@ STUB
 for h in claude codex opencode pi cursor-agent; do printf '#!/bin/sh\nexit 0\n' >"$XSTUBS/$h"; done
 chmod +x "$XSTUBS"/*
 
-xworld() {  # xworld - a fresh world: the home, the repo $XW/proj (one commit on main) linked as projects/proj, the container .claude, both fakes' dirs
+xworld() {  # xworld - a fresh world: the home, the repo $XW/proj (one commit on main) linked as projects/proj, the container .claude, fake orca's dir
   rm -rf "$XW"
   mkdir -p "$XW/home/state" "$XW/home/data" "$XW/home/records" "$XW/home/config" "$XW/home/projects" \
-    "$XW/tmp" "$XW/stub" "$XW/hh" "$XW/cwd" "$XW/cp" "$XW/herdr/panes" "$XW/herdr/tabs" "$XW/orca/terminals" "$XW/.claude"
+    "$XW/tmp" "$XW/stub" "$XW/hh" "$XW/cwd" "$XW/cp" "$XW/orca/terminals" "$XW/.claude"
   printf 'off\n' >"$XW/home/config/wedge-alarm"
   printf 'echo crew __ID__ reading __BRIEF__\n' >"$XW/home/config/launch-fake"
   printf 'the container crewmate layer\n' >"$XW/.claude/CLAUDE.md"
-  # Most rows below assert herdr's own text (backend=herdr, window=herdr:...);
-  # xorca overrides this for the rows that cut the crew path to Orca instead.
-  printf 'herdr\n' >"$XW/home/config/backend"
-  : >"$XW/herdr/.pane-idle-by-default"
+  printf 'orca\n' >"$XW/home/config/backend"
+  printf '\342\234\263 fake\n' >"$XW/orca/.default-title"
   git init -q "$XW/proj"
   printf 'base\n' >"$XW/proj/f.txt"; git -C "$XW/proj" add f.txt; git -C "$XW/proj" commit -qm base
   ln -s "$XW/proj" "$XW/home/projects/proj"
@@ -68,11 +65,11 @@ xe() {  # xe - the call environment into XE: the stubs ahead of the fakes and th
   local path="$XSTUBS:$PATH" x
   [ -z "$XPATH" ] || path="$XPATH"
   XE=(env -u AC_HOME -u AC_FLEET_STATE -u AC_SCOPE -u AC_SOLO -u AC_FLEET_SCOPE -u AC_CREW_ID -u AC_DOMAIN
-    -u AC_BACKEND -u AC_HERDR_SESSION -u AC_ROOM_OVERCAP_REASON -u AC_WINDOW_FAMILY -u CLAUDE_CONFIG_DIR -u CDPATH
+    -u AC_BACKEND -u AC_ROOM_OVERCAP_REASON -u AC_WINDOW_FAMILY -u CLAUDE_CONFIG_DIR -u CDPATH
     -u AC_SPAWN_META_CLAIM_TIMEOUT -u AC_SPAWN_META_CLAIM_STALE_GRACE -u AC_ULTRACODE_SETTLE -u AC_CHIEF_SOLO
-    "LC_ALL=$XLC" "PATH=$path" "HOME=$XW/hh" "TMPDIR=$XW/tmp" "XSTUB=$XW/stub" "FAKE_HERDR=$XW/herdr" "FAKE_ORCA=$XW/orca"
+    "LC_ALL=$XLC" "PATH=$path" "HOME=$XW/hh" "TMPDIR=$XW/tmp" "XSTUB=$XW/stub" "FAKE_ORCA=$XW/orca"
     "AC_CLAUDE_TRANSCRIPT_ROOT=$XW/cp" "AC_GUARD_ROOT=$XW/cwd" "AC_SPAWN_SETTLE=0" "AC_KICKOFF_READY_BUDGET=5"
-    "AC_SEND_SETTLE=0" "AC_STARTUP_DIALOG_BUDGET=2" "AC_HERDR_RPC_TIMEOUT=10")
+    "AC_SEND_SETTLE=0" "AC_STARTUP_DIALOG_BUDGET=2")
   [ -z "$XHOME" ] || XE+=("AC_HOME=$XW/home")
   for x in ${XENV[@]+"${XENV[@]}"}; do XE+=("$x"); done
 }
@@ -174,8 +171,8 @@ xwithout() {  # xwithout <tool> - the stubs and PATH with every dir holding <too
   printf '%s\n' "$out"
 }
 xt1() { xworld; xbrief t1 proj --mode local-only; }   # a world holding the brief of t1
-xdeadpane() { local p t; read -r p t <"$XW/home/state/.pane-$1"; rm -f "$XW/herdr/panes/$p".* "$XW/herdr/tabs/$t"; }   # xdeadpane <id> - the task's pane is gone
-xchief() { printf 'kind=roomchief\nbackend=herdr\n%s' "${2:-}" >"$XW/home/state/$1-chief.meta"; }   # xchief <family> [<more meta lines>] - a flying roomchief
+xdeadpane() { local p; p="$(awk '{print $1; exit}' "$XW/home/state/.pane-$1")"; rm -f "$XW/orca/terminals/$p".*; }   # xdeadpane <id> - the task's pane is gone
+xchief() { printf 'kind=roomchief\nbackend=orca\n%s' "${2:-}" >"$XW/home/state/$1-chief.meta"; }   # xchief <family> [<more meta lines>] - a flying roomchief
 
 # -- 1: preamble ------------------------------------------------------------
 x1a() {
@@ -205,7 +202,7 @@ x1b() {
 xgo xworld x1b
 xrcs '1 1 1 1 '
 xhas $'== t1 proj\nrc=1\n-- out\n-- err\nERROR: a solo session (AC_SOLO=1) never spawns crew'
-assert_eq "$(grep -ac "^ERROR: unsupported backend 'tmux' (valid backends: herdr, orca" "$TMP/xt2")" "3" "spawn at line $LINENO: a tmux backend is refused by env and by config"
+assert_eq "$(grep -ac "^ERROR: unsupported backend 'tmux' (valid backend: orca" "$TMP/xt2")" "3" "spawn at line $LINENO: a tmux backend is refused by env and by config"
 x1c() { XHOME=""; xc t1 proj --harness fake; xc --roomchief fa --harness fake; }
 xgo xt1 x1c
 xrcs '1 1 '
@@ -254,16 +251,14 @@ x2c() {
   XENV=(AC_KICKOFF_READY_BUDGET=1.5); xc t1 proj --harness fake
   XENV=(AC_ULTRACODE_SETTLE=x); xc t1 proj --harness fake
   XENV=(AC_ULTRACODE_SETTLE=x); xc t2 proj --harness claude --effort ultracode
-  XENV=(); xc t3 proj --harness fake --base-branch main
 }
 xknobs() { xt1; xbrief t2 proj --mode local-only; xbrief t3 proj --mode local-only; }
 xgo xknobs x2c
-xrcs '1 1 0 1 1 '
+xrcs '1 1 0 1 '
 xhas 'ERROR: AC_SPAWN_SETTLE must be a non-negative number: abc'
 xhas 'ERROR: AC_KICKOFF_READY_BUDGET must be a non-negative integer: 1.5'
 xhas 'spawned t1 harness=fake'
 xhas 'ERROR: AC_ULTRACODE_SETTLE must be a non-negative number: x'
-xhas 'ERROR: --base-branch requires an orca-backend fleet'
 x2d() {
   xc t9 proj --harness fake
   xc t1 proj --harness fake --mode bogus
@@ -284,8 +279,8 @@ xwlacks 'home/state/t1.meta'
 # --resume-from: a meta that never existed, a non-claude one, one with no session.
 xresumeworld() {
   xt1
-  xput home/state/t8.meta "kind=ship\nbackend=herdr\nharness=codex\nworktree=$XW/proj\n"
-  xput home/state/t7.meta "kind=ship\nbackend=herdr\nharness=claude\nworktree=$XW/proj\n"
+  xput home/state/t8.meta "kind=ship\nbackend=orca\nharness=codex\nworktree=$XW/proj\n"
+  xput home/state/t7.meta "kind=ship\nbackend=orca\nharness=claude\nworktree=$XW/proj\n"
 }
 x2e() { xc t1 proj --resume-from t5; xc t1 proj --resume-from t8; xc t1 proj --resume-from t7; }
 xgo xresumeworld x2e
@@ -294,10 +289,10 @@ xhas 'ERROR: --resume-from: no meta for t5'
 xhas 'ERROR: --resume-from: t8 was not a claude session'
 xhas 'ERROR: --resume-from: t7 has no recorded session_id'
 
-# -- 3: the crew path on herdr --------------------------------------------------
+# -- 3: the crew path ---------------------------------------------------------
 x3a() { xc t1 proj --harness fake --mode local-only; xc t1 proj --harness fake; }
 xgo xt1 x3a
-xhas 'spawned t1 harness=fake kind=ship mode=local-only yolo=off backend=herdr'
+xhas 'spawned t1 harness=fake kind=ship mode=local-only yolo=off backend=orca'
 xrcs '0 1 '
 xhas 'ERROR: crewmate t1 already exists (see XW/home/state/t1.meta); tear it down first'
 xwhas 'kickoff order at'
@@ -345,7 +340,7 @@ x3i() { xc t1 "$XW/proj" --harness fake; xc t2 nope --harness fake; }
 xtwo() { xt1; xbrief t2 proj --mode local-only; }
 xgo xtwo x3i
 xrcs '0 1 '
-xhas 'spawned t1 harness=fake kind=ship mode=local-only yolo=off backend=herdr window=herdr:pane-p1 worktree=XW/proj/.crew/worktrees/1-proj'
+xhas 'spawned t1 harness=fake kind=ship mode=local-only yolo=off backend=orca window=orca:term2 worktree=XW/orca/orca-wt/crew-t1'
 xhas 'ERROR: project not found: nope'
 xmodes() {
   xworld; xbrief c1 proj --mode crew-ship --captain-requested 'order 1' --reason 'a probe'; sed -i.bak 's/^Review: .*/Review: no/' "$XW/home/data/c1/brief.md"; rm -f "$XW/home/data/c1/brief.md.bak"
@@ -363,10 +358,10 @@ x3k() { xput home/state/.pane-t1 'p77 t77\n'; xc t1 proj --harness fake; }
 xgo xt1 x3k
 xrcs '0 '
 xhas 'spawned t1 harness=fake'
-x3l() { : >"$XW/proj/.crew"; xc t1 proj --harness fake; }
-xgo xt1 x3l
-xrcs '1 '
-xwlacks 'home/state/t1.meta'
+# GAP, not ported: a `.crew` FILE blocking the pool directory's own mkdir
+# refused a plain crew spawn under bin/ac-tree.sh's in-repo worktree pool,
+# which a crew spawn's orca lease never touches (orca_worktree_lease leases
+# through the Orca runtime directly, no <repo>/.crew/ involved).
 
 # -- 5: the crew path on orca -----------------------------------------------------
 xorca() { xt1; printf 'orca\n' >"$XW/home/config/backend"; printf '\342\234\263 fake\n' >"$XW/orca/.default-title"; }
@@ -455,11 +450,11 @@ xhas 'spawned dep1 harness=fake'
 xwhas 'exec echo crew t1 reading'
 
 # -- 8: crew recovery ---------------------------------------------------------------
-x8b() { xc t1 proj --harness fake; xdeadpane t1; xc t1 proj --recover; xbrief t2 proj --mode local-only; xc t2 proj --harness claude; xdeadpane t2; rm -rf "$XW/proj/.crew/worktrees/2-proj"; xc t2 proj --recover; }
+x8b() { xc t1 proj --harness fake; xdeadpane t1; xc t1 proj --recover; xbrief t2 proj --mode local-only; xc t2 proj --harness claude; xdeadpane t2; rm -rf "$XW/orca/orca-wt/crew-t2"; xc t2 proj --recover; }
 xgo xt1 x8b
 xrcs '0 1 0 1 '
 xhas 'ERROR: --recover: t1 has no resumable claude session on record'
-xhas 'ERROR: --recover: the recorded worktree of t2 is gone (XW/proj/.crew/worktrees/2-proj)'
+xhas 'ERROR: --recover: the recorded worktree of t2 is gone (XW/orca/orca-wt/crew-t2)'
 
 # -- 9: concurrency and signals --------------------------------------------------------
 x9a() {
@@ -480,13 +475,13 @@ xhas $'== TERM t1 proj --harness fake\nrc=143'
 xwlacks 'home/state/t1.meta'
 xwlacks 'leased=1'
 xwlacks '.meta-claims/t1'
-xwhas 'tab close'
+xwhas 'terminal close'
 x9d() { printf '7\n' >"$XW/stub/hold-sleep"; XENV=(AC_SPAWN_SETTLE=7); xsig HUP --roomchief fa --harness fake; }
 xgo xrooms x9d
 xhas $'== HUP --roomchief fa --harness fake\nrc=129'
 xwlacks 'home/state/fa-chief.meta'
 xwlacks '.meta-claims/fa-chief'
-xwhas 'tab close'
+xwhas 'terminal close'
 # INT to the pid alone ends the run 130 with the cleanup run.
 x9f() { printf '7\n' >"$XW/stub/hold-sleep"; XENV=(AC_SPAWN_SETTLE=7); xsig INT t1 proj --harness fake; }
 xgo xt1 x9f
@@ -494,7 +489,7 @@ xhas $'== INT t1 proj --harness fake\nrc=130'
 xwlacks 'home/state/t1.meta'
 xwlacks '.meta-claims/t1'
 xwlacks 'leased=1'
-xwhas 'tab close'
+xwhas 'terminal close'
 xholder() {  # xholder <tool> <exec> <sh condition> - stub/hold/<tool>: the first call meeting <condition> holds like sleep's hold-sleep, then every call execs <exec>
   mkdir -p "$XW/stub/hold"
   printf '#!/bin/sh\nif [ ! -e "$XSTUB/hold-once" ] && { %s; }; then\n  : >"$XSTUB/hold-once"; : >"$XSTUB/held"\n  i=0; while [ ! -e "$XSTUB/release" ] && [ "$i" -lt 300 ]; do /bin/sleep 0.1; i=$((i + 1)); done\nfi\nexec %s "$@"\n' "$3" "$2" >"$XW/stub/hold/$1"
@@ -545,12 +540,12 @@ xwlacks '== home/state/dep1.meta '
 # whole, before its window is recorded, the claim released.
 x9m() {
   xc t1 proj --harness claude; xdeadpane t1
-  xholder herdr "$TMP/stubbin/herdr" 'case "$*" in *"has been RECOVERED"*) true ;; *) false ;; esac'; xheld TERM t1 proj --recover
+  xholder orca "$TMP/stubbin/orca" 'case "$*" in *"has been RECOVERED"*) true ;; *) false ;; esac'; xheld TERM t1 proj --recover
 }
 xgo xt1 x9m
 xhas $'== TERM t1 proj --recover\nrc=143'
 xwlacks 'recovered: pane reopened'
-xwlacks 'window=herdr:pane-p2'
+xwlacks 'window=orca:term3'
 xwlacks '.meta-claims/t1'
 
 pass
