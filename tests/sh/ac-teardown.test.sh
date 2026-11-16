@@ -10,7 +10,6 @@
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
-make_fake_herdr
 make_fake_orca
 
 # --- the CLI contract, row by row ---------------------------------------------
@@ -18,8 +17,8 @@ make_fake_orca
 # at $XH/r* with fixed author/committer dates and one git config
 # (GIT_CONFIG_GLOBAL, no system config) so every sha is fixed, an optional bare
 # origin beside them, pool slots leased by ac-tree.sh get under a PATH `od`
-# (one lease_id), the fake herdr and orca (tests/sh/helpers.sh) with their
-# state at $XH/fh and $XH/fo; the side root spelled @H in argv and env values;
+# (one lease_id), the fake orca (tests/sh/helpers.sh) with its state at $XH/fo;
+# the side root spelled @H in argv and env values;
 # cwd $XH/cwd, an EMPTY dir, unless a row names a repo; stdin /dev/null;
 # LC_ALL=C unless a row names en_US.UTF-8; PATH stubs - date answering one
 # instant per format, od one fixed 8 bytes, sleep logging each call (and
@@ -75,7 +74,7 @@ chmod +x "$XSTUBS/date" "$XSTUBS/od" "$XSTUBS/sleep" "$XDOCKER/docker"
 xdo() {  # xdo <cmd> <args...> - a seeding step at the side root: H names it, and so does a literal @H in an argument
   local x a=(); H="$XH"; for x in "$@"; do a+=("${x//@H/$H}"); done; "${a[@]}"
 }
-xseed() { rm -rf "$H"; mkdir -p "$H/home/records" "$H/home/state" "$H/home/data" "$H/home/config" "$H/cwd" "$H/stub" "$H/fh/panes" "$H/fh/tabs" "$H/fo/terminals"; }
+xseed() { rm -rf "$H"; mkdir -p "$H/home/records" "$H/home/state" "$H/home/data" "$H/home/config" "$H/cwd" "$H/stub" "$H/fo/terminals"; }
 xrepo() {  # xrepo <name> - a repo with one commit on main
   git init -q -b main "$H/$1"; printf 'hello\n' >"$H/$1/file.txt"; git -C "$H/$1" add -A; git -C "$H/$1" commit -qm init
 }
@@ -94,19 +93,18 @@ xlease() {  # xlease <repo> <id> - one leased slot, the meta's worktree/leases/l
   local wt; wt="$(xtree get --repo "$H/$1" --id "$2")"
   printf 'kind=ship\nbackend=orca\nproject_dir=%s\nworktree=%s\nleases=%s\nlease_ids=0011223344556677\n' "$H/$1" "$wt" "$wt" >"$H/home/state/$2.meta"
 }
-xtab() {  # xtab <id> <n> [<label>] - the fake herdr's tab t<n> / pane p<n> and state/.pane-<id>
-  printf 'p%s %s\n' "$2" "${3-crew:$1}" >"$H/fh/tabs/t$2"; : >"$H/fh/panes/p$2.buf"
+xtab() {  # xtab <id> <n> - state/.pane-<id>, the pane/tab pair backendKillWindow reads
   printf 'p%s t%s\n' "$2" "$2" >"$H/home/state/.pane-$1"
 }
 XLC=C; XENV=(); XHOMELESS=0; XCWD=cwd; XGONE=0; XPRE=""; XPATH=""; XDOCK=0; XNBIN="$BIN"
 xrun_side() {  # xrun_side <bin> <side root> <prefix> <args...>
   local bin="$1" h="$2" p="$3" x v path; shift 3
   path="$XSTUBS:$PATH"; [ "$XDOCK" = 0 ] || path="$XDOCKER:$path"; [ -z "$XPRE" ] || path="${XPRE//@H/$h}:$path"; [ -z "$XPATH" ] || path="${XPATH//@H/$h}"
-  local a=() e=("LC_ALL=$XLC" "PATH=$path" "STUB_DIR=$h/stub" "FAKE_HERDR=$h/fh" "FAKE_ORCA=$h/fo" "AC_HERDR_RPC_TIMEOUT=10")
+  local a=() e=("LC_ALL=$XLC" "PATH=$path" "STUB_DIR=$h/stub" "FAKE_ORCA=$h/fo")
   [ "$XHOMELESS" = 1 ] || e+=("AC_HOME=$h/home")
   for x in ${XENV[@]+"${XENV[@]}"}; do v="${x#*=}"; e+=("${x%%=*}=${v//@H/$h}"); done
   for x in "$@"; do a+=("${x//@H/$h}"); done
-  (cd "$h/$XCWD" && { [ "$XGONE" != 1 ] || rmdir "$h/$XCWD"; } && exec env -u AC_HOME -u AC_FLEET_STATE -u AC_BACKEND -u AC_HERDR_SESSION -u AC_TEARDOWN_QA_TIMEOUT -u AC_LOCK_STALE_GRACE -u EPOCHSECONDS \
+  (cd "$h/$XCWD" && { [ "$XGONE" != 1 ] || rmdir "$h/$XCWD"; } && exec env -u AC_HOME -u AC_FLEET_STATE -u AC_BACKEND -u AC_TEARDOWN_QA_TIMEOUT -u AC_LOCK_STALE_GRACE -u EPOCHSECONDS \
     "${e[@]}" /bin/sh -c 'printf %s "$$" >"$0"; printf %s "$$" >"$1"; shift; exec "$@"' "$TMP/$p.pid" "$h/stub/td.pid" "$bin/ac-teardown.sh" ${a[@]+"${a[@]}"}) </dev/null >"$TMP/$p.raw" 2>"$TMP/$p.err"
 }
 xnorm() {  # xnorm <file> <side root> <pid> - the pid only between non-hex bytes, never inside a sha
@@ -124,7 +122,7 @@ xrow() { printf '%s' "${BASH_LINENO[${#BASH_LINENO[@]}-2]}"; }   # the suite's o
 xworld() {  # xworld <side root> - what a row may change
   local h="$1" r f w
   (cd "$h" && find . -path '*/.git' -prune -o -path ./stub/sleep.log -prune -o -path ./stub/td.pid -prune -o -path ./home/records/task-tokens.tsv -prune -o -print 2>/dev/null | LC_ALL=C sort)
-  (cd "$h" && find home stub fh fo -type f ! -name sleep.log ! -name td.pid ! -name docker.pid ! -name task-tokens.tsv 2>/dev/null | LC_ALL=C sort) | while IFS= read -r f; do
+  (cd "$h" && find home stub fo -type f ! -name sleep.log ! -name td.pid ! -name docker.pid ! -name task-tokens.tsv 2>/dev/null | LC_ALL=C sort) | while IFS= read -r f; do
     printf '== %s %s\n' "$f" "$(ls -l "$h/$f" | cut -c1-10)"; cat "$h/$f" 2>/dev/null || printf '<unreadable>'; printf '\n'
   done
   for r in "$h"/r*; do
@@ -789,7 +787,6 @@ x8() {
   printf 'task=t\n' >"$l/.crew/qa/q-dead/run.meta"; printf '%s\n' "$xdead" >"$l/.crew/qa/q-dead/serve.pid"; : >"$l/.crew/qa/q-dead/watch.pane"
   ln -s q-ours "$l/.crew/qa/current"
   printf 'branch=crew/t\n' >"$l/.crew/ship/s-ours/run.meta"; printf 'pSR\n' >"$l/.crew/ship/s-ours/review.pane"; printf 'pSTUCK\n' >"$l/.crew/ship/s-ours/watch.pane"
-  : >"$H/fh/panes/pSTUCK.buf"
   printf 'id=s2\n' >"$l/.crew/ship/s-none/run.meta"
 }
 sleep 0.1 &
@@ -828,11 +825,9 @@ assert_eq "$(xerr)" "ERROR: unsupported backend 'herdr' (valid backend: orca)" "
 [ -e "$XH/lease/.crew/qa/agent-t.pane" ] && [ -e "$XH/fo/terminals/term7.buf" ] || fail "8: ...its record kept, its terminal untouched - no reap attempted"
 [ ! -e "$XH/home/state/archive/t" ] || fail "8: ...the task's own meta/status never archived either - refused before any side effect"
 xdo x8o
-XPATH="$(xwithout herdr)"
 xrun t
-XPATH=""
-assert_eq "$XRC" 0 "8: an orca task without herdr lands"
-case "$(xerr)" in *"could not reap pane"*) fail "8: an orca task's pane is reaped without herdr" ;; esac
+assert_eq "$XRC" 0 "8: an orca task lands"
+case "$(xerr)" in *"could not reap pane"*) fail "8: an orca task's pane is reaped cleanly" ;; esac
 [ ! -e "$XH/lease/.crew/qa/agent-t.pane" ] && [ ! -e "$XH/fo/terminals/term7.buf" ] || fail "8: ...the record gone, the terminal closed"
 xdo x8o
 XPATH="$(xwithout orca)"
@@ -880,18 +875,15 @@ if [ "$XROOTED" = 0 ]; then
 fi
 
 # 9. the pane kill: a backend=herdr task refuses before any kill is
-#    attempted (cutover, T8 - the tab-close WARN text, AC_HERDR_SESSION and
-#    config/herdr-session hand-commands it used to exercise are herdr driver
-#    internals with no reachable caller left; T11 deletes them); orca's
-#    terminal closed and its emptied tab's family record retired (x9o below,
-#    already orca-pinned - the dedicated dual coverage T4 established); a
-#    kill that ends the caller (meta and status archived, the lease left).
-x9() { xseed; xrepo r; xlease r t; sed -i '' 's/^backend=orca$/backend=herdr/' "$H/home/state/t.meta"; xtab t 1 "${1-crew:t}"; mkdir -p "$H/home/data/t"; }
+#    attempted (cutover, T8); orca's terminal closed and its emptied tab's
+#    family record retired (x9o below, already orca-pinned - the dedicated
+#    dual coverage T4 established); a kill that ends the caller (meta and
+#    status archived, the lease left).
+x9() { xseed; xrepo r; xlease r t; sed -i '' 's/^backend=orca$/backend=herdr/' "$H/home/state/t.meta"; xtab t 1; mkdir -p "$H/home/data/t"; }
 xdo x9
 xrun t
 assert_eq "$XRC:$(xout)" "1:" "9: a herdr-pinned task refuses before any kill is attempted"
 assert_eq "$(xerr)" "ERROR: unsupported backend 'herdr' (valid backend: orca)" "9: ...the exact cutover error, nothing else"
-assert_eq "$(ls "$XH/fh/tabs")" "t1" "9: ...the tab untouched - no kill attempted"
 [ ! -e "$XH/home/state/archive/t" ] || fail "9: ...nothing archived either - refused before any side effect"
 x9o() {
   xseed; xrepo r; xlease r t
@@ -902,10 +894,10 @@ x9o() {
 xdo x9o
 xrun t
 assert_eq "$(ls -A "$XH/home/state" | grep orca-fam)" ".orca-fam-x" "9: orca closed the terminal and retired its emptied tab's record"
-# A kill signalled mid-close at the pane step (fh/.kill-caller-on-tab-close)
-# was a herdr-driver-reached scenario; backend=herdr now refuses before
-# that step is ever reached (proven above) - no reachable caller is left
-# for it under orca (T11 removes the herdr-only knob with the driver).
+# A kill signalled mid-close at the pane step was a herdr-driver-reached
+# scenario with no orca counterpart (backend_kill_window_orca carries no such
+# hook); backend=herdr now refuses before that step is ever reached (proven
+# above).
 
 # 10. the lease loop: a pre-leases meta (worktree= is the list, no id); a
 #     vanished dir and an empty entry; a short id list (the first lease takes
@@ -989,7 +981,7 @@ GATE
 chmod +x "$TMP/xgate.sh"
 xplant() {  # xplant <bin> <side root> <out> - one gated teardown, a symlink to <side>/victim<i> planted at each temp name its pid makes
   local b="$1" h="$2" o="$3" gate pid; gate="$h/gate.fifo"; mkfifo "$gate"
-  env -u AC_FLEET_STATE -u AC_BACKEND LC_ALL=C AC_HOME="$h/home" PATH="$XSTUBS:$PATH" STUB_DIR="$h/stub" FAKE_HERDR="$h/fh" FAKE_ORCA="$h/fo" \
+  env -u AC_FLEET_STATE -u AC_BACKEND LC_ALL=C AC_HOME="$h/home" PATH="$XSTUBS:$PATH" STUB_DIR="$h/stub" FAKE_ORCA="$h/fo" \
     "$TMP/xgate.sh" "$gate" "$h/cwd" "$b" t </dev/null >"$o" 2>"$o.err" &
   pid=$!
   ln -s "$h/victim1" "$h/home/state/port-slots.tsv.tmp.$pid"
