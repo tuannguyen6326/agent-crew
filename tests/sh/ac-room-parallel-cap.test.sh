@@ -9,10 +9,10 @@
 # end to end). Its own file because ac-spawn.sh's tests are already split by
 # concern (teardown, model/effort).
 #
-# The fake herdr CLI is armed anyway, because "needs no backend" is not
+# The fake orca CLI is armed anyway, because "needs no backend" is not
 # "touches no backend": the teardowns below run backend_kill_window over their
 # metas, and exactly when the cap REGRESSES the promote runs on into
-# backend_window_new - with a real herdr on PATH that would open a live
+# backend_window_new - with a real orca on PATH that would open a live
 # harness window on the OPERATOR's server. The fake (tests/sh/helpers.sh) keeps
 # every such call file-backed.
 
@@ -21,10 +21,14 @@
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
-make_fake_herdr
+make_fake_orca
 make_home
+# ac-spawn.sh's own backend pin for a NEW task defaults a missing
+# config/backend to herdr (src/spawn.ts, independent of ac_backend()'s
+# orca default), so every promote below must find orca pinned explicitly.
+printf 'orca\n' >"$AC_HOME/config/backend"
 
-chief() { printf 'kind=roomchief\nbackend=herdr\n' >"$AC_HOME/state/$1-chief.meta"; }
+chief() { printf 'kind=roomchief\nbackend=orca\n' >"$AC_HOME/state/$1-chief.meta"; }
 
 room_seed() {
   # room_seed <family> - the ORDER GATE precondition every real promote meets:
@@ -52,7 +56,7 @@ out="$("$BIN/ac-spawn.sh" --roomchief fam6 --harness nope 2>&1)" || true
 case "$out" in *"cap reached"*) fail "4 chiefs are under the cap of 5" ;; esac
 
 # -- only roomchiefs count: a crewdeputy never holds a room slot ----------------
-printf 'kind=crewdeputy\nbackend=herdr\n' >"$AC_HOME/state/dep-chief.meta"
+printf 'kind=crewdeputy\nbackend=orca\n' >"$AC_HOME/state/dep-chief.meta"
 out="$("$BIN/ac-spawn.sh" --roomchief fam6 --harness nope 2>&1)" || true
 case "$out" in *"cap reached"*) fail "kind=crewdeputy must not count against the room cap" ;; esac
 rm -f "$AC_HOME/state/dep-chief.meta"
@@ -81,9 +85,9 @@ cat >"$AC_HOME/records/backlog.md" <<'EOF'
 - [ ] waiting - blocked work (repo: proj) blocked-by: fam1 - needs fam1 first
 - [ ] nextup - ordinary queued work (repo: proj)
 EOF
-# A pane handle so teardown's kill path can resolve the tab (the fake herdr
+# A pane handle so teardown's kill path can resolve the tab (the fake orca
 # no-ops the close; the ac-promote.test.sh idiom).
-printf 'p10 t10\n' >"$AC_HOME/state/.pane-fam1-chief"
+printf 'term10 tab10\n' >"$AC_HOME/state/.pane-fam1-chief"
 out="$("$BIN/ac-teardown.sh" fam1-chief 2>&1)"
 assert_contains "$out" "teardown fam1-chief complete" "the teardown still reports its own outcome"
 assert_contains "$out" "next queued family: nextup" "a freed chief slot surfaces the next queued family"
@@ -92,8 +96,8 @@ assert_no_file "$AC_HOME/state/nextup-chief.meta" "the advisory never spawns - t
 
 # -- the advisory is scoped to chiefs: no other teardown frees a room slot ------
 repo="$(make_repo proj)"
-printf 'kind=ship\nbackend=herdr\nworktree=%s\nproject_dir=%s\n' "$repo" "$repo" >"$AC_HOME/state/plain.meta"
-printf 'p11 t11\n' >"$AC_HOME/state/.pane-plain"
+printf 'kind=ship\nbackend=orca\nworktree=%s\nproject_dir=%s\n' "$repo" "$repo" >"$AC_HOME/state/plain.meta"
+printf 'term11 tab11\n' >"$AC_HOME/state/.pane-plain"
 out="$("$BIN/ac-teardown.sh" plain 2>&1)"
 case "$out" in *"chief slot is free"*) fail "tearing down a crewmate frees no chief slot" ;; esac
 
@@ -102,20 +106,20 @@ case "$out" in *"chief slot is free"*) fail "tearing down a crewmate frees no ch
 # is exempt and never counts; --over-cap sanctions ONE extra chief past the cap
 # without ever writing config. Success cases run the spawn to completion, so
 # they need the fake launch template + immediate kickoff (the ac-roomchief.test.sh
-# idiom); the fake herdr is already armed above.
+# idiom); the fake orca is already armed above.
 export AC_SPAWN_SETTLE=0
 # Every pane here clears the composer-ready observation (bin/ac-spawn.sh
 # kickoff_wait_input_ready) immediately - this suite is not testing that gate
 # (tests/sh/ac-spawn-kickoff-ready.test.sh owns it), it just needs the spawns
 # below to complete without a real harness's boot delay.
-: >"$FAKE_HERDR/.pane-idle-by-default"
+printf '✳ fake\n' >"$FAKE_ORCA/.default-title"
 export AC_KICKOFF_READY_BUDGET=5
 printf 'echo roomchief __ID__\n' >"$AC_HOME/config/launch-fake"
 # A chief() variant that stamps initiated_by= - the cheapest way to seed an
 # exempt (captain) vs counted (chief) chief. The plain chief() above stamps NO
 # initiated_by, and its metas still COUNT (the fail-closed default proved by the
 # top-of-file assertions).
-chief_ib() { printf 'kind=roomchief\nbackend=herdr\ninitiated_by=%s\n' "$2" >"$AC_HOME/state/$1-chief.meta"; }
+chief_ib() { printf 'kind=roomchief\nbackend=orca\ninitiated_by=%s\n' "$2" >"$AC_HOME/state/$1-chief.meta"; }
 
 rm -f "$AC_HOME/state"/*-chief.meta            # known-empty chief population
 printf '1\n' >"$AC_HOME/config/room-parallel"  # a single slot makes the gate crisp
