@@ -8,7 +8,7 @@
 // tests/sh/ac-gate.test.sh's.
 //
 // DISPUTED: the implementation of each helper (the bash vs src/lib.ts)
-// HELD-CONSTANT: one side root per side and row seeded alike (a home at <side>/home, a family data dir, markers, transcripts, a maintenance run with its plan and staged files, a fake herdr logging its argv to <side>/herdr.log); argv; env (PATH = a fake-herdr dir, then the host's bun and jq, then /bin and /usr/bin without herdr, orca, docker, codegraph or jq; LC_ALL=C; HOME, TMPDIR, AC_HOME only where a row sets it); cwd (the distro root); stdin (/dev/null); stdout, stderr, the status and the side root's files after the call compared whole (the side root spelled S).
+// HELD-CONSTANT: one side root per side and row seeded alike (a home at <side>/home, a family data dir, markers, transcripts, a maintenance run with its plan and staged files); argv; env (PATH = the host's bun and jq, then /bin and /usr/bin without herdr, orca, docker, codegraph or jq - no row here ever shells out to a backend, so excluding them is pure isolation, not a fixture; LC_ALL=C; HOME, TMPDIR, AC_HOME only where a row sets it); cwd (the distro root); stdin (/dev/null); stdout, stderr, the status and the side root's files after the call compared whole (the side root spelled S).
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -38,22 +38,7 @@ for (const t of ["bun", "jq"]) symlinkSync(Bun.which(t)!, join(TOOLS, t));
 const NOJQ = join(W, "nojq");
 mkdirSync(NOJQ);
 symlinkSync(Bun.which("bun")!, join(NOJQ, "bun"));
-const FAKE = join(W, "fake");
-mkdirSync(FAKE);
-// A herdr that logs its argv and answers from <side>/answers/<verb>-<noun>
-// (exit 1 when the answer file is missing).
-writeFileSync(
-  join(FAKE, "herdr"),
-  `#!/bin/sh
-printf '%s\\n' "herdr $*" >>"$SIDE/herdr.log"
-a="$1"; [ "$a" = --session ] && { shift 2; a="$1"; }
-f="$SIDE/answers/$1-$2"
-[ -f "$f" ] || exit 1
-cat "$f"
-`,
-);
-chmodSync(join(FAKE, "herdr"), 0o755);
-const PATH = `${FAKE}:${TOOLS}:${BASE}`;
+const PATH = `${TOOLS}:${BASE}`;
 
 type Row = {
   // the bash call, run after sourcing ac-lib.sh and <libs>, its arguments "$@"; none for a row only the twin runs
@@ -66,7 +51,7 @@ type Row = {
   env?: Record<string, string>;
   path?: string;
 };
-type Side = { out: string; err: string; rc: number | null; files: string; herdr: string };
+type Side = { out: string; err: string; rc: number | null; files: string };
 
 function listing(s: string): string {
   const lines: string[] = [];
@@ -98,9 +83,7 @@ function side(row: Row, s: string, oracle: boolean): Side {
       ];
   const r = Bun.spawnSync(cmd, { cwd: ROOT, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
   const norm = (t: string): string => t.replaceAll(s, "S");
-  const log = join(s, "herdr.log");
-  const herdr = existsSync(log) ? norm(readFileSync(log, "latin1")) : "";
-  return { out: norm(r.stdout.toString("latin1")), err: norm(r.stderr.toString("latin1")), rc: r.exitCode, files: listing(s), herdr };
+  return { out: norm(r.stdout.toString("latin1")), err: norm(r.stderr.toString("latin1")), rc: r.exitCode, files: listing(s) };
 }
 
 function pair(row: Row): { o: Side; t: Side } {
@@ -117,7 +100,7 @@ function pair(row: Row): { o: Side; t: Side } {
 
 function same(label: string, row: Row): { o: Side; t: Side } {
   const p = pair(row);
-  const view = (x: Side) => ({ label, out: x.out, err: x.err, rc: x.rc, files: x.files, herdr: x.herdr });
+  const view = (x: Side) => ({ label, out: x.out, err: x.err, rc: x.rc, files: x.files });
   expect(view(p.t)).toEqual(view(p.o));
   return p;
 }
