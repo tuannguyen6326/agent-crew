@@ -194,19 +194,23 @@ assert_file "$AC_HOME/state/.guard-stamp" "a roomchief all-clear never clears th
 rm -f "$AC_HOME/state"/.guard-stamp*
 rm -rf "$AC_HOME/state/.wake-spool"
 gstub="$TMP/gstub"; mkdir -p "$gstub"
-cat >"$gstub/herdr" <<'EOF'
+cat >"$gstub/orca" <<'EOF'
 #!/usr/bin/env bash
-# Liveness only: `pane get <p>` succeeds iff the sentinel exists.
-if [ "${1:-} ${2:-}" = "pane get" ]; then
-  [ -e "$AC_HOME/state/.mock-win-${3:-}" ] || exit 1
+# Liveness only: `terminal show --terminal <h>` succeeds iff the sentinel
+# exists; anything else (the status fallback included) answers ok.
+if [ "${1:-} ${2:-}" = "terminal show" ]; then
+  if [ -e "$AC_HOME/state/.mock-win-${4:-}" ]; then
+    printf '{"ok":true,"result":{"terminal":{"connected":true}}}\n'; exit 0
+  fi
+  printf '{"ok":false,"error":{"message":"terminal_not_found"}}\n'; exit 1
 fi
-exit 0
+printf '{"ok":true,"result":{}}\n'
 EOF
-chmod +x "$gstub/herdr"
+chmod +x "$gstub/orca"
 mkdir -p "$AC_HOME/state/.wake-spool.fam2"
 printf 'report\tfam2-t1\n' >"$AC_HOME/state/.wake-spool.fam2/1.1.000000"
-printf 'window=crew:fam2-chief\nbackend=herdr\n' >"$AC_HOME/state/fam2-chief.meta"
-printf 'fam2-chief t0\n' >"$AC_HOME/state/.pane-fam2-chief"
+printf 'window=crew:fam2-chief\nbackend=orca\n' >"$AC_HOME/state/fam2-chief.meta"
+printf 'fam2-chief tabfam2\n' >"$AC_HOME/state/.pane-fam2-chief"
 : >"$AC_HOME/state/.mock-win-fam2-chief"
 date +%s >"$AC_HOME/state/.last-watcher-beat"
 assert_eq "$(PATH="$gstub:$PATH" AC_GUARD_QUIET=0 sguard '')" "" \

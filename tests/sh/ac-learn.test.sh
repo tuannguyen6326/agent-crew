@@ -381,7 +381,7 @@ rm -f "$LEARN_META_CAPTURE" "$LEARN_STATUS_CAPTURE" "$LEARN_HANDLE_CAPTURE" "$LE
 assert_file "$LEARN_META_CAPTURE" "scout publishes a durable meta while it runs"
 learn_meta="$(cat "$LEARN_META_CAPTURE")"
 assert_contains "$learn_meta" "kind=verify-learning" "scout meta uses the verify-learning token (interface 2.i)"
-assert_contains "$learn_meta" "backend=herdr" "scout meta records backend"
+assert_contains "$learn_meta" "backend=orca" "scout meta records backend (no config/backend -> ac_backend()'s own orca default)"
 assert_contains "$learn_meta" "window=pLearn" "scout meta records the live pane"
 assert_contains "$learn_meta" "cwd=" "scout meta records the run cwd"
 # The meta is classed a VERIFICATION agent, so the six enumerators exclude it.
@@ -427,6 +427,21 @@ rm -rf "$LEARN_META_CAPTURE" "$AC_HOME"/data/learning-*
 assert_contains "$(cat "$LEARN_META_CAPTURE")" "backend=orca" "an orca fleet's scout meta records backend=orca"
 assert_eq "$(cat "$LEARN_CREW_STATE_CAPTURE")" "status| started learning scout pane=termLearn" \
   "an orca fleet's live scout reads alive through its own driver, never gone"
+unset LEARN_PANE LEARN_CREW_STATE LEARN_CREW_STATE_CAPTURE
+rm -f "$AC_HOME/config/backend"
+
+# Herdr still routes too when a fleet explicitly pins it (T1-T7: both drivers
+# stay operational) - same proof, the herdr driver's own fake.
+printf 'herdr\n' >"$AC_HOME/config/backend"
+: >"$FAKE_HERDR/panes/pLearnH.buf"
+printf 'pLearnH\n' >"$FAKE_HERDR/tabs/tLearnH"
+export LEARN_PANE='pLearnH tLearnH'
+export LEARN_CREW_STATE="$BIN/ac-crew-state.sh" LEARN_CREW_STATE_CAPTURE="$TMP/learn-crew-state-herdr.capture"
+rm -rf "$LEARN_META_CAPTURE" "$AC_HOME"/data/learning-*
+"$BIN/ac-learn.sh" run >/dev/null 2>&1 || fail "learning run completes on a herdr fleet"
+assert_contains "$(cat "$LEARN_META_CAPTURE")" "backend=herdr" "a herdr fleet's scout meta records backend=herdr"
+assert_eq "$(cat "$LEARN_CREW_STATE_CAPTURE")" "status| started learning scout pane=pLearnH" \
+  "a herdr fleet's live scout reads alive through its own driver too"
 unset LEARN_PANE LEARN_CREW_STATE LEARN_CREW_STATE_CAPTURE
 rm -f "$AC_HOME/config/backend"
 

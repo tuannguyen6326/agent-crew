@@ -5,8 +5,8 @@
 # states, the four liveness states, the tally, and the strict `validate` twin).
 #
 # HERMETICITY: `list` probes backend liveness, so every case that can reach a
-# probe runs against the fake herdr of tests/sh/helpers.sh. The LIVE assertion is
-# the tripwire - without the stub on PATH `pane get` fails and the entry
+# probe runs against the fake orca of tests/sh/helpers.sh. The LIVE assertion is
+# the tripwire - without the stub on PATH `terminal show` fails and the entry
 # renders DOWN - and the log assertion proves the probe hit the stub.
 
 # Fail-closed sourcing: unsourced (suite run outside tests/sh/), errexit is never
@@ -14,7 +14,7 @@
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
-make_fake_herdr
+make_fake_orca
 make_home
 
 reg="$AC_HOME/records/crewdeputies.md"
@@ -134,14 +134,14 @@ hlive="$(mk_deputy_home dlive)"
 hdown="$(mk_deputy_home ddown)"
 hidle="$(mk_deputy_home didle)"
 
-# dlive: meta + a pane the fake herdr answers for.
-printf 'backend=herdr\nkind=crewdeputy\n' >"$AC_HOME/state/dlive.meta"
-printf 'pD1 tD1\n' >"$AC_HOME/state/.pane-dlive"
-printf 'pD1\n' >"$FAKE_HERDR/tabs/tD1"
-: >"$FAKE_HERDR/panes/pD1.buf"
-# ddown: meta + a pane handle the backend cannot resolve - the pane died.
-printf 'backend=herdr\nkind=crewdeputy\n' >"$AC_HOME/state/ddown.meta"
-printf 'pGONE tGONE\n' >"$AC_HOME/state/.pane-ddown"
+# dlive: meta + a terminal the fake orca answers for.
+printf 'backend=orca\nkind=crewdeputy\n' >"$AC_HOME/state/dlive.meta"
+printf 'term1 tab1\n' >"$AC_HOME/state/.pane-dlive"
+: >"$FAKE_ORCA/terminals/term1.buf"
+printf 'tab1\n' >"$FAKE_ORCA/terminals/term1.tab"
+# ddown: meta + a terminal handle the backend cannot resolve - the terminal died.
+printf 'backend=orca\nkind=crewdeputy\n' >"$AC_HOME/state/ddown.meta"
+printf 'termGONE tabGONE\n' >"$AC_HOME/state/.pane-ddown"
 # didle: seeded, never spawned - no meta at all.
 # dgone: registered, but its home is not on disk.
 
@@ -157,9 +157,9 @@ printf 'pGONE tGONE\n' >"$AC_HOME/state/.pane-ddown"
 out="$("$BIN/ac-deputy.sh" list)"
 assert_contains "$out" "$(printf 'LIVE\tdlive\thome: %s\tprojects: alpha' "$hlive")" \
   "a live deputy renders LIVE with its home and clone list"
-# The hermeticity tripwire: without the stub on PATH `pane get` fails and the
-# entry above renders DOWN. The log proves the probe hit the fake, not a server.
-assert_contains "$(cat "$FAKE_HERDR/log")" "pane get pD1" "the liveness probe went to the fake herdr"
+# The hermeticity tripwire: without the stub on PATH `terminal show` fails and
+# the entry above renders DOWN. The log proves the probe hit the fake, not a server.
+assert_contains "$(cat "$FAKE_ORCA/log")" "terminal show --terminal term1" "the liveness probe went to the fake orca"
 assert_contains "$out" "$(printf '\tcharter: payments duty')" "charter on its own tab-indented line"
 assert_contains "$out" "$(printf '\tscope: payments incidents')" "scope on its own tab-indented line"
 case "$out" in *"recover: bin/ac-spawn.sh dlive"*) fail "a LIVE deputy must carry no recover hint" ;; esac

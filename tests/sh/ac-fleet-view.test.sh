@@ -9,13 +9,13 @@
 
 make_home
 
-printf 'kind=ship\nproject=alpha\nmode=local-only\nwindow=w1\nbackend=herdr\n' >"$AC_HOME/state/crew1.meta"
-printf 'kind=verify-codereview\nproject=alpha\nbackend=herdr\n' >"$AC_HOME/state/vfy1.meta"
+printf 'kind=ship\nproject=alpha\nmode=local-only\nwindow=w1\nbackend=orca\n' >"$AC_HOME/state/crew1.meta"
+printf 'kind=verify-codereview\nproject=alpha\nbackend=orca\n' >"$AC_HOME/state/vfy1.meta"
 
 # A self task with no live pane is DETACHED (the tail died with its session,
 # the slice did not); a crewmate in the same shape is GONE.
-printf 'kind=self\nproject=alpha\nmode=local-only\nbackend=herdr\n' >"$AC_HOME/state/self1.meta"
-printf 'kind=ship\nproject=alpha\nmode=local-only\nbackend=herdr\n' >"$AC_HOME/state/crew2.meta"
+printf 'kind=self\nproject=alpha\nmode=local-only\nbackend=orca\n' >"$AC_HOME/state/self1.meta"
+printf 'kind=ship\nproject=alpha\nmode=local-only\nbackend=orca\n' >"$AC_HOME/state/crew2.meta"
 out="$("$BIN/ac-fleet-view.sh")"
 assert_contains "$out" "crew1" "an ordinary crewmate still renders its row"
 assert_contains "$out" "self1	self	alpha	local-only	detached" "a paneless self task reads detached"
@@ -24,10 +24,9 @@ case "$out" in *vfy1*) fail "a verify-* pane agent must not render as a crewmate
 
 # --- the view, row by row -------------------------------------------------------
 # One side root ($H): a home at $H/home whose state/ each row seeds, the
-# caller's cwd $H/cwd, one fake herdr (helpers.sh), stdin /dev/null unless the
+# caller's cwd $H/cwd, one fake orca (helpers.sh), stdin /dev/null unless the
 # row names a file, LC_ALL=C. HOME in an argument or an env value is $H, and $H
 # reads HOME in what the run printed.
-make_fake_herdr
 make_fake_orca
 H="$TMP/side-n"
 HOMELESS=0
@@ -133,22 +132,21 @@ fi
 #    (validate:), a busy pane, an idle pane with a status line, a paneless
 #    self task (detached); the backend unreachable (unobservable); an
 #    AC_BACKEND crew-state refuses (every row unknown).
-live() {  # live <id> <pane buffer> - a handle in state/ and the fake herdr's tab and pane
-  printf 'p%s t%s\n' "$1" "$1" >"$H/home/state/.pane-$1"
-  printf 'p%s\n' "$1" >"$FAKE_HERDR/tabs/t$1"
-  printf '%s\n' "$2" >"$FAKE_HERDR/panes/p$1.buf"
+live() {  # live <id> <pane buffer> - a handle in state/ and the fake orca's terminal
+  printf 'term%s tab%s\n' "$1" "$1" >"$H/home/state/.pane-$1"
+  printf '%s\n' "$2" >"$FAKE_ORCA/terminals/term$1.buf"
 }
-fresh; m busy1 'kind=ship\n'; live busy1 "Thinking..."
-m stat1 'kind=ship\n'; live stat1 '$ '; printf '2026-01-01T00:00:00Z working: x\n' >"$H/home/state/stat1.status"
-m self1 'kind=self\n'
-m val1 "kind=ship\nworktree=$H/wt\n"; mkdir -p "$H/wt/.crew/ship/current"; printf 'review\trunning\tr1\n' >"$H/wt/.crew/ship/current/steps.tsv"
+fresh; m busy1 'kind=ship\nbackend=orca\n'; live busy1 "Thinking..."
+m stat1 'kind=ship\nbackend=orca\n'; live stat1 '$ '; printf '2026-01-01T00:00:00Z working: x\n' >"$H/home/state/stat1.status"
+m self1 'kind=self\nbackend=orca\n'
+m val1 "kind=ship\nworktree=$H/wt\nbackend=orca\n"; mkdir -p "$H/wt/.crew/ship/current"; printf 'review\trunning\tr1\n' >"$H/wt/.crew/ship/current/steps.tsv"
 view
 shows $'busy1\tship\t\t\tbusy\t\nself1\tself\t\t\tdetached\t\nstat1\tship\t\t\tstatus| working: x\t\nval1\tship\t\t\tvalidate:review:running:r1\t' "row 5: crew-state's own lines"
-touch "$FAKE_HERDR/.unreachable"
+touch "$FAKE_ORCA/.unreachable"
 view
-rm -f "$FAKE_HERDR/.unreachable"
+rm -f "$FAKE_ORCA/.unreachable"
 assert_eq "$FV_RC" "0" "row 5: an unreachable backend still renders"
-assert_contains "$(shim_out)" "busy1	ship			unobservable: backend could not be read for herdr:pane-pbusy1	" "row 5: an unreachable backend is unobservable"
+assert_contains "$(shim_out)" "busy1	ship			unobservable: backend could not be read for orca:termbusy1	" "row 5: an unreachable backend is unobservable"
 FV_ENV=("AC_BACKEND=tmux")
 view
 FV_ENV=()

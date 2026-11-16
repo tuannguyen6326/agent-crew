@@ -11,12 +11,11 @@
 
 make_home
 state="$AC_HOME/state"
-make_fake_herdr
+make_fake_orca
 
 seed_pane() {
   printf '%s %s\n' "$2" "$3" >"$state/.pane-$1"
-  printf '%s\n' "$2" >"$FAKE_HERDR/tabs/$3"
-  : >"$FAKE_HERDR/panes/$2.buf"
+  : >"$FAKE_ORCA/terminals/$2.buf"
 }
 fleet_spool() { cat "$state"/.wake-spool/* 2>/dev/null || true; }
 
@@ -40,16 +39,22 @@ printf '{"openrouter":{"api_key":"sk-or-TEST"}}\n' >"$AC_HOME/config/providers.j
 
 # quiet <id> <p> <t> <status> - a pane whose tail asks a prose question, settled
 # once, then backdated past AC_STALE with the given backend agent status, so the
-# next --once takes the quiet arm (ac-watch.test.sh's elw idiom).
+# next --once takes the quiet arm (ac-watch.test.sh's elw idiom). Orca has no
+# per-pane status file; agent_status reads the title glyph instead (idle: a
+# leading ✳, working: a leading spinner glyph - bin/ac-backend-orca.sh
+# orca_title_spinner/backend_agent_status_pane_orca).
 quiet() {
   mkdir -p "$AC_HOME/data/$1"
-  printf 'window=crew:%s\nbackend=herdr\n' "$1" >"$state/$1.meta"
+  printf 'window=crew:%s\nbackend=orca\n' "$1" >"$state/$1.meta"
   seed_pane "$1" "$2" "$3"
-  printf 'summarising the change\nshould I also drop the legacy path?\n' >>"$FAKE_HERDR/panes/$2.buf"
+  printf 'summarising the change\nshould I also drop the legacy path?\n' >>"$FAKE_ORCA/terminals/$2.buf"
   bash "$BIN/ac-watch.sh" --once >/dev/null
   rm -rf "$state"/.wake-spool*
   printf '%s\n' "$(( $(date +%s) - 1000 ))" >"$state/.change-$1"
-  printf '%s\n' "$4" >"$FAKE_HERDR/panes/$2.status"
+  case "$4" in
+    idle) printf '✳ fake\n' ;;
+    working) printf '◐ fake\n' ;;
+  esac >"$FAKE_ORCA/terminals/$2.title"
 }
 payload() { fleet_spool | grep -E "$1" | tail -n 1; }
 
