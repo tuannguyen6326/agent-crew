@@ -224,17 +224,15 @@
 //   ERROR: room <family> is not promoted (no <family>-chief in flight); promote with ac-spawn.sh --roomchief <family>, or keep talking here
 // AC_BACKEND becomes the meta's backend (taskBackend: orca when absent, an
 // unreadable meta warned and read as absent too; an explicit name this
-// fleet refuses, herdr included, is the same named ERROR as ac_backend's own
-// ladder, exit 1, before window_alive ever runs), then backend_window_alive
-// (backendCall), stdio passed; 1 ->
+// fleet refuses is the same named ERROR as ac_backend's own ladder, exit 1,
+// before window_alive ever runs), then backend_window_alive (backendCall),
+// stdio passed; 1 ->
 //   ERROR: roomchief window is gone; respawn (--roomchief <family>) or teardown <family>-chief
-// any other but 0 (2 unreadable, a timed-out herdr included) - never
-// "gone", a roomchief that may be alive is never torn down on an
-// unobservable read:
-//   ERROR: the BACKEND could not be READ for <family>-chief - whether <backend_target> still exists is UNKNOWN, so this is NOT treated as gone; check the backend itself (herdr status server), then try again
-// (herdr named for orca too - W18). 0 -> backend_focus (`ERROR: could not
-// focus <family>-chief` on failure), then `focused <family>-chief
-// (<backend_target>)` - `herdr:pane-<p>` or `orca:<h>`.
+// any other but 0 (2 unreadable, a timed-out read included) - never "gone",
+// a roomchief that may be alive is never torn down on an unobservable read:
+//   ERROR: the BACKEND could not be READ for <family>-chief - whether <backend_target> still exists is UNKNOWN, so this is NOT treated as gone; check the backend itself, then try again
+// 0 -> backend_focus (`ERROR: could not focus <family>-chief` on failure),
+// then `focused <family>-chief (<backend_target>)` - `orca:<h>`.
 //
 // gate-route / gate-verify / disposition: fewer than two words, a value flag
 // as the last word, an unknown word, or an empty value - every value flag
@@ -295,12 +293,11 @@
 // `read` would trim off the last field.
 //
 // THE BACKEND VERBS go through backendCall (src/lib.ts), the twin of
-// bin/ac-backend.sh's herdr and orca drivers: backend_window_alive
-// <fam>-chief (the guard, AC_BACKEND the meta's for that call only, as the
-// original's `( )`; open), backend_mark_wait / backend_clear_wait (the
-// stamp), backend_focus and backend_target (open). stdin passes to every one,
-// as to every child here, except where the original's subshell handed herdr
-// /dev/null (the guard).
+// bin/ac-backend.sh's orca driver: backend_window_alive <fam>-chief (the
+// guard, AC_BACKEND the meta's for that call only, as the original's `( )`;
+// open), backend_mark_wait / backend_clear_wait (the stamp), backend_focus
+// and backend_target (open). orca always reads the caller's stdin regardless
+// of what any call site passes it, the guard included.
 //
 // EXIT: 0; 1 on every refusal; 2 for usage and an unreadable room's pending;
 // a child's status where its failure ends the run (128+signal for a signal,
@@ -818,7 +815,7 @@ function cmdOpen(args: string[]): void {
   if (alive.status !== 0)
     die(
       latin1(
-        `${bytes(`the BACKEND could not be READ for ${chief} - whether `)}${target()}${bytes(" still exists is UNKNOWN, so this is NOT treated as gone; check the backend itself (herdr status server), then try again")}`,
+        `${bytes(`the BACKEND could not be READ for ${chief} - whether `)}${target()}${bytes(" still exists is UNKNOWN, so this is NOT treated as gone; check the backend itself, then try again")}`,
       ),
     );
   const focus = backendCall("focus", [chief], io);
