@@ -1278,7 +1278,9 @@ assert_contains "$err18" "git branch -D crew/t18" \
 "$BIN/ac-brief.sh" t19 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" t19 "$repo" --harness fake --mode local-only >/dev/null 2>&1
 stray19="$TMP/stray-t19"
-git -C "$repo" worktree add -q -b crew/t19 "$stray19"
+# crew/t19 already exists (the orca lease minted and checked it out) - -f lets
+# a second worktree hold the SAME branch, matching CASE C's premise exactly.
+git -C "$repo" worktree add -f -q "$stray19" crew/t19
 printf 'stray work\n' >"$stray19/t19.txt"
 git -C "$stray19" add -A
 git -C "$stray19" -c user.email=t@t -c user.name=t commit -qm "stray work"
