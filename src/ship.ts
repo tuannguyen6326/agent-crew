@@ -61,13 +61,10 @@
 //   ac-ship.sh status
 //   ac-ship.sh finish <checks-passed|passed|failed|cancelled>
 //
-// LIVE DASHBOARD: start used to auto-open ac-ship-watch.sh in a herdr tab
-// (label ac-ship-watch, agents workspace; AC_SHIP_WATCH=off disabled it);
-// herdr is retired, so no run opens one now. A pre-cutover fleet may still
-// carry one open, which finish retires via <run>/watch.pane. The board
-// itself (bin/ac-ship-watch.sh) still runs standalone in any terminal - it
-// marks the active step, shows fix rounds + findings, tails the run log, and
-// SELF-CLOSES when the run finishes or idles.
+// LIVE DASHBOARD: the board (bin/ac-ship-watch.sh) runs standalone in any
+// terminal - it marks the active step, shows fix rounds + findings, tails
+// the run log, and SELF-CLOSES when the run finishes or idles. Nothing
+// auto-opens it; an operator runs it by hand.
 //
 // Steps (fixed order):
 //   intent rebase review test document lint push pr
@@ -1997,11 +1994,6 @@ function cmdFinish(a: string[]): void {
     const helper = process.env.AC_PANE_AGENT ? b8(process.env.AC_PANE_AGENT) : `${binDir}/ac-pane-agent.sh`;
     if (can(helper, fsc.X_OK)) run([helper, "close", "--pane", cap(readText(`${rd}/review.pane`) ?? "")], { stdout: "ignore", stderr: "ignore" });
     rm(`${rd}/review.pane`);
-  }
-  if (isFile(`${rd}/watch.pane`) && commandV("herdr")) {
-    const ses = b8(process.env.AC_HERDR_SESSION || configReadSoft("herdr-session", "default"));
-    run(["herdr", "--session", ses, "pane", "close", cap(readText(`${rd}/watch.pane`) ?? "")], { stdout: "ignore", stderr: "ignore" });
-    rm(`${rd}/watch.pane`);
   }
   ee(append(`${rd}/run.meta`, `outcome=${outcome}\n`));
   ee(append(`${rd}/run.meta`, `finished_at=${iso()}\n`));

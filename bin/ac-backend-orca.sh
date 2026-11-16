@@ -2,15 +2,14 @@
 # ac-backend-orca.sh - the orca driver of the session-backend contract.
 # Sourced by ac-backend.sh (never an entrypoint); every backend_*_orca here
 # implements the surface ac-backend.sh's header documents, same names, same
-# three-state return codes. The herdr driver is the contract's reference
-# implementation; where orca has no counterpart the divergence is stated at
-# the function, not silently absorbed:
+# three-state return codes:
 # - GROUPING (orca_place_pane): chief-kind panes (cwd = the home) sit under
 #   the HOME node - config/orca-node's full selector, auto-pinned by
 #   orca_home_node from the entry named after the fleet when absent - one
-#   FAMILY TAB per room (AC_WINDOW_FAMILY, same ladder as the herdr driver;
-#   the tab clears with its last pane); crewmate and verifier panes (cwd = a
-#   project/lease worktree) sit under THAT worktree's own node, one tab each.
+#   FAMILY TAB per room (AC_WINDOW_FAMILY, the same family-resolution ladder
+#   used fleet-wide; the tab clears with its last pane); crewmate and
+#   verifier panes (cwd = a project/lease worktree) sit under THAT worktree's
+#   own node, one tab each.
 # - No agent-report API: the captain-wait stamp is the FILE alone; Orca's own
 #   agentWait detection keeps surfacing waits in its UI (see backend_mark_wait_orca).
 # - No process-info verb: the came-up probe reads Orca's OWN agent detection
@@ -34,7 +33,7 @@
 orca_json() {
   # orca_json <args...> - run the orca CLI with --json. Non-zero exit and an
   # ok:false envelope both fail (return 1): the caller's three-state logic
-  # decides what a failed call means, exactly like a failed herdr_cli.
+  # decides what a failed call means.
   local out
   out="$(orca "$@" --json 2>/dev/null)" || return 1
   jq -e '.ok == true' <<<"$out" >/dev/null 2>&1 || return 1
@@ -46,10 +45,10 @@ orca_pane() { ac_pane_field "$1" 1; }
 backend_target_orca() { printf 'orca:%s\n' "$(orca_pane "$1")"; }
 
 orca_fam_key() {
-  # The herdr driver's FAMILY WORKSPACE GROUPING ladder, orca dialect
-  # (family -> TAB): AC_WINDOW_FAMILY set non-empty names the family, set
-  # EMPTY deliberately targets the fleet ROOT group, unset derives the
-  # family from the task id via ac_window_family.
+  # The fleet-wide family-resolution ladder (header: ac-backend.sh FAMILY
+  # GROUPING), orca dialect (family -> TAB): AC_WINDOW_FAMILY set non-empty
+  # names the family, set EMPTY deliberately targets the fleet ROOT group,
+  # unset derives the family from the task id via ac_window_family.
   local id="$1" fam
   if [ "${AC_WINDOW_FAMILY+set}" = "set" ]; then fam="$AC_WINDOW_FAMILY"
   else fam="$(ac_window_family "$id")"; fi
@@ -128,9 +127,8 @@ orca_home_node() {
 
 orca_worktree_lease() {
   # orca_worktree_lease <id> <repo> [<base-branch-override>] - an
-  # Orca-managed worktree for an orca-backend crewmate (orca fleets lease
-  # through the Orca CLI, one worktree per task, sidebar-native; herdr
-  # fleets keep the crew-tree pool). Cut from the repo's LIVE CHECKOUT
+  # Orca-managed worktree for a crewmate: one worktree per task, leased
+  # through the Orca CLI, sidebar-native. Cut from the repo's LIVE CHECKOUT
   # branch, resolved to its FRESHEST tip via ac_freshest_ref (local vs
   # origin, origin wins on true divergence) - NEVER ac_default_branch,
   # which answers "what branch does this repo default to" and has no idea
@@ -155,8 +153,9 @@ orca_worktree_lease() {
   # (ac_epic_base_for) is cut from that branch as the override, under
   # ac-tree.sh get's own existence rule, and refused before anything is
   # created when that branch is missing, the ledger cannot be read, or an
-  # override names another branch. It lives HERE, as herdr's lives in get,
-  # so every orca lease path (crew spawn, self task, verifier) rides it.
+  # override names another branch. It lives HERE too (duplicated from get,
+  # not shared) so every orca lease path (crew spawn, self task, verifier)
+  # rides it.
   # Like get it fetches origin first (best effort: a failed fetch warns and
   # judges local refs), so a predecessor merged into the epic branch on
   # origin is in the next story's base; an unfenced lease never fetches.
@@ -384,7 +383,7 @@ backend_window_new_orca() {
 }
 
 backend_window_alive_orca() {
-  # Same three-state shape as the herdr driver: `terminal show` is the fast
+  # Three-state (header: WINDOW LIVENESS): `terminal show` is the fast
   # path, its failure is not a verdict - GONE needs the runtime itself to
   # answer (`status`, the control call on the same CLI surface).
   local handle out
@@ -404,8 +403,7 @@ backend_capture_pane_orca() {
   # calls that default unsuitable for verifying rendered output) and a
   # repainting one comes back as stacked fragments. Every caller of this verb
   # asks what the pane SHOWS - did the harness come up, did the submit land,
-  # did a captain marker appear - which is the rendered screen, and which is
-  # also what the herdr driver's capture answers.
+  # did a captain marker appear - which is the rendered screen.
   local pane="$1" lines="${2:-40}" out
   [ -n "$pane" ] || return 1
   out="$(orca_json terminal read --terminal "$pane" --limit "$lines" --screen)" || return 1
@@ -427,8 +425,7 @@ orca_composer_pending() {
   # pane) never claims pending, so the caller keeps today's verdict.
   local pane="$1" text="$2" cap r1 r2 region want
   # </dev/null: a read never needs the caller's stdin, whatever the caller's
-  # own send calls were asked to inherit - matching herdr_submit_verified_pane's
-  # render(), which reads the same way.
+  # own send calls were asked to inherit.
   cap="$(backend_capture_pane_orca "$pane" 15 2>/dev/null </dev/null)" || return 1
   # LC_ALL=C + a GROUPED repeat: an interval over the bare 3-byte glyph binds
   # to its LAST byte under a C locale and never matches (measured on this
@@ -448,10 +445,10 @@ orca_composer_pending() {
 }
 
 orca_submit_verified_pane() {
-  # The delivery-verification contract of herdr_submit_verified_pane, on orca
-  # primitives: press Enter ONCE, require the render to react, 0/1/2. The
-  # press is guarded (|| true) so an unreachable runtime reaches the verdict
-  # path instead of aborting the caller under errexit.
+  # Delivery verification (header: ac-backend.sh): press Enter ONCE, require
+  # the render to react, 0/1/2. The press is guarded (|| true) so an
+  # unreachable runtime reaches the verdict path instead of aborting the
+  # caller under errexit.
   # With <text> given, a reacted render alone is NOT a submit: a popup
   # closing on the Enter changes the render while the text sits pending
   # (measured class), so the composer region is checked and a proven-pending
@@ -559,8 +556,7 @@ backend_send_line_pane_orca() {
 }
 
 orca_send_key_pane() {
-  # Key delivery goes straight to the PTY - the herdr unfocused-send-keys
-  # quirk has no orca counterpart, so no focus step. Enter is the bare
+  # Key delivery goes straight to the PTY, no focus step. Enter is the bare
   # `--enter` flag (measured: submits the composer, empty or not); Escape is
   # the raw ESC byte as text (measured); C-c is `--interrupt` (measured).
   local pane="$1" key="$2"
@@ -585,7 +581,7 @@ backend_kill_window_orca() {
   # is shared with siblings and dies by itself with its last pane
   # (measured) - then, when this pane WAS the last, retire the family
   # record so a later spawn creates fresh instead of splitting a corpse.
-  # Best-effort like the herdr driver: always 0, always sweeps the files.
+  # Best-effort: always 0, always sweeps the files.
   local id="$1" handle tab i=0
   handle="$(orca_pane "$id")"
   tab="$(ac_pane_field "$id" 2)"
@@ -615,8 +611,8 @@ backend_focus_orca() { orca_focus_pane "$(orca_pane "$1")"; }
 backend_agent_blocked_orca() {
   # agentWait names a worker parked on a human-only prompt; null means Orca
   # looked and found no wait, an ABSENT field means it never looked - both
-  # answer false here, like herdr's unreadable pane. The captain-wait stamp
-  # masks first, exactly as in the herdr driver.
+  # answer false here. The captain-wait stamp masks first (header: CAPTAIN-
+  # WAIT STAMP, ac-backend.sh).
   local handle out
   [ -e "$(ac_wait_file "$1")" ] && return 1
   handle="$(orca_pane "$1")"
@@ -627,8 +623,8 @@ backend_agent_blocked_orca() {
 
 backend_agent_idle_pane_orca() {
   # `wait --for tui-idle` returns the instant the TUI is idle and times out
-  # otherwise; 1000ms bounds a working-TUI poll (herdr answers from a status
-  # field, orca answers by observing - measured ~113ms on an idle TUI).
+  # otherwise; 1000ms bounds a working-TUI poll (orca answers by observing
+  # the render rather than a status field - measured ~113ms on an idle TUI).
   # Two TUIs, two readings, both measured: for claude on a FLEET pane (TUI
   # launched from an exec'd shell rather than as the terminal's own command)
   # tui-idle NEVER satisfies (an idle "✳ Claude Code" timed out for 105s
@@ -766,8 +762,7 @@ orca_title_spinner() {
 }
 
 backend_mark_wait_orca() {
-  # No external agent-report API in orca (herdr's report-agent/release-agent
-  # masking has no counterpart). The stamp FILE is the contract's authority -
+  # No external agent-report API in orca. The stamp FILE is the contract's authority -
   # backend_agent_blocked_orca short-circuits on it - and Orca's own agentWait
   # detection keeps surfacing the wait in its UI; a rename would not stick
   # (the title field is OSC-driven, measured), so none is attempted.

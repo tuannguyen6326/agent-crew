@@ -3938,11 +3938,6 @@ function cmdFinish(a: string[]): void {
     metaPut(`${rd}/run.meta`, "attestation", "none");
     metaPut(`${rd}/run.meta`, "attestation_reason", `outcome-${outcome}`);
   }
-  if (isFile(`${rd}/watch.pane`) && commandV("herdr")) {
-    const ses = b8(process.env.AC_HERDR_SESSION || configReadSoft("herdr-session", "default"));
-    run(["herdr", "--session", ses, "pane", "close", cap(readText(`${rd}/watch.pane`) ?? "")], { stdout: "ignore", stderr: "ignore" });
-    rm(`${rd}/watch.pane`);
-  }
   say(qaEnvelope(rd));
 }
 

@@ -223,10 +223,9 @@
 // plus the pane-agent's own transient stdout/stderr paths) so ac-gate-watch can
 // tail the ACTIVE run; only the DESCRIPTOR is deleted on exit, never the prompt
 // file it names, so --tail can still point back to it once the gate settles.
-// ac-gate.sh used to auto-open a board labelled ac-gate-watch:<family> on a
-// herdr fleet; herdr is retired, so no run opens one now. A pre-cutover fleet
-// may still carry one open, which watchRetire closes by label at the
-// family's last live run's exit.
+// ac-gate.sh used to auto-open a board labelled ac-gate-watch:<family> and
+// retire it by label at the family's last live run's exit; nothing opens or
+// retires a board now - an operator runs ac-gate-watch.sh by hand.
 //
 // BUSY DECLARATION: a positional-mode gate blocks its CALLER - typically the
 // family's roomchief - inside ONE synchronous tool call for up to
@@ -293,8 +292,6 @@
 //   both; data/ is minted by a usage error; maintenance mints
 //   <run>/gates/<subject>/ before the disabled exit 4; `off` is read only
 //   after every precondition, so a disabled gate with no receipts exits 1.
-// - The labelled board's retire by label at the family's last exit lists and
-//   closes herdr panes through RAW herdr even on an orca fleet.
 //
 // ALSO:
 // - W9 (EXCLUSIVE TEMPS): the context, the review, the canonical copy and the
@@ -343,7 +340,7 @@
 // (.gate-running.<pid>), ac_chief_busy_leave (.gate-lock) and ac-watch.sh's
 // AC_WATCH_SKIP revalidation (the busy declaration).
 
-import { closeSync, lstatSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, lstatSync, openSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import {
   STARTED_BIN,
   arithValue,
@@ -364,7 +361,6 @@ import {
   maintenancePlanValidate,
   nowRaw,
   physicalDir,
-  pidAlive,
   projectDir,
   recordsDir,
   require,
@@ -853,7 +849,6 @@ Output ONLY that Markdown document - no preamble, no code fences.
 Read each listed file in full and inspect the repository at the exact commit
 before you decide:${contextLines}${previousInput}`;
 
-const PANE_IDS_JQ = ".result.panes[]? | select(.label == $l) | .pane_id";
 const CONTEXT_JQ = `{schema:"agentcrew.gate-context/v1", family:$family, stage:$stage, round:$round,
       routing:{route:$route, uncertainty:$uncertainty, consequence:$consequence,
         authority:$authority, receipt:$routing_receipt}, gate_verify:$gate_verify,
@@ -897,55 +892,14 @@ function unlockFamily(): void {
   lockRelease(u8(S.gateLock));
 }
 
-const watchOn = (): boolean => (process.env.AC_GATE_WATCH || "auto") !== "off";
-
-const quietPid = (m: string): string => {
-  try {
-    const text = readFileSync(fsPath(m), "latin1");
-    let v = "";
-    for (const line of text.split("\n")) if (line === "pid" || line.startsWith("pid=")) v = line.slice(4);
-    return v;
-  } catch {
-    return "";
-  }
-};
-
-// The family's board by its label, from a pre-cutover fleet that still has
-// one open under herdr - a current run never opens one. Never fails the exit.
-function watchRetire(): void {
-  if (S.busyDecl === "") return;
-  if (!watchOn() || !commandV("herdr")) return;
-  const ses = b8(process.env.AC_HERDR_SESSION || configReadSoft("herdr-session", "default", "ignore"));
-  const list = run(["herdr", "--session", ses, "pane", "list"], { stdout: "pipe", stderr: "ignore" });
-  const ids = run(["jq", "-r", "--arg", "l", `ac-gate-watch:${S.family}`, PANE_IDS_JQ], { stdin: { data: list.out.toString("latin1") }, stdout: "pipe", stderr: "ignore" });
-  for (const p of subst(ids.out).split(/[ \t\n]+/)) if (p !== "") run(["herdr", "--session", ses, "pane", "close", p], { stdout: "ignore", stderr: "ignore" });
-}
-
-// This run's marker is its own; the board and the busy declaration are the
-// FAMILY's, so only its last live gate run retires the board, and only its
-// last live holder - a gate run or a verifier call - clears the declaration.
-// Under the family lock, so a run stamping its marker meanwhile is either
-// seen here or starts after this exit. A maintenance run has no family: it
-// retires the board it opened.
+// The busy declaration is the FAMILY's, so only its last live holder - a
+// gate run or a verifier call - clears it. Under the family lock, so a run
+// stamping its marker meanwhile is either seen here or starts after this exit.
 function leaveFamily(): void {
   if (S.gateRunning !== "") rmSync(fsPath(S.gateRunning), { force: true });
-  if (S.busyDecl === "") {
-    watchRetire();
-    return;
-  }
+  if (S.busyDecl === "") return;
   lockFamily();
   const famDir = `${S.dataDir}/${S.family}`;
-  let live = false;
-  try {
-    for (const n of readdirSync(fsPath(famDir), { encoding: "latin1" }).sort()) {
-      if (!n.startsWith(".gate-running.") || !isFile(`${famDir}/${n}`)) continue;
-      if (pidAlive(quietPid(`${famDir}/${n}`))) {
-        live = true;
-        break;
-      }
-    }
-  } catch {}
-  if (!live) watchRetire();
   if (!chiefBusyHeld(u8(S.stateDir), u8(S.family), u8(famDir), true)) run(["rm", "-f", S.busyDecl], { stdout: "ignore", stderr: "ignore" });
   unlockFamily();
 }

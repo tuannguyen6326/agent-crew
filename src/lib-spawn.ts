@@ -18,13 +18,10 @@ import {
   dialogAnswerPane,
   die,
   exclusiveTemp,
-  herdrCli,
-  herdrVerb,
   isDir,
   isFile,
   isLink,
   iso,
-  keyNamed,
   lat,
   latBuf,
   lockAcquire,
@@ -49,7 +46,6 @@ import {
   stage,
   STARTED_BIN,
   startupDialogs,
-  submitVerified,
   tabFields,
   testInt,
   wakeScopeOk,
@@ -575,38 +571,32 @@ export function seedPortsEnv(wt: string, proj = ""): string | null {
 // task's handle names.
 export function backendDialogAnswer(id: string, io: SpawnIo): Ended {
   const b = backendRoute(io.stderr);
-  return b === null ? { status: 1, exited: true } : { status: dialogAnswerPane(b, argvOf(paneField(id, 1, io.stderr === "inherit")), io), exited: false };
+  return b === null ? { status: 1, exited: true } : { status: dialogAnswerPane(argvOf(paneField(id, 1, io.stderr === "inherit")), io), exited: false };
 }
 
 // backend_agent_idle_pane's twin, routed per call over a raw pane id.
 export function backendAgentIdlePane(pane: string, io: SpawnIo): Ended {
   const b = backendRoute(io.stderr);
-  return b === null ? { status: 1, exited: true } : { status: agentIdlePane(b, pane, io), exited: false };
+  return b === null ? { status: 1, exited: true } : { status: agentIdlePane(pane, io), exited: false };
 }
 
 // backend_submit_verified's twin (id-keyed), routed per call: one Enter whose
-// render must react - 0 accepted, 1 stranded, 2 unreadable, and on orca 3 a
-// dialog owns the pane; orca re-presses (at most twice) while <text> still
-// sits in its composer, herdr ignores <text>.
+// render must react - 0 accepted, 1 stranded, 2 unreadable, 3 a dialog owns
+// the pane; re-presses (at most twice) while <text> still sits in its
+// composer.
 export function backendSubmitVerified(id: string, text: string, io: SpawnIo): Ended {
   const b = backendRoute(io.stderr);
   if (b === null) return { status: 1, exited: true };
   const top = io.stdin ?? "inherit";
-  if (b === "herdr") return { status: submitVerified(id, top, io.stderr), exited: false };
   return { status: orcaSubmitVerified(argvOf(paneField(id, 1, io.stderr === "inherit")), text, top, io.stderr), exited: false };
 }
 
-// backend_send_key under `|| true`, routed per call: herdr focuses the
-// handle's tab and presses whatever the focus answered (backendCall's
-// send_key stops at a failed focus, as an errexit caller did).
+// backend_send_key's twin, routed per call.
 function keyPress(id: string, key: string, io: SpawnIo): Ended {
   const b = backendRoute(io.stderr);
   if (b === null) return { status: 1, exited: true };
   const vio: VerbIo = { stdin: io.stdin, stdout: "ignore", stderr: io.stderr };
-  if (b === "orca") return { status: orcaVerb("send_key", [id, key], vio, () => {}), exited: false };
-  herdrVerb("focus", [id], vio, () => {});
-  const keyName = keyNamed(key) ?? key.replace(/\n+$/, "");
-  return { status: herdrCli(["pane", "send-keys", argvOf(paneField(id, 1, io.stderr === "inherit")), keyName], io.stdin ?? "inherit", "ignore").status, exited: false };
+  return { status: orcaVerb("send_key", [id, key], vio, () => {}), exited: false };
 }
 
 // backend_startup_dialogs' twin: the sequence over the id-keyed verbs - the
@@ -625,7 +615,7 @@ export function backendStartupDialogs(id: string, harness: string, io: SpawnIo):
 // fresh lease <wt> with AC_LEASE_PRIMARY=<repo> (so it can reuse the primary's
 // caches), stdin closed, its output dropped, bounded by
 // AC_LEASE_INSTALL_TIMEOUT (default 300 s) - past it the group is TERMed then
-// KILLed, as herdrCli's ceiling does. "" when no command is declared; "ok"
+// KILLed. "" when no command is declared; "ok"
 // when it exits 0 and `git status --porcelain` is empty after it; else
 // "failed", WARNed with the cause. The distro never refuses the lease and
 // never restores what the command dirtied: a command that touches tracked

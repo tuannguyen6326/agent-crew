@@ -1,8 +1,7 @@
 // gate.test.ts - what src/gate.ts brought into src/lib.ts, held to the LIVE
 // bash it twins: harnessKnown (ac_harness_known), chiefBusyPath and
 // chiefBusyHeld (ac_chief_busy_path / ac_chief_busy_held, which ac-verify and
-// ac-watch keep calling) and herdrTabOpen (ac_herdr_tab_open, which ac-ship,
-// ac-qa and the pane agent keep calling); transcriptFinal and
+// ac-watch keep calling); transcriptFinal and
 // maintenancePlanValidate, held to the answers the comment above each states;
 // and the read-evidence floor the prompt prints, held to the lib's
 // AC_MAINTENANCE_QUOTE_MIN. The CLI contract itself is
@@ -329,32 +328,6 @@ test("maintenancePlanValidate: the closed schema, the paths and the staged hashe
   judged("no jq on PATH", { ...VALIDATE(), path: `${NOJQ}:${BASE}` }, false);
 });
 
-const OPEN: Row = {
-  bash: `ac_herdr_tab_open "$1" "$2" "$3" "$4"`,
-  libs: ["ac-backend.sh"],
-  twin: `const r = L.herdrTabOpen(A[0], A[1], A[2], A[3]); if (r !== null) writeSync(1, Buffer.from(r + "\\n", "latin1")); return r === null ? 1 : 0;`,
-  args: ["ses", "ac-gate-watch:fam", "@S/home", "w1"],
-};
-const answers = (a: Record<string, string>) => (s: string): void => {
-  for (const [k, v] of Object.entries(a)) put(join(s, "answers", k), v);
-};
-const CREATED = '{"result":{"tab":{"tab_id":"t7"},"root_pane":{"pane_id":"p7"}}}\n';
-
-test("herdrTabOpen: a labelled tab, its pane and tab ids by sed, the workspace's default tabs closed", () => {
-  const closed = same("in a workspace", {
-    ...OPEN,
-    seed: answers({ "tab-create": CREATED, "tab-list": '{"result":{"tabs":[{"tab_id":"d1","label":"1"},{"tab_id":"t7","label":"ac-gate-watch:fam"},{"tab_id":"d2","label":"1"}]}}\n' }),
-  });
-  expect(closed.t.herdr).toContain("herdr --session ses tab close d1\nherdr --session ses tab close d2\n");
-  same("no workspace", { ...OPEN, args: ["ses", "ac-gate-watch:fam", "@S/home", ""], seed: answers({ "tab-create": CREATED }) });
-  same("the create fails", OPEN);
-  same("no pane id", { ...OPEN, seed: answers({ "tab-create": '{"result":{"tab":{"tab_id":"t7"}}}\n' }) });
-  same("ids across lines, the last on a line wins", {
-    ...OPEN,
-    seed: answers({ "tab-create": '{"pane_id":"a1","pane_id":"a2",\n"tab_id":"b1"}\n{"pane_id":"a3"}' }),
-  });
-  same("an unreadable tab list", { ...OPEN, seed: answers({ "tab-create": CREATED, "tab-list": "nope\n" }) });
-});
 
 test("the read-evidence floor the prompt prints is the lib's AC_MAINTENANCE_QUOTE_MIN", () => {
   const r = Bun.spawnSync(["/bin/bash", "-c", `. "$0/ac-lib.sh"; . "$0/ac-maintenance-lib.sh"; printf %s "$AC_MAINTENANCE_QUOTE_MIN"`, BIN], { cwd: ROOT, env: { PATH, HOME: W, LC_ALL: "C" }, stdin: "ignore", stdout: "pipe" });

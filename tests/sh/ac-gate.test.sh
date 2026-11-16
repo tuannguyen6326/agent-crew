@@ -1323,9 +1323,10 @@ assert_contains "$(cat "$GLOG.prompt")" "data/noroom/room.md" "the created room 
 assert_contains "$(cat "$AC_HOME/data/noroom/room.md")" "GATE-VERIFY:" "gate-verify records the chief pass in the created room"
 
 # ============================================================================
-# 13. (retired) the gate board used to auto-open through watchOpen on a herdr
-# fleet; herdr is retired, so no run ever opens one now - see the family's
-# last-live-run retire coverage below for watchRetire's surviving cleanup.
+# 13. (retired) the gate board used to auto-open through watchOpen, and a
+# board left over from a pre-cutover fleet was retired by watchRetire at the
+# family's last live run; both are gone - no run ever opens or retires a
+# board now.
 # ============================================================================
 
 # ============================================================================
@@ -2209,57 +2210,6 @@ release_held bsi
 assert_eq "$(cat "$hold/bsi.rc")" "0" "the gate run settles after the verifier left"
 assert_no_file "$busy4" "the last holder's exit clears the declaration"
 
-# --- the gate board is the FAMILY's: only its last live run retires it ----------
-# No run opens a board anymore (herdr is retired), but a pre-cutover fleet may
-# still carry one open under the family's label; watchRetire keeps closing it
-# by label at the family's last live run's exit, regardless of config/backend
-# (it gates only on the herdr binary being on PATH) - HD_PANE_LIST below seeds
-# that pre-existing board. The stub below models only watchRetire's two calls.
-export HDLOG="$TMP/hd.log"
-cat >"$stub/herdr" <<'EOF'
-#!/usr/bin/env bash
-echo "herdr $*" >>"$HDLOG"
-[ "${1:-}" = --session ] && shift 2
-case "${1:-} ${2:-}" in
-  "pane list") printf '%s\n' "${HD_PANE_LIST:-}" ;;
-  "pane close") printf '%s\n' "$3" >>"$HDLOG.closed" ;;
-esac
-exit 0
-EOF
-chmod +x "$stub/herdr"
-fam5=boardshare
-for s in spec arch; do
-  mkdir -p "$AC_HOME/data/$fam5/$s"
-  printf '# %s brief\ncontract.\n' "$s" >"$AC_HOME/data/$fam5/$s/brief.md"
-  printf '# %s report\noriginal report.\n' "$s" >"$AC_HOME/data/$fam5/$s/report.md"
-done
-for st in spec architecture; do post_receipts "$fam5" "$st" 1; done
-held_board() {  # held_board <key> <stage> <env>... - a held run with its board on
-  local key="$1" stage="$2" i=0
-  shift 2
-  ( rc=0
-    env "$@" PATH="$stub:$PATH" GATE_STUB_HOLD="$hold" GATE_STUB_KEY="$key" GATE_BODY_FILE="$hold/continue.md" \
-      AC_PANE_AGENT="$stub/pane-agent" AC_GATE_WATCH=auto "$BIN/ac-gate.sh" "$fam5" "$stage" --repo "$gate_repo" \
-      >"$hold/$key.out" 2>"$hold/$key.err" || rc=$?
-    printf '%s\n' "$rc" >"$hold/$key.rc" ) >/dev/null 2>&1 &
-  while [ ! -e "$hold/$key.started" ] && [ ! -e "$hold/$key.rc" ]; do
-    i=$((i + 1)); [ "$i" -le 300 ] || fail "held board run $key never reached its turn"
-    sleep 0.1
-  done
-  [ -e "$hold/$key.started" ] || fail "held board run $key exited before its turn: $(cat "$hold/$key.err")"
-}
-: >"$HDLOG.closed"
-held_board bdA spec HD_PANE_LIST=
-held_board bdB architecture \
-  HD_PANE_LIST='{"result":{"panes":[{"pane_id":"pG1","label":"ac-gate-watch:boardshare","tab_id":"tG"}]}}' \
-  HD_PROC_INFO='{"result":{"process_info":{"foreground_processes":[{"argv0":"bash","cmdline":"bash /x/bin/ac-gate-watch.sh --tail"}]}}}'
-release_held bdA
-assert_eq "$(cat "$hold/bdA.rc")" "0" "the run that opened the board settles"
-assert_eq "$(cat "$HDLOG.closed")" "" "the board stays open while a same-family run is live"
-release_held bdB
-assert_eq "$(cat "$hold/bdB.rc")" "0" "the family's last run settles"
-assert_eq "$(cat "$HDLOG.closed")" "pG1" "the family's last run retires the board by its label"
-
 # --- a run starting while another of its family exits keeps its declaration ------
 # X is held inside its exit, after it found no other live run and before it clears
 # the busy declaration; Y, starting meanwhile, must wait for X's exit to end, or X
@@ -2820,10 +2770,9 @@ fi
 rc=0; xrun_side widget spec || rc=$?
 assert_eq "$rc:$(cat "$TMP/xn.err")" "0:" "the next run settles the round the terminated one left"
 
-# 9. (retired) the board used to auto-open on a herdr fleet, launch line,
-# live/dead/unobservable reuse and all; herdr is retired, so no run opens one
-# now (the family's last-live-run retire coverage above is what remains of
-# the board mechanism, for a pre-cutover fleet's leftover pane).
+# 9. (retired) the board used to auto-open, launch line, live/dead/
+# unobservable reuse and all; watchOpen and watchRetire are both gone, so no
+# run opens or retires a board now.
 
 # 10. signals: HUP, INT and TERM to the gate alone mid-turn - the turn is
 #     waited out, the run ends 128+n through its exit, nothing published.

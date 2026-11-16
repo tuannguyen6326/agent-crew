@@ -2157,10 +2157,9 @@ export function wakePending(sd: string, scope: string): boolean {
 // backend=. Only status 0 is live: 1 gone, 2 unreadable and a refused backend
 // name are orphans alike. stdin and stdout are dropped unless the caller
 // passes its own: ac_wake_orphan_files' subshell wrote its stdout into the
-// list it fed and handed the backgrounded herdr /dev/null (the orca CLI it
-// handed the family-list pipe - src/guard.ts names that), while the drain's
-// completion scope left both to the probe - a stdin only orca reads, the
-// probe's `( )` handing herdr /dev/null there too.
+// list it fed and handed the backgrounded orca CLI the family-list pipe
+// (src/guard.ts names that), while the drain's completion scope left both to
+// the probe - a stdin only orca reads.
 export function roomchiefLive(sd: string, fam: string, io: ProbeIo = { stdin: "ignore", stdout: "ignore" }): boolean {
   const m = `${sd}/${fam}-chief.meta`;
   return existsSync(m) && windowAliveAs(m, `${fam}-chief`, io);
@@ -2516,60 +2515,6 @@ function paneField(id: string, n: number, report: boolean): string {
   return capturedText(stage(["awk", "-v", `n=${n}`, "{print $n; exit}", `${softSubdir("state", report)}/.pane-${id}`], "ignore", "pipe", "ignore").out);
 }
 
-// herdr_rpc_timeout's twin: AC_HERDR_RPC_TIMEOUT, else config/herdr-rpc-timeout,
-// digits only and not `0`, else 2 - `00` passes.
-function herdrRpcTimeout(): string {
-  const t = process.env.AC_HERDR_RPC_TIMEOUT || configReadSoft("herdr-rpc-timeout", "", "ignore");
-  return /^[0-9]+$/.test(t) && t !== "0" ? t : "2";
-}
-
-// herdr_cli through herdr_rpc_bounded: `herdr <args>`, plus `--session <s>`
-// and HERDR_SESSION for the child when AC_HERDR_SESSION or
-// config/herdr-session names one, both knobs re-read per RPC; herdr's stderr
-// goes where the call site sends it, dropped by default (`pipe` returns the
-// bytes). The call leads its own process group (setsid,
-// where the original's `set -m` job led a group only - named) so the ceiling
-// reaches what it forked: Bun's timeout TERMs the leader, the group is TERMed
-// and KILLed once it is reaped (the original TERMed the group at the ceiling
-// itself - named), and a call the ceiling reached reads 124 unless it ended
-// 0. spawnSync waits for stdout's pipe to close, not the leader's exit
-// (measured, bun 1.4.4), so a TERM-ignoring grandchild holding stdout CAN
-// hold the caller - bounded here only by the timeout this call always
-// passes, same as the original's `$( )` read to EOF (named). sleep(1)
-// refuses past 2147483647 s, so the original's watchdog fires at once there,
-// as at 0. Bun's timeout wraps past 2^31-1 ms (measured, bun 1.3.13), so a
-// ceiling longer than that, which the original slept in full, is no ceiling
-// here (named).
-function herdrCli(args: string[], stdin: "inherit" | "ignore", stdout: "ignore" | "pipe", stderr: Stdio = "ignore"): { status: number; out: Buffer; err: Buffer } {
-  const s = process.env.AC_HERDR_SESSION || configReadSoft("herdr-session", "", "ignore");
-  const secs = Number(herdrRpcTimeout());
-  const saved = process.env.HERDR_SESSION;
-  if (s) process.env.HERDR_SESSION = s;
-  let r: ReturnType<typeof Bun.spawnSync> | null = null;
-  try {
-    r = spawnShellSync(["herdr", ...args, ...(s ? ["--session", s] : [])], {
-      stdin,
-      stdout,
-      stderr,
-      detached: true,
-      timeout: secs < 1 || secs > 2147483647 ? 1 : secs * 1000 <= 2 ** 31 - 1 ? secs * 1000 : undefined,
-    });
-  } catch {
-  } finally {
-    if (saved === undefined) delete process.env.HERDR_SESSION;
-    else process.env.HERDR_SESSION = saved;
-  }
-  let status = shellStatus(r);
-  if (r?.exitedDueToTimeout && status !== 0) {
-    for (const sig of ["SIGTERM", "SIGKILL"] as const)
-      try {
-        process.kill(-r.pid, sig);
-      } catch {}
-    status = 124;
-  }
-  return { status, out: stdout === "pipe" && r ? Buffer.from(r.stdout) : Buffer.alloc(0), err: stderr === "pipe" && r ? Buffer.from(r.stderr) : Buffer.alloc(0) };
-}
-
 // orca_json's twin: `orca <args> --json`, stdout captured, stderr dropped, no
 // ceiling; then `jq -e '.ok == true'` over the capture, the stream's LAST
 // value deciding. null when either fails, else the capture as the caller's
@@ -2594,48 +2539,29 @@ const IDLE_GLYPH = lat("✳");
 // block by its lead bytes (E2 A0-A3), whichever cell the animation shows.
 const SPINNERS = ["◐", "◓", "◑", "◒", "✻", "✽", "✢", "✶", "·", "⏺"].map(lat).concat(["\xe2\xa0", "\xe2\xa1", "\xe2\xa2", "\xe2\xa3"]);
 export const spins = (title: string): boolean => SPINNERS.some((g) => title.startsWith(g));
-// The key spellings herdr_key_name and orca_send_key_pane both case on, by
-// herdr's name for each.
+// The key spellings orca_send_key_pane cases on.
 export const keyNamed = (k: string): "enter" | "escape" | "ctrl+c" | null =>
   ["Enter", "enter"].includes(k) ? "enter" : ["Escape", "escape", "Esc", "esc"].includes(k) ? "escape" : ["C-c", "c-c", "ctrl+c", "Ctrl+C"].includes(k) ? "ctrl+c" : null;
-// The composer readings run under LC_ALL=C: [:space:] is the ASCII six, and a
-// glyph is its bytes.
-const C_SPACE = /[ \t\n\v\f\r]/g;
 const RULE_RUN = new RegExp(`(?:${lat("─")}){8,}`);
-const PROMPT_ROW = new RegExp(`^[ \\t\\n\\v\\f\\r]*${lat("❯")}(?:${lat("\u00a0")})?`);
 // The locale bash counts a string's length and offsets in, by its name:
 // LC_ALL, else LC_CTYPE, else LANG. A UTF-8 name the host has no locale for
 // left bash counting bytes (probed: xx_YY.UTF-8) - named.
 const utf8Locale = (): boolean => /utf-?8/i.test(process.env.LC_ALL || process.env.LC_CTYPE || process.env.LANG || "");
 
-// The backend_* verbs of bin/ac-backend.sh that src/ calls, both drivers, as
-// a bash caller ran them:
-// the route per call on process.env.AC_BACKEND (a refused name is exited,
-// status 1, its line on stderr, nothing read or minted), then the driver's
-// arm. Window liveness answers 0 alive, 1 gone, 2 unreadable (ac-backend.sh's
-// WINDOW LIVENESS); focus answers herdr's own status (124 at the ceiling, 127
-// absent); mark_wait/clear_wait answer touch's / rm's; agent_blocked 0
-// blocked, 1 not, stamped or unreadable (orca: jq -e's own status);
-// harness_up 0 up, 1 a bare shell, 2 unreadable (HARNESS CAME-UP PROBE);
-// send_key herdr's focus, then send-keys' own status
-// - a failing focus is returned before any key, as ac-send.sh's bare call
-// under errexit ended there (a caller under `||` pressed the key anyway:
-// named) - and orca's one send, 0 or 1. send_line types its arguments
-// joined by a space and verifies the Enter by the render
-// (ac-backend.sh's delivery verification): 0 accepted, 1 stranded, 2
-// unreadable, 3 a claude composer not proven so nothing submitted (herdr
-// only - orca answers a pane a dialog owns 1), the reason on stderr. stdin
-// by POSITION: the original's
-// top-level herdr calls (window_alive's pane get, tab focus, send-keys,
-// send-text, report-agent, release-agent) read the caller's stdin
-// unless the verb ran in a `( )` - `subshell` - and every herdr call inside a
-// `$( )` or a pipeline read /dev/null in a fresh shell (once a compound
-// command with a stdin redirect had run - harness_up's own `done <<<` -
-// bash 3.2 handed a later one the caller's stdin: named, not reproduced);
-// orca, a foreground command, always reads the caller's. stdout and stderr
-// are where the call site sent them ("pipe" returns the bytes); the jqs whose
-// stderr the bash left open (herdr agent_blocked's status, orca harness_up's
-// title reads) write jq's error there.
+// The backend_* verbs of bin/ac-backend.sh that src/ calls, as a bash caller
+// ran them: the route per call on process.env.AC_BACKEND (a refused name is
+// exited, status 1, its line on stderr, nothing read or minted), then
+// orcaVerb's arm. Window liveness answers 0 alive, 1 gone, 2 unreadable
+// (ac-backend.sh's WINDOW LIVENESS); mark_wait/clear_wait answer touch's /
+// rm's; agent_blocked 0 blocked, 1 not, stamped or unreadable (jq -e's own
+// status); harness_up 0 up, 1 a bare shell, 2 unreadable (HARNESS CAME-UP
+// PROBE); send_key is one send, 0 or 1. send_line types its arguments joined
+// by a space and verifies the Enter by the render (ac-backend.sh's delivery
+// verification): 0 accepted, 1 stranded, 2 unreadable, 3 a dialog owns the
+// pane, the reason on stderr. orca, a foreground command, always reads the
+// caller's stdin. stdout and stderr are where the call site sent them
+// ("pipe" returns the bytes); the jqs whose stderr the bash left open
+// (harness_up's title reads) write jq's error there.
 export function backendCall(
   fn: BackendFn,
   args: string[],
@@ -2648,214 +2574,17 @@ export function backendCall(
     if (io.stdout === "pipe") chunks.push(buf);
     else if (io.stdout === "inherit") writeSync(1, buf);
   };
-  const status = (b === "herdr" ? herdrVerb : orcaVerb)(fn, args, io, say);
+  const status = orcaVerb(fn, args, io, say);
   return { status, exited: false, out: Buffer.concat(chunks) };
 }
 
 export type VerbIo = Parameters<typeof backendCall>[2];
-
-export function herdrVerb(fn: BackendFn, args: string[], io: VerbIo, say: (b: Buffer) => void): number {
-  const id = args[0] ?? "";
-  const report = io.stderr === "inherit";
-  const top = io.subshell ? "ignore" : (io.stdin ?? "inherit");
-  const pane = (): string => paneField(id, 1, report);
-  switch (fn) {
-    case "target":
-      say(Buffer.from(`herdr:pane-${pane()}\n`, "latin1"));
-      return 0;
-    case "window_alive": {
-      const p = pane();
-      if (p === "") return 1;
-      if (herdrCli(["pane", "get", argvOf(p)], top, "ignore").status === 0) return 0;
-      const list = herdrCli(["pane", "list"], "ignore", "pipe");
-      if (list.status !== 0) {
-        const running = stage(["jq", "-r", ".running"], herdrCli(["status", "server", "--json"], "ignore", "pipe").out, "pipe", "ignore");
-        return capturedText(running.out) === "false" ? 1 : 2;
-      }
-      const v = capturedText(jqOver(["-r", "--arg", "p", argvOf(p), LIVENESS], capturedText(list.out), "pipe", "ignore").out);
-      return v === "alive" ? 0 : v === "gone" ? 1 : 2;
-    }
-    case "focus":
-      return herdrCli(["tab", "focus", argvOf(paneField(id, 2, report))], top, "ignore").status;
-    case "capture": {
-      const p = pane();
-      const lines = args[1] || "40";
-      if (p === "") return 1;
-      const n = testInt(lines);
-      const read = herdrCli(["pane", "read", argvOf(p), "--source", "recent", "--lines", n !== null && n >= 200n ? lines : "200"], "ignore", "pipe");
-      if (read.status !== 0) return 1;
-      const t = stage(["tail", "-n", lines], Buffer.from(`${capturedText(read.out)}\n`, "latin1"), io.stdout, io.stderr);
-      say(t.out);
-      return t.status;
-    }
-    case "mark_wait": {
-      const msg = args[1] || "awaiting captain decision";
-      const p = pane();
-      if (p === "") return 1;
-      if (herdrCli(["pane", "report-agent", argvOf(p), "--source", "ac-fleet", "--agent", "crew", "--state", "blocked", "--message", msg], top, "ignore").status !== 0) return 1;
-      return stage(["touch", `${softSubdir("state", report)}/.captain-wait-${id}`], "ignore", "ignore", io.stderr).status;
-    }
-    case "clear_wait": {
-      const wf = `${softSubdir("state", report)}/.captain-wait-${id}`;
-      if (!existsSync(wf)) return 0;
-      const p = pane();
-      if (p !== "") herdrCli(["pane", "release-agent", argvOf(p), "--source", "ac-fleet", "--agent", "crew"], top, "ignore");
-      return stage(["rm", "-f", wf], "ignore", "ignore", io.stderr).status;
-    }
-    case "agent_blocked": {
-      if (existsSync(`${softSubdir("state", report)}/.captain-wait-${id}`)) return 1;
-      const p = pane();
-      if (p === "") return 1;
-      const get = herdrCli(["pane", "get", argvOf(p)], "ignore", "pipe");
-      if (get.status !== 0) return 1;
-      const status = jqOver(["-r", '[.. | .agent_status? // empty] | map(select(. != "")) | first // empty'], capturedText(get.out), "pipe", io.stderr);
-      return capturedText(status.out) === "blocked" ? 0 : 1;
-    }
-    case "harness_up":
-      return harnessUpHerdr(argvOf(pane()));
-    case "send_key": {
-      const focus = herdrVerb("focus", [id], io, say);
-      if (focus !== 0) return focus;
-      const k = args[1] ?? "";
-      // herdr_key_name's printf through `$( )`: an unnamed key loses its trailing LFs.
-      return herdrCli(["pane", "send-keys", argvOf(pane()), keyNamed(k) ?? k.replace(/\n+$/, "")], top, "ignore").status;
-    }
-    case "send_line": {
-      const text = args.slice(1).join(" ");
-      const p = pane();
-      const meta = stateFile(id, "meta", report);
-      let harness = "";
-      try {
-        accessSync(meta, constants.R_OK);
-        harness = cutNul(metaGet(meta, "harness"));
-      } catch {}
-      const target = (): string => `herdr:pane-${paneField(id, 1, report)}`;
-      const who = lat(id);
-      const tell = (msg: string): void => {
-        if (report) writeSync(2, Buffer.from(`ac-backend: ${msg}\n`, "latin1"));
-      };
-      let proof = false;
-      if (harness === "claude" && (process.env.AC_SEND_UNPROVEN || "0") !== "1") {
-        const pre = composerText(p, 20, io.stderr);
-        if (pre.status === 2) {
-          tell(`could not read the pane of ${target()} - NOTHING was typed or submitted (peek it: ac-peek.sh ${who})`);
-          return 2;
-        }
-        if (pre.status !== 0) {
-          tell(`cannot see the composer of ${target()} (no claude composer on screen) - NOTHING was typed; peek it (ac-peek.sh ${who}), or type anyway with ac-send.sh ${who} --force`);
-          return 3;
-        }
-        if (pre.text.replace(C_SPACE, "") !== "") {
-          tell(`the composer of ${target()} holds an unsent draft - NOTHING was typed or submitted, so the draft is untouched; send it or clear it first (peek: ac-peek.sh ${who})`);
-          return 3;
-        }
-        proof = true;
-      }
-      herdrCli(["pane", "send-text", argvOf(p), text], top, "ignore");
-      settle(io.stderr);
-      if (proof) {
-        // `${#text}`: characters under a UTF-8 locale, bytes under any other.
-        const length = utf8Locale() ? [...text].length : Buffer.byteLength(text);
-        const rows = Math.min(200, Math.max(20, Math.floor(length / 40) + 8));
-        const post = composerText(p, rows, io.stderr);
-        if (post.status !== 0 || !composerShows(text, post.text)) {
-          const draft = composerClear(p, rows, top, io.stderr) ? "cleared" : `NOT cleared - peek it (ac-peek.sh ${who})`;
-          tell(`the composer of ${target()} did not show the whole message before Enter (a long send lands as its tail) - NOTHING was submitted, draft ${draft}; write the instruction to a file and send a short pointer to it`);
-          return 3;
-        }
-      }
-      if (submitVerified(id, top, io.stderr) === 0) return 0;
-      herdrVerb("focus", [id], io, say);
-      const rc = submitVerified(id, top, io.stderr);
-      if (rc === 0) return 0;
-      if (rc === 2) {
-        tell(`could not read the pane of ${target()} - submit UNVERIFIED, so the text may or may not have gone through (peek it: ac-peek.sh ${who})`);
-        return 2;
-      }
-      tell(`submit not acknowledged by ${target()} - text likely stranded unsubmitted in the composer (peek, then resubmit: ac-send.sh ${who} --key Enter)`);
-      return 1;
-    }
-  }
-}
 
 // `sleep "${AC_SEND_SETTLE:-0.4}"`: PATH's sleep, as the driver ran it, the
 // knob read per pause; its complaint on the caller's stderr, its status
 // ignored.
 export function settle(stderr: "inherit" | "ignore"): void {
   stage(["sleep", process.env.AC_SEND_SETTLE || "0.4"], "ignore", "ignore", stderr);
-}
-
-// herdr_composer_text_pane's twin: the claude composer between the last two
-// rules of the --ansi read's last <rows> lines, the dim hint, every SGR, CR and
-// the first row's ❯ and the NBSP after it stripped; status 2 when the read
-// failed, 1 when no two ordered rules frame it. Two adjacent rules gave sed a
-// range ending before its start, which printed that start alone - the second
-// rule.
-function composerText(p: string, rows: number, stderr: "inherit" | "ignore"): { status: number; text: string } {
-  const read = herdrCli(["pane", "read", argvOf(p), "--source", "recent", "--lines", "200", "--ansi"], "ignore", "pipe");
-  if (read.status !== 0) return { status: 2, text: "" };
-  const lines = capturedText(stage(["tail", "-n", String(rows)], Buffer.from(`${capturedText(read.out)}\n`, "latin1"), "pipe", stderr).out).split("\n");
-  const ruled = lines.flatMap((l, i) => (RULE_RUN.test(l) ? [i] : []));
-  const r2 = ruled.at(-1);
-  const r1 = ruled.at(-2) ?? r2;
-  if (r1 === undefined || r2 === undefined || r1 >= r2) return { status: 1, text: "" };
-  const region = r2 - r1 > 1 ? lines.slice(r1 + 1, r2) : [lines[r2]!];
-  const rowText = (l: string, i: number): string => {
-    const t = l.replace(/\x1b\[2m[^\x1b]*/g, "").replace(/\x1b\[[0-9;]*m/g, "").replace(/\r/g, "");
-    return i === 0 ? t.replace(PROMPT_ROW, "") : t;
-  };
-  return { status: 0, text: region.map(rowText).join("\n").replace(/\n+$/, "") };
-}
-
-// herdr_composer_shows' twin: the composer holds exactly <text>, white space
-// ignored (it soft-wraps), or only claude's paste placeholders.
-function composerShows(text: string, got: string): boolean {
-  const want = lat(text).replace(C_SPACE, "");
-  const have = got.replace(C_SPACE, "");
-  if (want === "" || have === "") return false;
-  return have === want || have.replace(/\[Pastedtext#[0-9]+(\+[0-9]+lines?)?\]/g, "") === "";
-}
-
-// herdr_composer_clear_pane's twin: up to <presses> ctrl+u, each re-read;
-// true once the composer reads empty, false on a failed press or read.
-function composerClear(p: string, presses: number, top: "inherit" | "ignore", stderr: "inherit" | "ignore"): boolean {
-  for (let i = 0; i < presses; i++) {
-    if (herdrCli(["pane", "send-keys", argvOf(p), "ctrl+u"], top, "ignore").status !== 0) return false;
-    const t = composerText(p, presses, stderr);
-    if (t.status !== 0) return false;
-    if (t.text.replace(C_SPACE, "") === "") return true;
-  }
-  return false;
-}
-
-// backend_submit_verified_herdr's twin: the handle re-read, then the raw-pane
-// verifier.
-export function submitVerified(id: string, top: "inherit" | "ignore", stderr: "inherit" | "ignore"): number {
-  return submitVerifiedPane(argvOf(paneField(id, 1, stderr === "inherit")), top, stderr);
-}
-
-// herdr_submit_verified_pane's twin, one RAW pane (decoded): the render's last
-// 15 lines read, the Enter pressed (its status ignored, even when the read
-// failed), then up to seven probes a settle apart - 0 the render changed, 1 it
-// never did, 2 a read failed. An empty pane is never read.
-export function submitVerifiedPane(p: string, top: "inherit" | "ignore", stderr: "inherit" | "ignore"): number {
-  const render = (): string | null => {
-    if (p === "") return null;
-    const read = herdrCli(["pane", "read", p, "--source", "recent", "--lines", "200"], "ignore", "pipe");
-    if (read.status !== 0) return null;
-    const t = stage(["tail", "-n", "15"], Buffer.from(`${capturedText(read.out)}\n`, "latin1"), "pipe", "ignore");
-    return t.status === 0 ? capturedText(t.out) : null;
-  };
-  const pre = render();
-  herdrCli(["pane", "send-keys", p, "enter"], top, "ignore");
-  if (pre === null) return 2;
-  for (let i = 0; i < 7; i++) {
-    settle(stderr);
-    const post = render();
-    if (post === null) return 2;
-    if (post !== pre) return 0;
-  }
-  return 1;
 }
 
 export function orcaVerb(fn: BackendFn, args: string[], io: VerbIo, say: (b: Buffer) => void): number {
@@ -2955,9 +2684,9 @@ export function orcaType(h: string, text: string, stdin: "inherit" | "ignore", s
 
 // backend_capture_pane_orca at 15 lines as `$(... 2>/dev/null)` read it:
 // null when there is no handle (no call), the read fails or jq does.
-// "ignore" hardcoded, never a passed-through stdin: submitVerifiedPane's
-// herdr render() reads the same way - a READ never needs the caller's stdin,
-// whatever the caller's own send calls were asked to inherit.
+// "ignore" hardcoded, never a passed-through stdin: a READ never needs the
+// caller's stdin, whatever the caller's own send calls were asked to
+// inherit.
 function orcaScreen(h: string): string | null {
   if (h === "") return null;
   const out = orcaJson(["terminal", "read", "--terminal", h, "--limit", "15", "--screen"], "ignore");
@@ -3080,8 +2809,7 @@ export function commandV(name: string): boolean {
   return fallback ?? false;
 }
 
-// --- relocate twins ---
-export { herdrCli, paneField };
+export { paneField };
 
 // ac_fleet_name's twin: the basename of the physical home AC_HOME names ("" when
 // cd cannot enter it), else AC_FLEET_NAME, else the fixed agent-crew.
@@ -3098,13 +2826,6 @@ export function fleetName(): string {
 export function windowFamily(id: string): string {
   for (const s of [process.env.AC_SCOPE, process.env.AC_FLEET_SCOPE]) if (s && wakeScopeOk(s)) return s;
   return familyOfId(id);
-}
-
-// herdr_ws_family_label's twin, bytes (latin1) in and out: `<fleet> · <fam>`,
-// or the fleet's root label `<fleet>` for an empty family.
-export function wsFamilyLabel(fam: string): string {
-  const fleet = lat(fleetName()).replace(/\n+$/, "");
-  return fam ? `${fleet} ${lat("·")} ${fam}` : fleet;
 }
 
 // `printf %q` as bash 3.2 spells it, bytes (latin1) in and out: '' for
@@ -3124,90 +2845,6 @@ export function shellQuote(s: string): string {
   let q = "$'";
   for (const ch of s) q += ANSI_C[ch] !== undefined ? `\\${ANSI_C[ch]}` : printable(ch) ? ch : `\\${ch.charCodeAt(0).toString(8).padStart(3, "0")}`;
   return `${q}'`;
-}
-
-const TWINS_JQ = `
-    [.result.workspaces[]? | select(.label == $lbl)]
-    | sort_by(-(.tab_count // 0)) | .[].workspace_id`;
-const TABS_STATE_JQ = `
-    if (.result.tabs | type) == "array"
-    then (if ([.result.tabs[].label] | all(. == "1")) then "empty" else "nonempty" end)
-    else "unreadable" end`;
-
-// herdr_resolve_workspace's twin as `$(...)` ran it, bytes (latin1) in and
-// out: the workspace labelled <label> - the busiest twin adopted, every other
-// one closed when its tabs are only herdr's default `1`s (the emptiness proof)
-// and WARNed when one holds another tab or its list cannot be read - else one
-// created. null once it died, the ERROR printed: a create that failed (herdr's
-// own stderr first) or answered no id (jq's line first when it was no JSON).
-// Every call reads /dev/null: the original's sweep calls read its loop's
-// here-string and its create the caller's stdin (a compound command with a
-// stdin redirect had run in that shell - named). `quiet` prints nothing, as
-// a caller's `2>/dev/null` around the bash left it.
-export function herdrResolveWorkspace(label: string, quiet = false): string | null {
-  const err = quiet ? "ignore" : "inherit";
-  const list = herdrCli(["workspace", "list"], "ignore", "pipe");
-  const twins = capturedText(stage(["jq", "-r", "--arg", "lbl", argvOf(label), TWINS_JQ], list.out, "pipe", "ignore").out);
-  let ws = twins.split("\n")[0]!;
-  for (const t of twins.split("\n")) {
-    if (t === "" || t === ws) continue;
-    const state = wsTabsState(t);
-    if (state === "empty") wsClose(t, false, quiet);
-    else if (quiet) continue;
-    else if (state === "nonempty") warn(Buffer.from(`twin workspace ${t} left open: it holds a tab other than herdr's default '1' - closing the workspace would take that tab with it`, "latin1"));
-    else warn(Buffer.from(`twin workspace ${t} left open: its tab list could not be read - a close cannot be proven safe`, "latin1"));
-  }
-  if (ws !== "") return ws;
-  const created = herdrCli(["workspace", "create", "--label", argvOf(label), "--no-focus"], "ignore", "pipe", err);
-  if (created.status !== 0) {
-    if (!quiet) writeSync(2, "ERROR: herdr workspace create failed (is the herdr server running?)\n");
-    return null;
-  }
-  ws = capturedText(jqOver(["-r", ".result.workspace.workspace_id // empty"], capturedText(created.out), "pipe", err).out);
-  if (ws === "" && !quiet) writeSync(2, "ERROR: could not parse herdr workspace create output\n");
-  return ws || null;
-}
-
-// herdr_ws_tabs_state's twin: empty, nonempty or unreadable - a list that
-// failed, no tabs array, or no answer at all.
-function wsTabsState(ws: string): string {
-  const r = herdrCli(["tab", "list", "--workspace", argvOf(ws)], "ignore", "pipe");
-  if (r.status !== 0) return "unreadable";
-  return capturedText(jqOver(["-r", TABS_STATE_JQ], capturedText(r.out), "pipe", "ignore").out) || "unreadable";
-}
-
-// herdr_ws_close's twin, best-effort: a refusal naming
-// workspace_group_close_required is WARNed - or, with `group` (a caller that
-// proved the workspace empty), retried as `--group` and WARNed only when that
-// fails too; `quiet` drops the warning. The original matched it in a `2>&1`
-// capture; here stdout and stderr are read whole, one after the other.
-function wsClose(ws: string, group = false, quiet = false): void {
-  const r = herdrCli(["workspace", "close", argvOf(ws)], "ignore", "pipe", "pipe");
-  if (r.status === 0 || !capturedText(Buffer.concat([r.out, r.err])).includes("workspace_group_close_required")) return;
-  if (!group) {
-    if (!quiet) warn(Buffer.from(`workspace ${ws} left open: herdr refused the close with workspace_group_close_required (it heads a linked-worktree group, which this sweep is not authorized to close)`, "latin1"));
-  } else if (herdrCli(["workspace", "close", argvOf(ws), "--group"], "inherit", "ignore").status !== 0)
-    warn(Buffer.from(`workspace ${ws} refused workspace_group_close_required and the --group retry failed too - close it by hand`, "latin1"));
-}
-
-// herdr_tab_create's twin as `$(...)` ran it, bytes (latin1) in: a tab
-// labelled crew:<id> in <ws> (herdr's default workspace for ""), its answer as
-// the capture read it and herdr's status; herdr's stderr is the caller's.
-export function herdrTabCreate(ws: string, dir: string, id: string): { status: number; out: string } {
-  const r = herdrCli(["tab", "create", ...(ws ? ["--workspace", argvOf(ws)] : []), "--cwd", argvOf(dir), "--label", argvOf(`crew:${id}`), "--no-focus"], "ignore", "pipe", "inherit");
-  return { status: r.status, out: capturedText(r.out) };
-}
-
-// herdr_close_default_tabs' twin: every `1` tab of <ws> closed, each close
-// best-effort, the ids read as `jq ... | while IFS= read -r t` read them (whole
-// lines only). The answer is that pipeline's status under pipefail - jq's,
-// which ended an errexit caller - or 0 when the list itself failed.
-export function herdrCloseDefaultTabs(ws: string): number {
-  const list = herdrCli(["tab", "list", "--workspace", argvOf(ws)], "ignore", "pipe");
-  if (list.status !== 0) return 0;
-  const ids = jqOver(["-r", '.result.tabs[]? | select(.label == "1") | .tab_id'], capturedText(list.out), "pipe", "ignore");
-  for (const t of ids.out.toString("latin1").split("\n").slice(0, -1)) if (t !== "") herdrCli(["tab", "close", argvOf(t)], "ignore", "ignore");
-  return ids.status;
 }
 
 // --- domain twins ---
@@ -3392,62 +3029,16 @@ export function writeAll(fd: number, b: Uint8Array): void {
   for (let off = 0; off < b.length; ) off += writeSync(fd, b, off, b.length - off);
 }
 
-// backend_kill_window's twin, both drivers, routed as backendCall routes (a
-// refused name is its ERROR and an exited status 1, nothing read or swept).
-// herdr, the KILL OWNERSHIP PROOF: the handle's tab (field 2) is closed only
-// while `tab get` labels it crew:<id>, else the stale-handle WARN - an
-// unreachable herdr reads the same (W18); a close that fails with the tab
-// still there retries as a close of its workspace (the tab id's part before
-// `:`) on the emptiness proof - every other tab a default `1` - taking
-// wsClose's group retry; an occupied or unreadable workspace, or a tab that
-// cannot be re-read, is WARNed and answers 1 (unclosed). orca: the handle's
-// terminal closed, then up to 8 PATH `sleep 0.25`s while `terminal list` still
-// shows it in its tab, and an emptied tab's state/.orca-fam-* records (byte
-// order) removed; it answers the last rm's status (W19). Both remove the pane
-// and captain-wait files with a spawned `rm -f`. stdin by position: a herdr
-// call in a pipeline or `$( )` reads /dev/null, every other the caller's.
+// backend_kill_window's twin, routed as backendCall routes (a refused name
+// is its ERROR and an exited status 1, nothing read or swept): the handle's
+// terminal closed, then up to 8 PATH `sleep 0.25`s while `terminal list`
+// still shows it in its tab, and an emptied tab's state/.orca-fam-* records
+// (byte order) removed; it answers the last rm's status (W19). Removes the
+// pane and captain-wait files with a spawned `rm -f`.
 export function backendKillWindow(id: string): { status: number; exited: boolean } {
   const b = backendRoute("inherit");
   if (b === null) return { status: 1, exited: true };
-  return { status: b === "herdr" ? herdrKillWindow(id) : orcaKillWindow(id), exited: false };
-}
-
-const CLOSEABLE_JQ = `
-              if (.result.tabs | type) == "array"
-              then (if ([.result.tabs[] | select(.tab_id != $t) | .label] | all(. == "1"))
-                    then "closeable" else "occupied" end)
-              else "unreadable" end`;
-
-// Exported like herdrVerb: tests/ts/teardown.test.ts calls it directly
-// (bypassing backendRoute's now-refusing ladder, T8) to keep proving this
-// driver's own kill behavior until T11 deletes it.
-export function herdrKillWindow(id: string): number {
-  const tab = paneField(id, 2, true);
-  const who = lat(id);
-  let unclosed = 0;
-  if (tab !== "") {
-    const label = capturedText(stage(["jq", "-r", ".result.tab.label // empty"], herdrCli(["tab", "get", argvOf(tab)], "ignore", "pipe").out, "pipe", "ignore").out);
-    if (label === `crew:${who}`) {
-      const rc = herdrCli(["tab", "close", argvOf(tab)], "inherit", "ignore").status;
-      if (rc !== 0) {
-        if (herdrCli(["tab", "get", argvOf(tab)], "inherit", "ignore").status === 0) {
-          const ws = tab.split(":")[0]!;
-          const left = capturedText(stage(["jq", "-r", "--arg", "t", argvOf(tab), CLOSEABLE_JQ], herdrCli(["tab", "list", "--workspace", argvOf(ws)], "ignore", "pipe").out, "pipe", "ignore").out);
-          if (left === "closeable") wsClose(ws, true);
-          else {
-            unclosed = 1;
-            warn(Buffer.from(left === "occupied" ? `tab ${tab} of ${who} refused to close and its workspace ${ws} holds other live tabs - close the tab by hand` : `tab ${tab} of ${who} refused to close and workspace ${ws} could not be read - close the tab by hand`, "latin1"));
-          }
-        } else {
-          unclosed = 1;
-          warn(Buffer.from(`tab ${tab} of ${who}: close failed (rc ${rc}) and the tab could not be re-read - close it by hand if it is still open`, "latin1"));
-        }
-      }
-    } else warn(Buffer.from(`not closing tab ${tab} for ${who}: it is labelled '${label || "none"}', not crew:${who} - the handle is stale (close the tab by hand if it really is this task's)`, "latin1"));
-  }
-  const sd = softSubdir("state", true);
-  stage(["rm", "-f", `${sd}/.pane-${id}`, `${sd}/.captain-wait-${id}`], "inherit", "inherit", "inherit");
-  return unclosed;
+  return { status: orcaKillWindow(id), exited: false };
 }
 
 function orcaKillWindow(id: string): number {
@@ -3755,37 +3346,6 @@ export function maintenancePlanValidate(plan: string, run: string): boolean {
     if (judged === null || plainSha(judged) !== expected) return false;
   }
   return true;
-}
-
-// ac_herdr_tab_open's twin (the pane agent keeps the bash),
-// bytes (latin1) in and out: a tab labelled <label> in <ws> (the session's
-// default group for "") through RAW herdr addressed by <ses>, "<pane> <tab>"
-// read from its answer as the bash's sed read it (per line, the LAST id on a
-// line, the first line holding one), else null. With <ws> the workspace's
-// default `1` tabs are closed, best-effort; each close reads /dev/null where
-// the bash's read the rest of its loop's jq pipe.
-export function herdrTabOpen(ses: string, label: string, cwd: string, ws: string): string | null {
-  const created = stage(["herdr", "--session", argvOf(ses), "tab", "create", ...(ws ? ["--workspace", argvOf(ws)] : []), "--label", argvOf(label), "--cwd", argvOf(cwd), "--no-focus"], "inherit", "pipe", "ignore");
-  if (created.status !== 0) return null;
-  const answer = capturedText(created.out).split("\n");
-  const id = (key: string): string => {
-    const re = new RegExp(`^.*"${key}":"([^"]*)".*$`);
-    for (const l of answer) {
-      const m = re.exec(l);
-      if (m) return m[1]!;
-    }
-    return "";
-  };
-  const p = id("pane_id");
-  const tab = id("tab_id");
-  if (p === "") return null;
-  if (ws) {
-    const list = stage(["herdr", "--session", argvOf(ses), "tab", "list", "--workspace", argvOf(ws)], "inherit", "pipe", "ignore");
-    const ids = stage(["jq", "-r", '.result.tabs[]? | select(.label == "1") | .tab_id'], list.out, "pipe", "ignore");
-    for (const t of ids.out.toString("latin1").split("\n").slice(0, -1))
-      if (t.split("\0", 1)[0] !== "") stage(["herdr", "--session", argvOf(ses), "tab", "close", argvOf(t.split("\0", 1)[0]!)], "ignore", "ignore", "ignore");
-  }
-  return `${p} ${tab}`;
 }
 
 // --- curate twins ---
@@ -4168,71 +3728,21 @@ export function orcaPlacePane(dir: string, cmd = "", agent = ""): string | null 
   return `${c.handle} ${c.tab}`;
 }
 
-const LEGACY_GROUPS_JQ = `
-    [.result.workspaces[]? | select(
-      .label == ($f + " (crewchief)") or
-      .label == ($f + " (crewmate)") or
-      .label == ($f + " (pane-agent)"))] | .[].workspace_id`;
-
-// herdr_sweep_legacy_groups' twin: this fleet's retired per-role workspaces
-// closed once provably empty, silently. The answer is its pipeline's status
-// under pipefail - jq's, else the list's - which ended the errexit caller
-// before any tab existed (W5's sibling, kept).
-function sweepLegacyGroups(fleet: string): number {
-  const list = herdrCli(["workspace", "list"], "ignore", "pipe");
-  const ids = stage(["jq", "-r", "--arg", "f", fleet, LEGACY_GROUPS_JQ], list.out, "pipe", "ignore");
-  for (const t of ids.out.toString("latin1").split("\n").slice(0, -1)) if (t !== "" && wsTabsState(t) === "empty") wsClose(t);
-  return ids.status !== 0 ? ids.status : list.status;
-}
-
 // backend_window_new's twin as ac-spawn.sh ran it - bare, under errexit -
-// routed per call: the pane handle `<pane> <tab>` (herdr) or
-// `<handle> <tab>` (orca) written LAST to state/.pane-<id>. herdr: the
-// family's workspace (AC_WINDOW_FAMILY when set, empty the fleet root, else
-// windowFamily) resolved after the legacy-group sweep, a `crew:<id>` tab
-// created at <dir>, the default `1` tabs closed; orca: orcaPlacePane. Every
-// death the bash had is `exited` with its status - a missing herdr/orca/jq, a
-// refused backend name, the sweep's or herdrCloseDefaultTabs' pipeline (W5),
-// a workspace or tab create that failed, a create answer jq could not read
-// (jq's own line) or holding no ids, a placement that failed, a handle the
-// shell could not write (its own line not reproduced). With `errexit` false it
-// is the self-task start's `( ... ) || ac_die` subshell (src/self-task.ts)
-// or ac-learn.sh's suite launch inside its
-// gate's capture (the bash's `if ! ...="$(...)"`), errexit asleep: the
-// sweep's, both ids' jq and herdrCloseDefaultTabs' statuses go unread (an
-// empty id is the parse ERROR), and a workspace that did not resolve is
-// `could not resolve herdr workspace '<label>'`.
+// routed per call: the pane handle `<handle> <tab>` written LAST to
+// state/.pane-<id> (orcaPlacePane). Every death the bash had is `exited`
+// with its status - a missing orca/jq, a refused backend name, a placement
+// that failed, a handle the shell could not write (its own line not
+// reproduced). With `errexit` false it is the self-task start's
+// `( ... ) || ac_die` subshell (src/self-task.ts) or ac-learn.sh's suite
+// launch inside its gate's capture (the bash's `if ! ...="$(...)"`).
 export function backendWindowNew(id: string, dir: string, errexit = true): Ended {
   const b = backendRoute("inherit");
   if (b === null) return { status: 1, exited: true };
   for (const t of [b, "jq"]) if (!commandV(t)) return died(`required tool not found: ${t}`);
-  let handle: string;
-  if (b === "herdr") {
-    const famEnv = process.env.AC_WINDOW_FAMILY;
-    const fam = famEnv !== undefined ? lat(famEnv) : lat(windowFamily(id)).replace(/\n+$/, "");
-    const sweep = sweepLegacyGroups(fleetName());
-    if (sweep !== 0 && errexit) return { status: sweep, exited: true };
-    const label = wsFamilyLabel(fam).replace(/\n+$/, "");
-    const ws = herdrResolveWorkspace(label);
-    if (ws === null) return errexit ? { status: 1, exited: true } : died(latBuf(`could not resolve herdr workspace '${label}'`));
-    const made = herdrTabCreate(ws, lat(dir), lat(id));
-    if (made.status !== 0) return died(latBuf(`herdr tab create failed (workspace ${ws})`));
-    const ids: string[] = [];
-    for (const path of [".result.tab.tab_id // empty", ".result.root_pane.pane_id // empty"]) {
-      const r = jqOver(["-r", path], made.out, "pipe", "inherit");
-      if (r.status !== 0 && errexit) return { status: r.status, exited: true };
-      ids.push(capturedText(r.out));
-    }
-    const [tab, pane] = ids as [string, string];
-    if (tab === "" || pane === "") return died("could not parse herdr tab create output");
-    const close = herdrCloseDefaultTabs(ws);
-    if (close !== 0 && errexit) return { status: close, exited: true };
-    handle = `${pane} ${tab}`;
-  } else {
-    const placed = orcaPlacePane(dir, "", id);
-    if (placed === null) return died(`orca pane placement failed for ${id} at ${dir}`);
-    handle = placed;
-  }
+  const placed = orcaPlacePane(dir, "", id);
+  if (placed === null) return died(`orca pane placement failed for ${id} at ${dir}`);
+  const handle = placed;
   try {
     writeFileSync(`${softSubdir("state", true)}/.pane-${id}`, latBuf(`${handle}\n`));
   } catch {
@@ -4241,61 +3751,40 @@ export function backendWindowNew(id: string, dir: string, errexit = true): Ended
   return { status: 0, exited: false };
 }
 
-export const AGENT_STATUS_JQ = '[.. | .agent_status? // empty] | map(select(. != "")) | first // empty';
-
-// backend_dialog_answer_pane_{herdr,orca}'s twin, one RAW pane (decoded): 0
-// one named dialog answered with the key safe on it - herdr's `agent explain`
-// rule startup_update, orca's agentWait reason codex-update-prompt or
-// codex-hooks-review-prompt, each taking 2 - 1 nothing pending, 2 a dialog it
-// cannot name, 3 unobservable (no pane, a failed read or press). herdr
-// focuses the tab `pane get` names, best-effort, before its press.
-export function dialogAnswerPane(b: string, p: string, io: SpawnIo): number {
+// backend_dialog_answer_pane_orca's twin, one RAW pane (decoded): 0 one
+// named dialog answered with the key safe on it - agentWait reason
+// codex-update-prompt or codex-hooks-review-prompt, each taking 2 - 1
+// nothing pending, 2 a dialog it cannot name, 3 unobservable (no pane, a
+// failed read or press).
+export function dialogAnswerPane(p: string, io: SpawnIo): number {
   const top = io.stdin ?? "inherit";
   if (p === "") return 3;
-  if (b === "orca") {
-    const show = orcaJson(["terminal", "show", "--terminal", p], top);
-    if (show === null) return 3;
-    if (jqOver(["-e", ".result.terminal.agentWait != null"], show, "ignore", "ignore").status !== 0) return 1;
-    const reason = capturedText(jqOver(["-r", ".result.terminal.agentWait.reason // empty"], show, "pipe", "ignore").out);
-    if (reason !== "codex-update-prompt" && reason !== "codex-hooks-review-prompt") return 2;
-    return orcaJson(["terminal", "send", "--terminal", p, "--text", "2"], top) === null ? 3 : 0;
-  }
-  const ex = herdrCli(["agent", "explain", p, "--json"], "ignore", "pipe");
-  if (ex.status !== 0) return 3;
-  const out = capturedText(ex.out);
-  const state = capturedText(jqOver(["-r", ".state // empty"], out, "pipe", "ignore").out);
-  if (state === "") return 3;
-  if (state !== "blocked") return 1;
-  if (capturedText(jqOver(["-r", ".matched_rule.id // empty"], out, "pipe", "ignore").out) !== "startup_update") return 2;
-  const tab = capturedText(stage(["jq", "-r", ".result.pane.tab_id // empty"], herdrCli(["pane", "get", p], "ignore", "pipe").out, "pipe", "ignore").out);
-  if (tab !== "") herdrCli(["tab", "focus", argvOf(tab)], top, "ignore");
-  return herdrCli(["pane", "send-keys", p, "2"], top, "ignore").status === 0 ? 0 : 3;
+  const show = orcaJson(["terminal", "show", "--terminal", p], top);
+  if (show === null) return 3;
+  if (jqOver(["-e", ".result.terminal.agentWait != null"], show, "ignore", "ignore").status !== 0) return 1;
+  const reason = capturedText(jqOver(["-r", ".result.terminal.agentWait.reason // empty"], show, "pipe", "ignore").out);
+  if (reason !== "codex-update-prompt" && reason !== "codex-hooks-review-prompt") return 2;
+  return orcaJson(["terminal", "send", "--terminal", p, "--text", "2"], top) === null ? 3 : 0;
 }
 
 // backend_dialog_answer_pane's twin, routed per call over a raw pane id.
 export function backendDialogAnswerPane(pane: string, io: SpawnIo): Ended {
   const b = backendRoute(io.stderr);
-  return b === null ? { status: 1, exited: true } : { status: dialogAnswerPane(b, pane, io), exited: false };
+  return b === null ? { status: 1, exited: true } : { status: dialogAnswerPane(pane, io), exited: false };
 }
 
-// backend_agent_idle_pane_{herdr,orca}'s twin, one RAW pane (decoded): 0
-// idle. herdr: `pane get`'s agent_status is idle or done (jq's stderr the
-// caller's); orca: the TUI read idle (orcaAgentIdle). No pane, or a failed
-// read, is 1.
-export function agentIdlePane(b: string, p: string, io: SpawnIo): number {
+// backend_agent_idle_pane_orca's twin, one RAW pane (decoded): 0 idle (the
+// TUI read idle, orcaAgentIdle). No pane, or a failed read, is 1.
+export function agentIdlePane(p: string, io: SpawnIo): number {
   if (p === "") return 1;
-  if (b === "orca") return orcaAgentIdle(p, io.stdin ?? "inherit", io.stderr) ? 0 : 1;
-  const get = herdrCli(["pane", "get", p], "ignore", "pipe");
-  if (get.status !== 0) return 1;
-  const s = capturedText(jqOver(["-r", AGENT_STATUS_JQ], capturedText(get.out), "pipe", io.stderr).out);
-  return s === "idle" || s === "done" ? 0 : 1;
+  return orcaAgentIdle(p, io.stdin ?? "inherit", io.stderr) ? 0 : 1;
 }
 
 // backend_agent_idle's twin: the routed raw-pane reading for the pane the
 // task's handle names.
 export function backendAgentIdle(id: string, io: SpawnIo): Ended {
   const b = backendRoute(io.stderr);
-  return b === null ? { status: 1, exited: true } : { status: agentIdlePane(b, argvOf(paneField(id, 1, io.stderr === "inherit")), io), exited: false };
+  return b === null ? { status: 1, exited: true } : { status: agentIdlePane(argvOf(paneField(id, 1, io.stderr === "inherit")), io), exited: false };
 }
 
 // ac_startup_dialogs' twin, over the caller's three verbs - <answer> (a
@@ -4458,28 +3947,6 @@ export { orcaJson };
 // epoch, the arm and the pane capture until its last bash caller goes
 // (tests/ts/verify-twins.test.ts).
 
-
-// herdr_focus_pane's twin: the tab `pane get` names (both reads /dev/null
-// inside their `$( )`), focused; 1 when no tab answered, else the focus's
-// status.
-export function herdrFocusPane(p: string, top: "inherit" | "ignore"): number {
-  const tab = capturedText(stage(["jq", "-r", ".result.pane.tab_id // empty"], herdrCli(["pane", "get", p], "ignore", "pipe").out, "pipe", "ignore").out);
-  return tab === "" ? 1 : herdrCli(["tab", "focus", argvOf(tab)], top, "ignore").status;
-}
-
-// backend_harness_up_pane_herdr's twin, one RAW pane (decoded) - the HARNESS
-// CAME-UP PROBE: 0 a foreground process that is no shell, 1 every one a
-// shell, 2 no pane, a failed read or no process named.
-function harnessUpHerdr(p: string): number {
-  if (p === "") return 2;
-  const info = herdrCli(["pane", "process-info", "--pane", p], "ignore", "pipe");
-  if (info.status !== 0) return 2;
-  const names = capturedText(jqOver(["-r", ".result.process_info.foreground_processes[]? | (.argv0 // .name // empty)"], capturedText(info.out), "pipe", "ignore").out);
-  if (names === "") return 2;
-  // `read -r n` trimmed each line's IFS blanks.
-  return names.split("\n").every((n) => SHELLS.includes(commandName(n.replace(/^[ \t]+|[ \t]+$/g, "")))) ? 1 : 0;
-}
-
 // backend_harness_up_pane_orca's twin, one RAW pane (decoded): 1 a shell's
 // title; 0 orca's own harness identity or wait, a harness glyph or an idle
 // TUI; 2 anything else, a disconnected or unreadable terminal included.
@@ -4498,24 +3965,19 @@ function harnessUpOrca(h: string, stdin: "inherit" | "ignore", stderr: "inherit"
 export function backendHarnessUpPane(pane: string, io: SpawnIo): Ended {
   const b = backendRoute(io.stderr);
   if (b === null) return { status: 1, exited: true };
-  return { status: b === "herdr" ? harnessUpHerdr(pane) : harnessUpOrca(pane, io.stdin ?? "inherit", io.stderr), exited: false };
+  return { status: harnessUpOrca(pane, io.stdin ?? "inherit", io.stderr), exited: false };
 }
 
 // backend_send_key_pane's twin, routed per call over a raw pane id: no pane
-// 1; herdr focuses the tab `pane get` names (best-effort) and presses the
-// key, its status the press's; orca sends the key straight to the PTY, 0 or 1.
+// 1; sends the key straight to the PTY, 0 or 1.
 export function backendSendKeyPane(pane: string, key: string, io: SpawnIo): Ended {
   const b = backendRoute(io.stderr);
   if (b === null) return { status: 1, exited: true };
   if (pane === "") return { status: 1, exited: false };
   const top = io.stdin ?? "inherit";
-  if (b === "orca") {
-    const named = keyNamed(key);
-    const how = named === "enter" ? ["--enter"] : named === "escape" ? ["--text", "\x1b"] : named === "ctrl+c" ? ["--interrupt"] : ["--text", key];
-    return { status: orcaJson(["terminal", "send", "--terminal", pane, ...how], top) !== null ? 0 : 1, exited: false };
-  }
-  herdrFocusPane(pane, top);
-  return { status: herdrCli(["pane", "send-keys", pane, keyNamed(key) ?? key.replace(/\n+$/, "")], top, "ignore").status, exited: false };
+  const named = keyNamed(key);
+  const how = named === "enter" ? ["--enter"] : named === "escape" ? ["--text", "\x1b"] : named === "ctrl+c" ? ["--interrupt"] : ["--text", key];
+  return { status: orcaJson(["terminal", "send", "--terminal", pane, ...how], top) !== null ? 0 : 1, exited: false };
 }
 
 // backend_startup_dialogs_pane's twin: ac_startup_dialogs' sequence over the

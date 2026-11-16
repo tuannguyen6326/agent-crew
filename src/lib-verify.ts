@@ -6,14 +6,11 @@ import { isoEpoch } from "./pane-agent.ts";
 import { readFileSync, writeFileSync } from "node:fs";
 import type { Ended, SpawnIo, Stdio } from "./lib.ts";
 import {
-  AGENT_STATUS_JQ,
   backendCall,
   backendRoute,
   capturedText,
   chiefBusyHeld,
   chiefBusyPath,
-  herdrCli,
-  herdrFocusPane,
   isDir,
   isFile,
   iso,
@@ -29,7 +26,6 @@ import {
   sleepOne,
   spins,
   stage,
-  submitVerifiedPane,
   testInt,
 } from "./lib.ts";
 
@@ -152,27 +148,16 @@ export function harnessPaneArm(h: string): "session" | "crewmate" | null {
 
 // backend_capture_pane's twin, the read addressed by RAW pane id - a pane with
 // no state/.pane-<id> handle, a pane agent's or a verifier's: the route as
-// backendCall reads it (a refused name exits, 1), an empty <pane> 1, then the
-// driver's read - herdr `pane read <pane> --source recent --lines <n>` (n the
-// lines when testInt reads them at least 200, else 200; stdin /dev/null and
-// stderr dropped, as inside its `$( )`), failing 1, then `tail -n <lines>`
-// over that text and a LF; orca `terminal read --terminal <pane> --limit
-// <lines> --screen` through orcaJson, failing 1, then `jq -r
-// '.result.terminal.tail[]?'` over it. The status is tail's or jq's. <lines>
-// empty is 40.
+// backendCall reads it (a refused name exits, 1), an empty <pane> 1, then
+// orca `terminal read --terminal <pane> --limit <lines> --screen` through
+// orcaJson, failing 1, then `jq -r '.result.terminal.tail[]?'` over it. The
+// status is jq's. <lines> empty is 40.
 export function backendCapturePane(pane: string, lines: string, io: { stdin?: "inherit" | "ignore"; stdout: Stdio; stderr: "inherit" | "ignore" }): { status: number; exited: boolean; out: Buffer } {
   const b = backendRoute(io.stderr);
   if (b === null) return { status: 1, exited: true, out: Buffer.alloc(0) };
   const none = { status: 1, exited: false, out: Buffer.alloc(0) };
   if (pane === "") return none;
   const n = lines || "40";
-  if (b === "herdr") {
-    const want = testInt(n);
-    const read = herdrCli(["pane", "read", pane, "--source", "recent", "--lines", want !== null && want >= 200n ? n : "200"], "ignore", "pipe");
-    if (read.status !== 0) return none;
-    const t = stage(["tail", "-n", n], latBuf(`${capturedText(read.out)}\n`), io.stdout, io.stderr);
-    return { status: t.status, exited: false, out: t.out };
-  }
   const out = orcaJson(["terminal", "read", "--terminal", pane, "--limit", n, "--screen"], io.stdin ?? "inherit");
   if (out === null) return none;
   const t = jqOver(["-r", ".result.terminal.tail[]?"], out, io.stdout, io.stderr);
@@ -180,24 +165,15 @@ export function backendCapturePane(pane: string, lines: string, io: { stdin?: "i
 }
 
 // backend_send_line_pane's twin, routed per call over a raw pane id, silent:
-// no pane 1; herdr types <text>, settles and verifies one Enter, then focuses
-// and verifies one more, that retry's verdict the answer (0 accepted, 1
-// stranded, 2 unreadable); orca types it in chunks, settles and verifies the
-// Enter with <text> - a dialog-owned pane (3) answers 1 with no retry, any
-// other failure gets a terminal switch and one more verify whose verdict,
-// 3 included, is the answer.
+// no pane 1; types <text> in chunks, settles and verifies the Enter with
+// <text> - a dialog-owned pane (3) answers 1 with no retry, any other
+// failure gets a terminal switch and one more verify whose verdict, 3
+// included, is the answer.
 export function backendSendLinePane(pane: string, text: string, io: SpawnIo): Ended {
   const b = backendRoute(io.stderr);
   if (b === null) return { status: 1, exited: true };
   if (pane === "") return { status: 1, exited: false };
   const top = io.stdin ?? "inherit";
-  if (b === "herdr") {
-    herdrCli(["pane", "send-text", pane, text], top, "ignore");
-    settle(io.stderr);
-    if (submitVerifiedPane(pane, top, io.stderr) === 0) return { status: 0, exited: false };
-    herdrFocusPane(pane, top);
-    return { status: submitVerifiedPane(pane, top, io.stderr), exited: false };
-  }
   orcaType(pane, text, top, io.stderr);
   settle(io.stderr);
   const rc = orcaSubmitVerified(pane, text, top, io.stderr);
@@ -208,21 +184,14 @@ export function backendSendLinePane(pane: string, text: string, io: SpawnIo): En
 }
 
 // backend_agent_status_pane's twin, routed per call over a raw pane id: the
-// word and a LF, status 0. herdr: `pane get`'s agent_status (jq's stderr
-// dropped), `unknown` for no pane, a failed read or no status; orca: blocked
-// for a pending wait, unknown for no pane, an unreadable or disconnected
-// terminal, idle when the TUI reads idle (orcaAgentIdle), working for a
-// spinner title, else unknown.
+// word and a LF, status 0 - blocked for a pending wait, unknown for no pane,
+// an unreadable or disconnected terminal, idle when the TUI reads idle
+// (orcaAgentIdle), working for a spinner title, else unknown.
 export function backendAgentStatusPane(pane: string, io: SpawnIo): { status: number; exited: boolean; out: Buffer } {
   const b = backendRoute(io.stderr);
   if (b === null) return { status: 1, exited: true, out: Buffer.alloc(0) };
   const say = (w: string): { status: number; exited: boolean; out: Buffer } => ({ status: 0, exited: false, out: latBuf(`${w}\n`) });
   if (pane === "") return say("unknown");
-  if (b === "herdr") {
-    const get = herdrCli(["pane", "get", pane], "ignore", "pipe");
-    if (get.status !== 0) return say("unknown");
-    return say(capturedText(jqOver(["-r", AGENT_STATUS_JQ], capturedText(get.out), "pipe", "ignore").out) || "unknown");
-  }
   const top = io.stdin ?? "inherit";
   const show = orcaJson(["terminal", "show", "--terminal", pane], top);
   if (show === null) return say("unknown");
