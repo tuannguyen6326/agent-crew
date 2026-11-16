@@ -191,9 +191,13 @@ const put = (s: string, rel: string, body: string, mode = 0o644): void => {
   chmodSync(join(s, rel), mode);
 };
 
+// ac_backend_route resolves ac_backend's full ladder, so a row with no
+// override would silently resolve the no-rung default (orca) rather than
+// exercise herdr: every "herdr:" base case pins it.
+const HERDR_ = { AC_BACKEND: "herdr" };
 // The bare raw-pane calls: the status is the verb's own, a refused backend
 // name ends the caller before anything after it prints.
-const verb = (call: string, ts: string, args: string[]): Row => ({ bash: `${call} "$@"`, twin: `const r = ${ts}; if (r.exited) process.exit(r.status); return r.status;`, args });
+const verb = (call: string, ts: string, args: string[]): Row => ({ bash: `${call} "$@"`, twin: `const r = ${ts}; if (r.exited) process.exit(r.status); return r.status;`, args, env: HERDR_ });
 // The captured ones: `x="$(<call>)"; s=$?` - a refused name ends only the
 // substitution. ac-backend.sh refuses a bad name when it is sourced too, so a
 // row of either kind reaches the route's refusal only with the name set after
@@ -202,6 +206,7 @@ const capture = (call: string, ts: string, args: string[], redirect = ""): Row =
   bash: `x="$(${call} "$@"${redirect})"; s=$?; printf '[%s]' "$x"; (exit $s)`,
   twin: `const r = ${ts}; say("[" + (r.exited ? "" : cap(r.out)) + "]"); return r.exited ? 1 : r.status;`,
   args,
+  env: HERDR_,
 });
 const tmuxAtCall = (row: Row): Row => ({ ...row, bash: `export AC_BACKEND=tmux; ${row.bash}`, twin: `process.env.AC_BACKEND = "tmux"; ${row.twin}` });
 const IO = `{ stderr: "inherit" }`;
@@ -243,7 +248,9 @@ test("claudeTranscriptRoot answers ac_claude_transcript_root's ladder", () => {
 
 test("backendCapturePane reads a raw pane as the drivers did, inside a capture", () => {
   const cp = capture("backend_capture_pane", `L.backendCapturePane(A[0], A[1], { stdout: "pipe", stderr: "ignore" })`, ["p1", "2"], " 2>/dev/null");
-  same("herdr: the last lines", { ...cp, seed: (s) => put(s, "stub/pane-read.out", "a\nb\nc\n") });
+  // Proves the herdr pin actually bites: a dropped pin would still pass (both
+  // sides would agree on whatever backend they fell back to), just not here.
+  expect(same("herdr: the last lines", { ...cp, seed: (s) => put(s, "stub/pane-read.out", "a\nb\nc\n") }).o.log).toMatch(/^herdr /);
   same("herdr: 400 lines fetch 400", { ...cp, args: ["p1", "400"], seed: (s) => put(s, "stub/pane-read.out", "a\nb\n") });
   same("herdr: a read that fails", { ...cp, seed: (s) => put(s, "stub/pane-read.rc", "1\n") });
   same("herdr: no pane", { ...cp, args: ["", "40"] });
@@ -255,7 +262,7 @@ test("backendCapturePane reads a raw pane as the drivers did, inside a capture",
 
 test("backendHarnessUpPane probes a raw pane's came-up states as the drivers did", () => {
   const up = verb("backend_harness_up_pane", `L.backendHarnessUpPane(A[0], ${IO})`, ["p1"]);
-  same("herdr: a harness in the foreground", { ...up, seed: (s) => put(s, "stub/pane-process-info.out", FG("-zsh", "/usr/local/bin/codex")) });
+  expect(same("herdr: a harness in the foreground", { ...up, seed: (s) => put(s, "stub/pane-process-info.out", FG("-zsh", "/usr/local/bin/codex")) }).o.log).toMatch(/^herdr /);
   same("herdr: a shell alone", { ...up, seed: (s) => put(s, "stub/pane-process-info.out", FG("-zsh", "bash")) });
   same("herdr: no process named", { ...up, seed: (s) => put(s, "stub/pane-process-info.out", '{"result":{"process_info":{"foreground_processes":[]}}}\n') });
   same("herdr: the read fails", { ...up, seed: (s) => put(s, "stub/pane-process-info.rc", "1\n") });
@@ -274,7 +281,7 @@ test("backendHarnessUpPane probes a raw pane's came-up states as the drivers did
 
 test("backendSendKeyPane presses one key at a raw pane as the drivers did", () => {
   const key = verb("backend_send_key_pane", `L.backendSendKeyPane(A[0], A[1], ${IO})`, ["p1", "Enter"]);
-  same("herdr: Enter, the tab focused first", { ...key, seed: (s) => put(s, "stub/pane-get.out", PGET("idle")) });
+  expect(same("herdr: Enter, the tab focused first", { ...key, seed: (s) => put(s, "stub/pane-get.out", PGET("idle")) }).o.log).toMatch(/^herdr /);
   same("herdr: an unnamed key", { ...key, args: ["p1", "2"], seed: (s) => put(s, "stub/pane-get.out", PGET("idle")) });
   same("herdr: no tab to focus still presses", { ...key, args: ["p1", "Escape"], seed: (s) => put(s, "stub/pane-get.rc", "1\n") });
   same("herdr: the press fails", { ...key, seed: (s) => (put(s, "stub/pane-get.out", PGET("idle")), put(s, "stub/pane-send-keys.rc", "3\n")) });
@@ -287,7 +294,7 @@ test("backendSendKeyPane presses one key at a raw pane as the drivers did", () =
 
 test("backendSendLinePane types and verifies one line at a raw pane as the drivers did", () => {
   const line = verb("backend_send_line_pane", `L.backendSendLinePane(A[0], A[1], ${IO})`, ["p1", "hello there"]);
-  same("herdr: the render reacts", { ...line, seed: (s) => (put(s, "stub/pane-read.1.out", "a\n"), put(s, "stub/pane-read.out", "b\n")) });
+  expect(same("herdr: the render reacts", { ...line, seed: (s) => (put(s, "stub/pane-read.1.out", "a\n"), put(s, "stub/pane-read.out", "b\n")) }).o.log).toMatch(/^herdr /);
   same("herdr: never reacts: focus and one retry, stranded", { ...line, seed: (s) => (put(s, "stub/pane-read.out", "a\n"), put(s, "stub/pane-get.out", PGET("idle"))) });
   same("herdr: the retry reacts", {
     ...line,
@@ -316,7 +323,7 @@ test("backendSendLinePane types and verifies one line at a raw pane as the drive
 test("backendAgentStatusPane prints a raw pane's status word as the drivers did, inside a capture", () => {
   const st = capture("backend_agent_status_pane", `L.backendAgentStatusPane(A[0], ${IO})`, ["p1"]);
   for (const v of ["idle", "working", "blocked", "done", ""]) same(`herdr: '${v}'`, { ...st, seed: (s) => put(s, "stub/pane-get.out", PGET(v)) });
-  same("herdr: an answer that is no JSON", { ...st, seed: (s) => put(s, "stub/pane-get.out", "oops\n") });
+  expect(same("herdr: an answer that is no JSON", { ...st, seed: (s) => put(s, "stub/pane-get.out", "oops\n") }).o.log).toMatch(/^herdr /);
   same("herdr: the read fails", { ...st, seed: (s) => put(s, "stub/pane-get.rc", "1\n") });
   same("herdr: no pane", { ...st, args: [""] });
   const show = (t: string) => (s: string): void => put(s, "stub/terminal-show.out", lat(OSHOW(t)));
@@ -332,11 +339,13 @@ test("backendAgentStatusPane prints a raw pane's status word as the drivers did,
 }, 180000);
 
 test("backendStartupDialogsPane runs ac_startup_dialogs over the raw-pane verbs, no errexit", () => {
-  const sd: Row = { bash: `backend_startup_dialogs_pane "$1" "$2"`, twin: `const r = L.backendStartupDialogsPane(A[0], A[1], ${IO}); if (r.exited) process.exit(r.status); return r.status;`, args: ["p1", "codex"] };
-  same("herdr: named, unnamed, then up", {
-    ...sd,
-    seed: (s) => (put(s, "stub/pane-process-info.out", FG("codex")), put(s, "stub/agent-explain.1.out", BLK("startup_update")), put(s, "stub/agent-explain.2.out", BLK("trust")), put(s, "stub/agent-explain.3.out", '{"state":"idle"}\n'), put(s, "stub/pane-get.out", PGET("idle"))),
-  });
+  const sd: Row = { bash: `backend_startup_dialogs_pane "$1" "$2"`, twin: `const r = L.backendStartupDialogsPane(A[0], A[1], ${IO}); if (r.exited) process.exit(r.status); return r.status;`, args: ["p1", "codex"], env: HERDR_ };
+  expect(
+    same("herdr: named, unnamed, then up", {
+      ...sd,
+      seed: (s) => (put(s, "stub/pane-process-info.out", FG("codex")), put(s, "stub/agent-explain.1.out", BLK("startup_update")), put(s, "stub/agent-explain.2.out", BLK("trust")), put(s, "stub/agent-explain.3.out", '{"state":"idle"}\n'), put(s, "stub/pane-get.out", PGET("idle"))),
+    }).o.log,
+  ).toMatch(/^herdr /);
   same("herdr: an unnamed dialog twice: the key once", { ...sd, seed: (s) => put(s, "stub/agent-explain.out", BLK("trust")) });
   same("herdr: claude has no key", { ...sd, args: ["p1", "claude"], seed: (s) => put(s, "stub/agent-explain.out", BLK("trust")) });
   same("herdr: unobservable: the key, once, and out", sd);
