@@ -30,7 +30,7 @@
 // - TEXT delivery is VERIFIED (contract: ac-backend.sh delivery verification):
 //   a submit never acknowledged exits non-zero naming WHICH failure it was -
 //   text STRANDED in the composer is resubmitted, a pane that could not be
-//   READ is peeked at first. A claude composer on herdr is proven BEFORE the
+//   READ is peeked at first. A claude composer is proven BEFORE the
 //   Enter: one showing only part of the message (a long send lands as its
 //   tail), holding a draft, or not on screen is REFUSED with nothing submitted
 //   - send a short pointer to a file instead; --force types without the proof.
@@ -80,23 +80,22 @@
 //  6. AC_BACKEND is set, and so exported to every child, to the meta's last
 //     backend= (cut at a NUL), orca when none; an unreadable meta prints
 //     `WARN: cannot read meta file <meta>` and reads absent, so orca (W1).
-//     An explicit backend= unknown to the shared reader (herdr included) is
-//     the same named refusal as step 1, before any pane is ever touched.
+//     An explicit backend= unknown to the shared reader is the same named
+//     refusal as step 1, before any pane is ever touched.
 //  7. Liveness: backendCall("window_alive") (src/lib.ts, the twin of the
 //     bin/ac-backend.sh drivers) at the original's top level. A route that
 //     refuses the name (a meta's backend=tmux) is its ERROR line, exit 1.
 //     0 goes on; 1 is `ERROR: window gone for <id>`; anything else is
 //     `ERROR: the BACKEND could not be read for <id> - nothing was delivered,
 //     and the pane's liveness is UNKNOWN (it may well be alive); check the
-//     backend itself (herdr status server), then send again` (contract:
+//     backend itself, then send again` (contract:
 //     ac-backend.sh WINDOW LIVENESS - an unreadable backend is no dead pane).
 //     It runs before the arguments past --force are read: `--key` alone on an
 //     unreadable backend is that line.
 //  8. --key: an empty or absent <key> is `ERROR: missing key name`;
-//     backendCall("send_key") as the original ran it, bare under errexit - herdr
-//     focuses the tab, and a focus that fails ends the run SILENTLY with its
-//     status before any key (V5), as does a send-keys that fails; orca sends
-//     one key, 1 on a failure. Then step 15 with `delivered (unverified) to`.
+//     backendCall("send_key") as the original ran it, bare under errexit -
+//     orca sends one key, 1 on a failure. Then step 15 with `delivered
+//     (unverified) to`.
 //  9. TEXT: an empty or absent <text> is `ERROR: refusing to send an empty
 //     message`. Without --force: backendCall("agent_blocked") answering 0
 //     (status !== 0 is "not blocked" - orca's is jq -e's own status; a
@@ -159,16 +158,15 @@
 //     records no typed turn, so its arrival has nothing to compare, and it
 //     answers no captain-wait.
 // 13. backendCall("send_line") with AC_SEND_UNPROVEN set to `1` under --force,
-//     else `0`, for that one call and restored after - an exported 1 never
-//     skips the proof (only herdr reads it; orca --force skips only the
-//     refusals above). A route refusal is its line, exit 1 (V12); 0 goes on;
+//     else `0`, for that one call and restored after - orca's driver does not
+//     read it, so --force skips only the refusals above, never the arrival
+//     proof itself. A route refusal is its line, exit 1 (V12); 0 goes on;
 //     2 is `ERROR: delivery UNVERIFIED for <id> - the pane could not be read,
-//     so the submit was neither confirmed nor refuted (see stderr above)`; 3
-//     (herdr only) is `ERROR: delivery REFUSED for <id> - nothing was
-//     submitted (see stderr above)`; anything else - orca's DIALOG verdict
-//     included - is `ERROR: delivery NOT confirmed for <id> - the text likely
-//     sits stranded in the composer (see stderr above)`; the driver's
-//     `ac-backend: ...` line precedes each.
+//     so the submit was neither confirmed nor refuted (see stderr above)`;
+//     anything else - orca's own DIALOG verdict included - is `ERROR:
+//     delivery NOT confirmed for <id> - the text likely sits stranded in the
+//     composer (see stderr above)`; the driver's `ac-backend: ...` line
+//     precedes each.
 // 14. ARRIVAL: the meta's harness= (cut at a NUL) read; an unreadable meta
 //     WARNs and ends the run with 1 - the text has landed, nothing is
 //     recorded (W1). harness=claude and no slash command: arrivalWait(the
@@ -198,20 +196,20 @@
 //     landed, before the stamp below (W5).
 // 15. Unless a slash command: backendCall("clear_wait") with its stderr
 //     dropped - a delivered steer, text or key, IS the answer a captain-wait
-//     stamped pane was parked on, and herdr re-adopts a released pane only on
-//     the state TRANSITION this steer supplies (contract: ac-backend.sh
-//     CAPTAIN-WAIT STAMP). The same non-slash steer also removes
+//     stamped pane was parked on, and removing the stamp FILE is the whole
+//     release: it is the contract's sole authority, not a backend-side state
+//     (contract: ac-backend.sh CAPTAIN-WAIT STAMP). The same non-slash steer
+//     also removes
 //     state/.ended-<id> (the ENDED BUSY LATCH, watch.ts header) AND
 //     state/.rewake-<id> (its sibling the REWAKE LATCH, same header): a
 //     reply answered and re-ended, or a gate round answered and re-printed,
 //     inside one poll is that same transition, and must not stay latched
 //     quiet waiting for a busy poll that may never come. Then stdout:
 //     `<verb> <target>`, <target> backendCall("target") as `$( )` read it -
-//     `herdr:pane-<pane>` or `orca:<handle>`.
+//     `orca:<handle>`.
 //
-// STDIN BY POSITION (backendCall's comment): the guard and every top-level
-// herdr call read the caller's stdin; nested reads read /dev/null; orca reads
-// the caller's at every call.
+// STDIN BY POSITION (backendCall's comment): the guard and every orca call
+// read the caller's stdin.
 //
 // EXIT: 0 delivered; 1 for every refusal and a route refusal; send_key's own
 // status on the key path; awk's for a deputy lookup that failed; date's for a
@@ -351,7 +349,7 @@ process.env.AC_BACKEND = Buffer.from(cutNul(taskBackend(id)), "latin1").toString
 const alive = call("window_alive", [id]);
 if (alive === 1) die(`window gone for ${id}`);
 if (alive !== 0)
-  die(`the BACKEND could not be read for ${id} - nothing was delivered, and the pane's liveness is UNKNOWN (it may well be alive); check the backend itself (herdr status server), then send again`);
+  die(`the BACKEND could not be read for ${id} - nothing was delivered, and the pane's liveness is UNKNOWN (it may well be alive); check the backend itself, then send again`);
 
 let verb: string;
 let slash = false;

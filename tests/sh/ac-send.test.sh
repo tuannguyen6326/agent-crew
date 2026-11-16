@@ -576,7 +576,7 @@ SUSAGE="ERROR: usage: ac-send.sh <id> [--force] '<text>' | --key <key>"
 SNOHOME='ERROR: AC_HOME is not set - set AC_HOME=<fleet home> (the directory holding state/ data/ records/ config/ projects/); the distro checkout is not one'
 SBAD="ERROR: unsupported backend 'tmux' (valid backend: orca)"
 SSOLO='ERROR: a solo session (AC_SOLO=1) never steers a pane - the crew belongs to the chief session; hand it the order with bin/ac-remote.sh order (solo-session skill)'
-SUNREAD="the BACKEND could not be read for c1 - nothing was delivered, and the pane's liveness is UNKNOWN (it may well be alive); check the backend itself (herdr status server), then send again"
+SUNREAD="the BACKEND could not be read for c1 - nothing was delivered, and the pane's liveness is UNKNOWN (it may well be alive); check the backend itself, then send again"
 SDEL='delivered (arrival unverified) to orca:pC1'
 SKEY='delivered (unverified) to orca:pC1'
 SWARN1='warning: this steer carries a bare marker verb ('
@@ -830,7 +830,7 @@ touch "$H/orca/terminals/term1.exited"
 srun o1 hi; assert_eq "$SN_RC:$(serr)" "1:ERROR: window gone for o1" "10: an exited terminal is gone"
 rm -f "$H/orca/terminals/term1.exited"
 touch "$H/orca/.unreachable"
-srun o1 hi; assert_eq "$SN_RC:$(serr)" "1:ERROR: the BACKEND could not be read for o1 - nothing was delivered, and the pane's liveness is UNKNOWN (it may well be alive); check the backend itself (herdr status server), then send again" "10: an unreachable runtime"
+srun o1 hi; assert_eq "$SN_RC:$(serr)" "1:ERROR: the BACKEND could not be read for o1 - nothing was delivered, and the pane's liveness is UNKNOWN (it may well be alive); check the backend itself, then send again" "10: an unreachable runtime"
 rm -f "$H/orca/.unreachable"
 
 # 11. the guard: a stale beat with crew in flight prints WATCHER-DOWN ahead of

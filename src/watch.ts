@@ -36,7 +36,7 @@
 // could not be read, so the pane's liveness is UNKNOWN - never a death: no
 // failure is stamped, the pane keeps being polled, and one outage costs one wake
 // and one status line; contract: ac-backend.sh WINDOW LIVENESS), `ask:<id>` (agent blocked on an
-// interactive prompt - herdr's pane state or Orca's agentWait), `ended:<id>` (the ENDED-TURN LOUD
+// interactive prompt - Orca's agentWait), `ended:<id>` (the ENDED-TURN LOUD
 // WAKE below - a pane that finished its turn with no marker), `limited:<id>`
 // (USAGE LIMIT below - an ended turn stopped by the provider), `needs-login:<id>`
 // (its EXPIRED LOGIN sibling - a human must sign in again), `stale:<id>`
@@ -63,7 +63,7 @@
 // With --once it does a single bounded pass (Codex-style checkpoint), and with
 // --release <pid> it releases ONE named watcher and exits without arming.
 // A captain-wait marker (AC_DECISION_RE: needs-decision:/blocked: and the
-// delivery-await checks-passed:) also stamps the pane BLOCKED in the herdr UI until
+// delivery-await checks-passed:) also stamps the pane BLOCKED in the UI until
 // the answering ac-send, a later non-decision marker, or the STALE-STAMP
 // SUPERSESSION below clears it; a pane still parked on an already-seen
 // captain-wait marker with no stamp is reconciled silently each pass (busy and
@@ -430,7 +430,7 @@
 // kept reporting `blocked` in every view until a human steered it - and the
 // marker that parked it can be one the pane never meant (a chief's own steer
 // text, the write-side guard's case at ac-send.sh). Fixing it HERE, at the
-// source, makes every renderer and the herdr UI stamp correct at once with no
+// source, makes every renderer and the UI stamp correct at once with no
 // renderer change - ac-fleets.sh must stay probe-free, so it cannot decide this
 // itself. The EVIDENCE is disk + tail, both already in hand each poll: the pane
 // matches AC_BUSY_RE while this fleet's own stamp file (state/.captain-wait-<id>,
@@ -603,7 +603,7 @@
 // an implement crewmate raising a real chief decision as PROSE inside a long
 // summary, twice, looking exactly like a crewmate working). The discriminator
 // is the backend's own agent status, the same field the ask path already reads
-// (backend_agent_idle, herdr's idle|working|blocked|unknown - only `idle` is an
+// (backend_agent_idle, the idle|working|blocked|unknown enum - only `idle` is an
 // ended turn), so it costs one backend call per stale episode. An ended turn
 // exits `ended:<id>` instead of `stale:` and stamps the pane BLOCKED through the
 // advisory backend_mark_wait path the marker branch uses (a stamp failure never
@@ -930,23 +930,21 @@
 // < 300. BOTH TERMS CAN BLOW IN ONE ITERATION and the SUM is what the grace has
 // to hold - the beacon is published at the top of the loop, checkFleet and
 // checkRemote both run before the next one, and a pane pass that finds nothing
-// actionable falls straight through to the remote gate. The pane pass is bounded
-// by herdr_rpc_timeout (ac-backend.sh, 2s per RPC) times the RPCs a wedged pass
-// spends, which is what the pass costs when every pane has already latched its
-// outage: 2 per pane (window_alive's deliberate two-call ladder, and its
-// `continue` lands before capture), and 4 per meta of a SKIPPED family - the
-// coverage probe on the chief pane plus the crewmate pane's own - both counts
-// measured against a stub that answers nothing, not derived. It was 6 until
-// skipCoverageLive started REPORTING which half of the coverage test failed:
-// the caller's re-probe was asking the backend the same question about the same
-// chief pane a second time in one pass. So the inequality is
-// R x ceiling + 120 + 15 < 300, i.e. R < 82 timed-out RPCs at the 2s default:
-// the distro's own shape (room-parallel 5, a couple of panes a family) spends
-// ~50 and holds at 235s (50 x 2 + 120 + 15), and a fleet past that lowers
-// config/herdr-rpc-timeout rather than discovering the gap as a false
-// WATCHER-DOWN. Against the LIVE test stub the same dedup reads 5 -> 4 chief-
-// pane calls, because window_alive's ladder short-circuits at one call when
-// the pane answers; the two counts are the same fix priced on two backends.
+// actionable falls straight through to the remote gate. The orca driver carries
+// no per-call RPC ceiling of its own (ac-backend.sh HUNG RPC), so the pane pass
+// has no enforced bound either: a wedged orca call blocks the pass, and the
+// beacon with it, for exactly as long as that call takes - the same false
+// WATCHER-DOWN this section otherwise guards against. The call counts below
+// are what the pass costs on a FAST failure, when every pane has already
+// latched its outage: 2 per pane (window_alive's deliberate two-call ladder,
+// and its `continue` lands before capture), and 4 per meta of a SKIPPED family -
+// the coverage probe on the chief pane plus the crewmate pane's own - both
+// counts measured against a stub that answers nothing, not derived. It was 6
+// until skipCoverageLive started REPORTING which half of the coverage test
+// failed: the caller's re-probe was asking the backend the same question about
+// the same chief pane a second time in one pass. Against the LIVE test stub
+// the same dedup reads 5 -> 4 chief-pane calls, because window_alive's ladder
+// short-circuits at one call when the pane answers.
 // WHAT A KILL COSTS is a property of the TRANSPORT, not of this distro, so this
 // header claims only what it owns: the rids ac-remote.sh had already stashed AND
 // published keep their own wakes, and the ceiling costs those nothing. Everything
@@ -967,9 +965,10 @@
 // wakePublish twin (src/lib.ts) - against a ceiling of seconds, and what it replaces is a watcher wedged for
 // ever - but closing it belongs to ingest_stream's own commit ordering, not to
 // this bound.
-// SIZING THE KNOB: keep ceiling + the bounded pane pass + AC_POLL under
-// AC_GUARD_GRACE - the pane pass is a term in that sum, not the `~0` it once
-// was, and the arithmetic above spends it. Above the grace a
+// SIZING THE KNOB: keep ceiling + the pane pass + AC_POLL under AC_GUARD_GRACE -
+// the pane pass is a term in that sum, not the `~0` it once was, on the FAST-
+// failure counts above; it carries no ceiling of its own on a wedged call.
+// Above the grace a
 // wedged poll re-opens the very beacon gap the guard reads, and the chief is
 // blocked at its turn end to arm a watcher that is already running - the exact
 // false report this bound exists to kill. Deliberately NOT clamped: serving a
@@ -2351,7 +2350,7 @@ async function checkPane(meta: string): Promise<string | null> {
     if (!existsSync(st("unobservable"))) {
       touch(st("unobservable"));
       statusAppend(id, `unobservable: backend could not be read for ${target()} - NOT a death; the pane may well be alive (check the backend itself)`);
-      queueWake("unobservable", idB, "the backend could not be read - liveness unknown, no work assumed lost (check the backend: herdr status server)");
+      queueWake("unobservable", idB, "the backend could not be read - liveness unknown, no work assumed lost (check the backend itself)");
       return reasonLine(`unobservable:${idB}`);
     }
     return null;
@@ -2440,9 +2439,11 @@ async function checkPane(meta: string): Promise<string | null> {
       rmF(st("superseded"), st("rewake"));
       statusAppend(id, marker);
       // Only a PARKED pane is stamped - a stamp taken while busy is released
-      // with no state transition ahead of it, and herdr then holds no
-      // identity for the pane until its turn ends. Reconcile stamps it once
-      // the pane reads non-busy.
+      // with no state transition ahead of it, and clearing it leaves nothing
+      // stale behind: the wait-file IS the stamp's only authority
+      // (backend_mark_wait_orca, ac-backend-orca.sh), never a backend-side
+      // identity that would need unwinding separately. Reconcile stamps it
+      // once the pane reads non-busy.
       if (grepQ(DECISION_RE, marker)) {
         if (!busy) routed(backendCall("mark_wait", [id, u8(marker)], stdio));
       } else routed(backendCall("clear_wait", [id], stdio));
