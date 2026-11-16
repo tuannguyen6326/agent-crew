@@ -2037,13 +2037,13 @@ done
 err="$("$BIN/ac-teardown.sh" ow5-verify-codereview 2>&1)" || fail "an orca verifier tears down: $err"
 [ ! -d "$vwt" ] || fail "the orca verifier worktree is released"
 case "$err" in *"could not return verifier"*) fail "an orca verifier lease is no pool slot to return: $err" ;; esac
-# ...and decided by the VERIFIER's backend when a parent's teardown sweeps it:
-# a herdr-pinned task in this orca fleet still owns an orca verifier.
+# ...and decided by the VERIFIER's backend when a parent's teardown sweeps it,
+# never the parent task's own.
 vwt9="$(orca worktree create --repo "path:$repo" --name ow9-verify-codereview --json | jq -r '.result.worktree.path')"
 printf 'kind=ship\nbackend=orca\nproject=proj\nproject_dir=%s\n' "$repo" >"$AC_HOME/state/ow9.meta"
 printf 'kind=verify-codereview\nfamily=ow9\ncaller=ow9\nbackend=orca\nworktree=%s\nleases=%s\n' "$vwt9" "$vwt9" \
   >"$AC_HOME/state/ow9-verify-codereview.meta"
-err="$("$BIN/ac-teardown.sh" ow9 --force 2>&1)" || fail "a herdr-pinned task with an orca verifier tears down: $err"
+err="$("$BIN/ac-teardown.sh" ow9 --force 2>&1)" || fail "a task with an orca verifier tears down: $err"
 [ ! -d "$vwt9" ] || fail "the swept orca verifier is released by its own backend"
 case "$err" in *"could not return verifier"*) fail "the swept orca verifier must not reach the pool's return: $err" ;; esac
 

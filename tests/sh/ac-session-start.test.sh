@@ -3,7 +3,7 @@
 # other. ORDER IS LOAD-BEARING: the qa-infra suite runs FIRST, in the pristine
 # home helpers.sh exports; the crewdeputy suite runs SECOND and is insulated
 # because it drives the digest with AC_HOME pointed at a home it creates
-# itself. Swapped, the qa-infra suite would inherit a fake herdr on PATH and a
+# itself. Swapped, the qa-infra suite would inherit a fake orca on PATH and a
 # crewdeputies/ dir under $AC_HOME that it was never written against.
 #
 # ac-session-start.test.sh - the per-project qa-infra reap sweep (the last

@@ -91,7 +91,7 @@ refuse "ERROR: usage: ac-session.sh <id> [--talk]"
 
 # A worktree that exists, with a quote in its name: printed as spelled, no WARN.
 mkdir -p "$TMP/wt'q"
-printf "worktree=%s\nharness=claude\nbackend=herdr\nsession_id=00000000-0000-0000-0000-000000000005\n" "$TMP/wt'q" >"$AC_HOME/state/t5.meta"
+printf "worktree=%s\nharness=claude\nbackend=orca\nsession_id=00000000-0000-0000-0000-000000000005\n" "$TMP/wt'q" >"$AC_HOME/state/t5.meta"
 run t5
 assert_eq "$out" "$view
 cd '$TMP/wt'q' && claude --resume 00000000-0000-0000-0000-000000000005 --fork-session" "a quoted worktree is printed as spelled"
@@ -102,7 +102,7 @@ printf 'build\trunning\n' >"$TMP/wt'q/.crew/ship/current/steps.tsv"
 refuse "ERROR: REFUSED: t5 is mid-turn (validate:build:running) - two writers corrupt one session. Talk when it parks, or ac-follow.sh to watch now." t5 --talk
 rm -rf "$TMP/wt'q/.crew"
 # A self task's dead pane reads detached, which talk allows.
-printf 'worktree=%s\nharness=claude\nbackend=herdr\nkind=self\nsession_id=00000000-0000-0000-0000-000000000006\n' "$TMP/wt'q" >"$AC_HOME/state/t6.meta"
+printf 'worktree=%s\nharness=claude\nbackend=orca\nkind=self\nsession_id=00000000-0000-0000-0000-000000000006\n' "$TMP/wt'q" >"$AC_HOME/state/t6.meta"
 run t6 --talk
 assert_eq "$rc" "0" "talk on a detached self task is allowed"
 assert_eq "$out" "$talk
@@ -116,7 +116,7 @@ assert_eq "$err" "WARN: worktree /tmp/đường is gone; mkdir -p it to let --re
 # A worktree that EXISTS under a UTF-8 name draws no WARN, and a non-ASCII id
 # is looked up by its native spelling.
 mkdir -p "$TMP/wt-đã-có"
-printf 'worktree=%s\nharness=claude\nbackend=herdr\nsession_id=00000000-0000-0000-0000-000000000009\n' "$TMP/wt-đã-có" >"$AC_HOME/state/tđ9.meta"
+printf 'worktree=%s\nharness=claude\nbackend=orca\nsession_id=00000000-0000-0000-0000-000000000009\n' "$TMP/wt-đã-có" >"$AC_HOME/state/tđ9.meta"
 run tđ9 --talk
 assert_eq "$rc" "0" "a non-ASCII id resolves its meta"
 assert_eq "$out" "$talk

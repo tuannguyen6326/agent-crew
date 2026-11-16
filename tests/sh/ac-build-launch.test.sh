@@ -50,9 +50,9 @@ assert_eq "$(lib 'ac_build_launch claude "" "" r-9 s-123')" \
 # fleet's effort would otherwise be silently DROPPED and whatever the host's
 # ~/.codex/config.toml pins would decide the reasoning tier.
 # Every codex line also switches its startup update prompt off: codex 0.157
-# takes the keys typed at that prompt as its options while herdr reads it idle,
-# so a kickoff typed there lost its head up to the first `2` (Skip), and a `1`
-# would run `brew upgrade` (harness-facts.md, codex UPDATE PROMPT).
+# takes the keys typed at that prompt as its options, so a kickoff typed
+# before the prompt cleared lost its head up to the first `2` (Skip), and a
+# `1` would run `brew upgrade` (harness-facts.md, codex UPDATE PROMPT).
 assert_eq "$(lib 'ac_build_launch codex cmod high')" \
   "codex -c check_for_update_on_startup=false -m cmod -c model_reasoning_effort=high" \
   "codex gets -m plus the effort as a -c config override"

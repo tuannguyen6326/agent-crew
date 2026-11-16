@@ -23,9 +23,9 @@
 
 make_fake_orca
 make_home
-# ac-spawn.sh's own backend pin for a NEW task defaults a missing
-# config/backend to herdr (src/spawn.ts, independent of ac_backend()'s
-# orca default), so every promote below must find orca pinned explicitly.
+# ac-spawn.sh's own backend pin for a NEW task reads config/backend too
+# (src/spawn.ts, the same default as ac_backend()'s - orca when absent), so
+# pin it explicitly rather than lean on either default agreeing.
 printf 'orca\n' >"$AC_HOME/config/backend"
 
 chief() { printf 'kind=roomchief\nbackend=orca\n' >"$AC_HOME/state/$1-chief.meta"; }

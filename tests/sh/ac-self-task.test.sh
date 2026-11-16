@@ -554,15 +554,15 @@ rm -rf "$state/.wake-spool"
 # stdout and stderr (one transcript) and the world they leave: a home ($XW/home,
 # or the row's own name beside it) with config/ records/ data/ state/ and
 # projects/proj linking the repo, the repo $XW/proj made under one git identity
-# and one commit date, the container's .claude/CLAUDE.md, the fake herdr's and
-# fake orca's dirs ($XW/herdr, $XW/orca), HOME=$XW/hh, TMPDIR=$XW/tmp;
-# AC_SEND_SETTLE=0, AC_HERDR_RPC_TIMEOUT=10, brain-auto-sync off, unless a row
-# names others; cwd $XW/cwd unless a row names the home; stdin /dev/null;
-# LC_ALL=C unless a row names en_US.UTF-8; PATH stubs - date answering one
-# instant for every format (holding at a meta's spawned_at stamp where a row
-# says), sleep logging each call and returning at once (holding where a row
-# says), od answering /dev/urandom from a per-world counter (holding where a
-# row says) - ahead of the fake herdr and orca. The transcript and the world
+# and one commit date, the container's .claude/CLAUDE.md, the fake orca's own
+# dir ($XW/orca), HOME=$XW/hh, TMPDIR=$XW/tmp; AC_SEND_SETTLE=0, brain-auto-sync
+# off, unless a row names others; cwd $XW/cwd unless a row names the home;
+# stdin /dev/null; LC_ALL=C unless a row names en_US.UTF-8; PATH stubs - date
+# answering one instant for every format (holding at a meta's spawned_at
+# stamp where a row says), sleep logging each call and returning at once
+# (holding where a row says), od answering /dev/urandom from a per-world
+# counter (holding where a row says) - ahead of the fake orca. The transcript
+# and the world
 # read the bin root ROOT and a temp pid PID; the world is every path under $XW
 # but hh/, the brain's own files and every repo's .git dir with mode and bytes
 # (a link: its target), and the repo's refs, worktrees and info/exclude.
@@ -619,7 +619,7 @@ XHN=home
 xworld() {  # xworld - a fresh world: the home $XW/$XHN, the repo $XW/proj (one commit on main) linked as projects/proj, the container .claude, both fakes' dirs
   rm -rf "$XW"
   mkdir -p "$XW/$XHN/state" "$XW/$XHN/data" "$XW/$XHN/records" "$XW/$XHN/config" "$XW/$XHN/projects" \
-    "$XW/tmp" "$XW/stub" "$XW/hh" "$XW/cwd" "$XW/herdr/panes" "$XW/herdr/tabs" "$XW/orca/terminals" "$XW/.claude"
+    "$XW/tmp" "$XW/stub" "$XW/hh" "$XW/cwd" "$XW/orca/terminals" "$XW/.claude"
   printf 'off\n' >"$XW/$XHN/config/wedge-alarm"
   printf 'off\n' >"$XW/$XHN/config/brain-auto-sync"
   # self-task.ts is orca-only, so every row's world defaults to orca - xorca
@@ -639,8 +639,8 @@ xe() {  # xe - the call environment into XE: the stubs ahead of the fakes and th
   XE=(env -u AC_HOME -u AC_FLEET_STATE -u AC_SCOPE -u AC_SOLO -u AC_CHIEF_SOLO -u AC_FLEET_SCOPE -u AC_CREW_ID -u AC_DOMAIN
     -u AC_BACKEND -u AC_HERDR_SESSION -u AC_WINDOW_FAMILY -u AC_SEND_UNPROVEN -u AC_MAX_TREES -u AC_PORT_BASE
     -u AC_CREW_SKILLS -u AC_PROMPT_RECALL_LIMIT -u AC_BRAIN_SYNC_IV -u CDPATH
-    "LC_ALL=$XLC" "PATH=$path" "HOME=$XW/hh" "TMPDIR=$XW/tmp" "XSTUB=$XW/stub" "FAKE_HERDR=$XW/herdr" "FAKE_ORCA=$XW/orca"
-    "AC_SEND_SETTLE=0" "AC_HERDR_RPC_TIMEOUT=10")
+    "LC_ALL=$XLC" "PATH=$path" "HOME=$XW/hh" "TMPDIR=$XW/tmp" "XSTUB=$XW/stub" "FAKE_ORCA=$XW/orca"
+    "AC_SEND_SETTLE=0")
   [ -z "$XHOME" ] || XE+=("AC_HOME=$XW/$XHN")
   for x in ${XENV[@]+"${XENV[@]}"}; do XE+=("$x"); done
 }
@@ -723,7 +723,7 @@ xwithout() {  # xwithout <tool> - the stubs and PATH with every dir holding <too
   done
   printf '%s\n' "$out"
 }
-xself() { xworld; xput home/state/s1.meta 'kind=self\nbackend=herdr\nproject=proj\n'; }   # a world holding a self task's meta
+xself() { xworld; xput home/state/s1.meta 'kind=self\nbackend=orca\nproject=proj\n'; }   # a world holding a self task's meta
 
 # -- 1: before the verb ------------------------------------------------------------
 x1a() {
@@ -755,7 +755,7 @@ xhas $'== log é x\nrc=1\n-- out\n-- err\nERROR: id must be [a-z0-9-]: é'
 xhas $'== start s1 proj --mode bogus\nrc=1\n-- out\n-- err\nERROR: invalid --mode: bogus'
 
 # -- 2: log ---------------------------------------------------------------------------
-xlogs() { xself; xput home/state/sk.meta 'kind=ship\nbackend=herdr\n'; xput home/state/sn.meta 'backend=herdr\n'; }
+xlogs() { xself; xput home/state/sk.meta 'kind=ship\nbackend=orca\n'; xput home/state/sn.meta 'backend=orca\n'; }
 x2a() { xc log nometa x; xc log sk 'working: x'; xc log sn 'working: x'; xc log s1 'working: edited a file' extra args; }
 xgo xlogs x2a
 xhas $'== log nometa x\nrc=1\n-- out\n-- err\nERROR: no self task for nometa (start it first)'
@@ -800,7 +800,7 @@ xwlacks '== home/state/s5.meta '
 # -- 4: the branch collision --------------------------------------------------------------
 xcollide() {
   xworld; git -C "$XW/proj" branch crew/s3; git -C "$XW/proj" branch crew/fam; git -C "$XW/proj" branch crew/s4
-  mkdir -p "$XW/home/data/fam/ship"; xput home/state/s4.meta 'kind=self\nbackend=herdr\n'
+  mkdir -p "$XW/home/data/fam/ship"; xput home/state/s4.meta 'kind=self\nbackend=orca\n'
 }
 x4a() { xc start s3 proj; xc start fam-ship proj; xc start s4-r2 proj; }
 xgo xcollide x4a

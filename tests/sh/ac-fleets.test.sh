@@ -423,7 +423,7 @@ assert_contains "$out_fp" "1 pending, 0 handback" "pending-only room with HANDBA
 # the byte-identity claim below is about the class and not about the clock.
 strip_beat() { sed 's/beat [0-9]*s/beat Ns/g'; }
 text_before="$(fleets "$container" | strip_beat)"
-printf 'kind=verify-codereview\nproject=agent-crew\nbackend=herdr\ncaller=flow-implement\nfamily=flow\nref=abcdef1234567890\nworktree=/tmp/verify-tree\nleases=/tmp/verify-tree\n' >"$alpha/state/ac-fleets-review.meta"
+printf 'kind=verify-codereview\nproject=agent-crew\nbackend=orca\ncaller=flow-implement\nfamily=flow\nref=abcdef1234567890\nworktree=/tmp/verify-tree\nleases=/tmp/verify-tree\n' >"$alpha/state/ac-fleets-review.meta"
 printf '%s reviewing the diff\n' "$(iso)" >"$alpha/state/ac-fleets-review.status"
 
 vjson="$(fleets --json "$container")"
@@ -502,9 +502,9 @@ zcalls="$(wc -c <"$jqcount" | tr -d ' ')"
 sc="$TMP/self-container"
 mkdir -p "$sc/selfhome/state" "$sc/selfhome/data" "$sc/selfhome/config"
 printf 'TN\n' >"$sc/selfhome/config/captain"
-printf 'kind=self\nproject=agent-crew\nmode=local-only\nwindow=w1\nbackend=herdr\n' >"$sc/selfhome/state/slice-one.meta"
+printf 'kind=self\nproject=agent-crew\nmode=local-only\nwindow=w1\nbackend=orca\n' >"$sc/selfhome/state/slice-one.meta"
 printf '%s editing\n' "$(iso)" >"$sc/selfhome/state/slice-one.status"
-printf 'kind=self\nproject=agent-crew\nmode=local-only\nwindow=w2\nbackend=herdr\n' >"$sc/selfhome/state/slice-two.meta"
+printf 'kind=self\nproject=agent-crew\nmode=local-only\nwindow=w2\nbackend=orca\n' >"$sc/selfhome/state/slice-two.meta"
 
 out_self="$(fleets "$sc")"
 assert_contains "$out_self" "crew    : 2 in flight" "a self task stays in ACCOUNTING (crew count lists it)"
@@ -517,7 +517,7 @@ assert_eq "$(jq -r '.totals.watchers_down' <<<"$sj")" "0"   "--json watchers_dow
 
 # the control, so the qualifier is not simply always on: one real crewmate
 # beside the self tasks and the same down watcher IS a coverage gap.
-printf 'kind=ship\nproject=agent-crew\nbackend=herdr\n' >"$sc/selfhome/state/real-crew.meta"
+printf 'kind=ship\nproject=agent-crew\nbackend=orca\n' >"$sc/selfhome/state/real-crew.meta"
 out_mixed="$(fleets "$sc")"
 case "$out_mixed" in *"crew in flight ("*|*"no crew in flight"*) fail "a real crewmate beside self tasks must not read as benign" ;; esac
 mj="$(fleets --json "$sc")"
