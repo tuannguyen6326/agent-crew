@@ -19,7 +19,7 @@ seed_reality() {
   printf '%s\n' "$root" >"$AC_HOME/state/.ac-root"
   printf 'direct\n' >"$AC_HOME/config/flow"
   printf 'always\n' >"$AC_HOME/config/promote"
-  printf 'herdr\n' >"$AC_HOME/config/backend"
+  printf 'orca\n' >"$AC_HOME/config/backend"
   cat >"$AC_HOME/records/standing-jobs.md" <<'EOF'
 # Standing jobs (fixture)
 
@@ -152,7 +152,7 @@ rm -f "$AC_HOME/config/backend"
 drift_run
 assert_eq "$rc" "1" "a declared knob with no file exits 1"
 assert_contains "$out" "DRIFT: config/backend" "the vanished knob is named"
-printf 'herdr\n' >"$AC_HOME/config/backend"
+printf 'orca\n' >"$AC_HOME/config/backend"
 
 # --- 10. config: a knob declared ABSENT that has grown a file ---------------
 # `state: default` is a positive declaration ("this fleet takes the reader's
