@@ -34,24 +34,20 @@ assert_contains "$out" "ping: pong" "bell channel"
 
 # --- the CLI contract, byte for byte ------------------------------------------
 # One side root $NH with a home at $NH/home; argv and env values spell it HOME.
-# herdr and osascript stubs log their argv to $NH/stub.log and exit per
-# HERDR_RC / OSA_RC; a row's PATH is those stubs, a stub dir without herdr, or
-# $NBIN:/bin holding only dirname, head and bun.
+# An osascript stub logs its argv to $NH/stub.log and exits per OSA_RC; a
+# row's PATH is that stub, or $NBIN:/bin holding only dirname, head and bun.
 NH="$TMP/nside"
-NSTUB="$TMP/nstubs"; NOSA="$TMP/nstubs-osa"; NBIN="$TMP/nbin"
-mkdir -p "$NSTUB" "$NOSA" "$NBIN" "$NH/home/config"
-for nx in herdr osascript; do
-  cat >"$NSTUB/$nx" <<STUB
+NSTUB="$TMP/nstubs"; NBIN="$TMP/nbin"
+mkdir -p "$NSTUB" "$NBIN" "$NH/home/config"
+cat >"$NSTUB/osascript" <<STUB
 #!/bin/sh
-printf '%s' "$nx" >>"\$STUB_DIR/stub.log"
+printf '%s' "osascript" >>"\$STUB_DIR/stub.log"
 for a in "\$@"; do printf ' [%s]' "\$a" >>"\$STUB_DIR/stub.log"; done
 printf '\n' >>"\$STUB_DIR/stub.log"
 printf 'noise\n'; printf 'noise\n' >&2
-exit "\${$( [ "$nx" = herdr ] && printf HERDR_RC || printf OSA_RC ):-0}"
+exit "\${OSA_RC:-0}"
 STUB
-  chmod +x "$NSTUB/$nx"
-done
-cp "$NSTUB/osascript" "$NOSA/osascript"
+chmod +x "$NSTUB/osascript"
 for nx in dirname head; do ln -s "/usr/bin/$nx" "$NBIN/$nx"; done
 ln -s "$(command -v bun)" "$NBIN/bun"
 NPATH_BOTH="$NSTUB:$(dirname "$(command -v bun)"):/usr/bin:/bin"
@@ -83,11 +79,6 @@ nrun t a "" b "c d"; assert_eq "$(nerr)" "$(printf '\at: a  b c d')" "2: empty w
 nrun 'ti%s' $'l1\nl2'; assert_eq "$(nerr)" "$(printf '\ati%%s: l1\nl2')" "2: a % and a newline pass as bytes"
 nrun t "$(printf 'd\351sc')"
 assert_eq "$(od -An -tx1 "$TMP/n.err" | tr -d ' \n')" "07743a2064efbfbd73630a" "2: an argv byte that is not UTF-8 rings as U+FFFD"
-# 3. herdr: the exact argv, its output dropped, a failure rings.
-nalarm 'herdr\n'
-nrun t 'say "hi"'; assert_eq "$(nlog)" 'herdr [notification] [show] [t] [--body] [say "hi"] [--sound] [none] [--position] [top-right]' "3: herdr's argv"
-assert_eq "$(nerr)" "" "3: herdr's own output is dropped"
-NENV=(HERDR_RC=7); nrun t m; assert_eq "$(nerr)" "$(printf '\at: m')" "3: a failing herdr rings"; NENV=()
 # 4. osascript: only `"` escaped; a failure rings.
 nalarm 'osascript\n'
 nrun 'ti"tle' 'say "hi" \ back'
@@ -104,33 +95,31 @@ nalarm 'command:exit 9\n'; nrun x y; assert_eq "$(nerr)" "$(printf '\ax: y')" "6
 nalarm 'command:\n'; nrun x y; assert_eq "$(nerr)" "" "6: an empty command succeeds"
 nalarm 'command: echo hi; exit 2\nsecond line ignored\n'; nrun x y; assert_eq "$(nerr)" "$(printf '\ax: y')" "6: only the first line runs"
 nalarm '  command:exit 0  \r\n'; nrun x y; assert_eq "$(nerr)" "" "6: trimmed"
-# 7-8. auto, and every unknown value as auto: herdr when the CONFIG backend
-#      is herdr (the default) and herdr is on PATH, else osascript.
-for nv in 'auto\n' 'bogus-channel\n' 'OFF\n' '\357\273\277off\n'; do nalarm "$nv"; nrun t m; assert_contains "$(nlog)" "herdr [notification]" "8: '$nv' is auto"; done
+# 7-8. auto, and every unknown value as auto: osascript when it is on PATH,
+#      else the bell. config/backend is not consulted at all.
+for nv in 'auto\n' 'bogus-channel\n' 'OFF\n' '\357\273\277off\n'; do nalarm "$nv"; nrun t m; assert_contains "$(nlog)" "osascript [-e]" "8: '$nv' is auto"; done
 nalarm 'auto\n'
-printf 'herdr\n' >"$NH/home/config/backend"; nrun t m; assert_contains "$(nlog)" "herdr [notification]" "7: a herdr backend takes herdr"
-printf 'tmux\n' >"$NH/home/config/backend"; nrun t m; assert_contains "$(nlog)" "osascript [-e]" "7: a non-herdr backend takes osascript"
+printf 'herdr\n' >"$NH/home/config/backend"; nrun t m; assert_contains "$(nlog)" "osascript [-e]" "7: config/backend is not consulted"
 rm -f "$NH/home/config/backend"
-NENV=(AC_BACKEND=orca); nrun t m; assert_contains "$(nlog)" "herdr [notification]" "7: AC_BACKEND is not consulted"; NENV=()
-NENV=(HERDR_RC=1); nrun t m; assert_eq "$(nerr)" "$(printf '\at: m')" "7: a failing herdr rings"; NENV=()
-rm -f "$NH/home/config/wedge-alarm"; nrun t m; assert_contains "$(nlog)" "herdr [notification]" "8: no config file"
-mkdir -p "$NH/home/config/wedge-alarm"; nrun t m; assert_contains "$(nlog)" "herdr [notification]" "8: a directory"
+NENV=(AC_BACKEND=orca); nrun t m; assert_contains "$(nlog)" "osascript [-e]" "7: AC_BACKEND is not consulted"; NENV=()
+NENV=(OSA_RC=1); nrun t m; assert_eq "$(nerr)" "$(printf '\at: m')" "7: a failing osascript rings"; NENV=()
+rm -f "$NH/home/config/wedge-alarm"; nrun t m; assert_contains "$(nlog)" "osascript [-e]" "8: no config file"
+mkdir -p "$NH/home/config/wedge-alarm"; nrun t m; assert_contains "$(nlog)" "osascript [-e]" "8: a directory"
 rmdir "$NH/home/config/wedge-alarm"
 if [ "$(id -u)" != 0 ]; then
   nalarm 'bell\n'; chmod 000 "$NH/home/config/wedge-alarm"
-  nrun t m; assert_contains "$(nlog)" "herdr [notification]" "8: an unreadable channel is read as auto"
+  nrun t m; assert_contains "$(nlog)" "osascript [-e]" "8: an unreadable channel is read as auto"
   chmod 644 "$NH/home/config/wedge-alarm"
 fi
-# 9. auto down the ladder: no herdr on PATH, then neither binary.
+# 9. auto with no osascript on PATH: the bell.
 nalarm 'auto\n'
-NPATH="$NOSA:$(dirname "$(command -v bun)"):/usr/bin:/bin"; nrun t m; assert_contains "$(nlog)" "osascript [-e]" "9: no herdr on PATH"
-NPATH="$NBIN:/bin"; nrun t m; assert_eq "$(nerr)$(nlog)" "$(printf '\at: m')" "9: neither binary rings"
+NPATH="$NBIN:/bin"; nrun t m; assert_eq "$(nerr)$(nlog)" "$(printf '\at: m')" "9: no osascript rings"
 NPATH="$NPATH_BOTH"
 # 10. homeless reads auto; so does a home that cannot be entered, silently.
-NHOMELESS=1; nrun t m; assert_contains "$(nlog)" "herdr [notification]" "10: homeless is auto"; NHOMELESS=0
+NHOMELESS=1; nrun t m; assert_contains "$(nlog)" "osascript [-e]" "10: homeless is auto"; NHOMELESS=0
 NENV=(AC_HOME=HOME/nonexistent); nrun t m; NENV=()
 assert_eq "$(nerr)" "" "10: an unenterable home prints nothing"
-assert_contains "$(nlog)" "herdr [notification]" "10: ...and is auto"
+assert_contains "$(nlog)" "osascript [-e]" "10: ...and is auto"
 # 11. two lines: the first is the channel.
 nalarm 'bell\noff\n'; nrun t m; assert_eq "$(nerr)" "$(printf '\at: m')" "11: the first line"
 # 12. a closed stderr: the bell is lost and the exit is still 0 -

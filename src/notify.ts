@@ -17,21 +17,18 @@
 // (configReadSoft: `auto` with no home, no file or a home cd cannot enter; a
 // file that cannot be read is head(1)'s own line and the empty channel):
 //   off            nothing
-//   herdr          herdr notification show <title> --body <message> --sound none --position top-right
 //   osascript      osascript -e 'display notification "<message>" with title "<title>"'
 //                  (only `"` escaped, as `\"`; backslashes and newlines pass)
 //   bell           stderr: BEL, then `<title>: <message>` and a newline
 //   command:<cmd>  sh -c <cmd> (`sh` from PATH, as the bash ran it), with
 //                  AC_NOTIFY_TITLE / AC_NOTIFY_MESSAGE added to its environment
-//   anything else  auto: herdr when config/backend reads `herdr` (the default -
-//                  AC_BACKEND is not consulted) and herdr is on PATH; else
-//                  osascript when it is on PATH; else the bell
+//   anything else  auto: osascript when it is on PATH; else the bell
 // Every spawned channel inherits stdin, has its stdout and stderr dropped, and
 // a status other than 0 - or a binary that cannot start - rings the bell.
 //
 // argv and the environment arrive decoded, so a title or message byte that is
-// not UTF-8 reaches the bell, herdr, osascript and the hook as U+FFFD; an
-// AC_HOME that cannot be entered prints nothing; `herdr` and `osascript` are
+// not UTF-8 reaches the bell, osascript and the hook as U+FFFD; an
+// AC_HOME that cannot be entered prints nothing; `osascript` is
 // found by Bun.which, which skips a PATH file that is not executable. A PATH
 // without bun is the shim's `ERROR: required tool not found: bun`, exit 1 - the
 // one exit not 0, which no caller meets: the room calls notify() in-process.
@@ -54,14 +51,11 @@ export function notify(title: string, message: string, stderr: "inherit" | "igno
   const ring = (): void => {
     if (stderr === "inherit") writeSync(2, Buffer.from(`\x07${title}: ${message}\n`, "utf8"));
   };
-  const herdr = (): boolean => delivered(["herdr", "notification", "show", title, "--body", message, "--sound", "none", "--position", "top-right"]);
   const esc = (s: string): string => s.replace(/"/g, '\\"');
   const osascript = (): boolean => delivered(["osascript", "-e", `display notification "${esc(message)}" with title "${esc(title)}"`]);
   const channel = configReadSoft("wedge-alarm", "auto", stderr);
   if (channel === "off") return;
-  if (channel === "herdr") {
-    if (!herdr()) ring();
-  } else if (channel === "osascript") {
+  if (channel === "osascript") {
     if (!osascript()) ring();
   } else if (channel === "bell") ring();
   else if (channel.startsWith("command:")) {
@@ -74,8 +68,6 @@ export function notify(title: string, message: string, stderr: "inherit" | "igno
       else process.env[k] = v;
     }
     if (!ok) ring();
-  } else if (configReadSoft("backend", "herdr", stderr) === "herdr" && Bun.which("herdr")) {
-    if (!herdr()) ring();
   } else if (Bun.which("osascript")) {
     if (!osascript()) ring();
   } else ring();
