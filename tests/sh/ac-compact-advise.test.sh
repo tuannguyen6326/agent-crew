@@ -168,12 +168,7 @@ assert_contains "$(jq -r .systemMessage <<<"$out")" "/compact" "a corrupt mark r
 # 10. config/compact-auto=on: a session that owns a meta (a roomchief) gets
 #     /compact typed into its own pane once the pane is idle - detached, so
 #     the Stop hook never waits on it. Everything else keeps the hint only.
-# Fake orca backs every case here except 10d below: 10d's pane must read
-# `blocked` from a captain-wait stamp, a real herdr behavior (pane
-# report-agent/`.reported` masking, src/compact-advise.ts) that orca's own
-# agentIdlePane never reads - so 10d keeps fake herdr.
 make_fake_orca
-make_fake_herdr
 mk_chief() { # mk_chief <id> <session_id> <handle> <tab>
   printf 'backend=orca\nkind=roomchief\nsession_id=%s\n' "$2" >"$AC_HOME/state/$1.meta"
   printf '%s %s\n' "$3" "$4" >"$AC_HOME/state/.pane-$1"
@@ -245,25 +240,26 @@ rm -f "$AC_HOME/state/.compact-advise/s-14"
 
 # 10d. --auto <id>, the watcher's form for a crewmate (src/watch.ts COMPACT
 #      NOTE): at or above the minimum under compact-auto=on the line reads
-#      compact=auto and /compact is typed with NO idle wait - the watcher's
-#      ended: arm has already stamped the pane captain-wait, which herdr reads
-#      blocked for as long as the stamp stands. Anything short of that keeps
-#      the hint and sends nothing.
-printf 'backend=herdr\nkind=ship\nsession_id=s-20\n' >"$AC_HOME/state/cm-ship.meta"
-printf 'pC4 tC4\n' >"$AC_HOME/state/.pane-cm-ship"
-printf 'pC4\n' >"$FAKE_HERDR/tabs/tC4"
-: >"$FAKE_HERDR/panes/pC4.buf"
-printf 'blocked\n' >"$FAKE_HERDR/panes/pC4.status"
+#      compact=auto and /compact is typed with NO idle wait at all (send's
+#      `while (!now)` loop is skipped outright) - the stamp is irrelevant
+#      here either way. Anything short of that keeps the hint and sends
+#      nothing.
+# A WAITING sender (--send without --now) never reaching a captain-wait-
+# stamped pane was herdr-only: herdr's own agent_status read `blocked` for as
+# long as the stamp stood, while orca's idle check never consults the stamp
+# at all (backend_agent_idle_pane_orca reads only the render) - no orca
+# counterpart, not ported.
+printf 'backend=orca\nkind=ship\nsession_id=s-20\n' >"$AC_HOME/state/cm-ship.meta"
+printf 'termC4 tabC4\n' >"$AC_HOME/state/.pane-cm-ship"
+: >"$FAKE_ORCA/terminals/termC4.buf"
 : >"$AC_HOME/state/.captain-wait-cm-ship"
 resp 0.96 0.9
-AC_COMPACT_SEND_WAIT=0 "$ADV" --send cm-ship >>"$sendlog" 2>&1 || fail "--send must exit 0"
-assert_contains "$(tail -n 1 "$sendlog")" "cm-ship: not idle" "the waiting sender never reaches a stamped pane"
 out="$("$ADV" "$mid" --role crew --auto cm-ship 2>/dev/null)"
 assert_eq "$out" "compact=advise score=0.912 floor=0.775 usage=0.35" "under the auto minimum a crewmate keeps the hint"
 out="$("$ADV" "$tx" --role crew --auto cm-ship 2>/dev/null)"
 assert_eq "$out" "compact=auto score=0.912 floor=0.575 usage=0.75" "at the minimum the line says the fleet sends /compact itself"
 for _ in 1 2 3 4 5 6 7 8 9 10; do grep -q 'cm-ship: sent' "$sendlog" 2>/dev/null && break; sleep 0.5; done
-assert_contains "$(cat "$FAKE_HERDR/panes/pC4.buf")" "/compact" "the stamped crewmate pane receives /compact"
+assert_contains "$(cat "$FAKE_ORCA/terminals/termC4.buf")" "/compact" "the stamped crewmate pane receives /compact"
 rm -f "$AC_HOME/config/compact-auto"
 out="$("$ADV" "$tx" --role crew --auto cm-ship 2>/dev/null)"
 assert_eq "$out" "compact=advise score=0.912 floor=0.575 usage=0.75" "without compact-auto --auto is only the hint"
@@ -441,17 +437,18 @@ ca_silent "6: a transcript_path that is no file"
 
 # 7. AUTO: the knob is exactly `on`; the owning meta is the first in byte
 #    order whose line is exactly session_id=<id>; the detached sender's line
-#    lands in send.log (the fake herdr pane busy, the wait 0).
-make_fake_herdr
+#    lands in send.log (the fake orca pane busy, the wait 0).
+make_fake_orca
 printf 'session_id=s-9\r\n' >"$ch/state/aa-crlf.meta"
-printf 'backend=herdr\nkind=roomchief\nsession_id=s-9\n' >"$ch/state/zz-chief.meta"
-printf 'backend=herdr\nkind=roomchief\nsession_id=s-9\n' >"$ch/state/bb-chief.meta"
+printf 'backend=orca\nkind=roomchief\nsession_id=s-9\n' >"$ch/state/zz-chief.meta"
+printf 'backend=orca\nkind=roomchief\nsession_id=s-9\n' >"$ch/state/bb-chief.meta"
 for c in bb-chief zz-chief; do
-  printf 'pA tA\n' >"$ch/state/.pane-$c"
+  printf 'termA tabA\n' >"$ch/state/.pane-$c"
 done
-printf 'pA\n' >"$FAKE_HERDR/tabs/tA"
-printf 'working\n' >"$FAKE_HERDR/panes/pA.status"
-: >"$FAKE_HERDR/panes/pA.buf"
+# No .idle file: backend_agent_idle_pane_orca's tui-idle wait times out, which
+# with no spinner/codex title reads not-idle - the same "busy" case as herdr's
+# agent_status=working, with no fixture needed to assert it.
+: >"$FAKE_ORCA/terminals/termA.buf"
 ca_payload s-9
 for auto in off ON; do
   printf '%s\n' "$auto" >"$ch/config/compact-auto"
@@ -464,7 +461,7 @@ ca_run HOME AC_COMPACT_SEND_WAIT=0 -- --hook
 assert_contains "$(jq -r .systemMessage <<<"$ca_out")" "/compact is typed into bb-chief if its pane goes idle" "7: the first owning meta in byte order is named"
 for _ in $(seq 1 50); do [ -s "$ch.n/state/.compact-advise/send.log" ] && break; sleep 0.1; done
 assert_eq "$(cat "$ch.n/state/.compact-advise/send.log")" "2027-01-15T08:00:00Z compact-auto bb-chief: not idle - left to the hint" "7: the sender's give-up line"
-assert_eq "$(cat "$FAKE_HERDR/panes/pA.buf")" "" "7: a busy pane is never typed into"
+assert_eq "$(cat "$FAKE_ORCA/terminals/termA.buf")" "" "7: a busy pane is never typed into"
 rm -f "$ch/config/compact-auto"
 
 # 8. --send by hand with no id is silence.
