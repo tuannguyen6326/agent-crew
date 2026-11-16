@@ -353,16 +353,15 @@ assert_eq "$(cat "$TMP/watch.env.skip")" "" \
 # turn on every backend; with no pane on the meta or no herdr to type through
 # the nudge fails silently - the scoped exit-2 case above proves that
 # fail-open by running with neither.
-make_fake_herdr
-printf 'kind=roomchief\nwindow=crew:famA-chief\nbackend=herdr\n' >"$AC_HOME/state/famA-chief.meta"
-printf 'pFAC tFAC\n' >"$AC_HOME/state/.pane-famA-chief"
-printf 'pFAC\n' >"$FAKE_HERDR/tabs/tFAC"
-: >"$FAKE_HERDR/panes/pFAC.buf"
+make_fake_orca
+printf 'kind=roomchief\nwindow=crew:famA-chief\nbackend=orca\n' >"$AC_HOME/state/famA-chief.meta"
+printf 'termFAC tabFAC\n' >"$AC_HOME/state/.pane-famA-chief"
+: >"$FAKE_ORCA/terminals/termFAC.buf"
 stub_watch_env 'report:t9'
 rc=0
 ( cd "$AC_HOME" && printf '{}' | AC_SCOPE=famA "$hook" >/dev/null 2>&1 ) || rc=$?
 assert_eq "$rc" "2" "the nudging handback still exits 2"
-assert_contains "$(cat "$(fake_pane_buf famA-chief)")" "wake:" \
+assert_contains "$(cat "$(fake_orca_buf famA-chief)")" "wake:" \
   "the scoped handback types the wake into its own chief pane"
 
 # A demoted family drops off the set at the very next re-arm, because the set is
@@ -510,10 +509,14 @@ fi
 # ac-watch.sh scripted per row (logging each call and the arm env it saw) and
 # an ac-ready.sh wrapper of the live one, its src/ linked; a git-inited home at
 # $AN/home; a stub dir first on PATH (`date -u +%s` answering $AN/stub/clock
-# with the status in $AN/stub/clock.rc, the ISO stamp fixed, a herdr logging
-# every call and answering only send-text). The cwd is the home, stdin the Stop
-# payload, the env scrubbed of every knob the hook, the backend driver and the
-# stub read, LC_ALL=C. SIDE in a seeding text or an env word is the lab root.
+# with the status in $AN/stub/clock.rc, the ISO stamp fixed, a herdr AND an
+# orca each logging every call and answering only their own text-send verb -
+# the nudge (src/watch-autoarm.ts nudge()) reads AC_BACKEND from the SCOPED
+# CHIEF'S OWN meta, defaulting to herdr when that field is empty, never from
+# config/backend, so both stubs stay armed and a row picks its driver by what
+# it writes into the chief meta). The cwd is the home, stdin the Stop payload,
+# the env scrubbed of every knob the hook, the backend driver and the stub
+# read, LC_ALL=C. SIDE in a seeding text or an env word is the lab root.
 AN="$TMP/aa-n"
 aa_side() {  # aa_side <side root> <bin to copy> - the root, its home and its stubs
   local s="$1"
@@ -524,7 +527,8 @@ aa_side() {  # aa_side <side root> <bin to copy> - the root, its home and its st
   printf '#!/bin/sh\nexec "%s/ac-ready.sh" "$@"\n' "$BIN" >"$s/root/bin/ac-ready.sh"
   printf '#!/bin/sh\ncase "$*" in\n  *%%s*) cat "%s/stub/clock"; exit "$(cat "%s/stub/clock.rc")" ;;\n  *%%Y*) printf "2026-10-10T00:00:00Z\\n" ;;\n  *) exec /bin/date "$@" ;;\nesac\n' "$s" "$s" >"$s/stub/date"
   printf '#!/bin/sh\nprintf "herdr %%s\\n" "$*" >>"%s/stub/herdr.log"\ncase "$1 $2" in "pane send-text") exit 0 ;; esac\nexit 1\n' "$s" >"$s/stub/herdr"
-  chmod +x "$s/root/bin/ac-ready.sh" "$s/stub/date" "$s/stub/herdr"
+  printf '#!/bin/sh\nprintf "orca %%s\\n" "$*" >>"%s/stub/orca.log"\ncase "$1 $2" in "terminal send") printf "{\\"ok\\":true,\\"result\\":{}}\\n"; exit 0 ;; esac\nprintf "{\\"ok\\":false}\\n"; exit 1\n' "$s" >"$s/stub/orca"
+  chmod +x "$s/root/bin/ac-ready.sh" "$s/stub/date" "$s/stub/herdr" "$s/stub/orca"
   git -C "$s/home" init -q . 2>/dev/null
   git -C "$s/home" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init 2>/dev/null
 }
@@ -534,7 +538,7 @@ aa_each() {  # aa_each <shell text> - run <text>, SIDE spelled as the lab root
   bash -c "${1//SIDE/$AN}" || fail "aa_each: seeding failed: $1"
 }
 aa_fresh() {  # a fresh world: no metas, spools, lock, records, remote-poll; the clock at T, status 0
-  aa_each 'rm -rf SIDE/home/state SIDE/home/records SIDE/home/config SIDE/home/.ac-crewdeputy-home SIDE/calls SIDE/stub/herdr.log
+  aa_each 'rm -rf SIDE/home/state SIDE/home/records SIDE/home/config SIDE/home/.ac-crewdeputy-home SIDE/calls SIDE/stub/herdr.log SIDE/stub/orca.log
     mkdir -p SIDE/home/state SIDE/home/records SIDE/home/config
     printf "1700000000\n" >SIDE/stub/clock; printf 0 >SIDE/stub/clock.rc
     cp '"$BIN"'/ac-backend.sh '"$BIN"'/ac-backend-orca.sh SIDE/root/bin/'
@@ -553,9 +557,9 @@ aa_lines() {  # aa_lines <line...> - the stub prints the next line per call, the
   aa_stub "n=\$(wc -l <SIDE/calls | tr -d ' '); line=\"\$(sed -n \"\${n}p\" $TMP/aa.script)\"; [ -n \"\$line\" ] || line=\"\$(tail -n 1 $TMP/aa.script)\"; printf '%s\\n' \"\$line\"
 c=\"\$(cat SIDE/stub/clock)\"; case \"\$c\" in '' | *[!0-9]*) ;; *) printf '%s\\n' \"\$((c + 1000))\" >SIDE/stub/clock ;; esac"
 }
-aa_run() {  # aa_run [env words...] - one firing, the call and herdr logs fresh; sets AA_RC, $TMP/aa.n.out and $TMP/aa.n.err
+aa_run() {  # aa_run [env words...] - one firing, the call and backend logs fresh; sets AA_RC, $TMP/aa.n.out and $TMP/aa.n.err
   local s="$AN" x v
-  rm -f "$s/calls" "$s/stub/herdr.log"
+  rm -f "$s/calls" "$s/stub/herdr.log" "$s/stub/orca.log"
   local e=(LC_ALL=C "PATH=$s/stub:$PATH" "AC_HOME=$s/home" AC_SEND_SETTLE=0)
   for x in "$@"; do v="${x#*=}"; e+=("${x%%=*}=${v//SIDE/$s}"); done
   AA_RC=0
@@ -576,6 +580,7 @@ aa_go() {  # aa_go <want rc> [env words...] - one firing: 0 it stood aside or ha
 aa_err() { LC_ALL=C sed -e "s#$AN#ROOT#g" "$TMP/aa.n.err"; }
 aa_calls() { cat "$AN/calls" 2>/dev/null || true; }
 aa_sent() { sed -n '/send-text/p' "$AN/stub/herdr.log" 2>/dev/null || true; }
+aa_sent_orca() { sed -n '/--text/p' "$AN/stub/orca.log" 2>/dev/null || true; }
 aa_said() { assert_contains "$(aa_err)" "$1" "the hook's stderr ($1)"; }
 aa_armed() { assert_eq "$(aa_calls | wc -l | tr -d ' ')" "$1" "the watcher is armed $1 time(s)"; }
 aa_traced() { assert_eq "$( (cat "$AN/home/state/.stop-hooks.log" 2>/dev/null || true) | wc -l | tr -d ' ')" "$1" "the trace holds $1 line(s)"; }
@@ -793,7 +798,17 @@ aa_each "rm -f SIDE/home/state/$aa_fe-chief.meta SIDE/home/state/.pane-$aa_fe-ch
 aa_stub 'mkdir -p SIDE/home/state/.wake-spool.famA; printf "3\treport\tt9\tdone: x\n" >SIDE/home/state/.wake-spool.famA/9.1.000000; printf "heartbeat\n"'
 aa_go 2 AC_SCOPE=famA
 assert_contains "$(aa_sent)" "herdr pane send-text pFAC wake: queued wakes pending - run" "queued wakes are nudged too"
+# The same nudge, driven through orca when the scoped chief's OWN meta says so
+# (nudge() reads backend= off the chief's meta, never config/backend, falling
+# back to herdr only when that field is empty).
+aa_meta famA-chief 'kind=roomchief\nwindow=crew:famA-chief\nbackend=orca\n'
+aa_each 'printf "termFAC tabFAC\n" >SIDE/home/state/.pane-famA-chief'
 aa_lines 'report:t1'
+aa_go 2 AC_SCOPE=famA
+assert_contains "$(aa_sent_orca)" "terminal send --terminal termFAC --text wake: " "an orca-backed chief's handback is typed into its own pane too"
+# Restore the herdr-backed chief the remaining rows below build on.
+aa_meta famA-chief 'kind=roomchief\nwindow=crew:famA-chief\nbackend=herdr\n'
+aa_each 'printf "pFAC tFAC\n" >SIDE/home/state/.pane-famA-chief'
 aa_meta famA-chief 'kind=roomchief\nbackend=bogus\n'
 aa_go 2 AC_SCOPE=famA
 aa_each 'chmod 000 SIDE/home/state/famA-chief.meta'
