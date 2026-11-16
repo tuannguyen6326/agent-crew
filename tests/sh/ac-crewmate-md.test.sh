@@ -562,13 +562,13 @@ grep -qxF '/AGENTS.md' "$(excl_of "$law_wt")" \
 # claude file. ac-spawn.sh resolves the harness before it leases the worktree,
 # so the seed target is decided from the SAME value the launch line is built
 # from - one resolution, never two that can drift.
-make_fake_herdr
+make_fake_orca
 export AC_SPAWN_SETTLE=0
 # Every pane here clears the composer-ready observation (bin/ac-spawn.sh
 # kickoff_wait_input_ready) immediately - this suite is not testing that gate
 # (tests/sh/ac-spawn-kickoff-ready.test.sh owns it), it just needs its spawns to
 # complete without a real harness's boot delay.
-: >"$FAKE_HERDR/.pane-idle-by-default"
+printf '\342\234\263 fake\n' >"$FAKE_ORCA/.default-title"
 export AC_KICKOFF_READY_BUDGET=5
 printf '#!/usr/bin/env bash\nexit 0\n' >"$TMP/stubbin/codex"
 chmod +x "$TMP/stubbin/codex"

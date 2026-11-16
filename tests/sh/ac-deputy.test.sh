@@ -8,9 +8,9 @@
 # (bin/ac-session-start.sh), so a direct call would take the whole digest
 # down over one stale deputy. tests/sh/ac-deputy-registry.test.sh (which
 # otherwise exhaustively covers `list`/`validate`) only ever constructs
-# backend=herdr entries, so this branch is untested there.
+# backend=orca entries, so this branch is untested there.
 #
-# Part 2: a SUPPORTED backend (herdr) the fleet genuinely cannot read (rc=2,
+# Part 2: THE supported backend (orca) the fleet genuinely cannot read (rc=2,
 # or 127 from a driver that failed to load) is a DIFFERENT variable from
 # part 1's malformed meta, and must render its own UNOBSERVABLE state, never
 # silently collapse to DOWN (contract: ac-backend.sh WINDOW LIVENESS;
@@ -40,7 +40,6 @@ assert_contains "$out" "$(printf 'DOWN\tstale')" "an unsupported backend degrade
 # correct and untouched) from a SUPPORTED backend the fleet genuinely cannot
 # read (rc=2, or 127 from a driver that failed to load) - that second
 # variable must render as its own state, never silently as DOWN.
-make_fake_herdr
 make_fake_orca
 
 h2="$AC_HOME/crewdeputies/unread"
@@ -48,25 +47,25 @@ mkdir -p "$h2/state"
 : >"$h2/.ac-crewdeputy-home"
 printf -- '- unread - duty - home: %s - scope: legacy - projects: none (added 2026-07-19T00:00:00Z)\n' "$h2" \
   >>"$AC_HOME/records/crewdeputies.md"
-printf 'backend=herdr\nkind=crewdeputy\n' >"$AC_HOME/state/unread.meta"
+printf 'backend=orca\nkind=crewdeputy\n' >"$AC_HOME/state/unread.meta"
 
 # rc=0 (A4 no-regression floor): a genuinely alive pane still renders LIVE.
 printf 'pUNREAD tUNREAD\n' >"$AC_HOME/state/.pane-unread"
-printf 'pUNREAD\n' >"$FAKE_HERDR/tabs/tUNREAD"; : >"$FAKE_HERDR/panes/pUNREAD.buf"
-out="$("$BIN/ac-deputy.sh" list)" || fail "list must not die on a live herdr-backed deputy"
+: >"$FAKE_ORCA/terminals/pUNREAD.buf"
+out="$("$BIN/ac-deputy.sh" list)" || fail "list must not die on a live orca-backed deputy"
 assert_contains "$out" "$(printf 'LIVE\tunread')" "a genuinely alive pane still renders LIVE (A4)"
 
 # rc=1 (A4 no-regression floor): a genuinely gone pane still renders DOWN.
-rm -f "$FAKE_HERDR/tabs/tUNREAD" "$FAKE_HERDR/panes/pUNREAD.buf"
-out="$("$BIN/ac-deputy.sh" list)" || fail "list must not die on a gone herdr-backed deputy"
+rm -f "$FAKE_ORCA/terminals/pUNREAD.buf"
+out="$("$BIN/ac-deputy.sh" list)" || fail "list must not die on a gone orca-backed deputy"
 assert_contains "$out" "$(printf 'DOWN\tunread')" "a genuinely gone pane still renders DOWN (A4)"
 
 # rc=2: THE REGRESSION this row closes.
 printf 'pUNREAD tUNREAD\n' >"$AC_HOME/state/.pane-unread"
-printf 'pUNREAD\n' >"$FAKE_HERDR/tabs/tUNREAD"; : >"$FAKE_HERDR/panes/pUNREAD.buf"
-touch "$FAKE_HERDR/.unreachable"
-out="$("$BIN/ac-deputy.sh" list)" || fail "list must never die on an unreadable herdr backend"
-rm -f "$FAKE_HERDR/.unreachable"
+: >"$FAKE_ORCA/terminals/pUNREAD.buf"
+touch "$FAKE_ORCA/.unreachable"
+out="$("$BIN/ac-deputy.sh" list)" || fail "list must never die on an unreadable orca backend"
+rm -f "$FAKE_ORCA/.unreachable"
 case "$out" in *"$(printf 'DOWN\tunread')"*) \
   fail "THE REGRESSION: an unreadable backend (rc=2) must never render as DOWN" ;; esac
 assert_contains "$out" "$(printf 'UNOBSERVABLE\tunread')" "an unreadable backend renders UNOBSERVABLE, not DOWN"
@@ -75,24 +74,24 @@ assert_contains "$out" "$(printf 'UNOBSERVABLE\tunread')" "an unreadable backend
 # once drove a driver that failed to LOAD (bash's 127, through a lab bin/ with
 # the herdr driver renamed); the backend verbs are native now (src/lib.ts
 # backendCall), so no driver can fail to load under list, and the row reaches
-# the same unobservable read with herdr absent from PATH (the liveness
+# the same unobservable read with orca absent from PATH (the liveness
 # ladder's 2).
 nh_path="$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin:/sbin"
-if [ -z "$(PATH="$nh_path" command -v herdr || true)" ]; then
+if [ -z "$(PATH="$nh_path" command -v orca || true)" ]; then
   out="$(PATH="$nh_path" "$BIN/ac-deputy.sh" list)" || fail "list must never die on a backend absent from PATH"
   case "$out" in *"$(printf 'DOWN\tunread')"*) \
-    fail "THE REGRESSION: herdr absent from PATH must never render as DOWN" ;; esac
+    fail "THE REGRESSION: orca absent from PATH must never render as DOWN" ;; esac
   assert_contains "$out" "$(printf 'UNOBSERVABLE\tunread')" \
-    "herdr absent from PATH renders UNOBSERVABLE, same as rc=2"
+    "orca absent from PATH renders UNOBSERVABLE, same as rc=2"
 else
-  printf 'SKIP: list with herdr absent - bun shares its directory with a herdr on this host\n'
+  printf 'SKIP: list with orca absent - bun shares its directory with an orca on this host\n'
 fi
 
 # --- the entry end to end, one scenario per row -------------------------------
 # One side root ($H): a parent home at $H/home with its deputy homes under
-# crewdeputies/, and the fake herdr's state at $H/herdr; cwd the side root,
-# stdin /dev/null, LC_ALL=C unless a row names en_US.UTF-8; PATH stubs -
-# make_fake_herdr's herdr, an orca answering per sentinel file, a date
+# crewdeputies/; cwd the side root, stdin /dev/null, LC_ALL=C unless a row
+# names en_US.UTF-8; PATH stubs - an orca answering per sentinel file (this
+# ladder) or the shared fake orca (make_fake_orca, row 3's table), a date
 # answering one fixed instant per format (or failing per sentinel). A row
 # reads the run's exit status, stdout and stderr (the side root spelled @H)
 # and what it left under the side root.
@@ -128,7 +127,7 @@ dat() {  # dat <cmd> <args...> - a seeding step; a literal @H in an argument is 
   local x a=(); for x in "$@"; do a+=("${x//@H/$H}"); done; "${a[@]}"
 }
 dseed() {
-  rm -rf "$H"; mkdir -p "$H/home/state" "$H/home/records" "$H/home/config" "$H/home/data" "$H/herdr/panes" "$H/herdr/tabs" "$H/orca/terminals"
+  rm -rf "$H"; mkdir -p "$H/home/state" "$H/home/records" "$H/home/config" "$H/home/data" "$H/orca/terminals"
   printf 'off\n' >"$H/home/config/wedge-alarm"
 }
 ddep() {  # ddep <id> [<dir under home>] - a seeded deputy home: the marker and the backlog skeleton home-seed writes
@@ -140,11 +139,6 @@ dreg() {  # dreg <line>... - registry lines (@H the side root), appended
   local l; for l in "$@"; do printf '%s\n' "${l//@H/$H}" >>"$H/home/records/crewdeputies.md"; done
 }
 dput() { mkdir -p "$(dirname "$H/$1")"; printf '%s' "${2//@H/$H}" >"$H/$1"; }   # dput <path under the side> <bytes>
-dlive() {  # dlive <id> <pane> - a meta and a pane the fake herdr answers for
-  printf 'backend=herdr\nkind=crewdeputy\n' >"$H/home/state/$1.meta"
-  printf '%s t%s\n' "$2" "$2" >"$H/home/state/.pane-$1"
-  printf '%s\n' "$2" >"$H/herdr/tabs/t$2"; : >"$H/herdr/panes/$2.buf"
-}
 dliveorca() {  # dliveorca <id> <handle> - a meta and a genuinely alive orca terminal
   printf 'backend=orca\nkind=crewdeputy\n' >"$H/home/state/$1.meta"
   printf '%s tab-%s\n' "$2" "$2" >"$H/home/state/.pane-$1"
@@ -152,7 +146,7 @@ dliveorca() {  # dliveorca <id> <handle> - a meta and a genuinely alive orca ter
 }
 DLC=C; DENV=(); DHOME=home; DHOMELESS=0; DPATH=""; DN_RC=0
 drun() {  # drun <args...> - one run of the entry; @H in an argument or a DENV value is the side root
-  local x v a=() e=("LC_ALL=$DLC" "PATH=${DPATH:-$DSTUBS:$TMP/stubbin:$PATH}" "STUB_DIR=$H" "FAKE_HERDR=$H/herdr" "FAKE_ORCA=$H/orca")
+  local x v a=() e=("LC_ALL=$DLC" "PATH=${DPATH:-$DSTUBS:$TMP/stubbin:$PATH}" "STUB_DIR=$H" "FAKE_ORCA=$H/orca")
   [ "$DHOMELESS" = 1 ] || e+=("AC_HOME=$H/$DHOME")
   for x in ${DENV[@]+"${DENV[@]}"}; do v="${x#*=}"; e+=("${x%%=*}=${v//@H/$H}"); done
   for x in "$@"; do a+=("${x//@H/$H}"); done
@@ -166,7 +160,7 @@ derr() { cat "$TMP/d.err"; }
 dspool() { cat "$H"/home/state/.wake-spool/* 2>/dev/null || true; }
 DNOHOME='ERROR: AC_HOME is not set - set AC_HOME=<fleet home> (the directory holding state/ data/ records/ config/ projects/); the distro checkout is not one'
 DUSAGE='ERROR: usage: ac-deputy.sh <list|validate|report|handoff>'
-DBAD="ERROR: unsupported backend 'tmux' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)"
+DBAD="ERROR: unsupported backend 'tmux' (valid backend: orca)"
 DTS='2026-01-01T00:00:00Z'
 dseed
 
@@ -187,10 +181,10 @@ for dv in list "report x" "handoff d x"; do
 done
 rm -f "$H/home/config/backend"
 DENV=(AC_BACKEND=Herdr); drun list; DENV=()
-assert_eq "$DN_RC:$(derr)" "1:ERROR: unsupported backend 'Herdr' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)" "1: AC_BACKEND=Herdr refuses"
+assert_eq "$DN_RC:$(derr)" "1:ERROR: unsupported backend 'Herdr' (valid backend: orca)" "1: AC_BACKEND=Herdr refuses"
 dput fs/config/backend $'bogus\tx\n'; mkdir -p "$H/fs/state"
 DENV=(AC_FLEET_STATE=@H/fs/state/); drun validate; DENV=()
-assert_eq "$DN_RC:$(derr)" "1:ERROR: unsupported backend 'bogus' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)" "1: the AC_FLEET_STATE rung, cut at its first blank"
+assert_eq "$DN_RC:$(derr)" "1:ERROR: unsupported backend 'bogus' (valid backend: orca)" "1: the AC_FLEET_STATE rung, cut at its first blank"
 
 # 2. homeless: report and handoff are refused on the AC_HOME line first; an
 #    AC_HOME that cannot be entered is named on every verb.
@@ -230,7 +224,7 @@ ddep dlive; ddep ddown; ddep dnohandle; ddep didle; ddep dmark; ddep dleg
 rm -f "$H/home/crewdeputies/dmark/.ac-crewdeputy-home"; mkdir "$H/home/crewdeputies/dmark/.ac-crewdeputy-home"
 dliveorca dlive termD1
 printf 'backend=orca\nkind=crewdeputy\n' >"$H/home/state/ddown.meta"; printf 'termGONE tabGONE\n' >"$H/home/state/.pane-ddown"
-printf 'backend=herdr\n' >"$H/home/state/dnohandle.meta"
+printf 'backend=orca\n' >"$H/home/state/dnohandle.meta"
 dreg '# Crewdeputies' '' \
   '- dlive - payments duty - home: @H/home/crewdeputies/dlive - scope: payments incidents - projects: alpha (added 2026-07-19T00:00:00Z)' \
   '- ddown - ops duty - home: @H/home/crewdeputies/ddown - scope: alert noise - projects: none (added 2026-07-19T00:00:00Z)' \
@@ -294,28 +288,25 @@ assert_contains "$(dout)" "INVALID	- b$(printf '\351')d - c - home: /h/b$(printf
 #    (LIVE), disconnected (DOWN), show failing with status answering (DOWN),
 #    both failing (UNOBSERVABLE).
 rm -f "$H/home/records/crewdeputies.md" "$H/home/state/"*.meta "$H/home/state/".pane-*
-ddep dh; ddep dt; ddep dorca
-dlive dh pH1
+ddep dt; ddep dorca
 printf 'backend=tmux\nkind=crewdeputy\n' >"$H/home/state/dt.meta"; printf 'pT tT\n' >"$H/home/state/.pane-dt"
 printf 'backend=orca\nkind=crewdeputy\n' >"$H/home/state/dorca.meta"; printf 'term-1 tab-1\n' >"$H/home/state/.pane-dorca"
-dreg '- dh - h - home: @H/home/crewdeputies/dh - scope: s - projects: none (added x)' \
-  '- dt - t - home: @H/home/crewdeputies/dt - scope: s - projects: none (added x)' \
+dreg '- dt - t - home: @H/home/crewdeputies/dt - scope: s - projects: none (added x)' \
   '- dorca - o - home: @H/home/crewdeputies/dorca - scope: s - projects: none (added x)'
 drun list
-assert_eq "$DN_RC:$(dout | /usr/bin/grep -v '^	')" "0:LIVE	dh	home: @H/home/crewdeputies/dh	projects: none
-DOWN	dt	home: @H/home/crewdeputies/dt	projects: none
+assert_eq "$DN_RC:$(dout | /usr/bin/grep -v '^	')" "0:DOWN	dt	home: @H/home/crewdeputies/dt	projects: none
 DOWN	dorca	home: @H/home/crewdeputies/dorca	projects: none
-registered: 3 (live 1, down 2, not-running 0, home-missing 0, invalid 0)" "4: herdr live, tmux stale, orca disconnected"
+registered: 2 (live 0, down 2, not-running 0, home-missing 0, invalid 0)" "4: tmux stale, orca disconnected"
 assert_eq "$(derr)" "$DBAD" "4: the stale meta's refusal reaches stderr"
-dmerged="$( (cd "$H" && env -u AC_HOME -u AC_BACKEND LC_ALL=C PATH="$DSTUBS:$TMP/stubbin:$PATH" STUB_DIR="$H" FAKE_HERDR="$H/herdr" AC_HOME="$H/home" \
+dmerged="$( (cd "$H" && env -u AC_HOME -u AC_BACKEND LC_ALL=C PATH="$DSTUBS:$TMP/stubbin:$PATH" STUB_DIR="$H" AC_HOME="$H/home" \
   "$BIN/ac-deputy.sh" list) </dev/null 2>&1 | LC_ALL=C sed -e "s#$H#@H#g" | /usr/bin/grep -v '^	')"
-assert_eq "$(printf '%s\n' "$dmerged" | sed -n 2,3p)" "$DBAD
+assert_eq "$(printf '%s\n' "$dmerged" | sed -n 1,2p)" "$DBAD
 DOWN	dt	home: @H/home/crewdeputies/dt	projects: none" "4: the ERROR precedes its entry's line on a merged stream"
 dput home/state/dt.meta $'backend=caf\303\251\nkind=crewdeputy\n'
-drun list; assert_eq "$(derr)" "ERROR: unsupported backend 'caf$(printf '\303\251')' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)" "4: a meta's UTF-8 backend name is refused as its bytes"
+drun list; assert_eq "$(derr)" "ERROR: unsupported backend 'caf$(printf '\303\251')' (valid backend: orca)" "4: a meta's UTF-8 backend name is refused as its bytes"
 dput home/state/dt.meta $'backend=caf\351\nkind=crewdeputy\n'
 drun list
-assert_eq "$(derr)" "ERROR: unsupported backend 'caf$(printf '\357\277\275')' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)" "4: a non-UTF-8 backend= is refused as U+FFFD"
+assert_eq "$(derr)" "ERROR: unsupported backend 'caf$(printf '\357\277\275')' (valid backend: orca)" "4: a non-UTF-8 backend= is refused as U+FFFD"
 dput home/state/dt.meta $'backend=tmux\nkind=crewdeputy\n'
 touch "$H/orca.connected"
 drun list; assert_contains "$(dout)" "LIVE	dorca" "4: orca connected is LIVE"
@@ -644,7 +635,7 @@ EOF
 chmod +x "$TMP/dgate.sh"
 dgate="$H/gate.fifo"; mkfifo "$dgate"
 printf 'victim bytes\n' >"$H/victim"
-env -u AC_BACKEND LC_ALL=C AC_HOME="$H/home" PATH="$DSTUBS:$TMP/stubbin:$PATH" STUB_DIR="$H" FAKE_HERDR="$H/herdr" \
+env -u AC_BACKEND LC_ALL=C AC_HOME="$H/home" PATH="$DSTUBS:$TMP/stubbin:$PATH" STUB_DIR="$H" \
   "$TMP/dgate.sh" "$dgate" "$BIN" </dev/null >"$TMP/dplant.out" 2>&1 &
 dppid=$!
 ln -s "$H/victim" "$H/home/records/backlog.md.tmp.$dppid"
