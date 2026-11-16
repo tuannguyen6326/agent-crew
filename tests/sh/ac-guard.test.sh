@@ -302,8 +302,8 @@ case "$err" in *"No such file"*) fail "missing guard must not spill errors" ;; e
 
 # --- the advisory, row by row ---------------------------------------------------
 # One side root ($NH): a home at $NH/home, scratch repos beside it, a stub dir
-# first on PATH (`date +%s` answering $NH/stub/clock, a herdr and an orca keyed
-# on files there, each call logged; every other date call is /bin/date's), the
+# first on PATH (`date +%s` answering $NH/stub/clock, an orca keyed on files
+# there, each call logged; every other date call is /bin/date's), the
 # caller's cwd $NH/cwd; every knob the guard reads scrubbed, then AC_HOME,
 # AC_GUARD_ROOT=$NH/repo and the row's; stdin /dev/null unless the row names a
 # file; LC_ALL=C. HOME in an argument or an env value is the side root, and the
@@ -322,7 +322,7 @@ run_guard() {  # run_guard <args...> - the guard from the caller's cwd; sets G_R
   rm -f "$h/stub/log"
   G_RC=0
   (cd "$h/$GD_CWD" && env -u AC_HOME -u AC_SCOPE -u AC_GUARD_ROOT -u AC_GUARD_QUIET -u AC_GUARD_GRACE -u AC_BACKEND \
-    -u AC_FLEET_STATE -u AC_HERDR_SESSION -u AC_HERDR_RPC_TIMEOUT -u EPOCHSECONDS "${e[@]}" "$NBIN/ac-guard.sh" ${a[@]+"${a[@]}"}) \
+    -u AC_FLEET_STATE -u EPOCHSECONDS "${e[@]}" "$NBIN/ac-guard.sh" ${a[@]+"${a[@]}"}) \
     <"${GD_STDIN:-/dev/null}" >"$TMP/n.raw" 2>"$TMP/n.err" || G_RC=$?
   norm <"$TMP/n.err" >"$TMP/n.err2"
   snap | norm >"$TMP/n.snap"
@@ -345,7 +345,7 @@ snap() {  # the state/ listing, every stamp's bytes (a directory's listing), the
 }
 shim_err() { cat "$TMP/n.err2"; }
 shim_snap() { cat "$TMP/n.snap"; }
-shim_calls() { sed -n '/^== log$/,$p' "$TMP/n.snap" | /usr/bin/grep -E '^(herdr|orca) ' || true; }  # the backend calls the run made
+shim_calls() { sed -n '/^== log$/,$p' "$TMP/n.snap" | /usr/bin/grep -E '^orca ' || true; }  # the backend calls the run made
 g() { git -C "$H/$1" -c user.email=t@t -c user.name=t "${@:2}"; }
 fresh0() {  # a clean side root: home/state, cwd, the stubs, the clock at T, the primary repo on main
   rm -rf "$H"; mkdir -p "$H/home/state" "$H/cwd" "$H/stub"
@@ -360,19 +360,6 @@ if [ "\$1" = +%s ]; then
 fi
 exec /bin/date "\$@"
 EOF
-  cat >"$H/stub/herdr" <<EOF
-#!/bin/sh
-d="$H/stub"
-printf 'herdr %s [%s]\n' "\$*" "\${HERDR_SESSION:-}" >>"\$d/log"
-[ ! -e "\$d/hang" ] || exec sleep 5
-[ ! -e "\$d/readstdin" ] || printf 'herdr stdin=[%s]\n' "\$(cat)" >>"\$d/log"
-case "\$1 \$2" in
-  "pane get") [ -e "\$d/win-\$3" ] ;;
-  "pane list") [ ! -e "\$d/list-fails" ] || exit 1; printf '{"result":{"panes":[]}}\n' ;;
-  "status server") printf '{"running":%s}\n' "\$(cat "\$d/running" 2>/dev/null || echo true)" ;;
-  *) exit 2 ;;
-esac
-EOF
   cat >"$H/stub/orca" <<EOF
 #!/bin/sh
 d="$H/stub"
@@ -383,7 +370,7 @@ case "\$1 \$2" in
   *) printf '{"ok":true}\n' ;;
 esac
 EOF
-  chmod +x "$H/stub/date" "$H/stub/herdr" "$H/stub/orca"
+  chmod +x "$H/stub/date" "$H/stub/orca"
   git init -q -b main "$H/repo"; g repo commit -q --allow-empty -m init
 }
 fresh() { fresh0; }
@@ -538,52 +525,40 @@ GD_ENV=()
 
 # 9. orphans through backendCall: a family spool with no chief meta is an
 #    orphan with no backend call; with one, only the driver's 0 is live -
-#    herdr's pane get, then pane list (an empty list: gone), then status
-#    server (running:false gone, true unreadable - both orphans); no pane
-#    handle (no call), orca's terminal show, a refused backend name (no call),
-#    a configured session (argv and HERDR_SESSION), a hung herdr bounded by
-#    AC_HERDR_RPC_TIMEOUT. The answering family sorts LAST; a chief meta is
-#    crew in flight, so every world has a fresh beacon.
+#    orca's terminal show; no pane handle (no call); a refused backend name
+#    (no call). The answering family sorts LAST; a chief meta is crew in
+#    flight, so every world has a fresh beacon.
+# GAP, not ported: herdr's own three-state ladder (pane get, then pane list,
+# then status server - gone vs unreachable), its AC_HERDR_SESSION knob
+# riding the call's argv, and a hung-RPC case bounded by AC_HERDR_RPC_TIMEOUT
+# all had no orca counterpart worth this file re-proving - orca's own
+# three-state shape (and the fact it carries no per-call RPC ceiling at all,
+# unlike herdr - ac-backend.sh HUNG RPC) is already proven in
+# tests/sh/ac-backend-orca.test.sh; this file only needs "alive or not, and a
+# refused name is treated as neither".
 fresh() { fresh0; beat "$T"; }
 o1() { fresh; spoolrec zz; }
-o2() { fresh; spoolrec zz; chief zz 'backend=herdr\n' pzz; win pzz; }
 o3() { fresh; spoolrec zz; chief zz 'kind=roomchief\n' pzz; }
-o4() { fresh; spoolrec zz; chief zz 'backend=herdr\n' pzz; : >"$H/stub/list-fails"; printf false >"$H/stub/running"; }
-o5() { fresh; spoolrec zz; chief zz 'backend=herdr\n' pzz; : >"$H/stub/list-fails"; }
-o6() { fresh; spoolrec zz; chief zz 'backend=herdr\n'; }
+o6() { fresh; spoolrec zz; chief zz 'backend=orca\n'; }
 o7() { fresh; spoolrec zz; chief zz 'backend=orca\n' hzz; win hzz; }
 o8() { fresh; spoolrec zz; chief zz 'backend=orca\n' hzz; }
 o9() { fresh; spoolrec zz; chief zz 'backend=tmux\n' pzz; win pzz; }
-o10() { fresh; mkdir -p "$H/home/state/.wake-spool.aa"; chief aa 'backend=herdr\n' paa; spoolrec bb; chief bb 'backend=herdr\n' pbb; win pbb; spoolrec zz; chief zz 'backend=herdr\n' pzz; }
-for o in o3 o4 o5 o8 o10; do "$o"; says "$QW"; done
+o10() { fresh; mkdir -p "$H/home/state/.wake-spool.aa"; chief aa 'backend=orca\n' haa; spoolrec bb; chief bb 'backend=orca\n' hbb; win hbb; spoolrec zz; chief zz 'backend=orca\n' hzz; }
+for o in o3 o8 o10; do "$o"; says "$QW"; done
 o1; says "$QW"
 assert_eq "$(shim_calls)" "" "row 9: no chief meta, no backend call"
 o6; says "$QW"
 assert_eq "$(shim_calls)" "" "row 9: no pane handle, no backend call"
 o9; says "$QW"
 assert_eq "$(shim_calls)" "" "row 9: a refused backend name is an orphan, no call"
-o2; says ""
-assert_eq "$(shim_calls)" "herdr pane get pzz []" "row 9: a live family's spool is its chief's - one pane get"
 o7; says ""
-o3
-GD_ENV=("AC_HERDR_SESSION=s1"); says "$QW"
-assert_contains "$(shim_snap)" "herdr pane get pzz --session s1 [s1]" "row 9: the session rides argv and HERDR_SESSION"
-: >"$NH/stub/hang"
-GD_ENV=("AC_HERDR_RPC_TIMEOUT=1" "AC_GUARD_QUIET=0"); says "$QW"
-assert_eq "$(shim_calls)" "herdr pane get pzz []
-herdr pane list []
-herdr status server --json []" "row 9: a hung herdr - three bounded calls, an orphan"
-GD_ENV=()
+assert_eq "$(shim_calls)" "orca terminal show --terminal hzz --json" "row 9: a live family's spool is its chief's - one terminal show"
 # The scan stops at the answering orphan.
-fresh; spoolrec aa; chief aa 'backend=herdr\n' paa; chief bb 'backend=herdr\n' pbb; mkdir -p "$NH/home/state/.wake-spool.bb"
+fresh; spoolrec aa; chief aa 'backend=orca\n' haa; chief bb 'backend=orca\n' hbb; mkdir -p "$NH/home/state/.wake-spool.bb"
 says "$QW"
-case "$(cat "$NH/stub/log")" in *pbb*) fail "row 9: the scan stops at the answer" ;; esac
-# The driver's children read /dev/null: a herdr or an orca that reads stdin
-# swallows neither the caller's stdin nor the families after it.
-printf 'caller-stdin\n' >"$TMP/stdin9"
-fresh; chief aa 'backend=herdr\n' paa; mkdir -p "$NH/home/state/.wake-spool.aa"; spoolrec bb; : >"$NH/stub/readstdin"
-GD_STDIN="$TMP/stdin9"; says "$QW"; unset GD_STDIN
-assert_contains "$(shim_snap)" "herdr stdin=[]" "row 9 (stdin): herdr reads nothing"
+case "$(cat "$NH/stub/log")" in *hbb*) fail "row 9: the scan stops at the answer" ;; esac
+# The driver's children read /dev/null: orca reading stdin swallows neither
+# the caller's stdin nor the families after it.
 fresh; chief aa 'backend=orca\n' haa; mkdir -p "$NH/home/state/.wake-spool.aa"; spoolrec bb; : >"$NH/stub/readstdin"
 says "$QW"
 assert_contains "$(cat "$NH/stub/log")" "orca stdin=[]" "row 9 (stdin): orca reads nothing"
