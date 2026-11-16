@@ -9,20 +9,31 @@
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
-# The backend comes from the fake, never from the box. "the dev box has herdr"
-# held on a mac and nowhere else: on a box without herdr the doctor reported
-# MISSING: herdr, the assignment below took its exit 1, errexit killed the file
+# The backend comes from the fake, never from the box. "the dev box has orca"
+# held on a mac and nowhere else: on a box without orca the doctor reported
+# MISSING: orca, the assignment below took its exit 1, errexit killed the file
 # before its first assert, and this was the ONE test reddening every run - while
 # the tool it was really testing worked fine.
-make_fake_herdr
+# A minimal, self-contained stub (not make_fake_orca's full terminal/worktree
+# protocol, and not $TMP/stubbin - the later orca-bin section plants its own
+# distinctly-shaped orca there, and a second copy here would shadow it and
+# read CHECK-FAILED instead of the version this doctor actually wants).
+mkdir -p "$TMP/orca-healthy"
+cat >"$TMP/orca-healthy/orca" <<'FAKEORCA'
+#!/usr/bin/env bash
+if [ "${1:-}" = status ]; then
+  printf '{"ok":true,"result":{"runtime":{"state":"ready","reachable":true,"appVersion":"9.9.9"}}}\n'
+  exit 0
+fi
+printf 'orca\n\nUsage: orca <command> [options]\n'
+exit 0
+FAKEORCA
+chmod +x "$TMP/orca-healthy/orca"
 
-# Pin every scenario below to herdr explicitly: the fallback default is now
-# orca (ac_config_read backend orca). The doctor's herdr checks (protocol
-# mismatch, wedge, version/capability floors) exercise herdr's own wire
-# shape and have no generic backend-neutral content to migrate - orca's
-# parallel dispatch (status --json, the not-ready state) is already covered
-# separately below under its own explicit orca pin.
-printf 'herdr\n' >"$AC_HOME/config/backend"
+# Pin every generic scenario below to orca explicitly, rather than lean on
+# the no-config default (ac_config_read backend orca) - the fallback itself
+# is proven separately further down.
+printf 'orca\n' >"$AC_HOME/config/backend"
 
 # Nor from the box's gh, which helpers.sh mirrors out of PATH: a logged-in
 # stand-in is the gh every copy below links.
@@ -44,7 +55,7 @@ for t in git jq gh bun dirname date mkdir head tail cat bash sort grep readlink 
   p="$(command -v "$t" 2>/dev/null || true)"
   [ -n "$p" ] && ln -s "$p" "$TMP/single/$t"
 done
-HEALTHY_PATH="$TMP/single:$TMP/stubbin"
+HEALTHY_PATH="$TMP/orca-healthy:$TMP/single:$TMP/stubbin"
 
 # Same base, minus jq: the PATH-shadow scenarios below plant their OWN jq
 # fakes and must never see this host's real jq (a genuine shadow) leak in
@@ -65,7 +76,7 @@ done
 # Healthy machine: exit 0, OK lines present.
 out="$(PATH="$HEALTHY_PATH" "$BIN/ac-bootstrap.sh")"
 assert_contains "$out" "OK: git" "git detected"
-assert_contains "$out" "OK: herdr" "herdr detected"
+assert_contains "$out" "OK: orca" "orca detected"
 
 # --quiet hides OK lines.
 quiet_out="$(PATH="$HEALTHY_PATH" "$BIN/ac-bootstrap.sh" --quiet)"
@@ -85,7 +96,7 @@ chmod +x "$TMP/stub/gh"
 out="$(PATH="$TMP/stub:$HEALTHY_PATH" "$BIN/ac-bootstrap.sh" --quiet)"
 assert_contains "$out" "NEEDS_GH_AUTH" "unauthenticated gh surfaces NEEDS_GH_AUTH"
 
-# Missing required tool: stub-only PATH with everything but herdr.
+# Missing required tool: stub-only PATH with everything but orca.
 mkdir -p "$TMP/thin"
 for t in git jq gh bun dirname date mkdir head tail cat sort grep readlink mktemp sleep rm; do
   p="$(command -v "$t" 2>/dev/null || true)"
@@ -98,69 +109,31 @@ out="$(PATH="$TMP/thin" bash "$BIN/ac-bootstrap.sh" --quiet)" || rc=$?
 # weaken this pre-existing gate: a genuinely ABSENT required tool must
 # still block.
 assert_eq "$rc" "1" "a missing required tool must still set rc=1"
-assert_contains "$out" "MISSING: herdr" "missing herdr reported"
+assert_contains "$out" "MISSING: orca" "missing orca reported"
 
-# A herdr client/server PROTOCOL mismatch is a fleet-wide supervision outage -
-# every socket call fails, so nothing can be spawned, seen or steered (lived
-# 2026-07-25). herdr reports it itself; the doctor must name it in ONE line
-# instead of leaving the digest looking healthy.
-mkdir -p "$TMP/mismatch"
-cat >"$TMP/mismatch/herdr" <<'EOF'
-#!/usr/bin/env bash
-[ "$1 $2" = "status server" ] \
-  && { printf '{"status":"running","version":"0.7.5","protocol":17,"compatible":false,"restart_needed":true}\n'; exit 0; }
-exit 0
-EOF
-chmod +x "$TMP/mismatch/herdr"
-rc=0
-out="$(PATH="$TMP/mismatch:$PATH" "$BIN/ac-bootstrap.sh" --quiet)" || rc=$?
-# Proves the real gate (the case that must actually stop the fleet) is
-# untouched by the new diagnostic-only PATH-shadow probe.
-assert_eq "$rc" "1" "an incompatible herdr server must still set rc=1"
-assert_contains "$out" "MISSING: herdr" "the mismatch is one MISSING line"
-assert_contains "$out" "restart" "the line names the remedy"
-
-# A WEDGED server - one that accepts and never answers - is a definite
-# observation, not silence. This probe is the one unbounded herdr call left on
-# a chief's own session-start path, and a hang there does not degrade a sweep:
-# it stops the chief from starting, which is the fleet losing its supervisor
-# before it has one. So the probe is bounded and a timeout is its own MISSING
-# line, distinct from the mismatch above and from the no-evidence case below.
+# A WEDGED runtime - one that accepts and never answers - is a definite
+# observation, not silence. This probe is the one unbounded backend call left
+# on a chief's own session-start path, and a hang there does not degrade a
+# sweep: it stops the chief from starting, which is the fleet losing its
+# supervisor before it has one. So the probe is bounded and a timeout is its
+# own MISSING line.
 mkdir -p "$TMP/wedged"
-cat >"$TMP/wedged/herdr" <<'EOF'
+cat >"$TMP/wedged/orca" <<'EOF'
 #!/usr/bin/env bash
-[ "$1 $2" = "status server" ] && { sleep 60; exit 0; }
+[ "${1:-}" = status ] && { sleep 60; exit 0; }
 exit 0
 EOF
-chmod +x "$TMP/wedged/herdr"
+chmod +x "$TMP/wedged/orca"
 rc=0
 began=$SECONDS
-out="$(AC_BOOTSTRAP_PROBE_TIMEOUT=2 PATH="$TMP/wedged:$HEALTHY_PATH" "$BIN/ac-bootstrap.sh" --quiet)" || rc=$?
+out="$(AC_BOOTSTRAP_PROBE_TIMEOUT=2 PATH="$TMP/wedged:$TMP/single" "$BIN/ac-bootstrap.sh" --quiet)" || rc=$?
 elapsed=$((SECONDS - began))
 [ "$elapsed" -lt 30 ] || fail "a wedged backend must not hang the doctor (took ${elapsed}s)"
 assert_eq "$rc" "1" "a backend that never answers sets rc=1"
-assert_contains "$out" "MISSING: herdr" "the wedge is one MISSING line"
-assert_contains "$out" "did not answer" "...and it says the probe timed out rather than claiming a mismatch"
-case "$out" in *compatible\ false*) fail "a timeout must not be reported as a protocol mismatch" ;; esac
-
-# A compatible server says nothing extra, and an unparseable answer is NOT read
-# as an outage: no evidence of a mismatch may never fail the doctor closed.
-mkdir -p "$TMP/compat"
-cat >"$TMP/compat/herdr" <<'EOF'
-#!/usr/bin/env bash
-[ "${1:-}" = --version ] && { printf 'herdr 0.8.0\n'; exit 0; }
-[ "$1 $2" = "status server" ] \
-  && { printf '{"status":"running","running":true,"compatible":true,"restart_needed":false}\n'; exit 0; }
-exit 0
-EOF
-chmod +x "$TMP/compat/herdr"
-out="$(PATH="$TMP/compat:$HEALTHY_PATH" "$BIN/ac-bootstrap.sh" --quiet)"
-case "$out" in *"MISSING: herdr"*) fail "a compatible server must not be flagged" ;; esac
-out="$(PATH="$HEALTHY_PATH" "$BIN/ac-bootstrap.sh" --quiet)"   # the fake herdr answers status server with nothing
-case "$out" in *"MISSING: herdr"*) fail "an unreadable answer is not evidence of a mismatch" ;; esac
+assert_contains "$out" "MISSING: orca status did not answer" "the wedge is one MISSING line"
 # ...and 0 means UNBOUNDED, never a 0s ceiling: an instant backend under
 # AC_BOOTSTRAP_PROBE_TIMEOUT=0 measurably lost the race and read as wedged.
-out="$(AC_BOOTSTRAP_PROBE_TIMEOUT=0 PATH="$TMP/compat:$HEALTHY_PATH" "$BIN/ac-bootstrap.sh" --quiet)" || true
+out="$(AC_BOOTSTRAP_PROBE_TIMEOUT=0 PATH="$HEALTHY_PATH" "$BIN/ac-bootstrap.sh" --quiet)" || true
 case "$out" in *"did not answer"*) fail "a 0 ceiling must disable the bound, not fire it instantly: $out" ;; esac
 
 # --- PATH-shadow probe (installed but inert) --------------------------------
@@ -186,12 +159,12 @@ EOF
 # DIAGNOSES ONLY: rc stays 0, deliberately (some
 # inert states, like this host's real nvm/homebrew pins, are chosen on
 # purpose, and a blocking line would fire every session forever over
-# them). The herdr protocol-compat check below is the real gate; this
+# them). The orca reachability check below is the real gate; this
 # probe never duplicates it.
 mkdir -p "$TMP/jq-old" "$TMP/jq-new"
 fake_ver "$TMP/jq-old/jq" "jq-1.6"
 fake_ver "$TMP/jq-new/jq" "jq-1.9"
-shadow_path="$TMP/jq-old:$TMP/single-nojq:$TMP/jq-new:$TMP/stubbin"
+shadow_path="$TMP/orca-healthy:$TMP/jq-old:$TMP/single-nojq:$TMP/jq-new:$TMP/stubbin"
 out="$(PATH="$shadow_path" "$BIN/ac-bootstrap.sh" --quiet)"
 rc=$?
 assert_eq "$rc" "0" "an inert tool must NEVER set rc - it diagnoses, it does not gate"
@@ -217,7 +190,7 @@ fix="$(printf '%s\n' "$out" | grep -o 'export PATH="[^"]*"')"
 ) || fail "the printed PATH hint command did not resolve jq to the newer copy"
 
 # Acceptance (2), negative: the active copy is ALREADY the newest -> no line.
-shadow_path="$TMP/jq-new:$TMP/single-nojq:$TMP/jq-old:$TMP/stubbin"
+shadow_path="$TMP/orca-healthy:$TMP/jq-new:$TMP/single-nojq:$TMP/jq-old:$TMP/stubbin"
 out="$(PATH="$shadow_path" "$BIN/ac-bootstrap.sh" --quiet)"
 case "$out" in *"jq installed but inert"*) fail "active-is-newest must not false-positive" ;; esac
 
@@ -225,7 +198,7 @@ case "$out" in *"jq installed but inert"*) fail "active-is-newest must not false
 # file must not make the detector compare a tool against itself.
 mkdir -p "$TMP/jq-dup"
 ln -s "$TMP/jq-old/jq" "$TMP/jq-dup/jq"
-shadow_path="$TMP/jq-old:$TMP/single-nojq:$TMP/jq-dup:$TMP/stubbin"
+shadow_path="$TMP/orca-healthy:$TMP/jq-old:$TMP/single-nojq:$TMP/jq-dup:$TMP/stubbin"
 out="$(PATH="$shadow_path" "$BIN/ac-bootstrap.sh" --quiet)"
 case "$out" in *"jq installed but inert"*) fail "symlink dupes must not false-positive" ;; esac
 
@@ -235,7 +208,7 @@ case "$out" in *"jq installed but inert"*) fail "symlink dupes must not false-po
 mkdir -p "$TMP/node-old" "$TMP/node-new"
 fake_ver "$TMP/node-old/node" "v18.0.0"
 fake_ver "$TMP/node-new/node" "v22.19.0"
-shadow_path="$TMP/node-old:$TMP/single:$TMP/node-new:$TMP/stubbin"
+shadow_path="$TMP/orca-healthy:$TMP/node-old:$TMP/single:$TMP/node-new:$TMP/stubbin"
 out="$(PATH="$shadow_path" "$BIN/ac-bootstrap.sh" --quiet)"
 rc=$?
 assert_eq "$rc" "0" "an inert OPTIONAL tool must not set rc either"
@@ -245,7 +218,7 @@ assert_contains "$out" "INERT: node installed but inert" "an optional tool's sha
 # silent pass - and it must not be mistaken for "newer" or "older".
 mkdir -p "$TMP/jq-unparseable"
 fake_ver "$TMP/jq-unparseable/jq" "not-a-version"
-shadow_path="$TMP/jq-unparseable:$TMP/single-nojq:$TMP/stubbin"
+shadow_path="$TMP/orca-healthy:$TMP/jq-unparseable:$TMP/single-nojq:$TMP/stubbin"
 out="$(PATH="$shadow_path" "$BIN/ac-bootstrap.sh" --quiet)"
 assert_contains "$out" "CHECK-FAILED: jq" "an unparseable active copy is reported, not swallowed"
 case "$out" in *"jq installed but inert"*) fail "an unparseable version must never be treated as a comparison result" ;; esac
@@ -309,73 +282,17 @@ rc=0
 out="$(PATH="$TMP/orca-bin:$TMP/single:$TMP/stubbin" "$BIN/ac-bootstrap.sh" --quiet)" || rc=$?
 assert_contains "$out" "orca runtime is starting, not ready" "an explicit non-ready state is flagged"
 [ "$rc" != 0 ] || fail "a non-ready runtime must fail the toolchain check"
-printf 'herdr
+printf 'orca
 ' >"$AC_HOME/config/backend"
 
 # --- version floors and capability probes ----------------------------------
 #
-# Present is not "the right build": the fleet's code targets a specific herdr
-# (0.8.0 - `status server --json` .running decides GONE vs unobservable in
-# ac-backend.sh), git (2.15 - the commit-msg guard's `interpret-trailers
-# --parse` fails OPEN on an older git, so every agent trailer would pass) and
-# jq (1.6 - `--args`/`$ARGS` in ac-brief.sh). A wrong build reads as its own
-# line class, never OK and never MISSING, naming the floor and the probe.
-# fake_herdr <dir> <version-line> <status-json> - a herdr answering --version
-# and `status server --json` with the given shapes.
-fake_herdr() {
-  mkdir -p "$1"
-  cat >"$1/herdr" <<EOF
-#!/usr/bin/env bash
-printf '%s\\n' "\$*" >>"$1/calls"
-[ "\${1:-}" = --version ] && { printf '%s\\n' '$2'; exit 0; }
-[ "\${1:-} \${2:-}" = "status server" ] && { printf '%s\\n' '$3'; exit 0; }
-exit 0
-EOF
-  chmod +x "$1/herdr"
-}
-real_status='{"status":"running","running":true,"version":"0.8.0","protocol":19,"compatible":true,"restart_needed":false}'
-
-# An older herdr is BELOW-FLOOR: a required tool, so it blocks like MISSING.
-fake_herdr "$TMP/herdr-old" "herdr 0.7.5" "$real_status"
-rc=0
-out="$(PATH="$TMP/herdr-old:$HEALTHY_PATH" "$BIN/ac-bootstrap.sh" --quiet)" || rc=$?
-assert_eq "$rc" "1" "a required tool below its floor blocks the toolchain"
-assert_contains "$out" "BELOW-FLOOR: herdr" "an older herdr is reported at BELOW-FLOOR grade"
-assert_contains "$out" "0.7.5" "...naming the version found"
-assert_contains "$out" "floor 0.8.0" "...and the floor"
-assert_contains "$out" "probe: herdr --version" "...and the probe that measured it"
-case "$out" in *"MISSING: herdr -"*) fail "below-floor is not MISSING: $out" ;; esac
-full="$(PATH="$TMP/herdr-old:$HEALTHY_PATH" "$BIN/ac-bootstrap.sh" || true)"
-case "$full" in *"OK: herdr"*) fail "a below-floor tool must never read OK: $full" ;; esac
-
-# A herdr AT the floor whose status server does not report .running lacks the
-# capability the backend calls: NO-CAPABILITY, also blocking.
-fake_herdr "$TMP/herdr-nocap" "herdr 0.8.0" '{"status":"running","compatible":true}'
-rc=0
-out="$(PATH="$TMP/herdr-nocap:$HEALTHY_PATH" "$BIN/ac-bootstrap.sh" --quiet)" || rc=$?
-assert_eq "$rc" "1" "a required tool lacking its capability blocks the toolchain"
-assert_contains "$out" "NO-CAPABILITY: herdr" "a herdr without .running is reported at NO-CAPABILITY grade"
-assert_contains "$out" "probe: herdr status server --json" "...naming the probe"
-case "$out" in *"BELOW-FLOOR: herdr"*) fail "at the floor is not below it: $out" ;; esac
-case "$out" in *"MISSING: herdr -"*) fail "a missing capability is not MISSING: $out" ;; esac
-full="$(PATH="$TMP/herdr-nocap:$HEALTHY_PATH" "$BIN/ac-bootstrap.sh" || true)"
-case "$full" in *"OK: herdr"*) fail "a tool lacking its capability must never read OK: $full" ;; esac
-
-# The real-shaped build is OK, and the doctor asks the server ONCE: the
-# capability reads the same bounded status probe the compat gate uses.
-fake_herdr "$TMP/herdr-real" "herdr 0.8.0" "$real_status"
-rc=0
-out="$(PATH="$TMP/herdr-real:$HEALTHY_PATH" "$BIN/ac-bootstrap.sh")" || rc=$?
-assert_eq "$rc" "0" "the targeted build passes"
-assert_contains "$out" "OK: herdr" "the real-shaped herdr reads OK"
-case "$out" in *"BELOW-FLOOR"*|*"NO-CAPABILITY"*) fail "the real-shaped build must raise no floor line: $out" ;; esac
-assert_eq "$(grep -c 'status server' "$TMP/herdr-real/calls")" "1" "the status server is probed exactly once per run"
-
-# A wedged server already owns its MISSING line; the capability probe must not
-# pile a second verdict on the same silence.
-rc=0
-out="$(AC_BOOTSTRAP_PROBE_TIMEOUT=2 PATH="$TMP/wedged:$HEALTHY_PATH" "$BIN/ac-bootstrap.sh" --quiet)" || rc=$?
-case "$out" in *"NO-CAPABILITY: herdr"*) fail "a timeout is not a missing capability: $out" ;; esac
+# Present is not "the right build": the fleet's code targets specific floors
+# for git (2.15 - the commit-msg guard's `interpret-trailers --parse` fails
+# OPEN on an older git, so every agent trailer would pass) and jq (1.6 -
+# `--args`/`$ARGS` in ac-brief.sh). orca has no floor or capability row (its
+# own reachability gate above is the real check); a wrong build reads as its
+# own line class, never OK and never MISSING, naming the floor and the probe.
 
 # The same table covers git and jq: an old jq is BELOW-FLOOR (required, blocks).
 mkdir -p "$TMP/jq-below"
