@@ -22,8 +22,7 @@
 # Learning/Curate cadence + maintenance-transaction block moved out to
 # ac-qa-lib.sh (retired since its last live caller was ported),
 # bin/ac-wake-lib.sh and bin/ac-maintenance-lib.sh respectively -
-# each sourced by the callers that need it, never by this file. The two
-# herdr-specific pane-agent workspace/tab helpers moved to bin/ac-backend.sh.
+# each sourced by the callers that need it, never by this file.
 #
 # The agent-crew home is the directory that holds state/, data/, config/ and
 # projects/. Scripts always run from the checkout that owns bin/, and read and
@@ -413,8 +412,8 @@ ac_config_read() {
   # every crewmate pane is one, and ac-pane-agent.sh reads its session and
   # model/effort knobs from one on every invocation. No home means no knob file,
   # so the default answers, which is the same value a homeless read already got:
-  # the only knob the phantom checkout ever grew is config/herdr-workspace, and
-  # that knob is retired and read by nothing (ac-backend.sh FAMILY WORKSPACE GROUPING).
+  # the only knob the phantom checkout ever grew is config/herdr-workspace, a
+  # retired knob read by nothing.
   # ac_home_resolve is THE homeless ladder - one copy on purpose. The
   # TypeScript twin, src/lib.ts's configRead, is pinned to this function by
   # a differential test (tests/ts/lib.test.ts).
@@ -451,7 +450,7 @@ ac_compact_pct_env() {
 # Operational knobs that stay CONVERGED parent -> crewdeputy: on every pull the
 # parent's value wins, including its absence (absence-mirroring). Only these
 # keys are ever copied or removed; identity and local keys (captain, launch-*,
-# herdr-*, local overrides) are never touched and stay downstream-owned.
+# local overrides) are never touched and stay downstream-owned.
 AC_INHERITABLE_CONFIG="${AC_INHERITABLE_CONFIG:-model effort backend crew-harness codereview-agent codereview-model codereview-effort qa-agent qa-model qa-effort gate-agent gate-model gate-effort epic-parallel room-parallel promote flow learn-every curate-every crew-dispatch.json}"
 
 ac_is_crewdeputy_home() {
@@ -946,7 +945,7 @@ AC_CAPTAIN_RE="${AC_CAPTAIN_RE:-$_ac_captain_re_default}"
 # captain ACTION - the two decision verbs (needs-decision:, blocked:) plus the
 # crew-ship delivery marker awaiting the captain's merge (checks-passed:,
 # anchored like AC_CAPTAIN_RE). done: stays out - a finished pane waits on the
-# CHIEF, not the captain. The watcher stamps such panes BLOCKED in the herdr UI
+# CHIEF, not the captain. The watcher stamps such panes BLOCKED in the UI
 # and any other marker clears the stamp - contract: ac-backend.sh CAPTAIN-WAIT
 # STAMP.
 _ac_decision_re_default='^[^[:alpha:][:digit:]"'\''`=+#/*-]*(needs-decision|blocked|checks-passed):([[:space:]]|$)'
@@ -1434,10 +1433,10 @@ ac_arrival_wait() {
   #                    transcript never produced a typed turn to compare -
   #                    "wrong" and "not written yet" are different facts,
   #                    and only the former may become REFUTED.
-  # ADAPTIVE, same shape as herdr_submit_verified_pane (ac-backend.sh): reads
-  # AC_SEND_SETTLE-spaced ticks (~2-3s budget at its default) and returns the
-  # INSTANT the evidence appears, never burning the whole budget on the
-  # healthy path.
+  # ADAPTIVE, same shape as the backend's own delivery verification
+  # (ac-backend.sh): reads AC_SEND_SETTLE-spaced ticks (~2-3s budget at its
+  # default) and returns the INSTANT the evidence appears, never burning the
+  # whole budget on the healthy path.
   # AC_ARRIVAL_LAST carries the arriving text back to the caller: a REFUTED
   # verdict that cannot say WHAT landed sends its reader to peek the pane, and
   # the pane is exactly where a truncated steer looks like a delivered one.
@@ -1504,7 +1503,7 @@ ac_meta_is_verify() {
 #
 # AUTHORITATIVE for what makes a `state/<id>.meta` a chief SELF TASK. It is the
 # meta bin/ac-self-task.sh writes (kind=self, exact match) so a small edit the
-# CHIEF makes itself is still visible on herdr and in every fleet view - the
+# CHIEF makes itself is still visible in every fleet view - the
 # "no invisible tasks" rule. Its pane holds a
 # `tail -f` on the task's progress log and NOTHING ELSE.
 #
@@ -2495,9 +2494,9 @@ ac_seed_crew_skills() {
 }
 
 ac_fleet_name() {
-  # The fleet token every herdr workspace label is built from ("<fleet>" for
-  # the root workspace, "<fleet> · <family>" for a family's - ac-backend.sh
-  # FAMILY WORKSPACE GROUPING). Ladder: AC_HOME names the fleet >
+  # The fleet token every pane's creation title is built from (orca_place_pane,
+  # ac-backend-orca.sh) and the one orca_home_node matches a sidebar entry's
+  # displayName against. Ladder: AC_HOME names the fleet >
   # AC_FLEET_NAME, the name ac-spawn.sh threads onto every crewmate launch
   # line > a FIXED name, never a basename.
   #
@@ -2526,8 +2525,8 @@ ac_fleet_name() {
 }
 
 ac_window_family() {
-  # ac_window_family <id> - the FAMILY whose herdr workspace a new tab for
-  # <id> belongs to (FAMILY WORKSPACE GROUPING, ac-backend.sh header).
+  # ac_window_family <id> - the FAMILY a new tab for <id> is grouped under
+  # (orca_fam_key, ac-backend-orca.sh - FAMILY GROUPING, ac-backend.sh header).
   # Ladder: AC_SCOPE (a roomchief spawning its own crewmate - first-hand
   # evidence of the family, and an epic roomchief spawning a story crewmate
   # groups it under the epic's space, matching its watch-set) > AC_FLEET_SCOPE
