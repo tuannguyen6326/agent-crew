@@ -15,10 +15,10 @@
 //        ac-self-task.sh log <id> '<progress line>'
 //
 // THE RULE IT SERVES (no invisible tasks; small tasks chief-self but
-// herdr-visible): no task may be done invisibly, and a task the CREWCHIEF does
-// itself is still a task. A chief editing a one-line doc or config used to
-// leave no trace on herdr at all - `start` is the one command that fixes
-// exactly that, and nothing else.
+// backend-visible): no task may be done invisibly, and a task the CREWCHIEF
+// does itself is still a task. A chief editing a one-line doc or config used
+// to leave no trace on the backend at all - `start` is the one command that
+// fixes exactly that, and nothing else.
 //
 // WHAT IT IS NOT. This is VISIBILITY, not an execution engine. It launches no
 // harness, reads no brief, opens no room, runs no gate, no review and no

@@ -253,12 +253,13 @@
 // nothing more - handing over AC_HOME instead would give every crewmate the whole
 // fleet home, which ac-qa.sh's "the path travels in the brief, not the environment"
 // block and ac-pane-agent.sh's refusal to fabricate a home both exist to prevent.
-// On the same rung and for the same reason: AC_FLEET_NAME, the fleet token every
-// herdr workspace label is built from (ac-lib.sh ac_fleet_name). Homeless, that
-// helper can only answer its fixed fallback, so every observation tab a crewmate
-// opens - ship watch, qa watch, the pane agents - landed in the ONE group shared
-// by every fleet on the box instead of its own. Resolved HERE where AC_HOME is
-// valid and threaded as the NAME alone.
+// On the same rung and for the same reason: AC_FLEET_NAME, the fleet token
+// every orca terminal title and workspace grouping is built from (ac-lib.sh
+// fleetName). Homeless, that helper can only answer its fixed fallback, so
+// every observation tab a crewmate opens - ship watch, qa watch, the pane
+// agents - landed in the ONE group shared by every fleet on the box instead
+// of its own. Resolved HERE where AC_HOME is valid and threaded as the NAME
+// alone.
 // Prefixed OUTSIDE spawnLaunch so a verbatim custom launch-<h> template passes
 // them on too. SHARP EDGE: config/model is harness-specific in VALUE, so a fleet
 // pinned to a codex model hands that name to a claude pane agent - the same
