@@ -15,8 +15,8 @@
 // 1. BEFORE the usage check, the fleet backend is resolved as sourcing
 //    ac-backend.sh resolved it (backendName, src/lib.ts): AC_BACKEND,
 //    config/backend, the first word of <AC_FLEET_STATE>/../config/backend,
-//    herdr; any other name is `ERROR: unsupported backend '<b>' (valid
-//    backends: herdr, orca; tmux/wezterm were removed 2026-07-17)`, exit 1.
+//    orca; any other name is `ERROR: unsupported backend '<b>' (valid
+//    backend: orca)`, exit 1.
 // 2. An empty or missing <id>: `ERROR: usage: ac-crew-state.sh <id>`, exit 1.
 // 3. <meta> is taskMeta(<id>) - <home>/state/<id>.meta, state/ minted, <id> a
 //    path component as given. No regular file there: `ERROR: no crewmate meta
@@ -24,8 +24,9 @@
 //    read is `/<id>.meta` - two lines.
 // 4. <worktree> is the meta's worktree= (metaGet: the last key wins, the value
 //    cut at a NUL); a meta that cannot be read is `WARN: cannot read meta file
-//    <meta>`, exit 1. AC_BACKEND becomes the meta's backend= (cut at a NUL),
-//    herdr without one, for every later call and child.
+//    <meta>`, exit 1. AC_BACKEND becomes taskBackend(<id>)'s validated read -
+//    orca without a recorded field, else exactly orca or the named refusal -
+//    for every later call and child.
 // 5. SHIP STEP: <worktree>/.crew/ship/current/steps.tsv a regular file (no
 //    worktree= reads `/.crew/...`): `awk -F'\t' '<STEPS_AWK>'` on it, the
 //    first row whose second TAB field is running, fixing or awaiting_approval,
@@ -50,9 +51,8 @@
 //    unreachable, past the RPC ceiling, its CLI absent from PATH - is
 //      unobservable: backend could not be read for <target>
 //    exit 0, <target> backendCall("target") read as `$( )` read it:
-//    `herdr:pane-<pane>` or `orca:<handle>`.
-// 7. BUSY: backendCall("capture", [<id>, "40"]) - herdr `pane read <pane>
-//    --source recent --lines 200` cut to its last 40 lines, orca `terminal
+//    `orca:<handle>`.
+// 7. BUSY: backendCall("capture", [<id>, "40"]) - orca `terminal
 //    read --limit 40 --screen` - piped through `sed '/^$/d'` then `tail -n 25`,
 //    so the 25-line window is counted after the blank lines are gone. A stage
 //    that fails ends the run with the rightmost failing status and nothing on
@@ -86,8 +86,8 @@
 // SPAWNED under the caller's locale, stdin /dev/null and stderr passed
 // through unless noted: awk, and tr (the row on stdin), for the ship step;
 // sed, tail and grep, each fed the stage before it, for the busy read; tail
-// and cut (tail's output on stdin) for the status line; and awk, herdr or
-// orca, jq and tail per backendCall verb.
+// and cut (tail's output on stdin) for the status line; and awk, orca,
+// jq and tail per backendCall verb.
 //
 // An AC_HOME that cannot be entered is `ERROR: AC_HOME is not a readable
 // directory: <h>`, exit 1. BYTES: argv and the environment arrive decoded, so
@@ -151,8 +151,9 @@ try {
   process.exit(1);
 }
 // taskBackend answers bytes; AC_BACKEND carries the text they spell, as the
-// shell's export did.
-process.env.AC_BACKEND = latin1(cutNul(taskBackend(id))).toString("utf8") || "herdr";
+// shell's export did. taskBackend never returns empty (orca without a
+// recorded field, else the named refusal), so there is no fallback to apply.
+process.env.AC_BACKEND = latin1(cutNul(taskBackend(id))).toString("utf8");
 
 const steps = `${worktree}/.crew/ship/current/steps.tsv`;
 if (isFile(latin1(steps))) {
