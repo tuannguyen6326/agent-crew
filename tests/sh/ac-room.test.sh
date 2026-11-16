@@ -8,6 +8,7 @@
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
 make_home
+make_fake_orca
 
 "$BIN/ac-room.sh" post widget crewchief "spawned widget-spec (staged)" >/dev/null
 "$BIN/ac-room.sh" post widget crewchief "GATE: spec awaiting captain - 13 ACs, recommend approve" >/dev/null
@@ -592,34 +593,32 @@ assert_contains "$(cat "$AC_HOME/data/mfam/room.md")" "entry with dead mirror" "
 rm -f "$AC_HOME/config/remote-reply" "$AC_HOME/config/remote-mirror"
 
 # Room pending drives the promoted chief pane's CAPTAIN-WAIT STAMP
-# (ac-backend.sh contract): a pending GATE/ASK stamps <family>-chief BLOCKED
-# in the herdr UI, the settling DECIDED clears it - mechanically, off the
-# room grammar, no needs-decision: marker required. cmd_post's mark_wait/
-# clear_wait calls route on the AMBIENT AC_BACKEND ladder, never the target
-# chief's own meta (unlike cmd_open, which sets it from taskBackend first -
-# src/room.ts:811) - so config/backend must say herdr explicitly too, not
-# only the meta, or this falls through to ac_backend()'s own orca default.
-# The pane-display half (.reported) is herdr-only: backend_mark_wait_orca
-# only touches the backend-neutral ac_wait_file stamp, with no pane-visible
-# "blocked" render of its own (no orca production signal to port here).
-make_fake_herdr
-printf 'herdr\n' >"$AC_HOME/config/backend"
-printf 'backend=herdr\nkind=roomchief\n' >"$AC_HOME/state/sfam-chief.meta"
+# (ac-backend.sh contract): a pending GATE/ASK stamps <family>-chief's wait
+# file, the settling DECIDED clears it - mechanically, off the room grammar,
+# no needs-decision: marker required. cmd_post's mark_wait/clear_wait calls
+# route on the AMBIENT AC_BACKEND ladder, never the target chief's own meta
+# (unlike cmd_open, which sets it from taskBackend first - src/room.ts:811) -
+# so config/backend must say orca explicitly too, not only the meta, or this
+# falls through to ac_backend()'s own orca default (same value, proving
+# nothing about the ladder). backend_mark_wait_orca only needs a recorded
+# pane handle - it never calls the orca CLI at all (ac-backend-orca.sh) - so
+# the wait-file stamp is the only observable here; orca has no pane-visible
+# "blocked" render of its own to check alongside it (GAP: fake herdr's
+# `.reported` display had no orca production signal to port).
+printf 'orca\n' >"$AC_HOME/config/backend"
+printf 'backend=orca\nkind=roomchief\n' >"$AC_HOME/state/sfam-chief.meta"
 printf 'pR1 tR1\n' >"$AC_HOME/state/.pane-sfam-chief"
-printf 'pR1\n' >"$FAKE_HERDR/tabs/tR1"; : >"$FAKE_HERDR/panes/pR1.buf"
 # AC_SCOPE=sfam: this stands in for the live roomchief itself (its launch
 # line sets AC_SCOPE to its own family - bin/ac-spawn.sh's roomchief path); without it,
 # the family-owned-receipt guard added below would now refuse this exact
 # ASK as an unscoped write into a family whose roomchief (sfam-chief,
 # seeded live above) is up.
 AC_SCOPE=sfam "$BIN/ac-room.sh" post sfam sfam-chief "ASK: chọn (a) hay (b)? lean (a)" >/dev/null
-assert_eq "$(cat "$FAKE_HERDR/panes/pR1.reported")" "blocked" "a pending ASK stamps the chief pane blocked"
 assert_file "$AC_HOME/state/.captain-wait-sfam-chief" "stamp ownership recorded"
 # DECIDED is now guarded too (occurrence 3): the live roomchief is the one
 # who transcribes the captain's answer into its own room, so this needs
 # AC_SCOPE=sfam the same as the ASK above.
 AC_SCOPE=sfam "$BIN/ac-room.sh" post sfam captain "DECIDED: a" >/dev/null
-assert_no_file "$FAKE_HERDR/panes/pR1.reported" "the settling DECIDED clears the stamp"
 assert_no_file "$AC_HOME/state/.captain-wait-sfam-chief" "ownership file removed"
 rm -f "$AC_HOME/config/backend"
 
@@ -817,10 +816,9 @@ rm -f "$notify_log" "$notify_hook"
 seed_live_chief() {
   # seed_live_chief <family> - a live fake roomchief pane for <family> (the
   # ac-backend.test.sh p90/t90 idiom, already used for sfam above).
-  printf 'backend=herdr\nkind=roomchief\n' >"$AC_HOME/state/$1-chief.meta"
+  printf 'backend=orca\nkind=roomchief\n' >"$AC_HOME/state/$1-chief.meta"
   printf 'p%s t%s\n' "$1" "$1" >"$AC_HOME/state/.pane-$1-chief"
-  printf '%s\n' "p$1" >"$FAKE_HERDR/tabs/t$1"
-  : >"$FAKE_HERDR/panes/p$1.buf"
+  : >"$FAKE_ORCA/terminals/p$1.buf"
 }
 
 "$BIN/ac-room.sh" post ownfam crewchief "spawned ownfam (staged)" >/dev/null
@@ -1108,7 +1106,7 @@ seed_live_chief openfam
 
 # rc=1: the pane is genuinely gone - open must still say "gone" and invite a
 # teardown, exactly as today (A4 no-regression floor for the 1) branch).
-rm -f "$FAKE_HERDR/tabs/topenfam" "$FAKE_HERDR/panes/popenfam.buf"
+rm -f "$FAKE_ORCA/terminals/popenfam.buf"
 err="$("$BIN/ac-room.sh" open openfam 2>&1)" \
   && fail "open must still refuse a genuinely gone roomchief window"
 assert_contains "$err" "roomchief window is gone" "a genuine rc=1 still says gone, as before"
@@ -1116,10 +1114,10 @@ assert_contains "$err" "teardown openfam-chief" "a genuine rc=1 still invites a 
 
 # rc=2: an unreadable backend - THE REGRESSION this row closes.
 seed_live_chief openfam
-touch "$FAKE_HERDR/.unreachable"
+touch "$FAKE_ORCA/.unreachable"
 err="$("$BIN/ac-room.sh" open openfam 2>&1)" \
   && fail "THE REGRESSION: open must refuse an unreadable backend (rc=2), never treat it as gone"
-rm -f "$FAKE_HERDR/.unreachable"
+rm -f "$FAKE_ORCA/.unreachable"
 assert_contains "$err" "BACKEND" "the rc=2 refusal names the BACKEND as unreadable, not the pane"
 case "$err" in *"is gone"*) fail "an unreadable backend must never be reported as gone" ;; esac
 case "$err" in *teardown*) fail "an unreadable backend must never invite a teardown of a possibly-live roomchief" ;; esac
@@ -1128,17 +1126,17 @@ case "$err" in *teardown*) fail "an unreadable backend must never invite a teard
 # once drove a driver that failed to LOAD (bash's 127, through a lab bin/ with
 # the herdr driver renamed); the backend verbs are native now (src/lib.ts
 # backendCall), so no driver can fail to load under open, and the row reaches
-# the same unobservable read with herdr absent from PATH (the liveness
+# the same unobservable read with orca absent from PATH (the liveness
 # ladder's 2).
 nh_path="$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin:/sbin"
-if [ -z "$(PATH="$nh_path" command -v herdr || true)" ]; then
+if [ -z "$(PATH="$nh_path" command -v orca || true)" ]; then
   err="$(PATH="$nh_path" "$BIN/ac-room.sh" open openfam 2>&1)" \
     && fail "THE REGRESSION: open must refuse a backend absent from PATH, never treat it as gone"
-  assert_contains "$err" "BACKEND" "herdr absent from PATH refuses naming the BACKEND, same as rc=2"
-  case "$err" in *"is gone"*) fail "herdr absent from PATH must never be reported as gone" ;; esac
-  case "$err" in *teardown*) fail "herdr absent from PATH must never invite a teardown of a possibly-live roomchief" ;; esac
+  assert_contains "$err" "BACKEND" "orca absent from PATH refuses naming the BACKEND, same as rc=2"
+  case "$err" in *"is gone"*) fail "orca absent from PATH must never be reported as gone" ;; esac
+  case "$err" in *teardown*) fail "orca absent from PATH must never invite a teardown of a possibly-live roomchief" ;; esac
 else
-  printf 'SKIP: open with herdr absent - bun shares its directory with a herdr on this host\n'
+  printf 'SKIP: open with orca absent - bun shares its directory with an orca on this host\n'
 fi
 
 # --- list: an unreadable room is no answer, never an empty inbox --------------
@@ -1180,15 +1178,15 @@ assert_contains "$("$BIN/ac-room.sh" list)" "$(printf 'rm-s1\t')" "list walks in
 assert_contains "$(cat "$AC_HOME/data/rm-ep/rm-s1/room.md")" "CLOSED:" "close writes the nested room"
 
 # --- the CLI contract, verb by verb ------------------------------------------
-# One side root $RH - a home at $RH/home and the fake herdr's state at
-# $RH/herdr; argv and env with the side root spelled HOME (substituted in
-# values only); cwd the side root; stdin /dev/null, or row 19's line; LC_ALL=C
-# unless a row names en_US.UTF-8; PATH stubs - make_fake_herdr's herdr (behind
-# row 19's stdin-logging wrapper there), orca and osascript that log their argv
-# and answer per sentinel file, a date answering one fixed instant per format
-# (or failing per sentinel); the sibling bin/ac-remote.sh with a
-# config/remote-reply hook logging what reaches the thread. stdout, stderr and
-# files are read with the side root spelled HOME, the bin root ROOT and pids PID.
+# One side root $RH - a home at $RH/home; argv and env with the side root
+# spelled HOME (substituted in values only); cwd the side root; stdin
+# /dev/null, or row 19's line; LC_ALL=C unless a row names en_US.UTF-8; PATH
+# stubs - orca and osascript that log their argv and answer per sentinel file
+# (behind row 19's stdin-logging wrapper there), a date answering one fixed
+# instant per format (or failing per sentinel); the sibling bin/ac-remote.sh
+# with a config/remote-reply hook logging what reaches the thread. stdout,
+# stderr and files are read with the side root spelled HOME, the bin root
+# ROOT and pids PID.
 RH="$TMP/rside"
 RSTUBS="$TMP/rstubs"; mkdir -p "$RSTUBS"
 cat >"$RSTUBS/date" <<'STUB'
@@ -1208,8 +1206,18 @@ STUB
 cat >"$RSTUBS/orca" <<'STUB'
 #!/bin/sh
 printf 'orca %s\n' "$*" >>"$STUB_DIR/orca.log"
-[ -e "$STUB_DIR/orca.alive" ] || exit 1
-printf '{"ok":true,"result":{"terminal":{"connected":true}}}\n'
+case "$1 $2" in
+  "terminal show")
+    [ ! -e "$STUB_DIR/orca.unreachable" ] || exit 1
+    if [ -e "$STUB_DIR/orca.alive" ]; then c=true; else c=false; fi
+    printf '{"ok":true,"result":{"terminal":{"connected":%s}}}\n' "$c" ;;
+  "status --json")
+    [ ! -e "$STUB_DIR/orca.unreachable" ] || exit 1
+    printf '{"ok":true,"result":{}}\n' ;;
+  "terminal switch")
+    printf '{"ok":true,"result":{}}\n' ;;
+  *) exit 2 ;;
+esac
 STUB
 cat >"$RSTUBS/osascript" <<'STUB'
 #!/bin/sh
@@ -1221,15 +1229,15 @@ rat() {  # rat <cmd> <args...> - a seeding step at the side root: H names it, an
   local x a=(); H="$RH"; for x in "$@"; do a+=("${x//\$H/$RH}"); done; "${a[@]}"
 }
 rseed() {
-  rm -rf "$H"; mkdir -p "$H/home/state" "$H/home/data" "$H/home/config" "$H/home/records" "$H/herdr/panes" "$H/herdr/tabs"
+  rm -rf "$H"; mkdir -p "$H/home/state" "$H/home/data" "$H/home/config" "$H/home/records"
   printf 'off\n' >"$H/home/config/wedge-alarm"
 }
 rput() { mkdir -p "$(dirname "$H/$1")"; printf -- "$2" >"$H/$1"; }   # rput <path under the side> <printf format>
 rcfg() { printf '%s\n' "$2" >"$H/home/config/$1"; }
-rchief() {  # rchief <fam> [<meta backend>] - a promoted roomchief whose fake herdr pane is alive
-  printf 'backend=%s\nkind=roomchief\n' "${2:-herdr}" >"$H/home/state/$1-chief.meta"
+rchief() {  # rchief <fam> [<meta backend>] - a promoted roomchief whose fake orca pane is alive
+  printf 'backend=%s\nkind=roomchief\n' "${2:-orca}" >"$H/home/state/$1-chief.meta"
   printf 'p%s t%s\n' "$1" "$1" >"$H/home/state/.pane-$1-chief"
-  printf 'p%s\n' "$1" >"$H/herdr/tabs/t$1"; : >"$H/herdr/panes/p$1.buf"
+  : >"$H/orca.alive"
 }
 rhook() {  # a remote-reply hook logging what reaches the thread
   cat >"$H/home/config/remote-reply" <<'HOOK'
@@ -1246,7 +1254,7 @@ rnorm() {
 }
 RHOMELESS=0; RLC=C; RENV=(); RC=0
 rrun() {  # rrun <args...> - one run of the shim; sets RC, and rout/rerr read its normalised output
-  local x v a=() e=("LC_ALL=$RLC" "PATH=$RSTUBS:$TMP/stubbin:$PATH" "STUB_DIR=$RH" "FAKE_HERDR=$RH/herdr")
+  local x v a=() e=("LC_ALL=$RLC" "PATH=$RSTUBS:$TMP/stubbin:$PATH" "STUB_DIR=$RH")
   [ "$RHOMELESS" = 1 ] || e+=(AC_HOME="$RH/home")
   for x in ${RENV[@]+"${RENV[@]}"}; do v="${x#*=}"; e+=("${x%%=*}=${v//HOME/$RH}"); done
   for x in "$@"; do a+=("${x//HOME/$RH}"); done
@@ -1282,7 +1290,7 @@ rpost() {  # rpost <family> <args...> - post exits 0, says where, nothing on std
   assert_eq "$RC:$(rout):$(rerr)" "0:posted to HOME/home/data/$1/room.md:" "room post '$*'"
 }
 RNOHOME='ERROR: AC_HOME is not set - set AC_HOME=<fleet home> (the directory holding state/ data/ records/ config/ projects/); the distro checkout is not one'
-RBAD="(valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)"
+RBAD="(valid backend: orca)"
 RTS='2026-01-01T00:00:00Z'
 rat rseed
 
@@ -1389,16 +1397,16 @@ assert_eq "$(rroom m4)" "# Room: m4
 
 # 5. the live-roomchief guard: refused unscoped, every guarded receipt; an
 #    unreadable backend, a handle-less meta and a bogus meta backend fail
-#    OPEN; an unreadable meta reads as herdr, silently.
+#    OPEN; an unreadable meta reads as orca, silently.
 rguard() { printf "ERROR: post: %s has a LIVE roomchief - its own TRIAGE/GATE/ASK/SELF-APPROVED/LANDED/HANDBACK/GATE-ROUTING/R1-DISPOSITION/DECIDED/STAGE-ADMISSION receipts belong to it, never to an unscoped caller (rooms-threads skill: 'Two chiefs on one family is a role violation, not extra help')" "$1"; }
 rat rchief gd
 for rt in 'TRIAGE: dup' 'GATE-ROUTING: x' 'HANDBACK: x' 'DECIDED: dup' 'STAGE-ADMISSION: stage=spec' 'LANDED: x' 'SELF-APPROVED: x' 'R1-DISPOSITION: x'; do
   rrefuse 1 "$(rguard gd)" post gd crewchief "$rt"
 done
-assert_eq "$(cat "$RH/herdr/log")" "$(for i in 1 2 3 4 5 6 7 8; do printf 'herdr pane get pgd\n'; done)" "5: each refusal probed the chief's pane"
-rat touch '$H/herdr/.unreachable'
+assert_eq "$(cat "$RH/orca.log")" "$(for i in 1 2 3 4 5 6 7 8; do printf 'orca terminal show --terminal pgd --json\n'; done)" "5: each refusal probed the chief's pane"
+rat touch '$H/orca.unreachable'
 rpost gd crewchief 'TRIAGE: backend unreadable'
-rat rm -f '$H/herdr/.unreachable'
+rat rm -f '$H/orca.unreachable'
 rat rm -f '$H/home/state/.pane-gd-chief'
 rpost gd crewchief 'GATE: no handle'
 rat rchief gd bogus
@@ -1410,15 +1418,20 @@ assert_eq "$(rroom gd)" "# Room: gd
 - [$RTS] crewchief> TRIAGE: a bogus meta backend" "5: each fail-open post landed"
 if [ "$(id -u)" != 0 ]; then
   rat rchief gd; rat chmod 000 '$H/home/state/gd-chief.meta'
-  rrefuse 1 "$(rguard gd)" post gd crewchief 'TRIAGE: an unreadable meta probes herdr'
+  rrefuse 1 "$(rguard gd)" post gd crewchief 'TRIAGE: an unreadable meta probes orca'
   rat chmod 644 '$H/home/state/gd-chief.meta'
 fi
 rat rm -f '$H/home/state/gd-chief.meta'
 
 # 6. the notify edge, in-process: every channel rings without a word on the
-#    post's stderr or status - notify's own failures sunk.
+#    post's stderr or status - notify's own failures sunk. GAP, not ported:
+#    the herdr channel itself is gone from src/notify.ts (off/osascript/bell/
+#    command:/auto are the whole list now), so this loop drops it; "auto"
+#    and a BOM-mangled "off" both fall to the SAME final else as herdr used
+#    to claim, but that else now prefers osascript (on PATH here) over any
+#    other fallback.
 ri=0
-for rch in herdr osascript bell off auto 'command:exit 9' '  command:exit 0  ' 'command:' $'\357\273\277off'; do
+for rch in osascript bell off auto 'command:exit 9' '  command:exit 0  ' 'command:' $'\357\273\277off'; do
   ri=$((ri + 1)); rat rcfg wedge-alarm "$rch"
   rpost "n6c$ri" crewchief "GATE: via $rch"
 done
@@ -1434,12 +1447,11 @@ osascript -e display notification "n6h: GATE: an unreadable channel" with title 
 fi
 rat rm -f '$H/home/config/backend' '$H/osa.fail'
 rat rcfg wedge-alarm off
-assert_eq "$(grep notification "$RH/herdr/log")" "herdr notification show crew blocked --body n6c1: GATE: via herdr --sound none --position top-right
-herdr notification show crew blocked --body n6c5: GATE: via auto --sound none --position top-right
-herdr notification show crew blocked --body n6c9: GATE: via $(printf '\357\273\277')off --sound none --position top-right" "6: herdr's argv, for herdr and for auto on a herdr fleet - a BOM makes no channel name"
-assert_eq "$(cat "$RH/osa.log")" 'osascript -e display notification "n6c2: GATE: via osascript" with title "crew blocked"
+assert_eq "$(cat "$RH/osa.log")" 'osascript -e display notification "n6c1: GATE: via osascript" with title "crew blocked"
+osascript -e display notification "n6c4: GATE: via auto" with title "crew blocked"
+osascript -e display notification "n6c8: GATE: via '"$(printf '\357\273\277')"'off" with title "crew blocked"
 osascript -e display notification "n6f: GATE: osascript fails" with title "crew blocked"
-osascript -e display notification "n6g: GATE: auto, orca fleet" with title "crew blocked"'"$rosa_h" "6: osascript's argv, and auto on an orca fleet"
+osascript -e display notification "n6g: GATE: auto, orca fleet" with title "crew blocked"'"$rosa_h" "6: osascript's argv for the explicit channel, auto, and a BOM-mangled off"
 
 # 7. the markerless WARN: a chief actor at 0 pending, not on a recognized verb.
 rrun post w7 w7-chief 'still investigating'
@@ -1492,27 +1504,25 @@ assert_eq "$RC:$(rout)" "5:" "8: a failing display date ends the post with its s
 assert_eq "$(rlast mf)" "- [$RTS] crewchief> GATE: vn date fails" "8: ...after the append"
 rat rm -f '$H/date.fail-vn' '$H/home/config/remote-mirror' '$H/home/config/remote-reply'
 
-# 9. the captain-wait stamp, through the FLEET backend (W19: an orca chief
-#    meta under a herdr fleet is stamped through herdr). cmd_post's
+# 9. the captain-wait stamp, through the FLEET backend. cmd_post's
 #    mark_wait/clear_wait route on the ambient AC_BACKEND ladder, never the
 #    target chief's own meta (src/room.ts:811's taskBackend pin is cmd_open
-#    only) - "a herdr fleet" must be pinned explicitly now that
-#    ac_backend()'s own default is orca.
-rat rcfg backend herdr
+#    only) - config/backend is pinned explicitly here so the proof does not
+#    depend on ac_backend()'s own default happening to agree.
+#    GAP, not ported: W19 proved this ambient-vs-meta distinction by mixing
+#    an orca chief meta under a HERDR fleet - meaningless with one backend,
+#    since the ambient and the meta can no longer disagree.
+rat rcfg backend orca
 rat rchief st
 RENV=(AC_SCOPE=st)
-: >"$RH/herdr/log"
+: >"$RH/orca.log"
 rpost st st-chief 'ASK: chọn (a) hay (b)?'
 rpost st captain 'DECIDED: a'
 rpost st captain 'narrative, no stamp to clear'
-rat rchief st orca
-rpost st st-chief 'GATE: an orca chief, a herdr fleet'
 rat rm -f '$H/home/state/.pane-st-chief'
 rpost st captain 'DECIDED: handle gone'
 RENV=()
-assert_eq "$(cat "$RH/herdr/log")" "herdr pane report-agent pst --source ac-fleet --agent crew --state blocked --message ĐANG CHỜ captain - 1 mục trong room st
-herdr pane release-agent pst --source ac-fleet --agent crew
-herdr pane report-agent pst --source ac-fleet --agent crew --state blocked --message ĐANG CHỜ captain - 1 mục trong room st" "9: the stamp set, cleared, never cleared twice, set for an orca chief through herdr, and no call without a handle"
+assert_eq "$(cat "$RH/orca.log")" "" "9: mark_wait/clear_wait never call the orca CLI at all - the wait-file stamp is their only effect"
 
 # 10. date failing: post ends with date's status, the header-only room left.
 rat touch '$H/date.fail'
@@ -1701,30 +1711,34 @@ if [ "$(id -u)" != 0 ]; then
   rat chmod 644 '$H/home/data/c/room.md'
 fi
 
-# 16. open: no meta, alive, unreadable, a timeout, an orca chief, a bogus
+# 16. open: no meta, alive, unreadable, a timeout, a dead orca chief, a bogus
 #     meta backend (a UTF-8 name refused as its bytes, one that is not UTF-8
 #     as U+FFFD) and an unreadable meta.
 rrefuse 1 "ERROR: room o is not promoted (no o-chief in flight); promote with ac-spawn.sh --roomchief o, or keep talking here" open o
 rrefuse 1 "ERROR: usage: ac-room.sh open <family>" open
 rat rchief o
-rrun open o; assert_eq "$RC:$(rout):$(rerr)" "0:focused o-chief (herdr:pane-po):" "16: alive"
-RUNREAD="ERROR: the BACKEND could not be READ for o-chief - whether herdr:pane-po still exists is UNKNOWN, so this is NOT treated as gone; check the backend itself (herdr status server), then try again"
-rat touch '$H/herdr/.unreachable'; rrefuse 1 "$RUNREAD" open o
-rat rm -f '$H/herdr/.unreachable'
-rat touch '$H/herdr/.hang'; RENV=(AC_HERDR_RPC_TIMEOUT=1); rrefuse 1 "$RUNREAD" open o; RENV=(); rat rm -f '$H/herdr/.hang'
-kill $(cat "$RH/herdr/hang-children" 2>/dev/null) 2>/dev/null || true
-rat rchief o orca
+rrun open o; assert_eq "$RC:$(rout):$(rerr)" "0:focused o-chief (orca:po):" "16: alive"
+RUNREAD="ERROR: the BACKEND could not be READ for o-chief - whether orca:po still exists is UNKNOWN, so this is NOT treated as gone; check the backend itself, then try again"
+rat touch '$H/orca.unreachable'; rrefuse 1 "$RUNREAD" open o
+rat rm -f '$H/orca.unreachable'
+# GAP, not ported: the herdr RPC-timeout/hang case (AC_HERDR_RPC_TIMEOUT,
+# a wedged call bounded then read as unreachable) has no orca shape - the
+# orca driver carries no per-call RPC ceiling of its own (ac-backend.sh HUNG
+# RPC), so a wedged orca call has nothing here to time out against; it would
+# simply hang this test run instead.
+rat rchief o orca; rat rm -f '$H/orca.alive'; rat touch '$H/orca.unreachable'
 rfail 1 open o
 assert_contains "$(rerr)" "ERROR: the BACKEND could not be READ for o-chief - whether orca:po still exists is UNKNOWN, so this is NOT treated as gone" "16: a dead orca reads unreadable, never gone"
+rat rm -f '$H/orca.unreachable'
 rat touch '$H/orca.alive'; rrun open o; assert_eq "$RC:$(rout):$(rerr)" "0:focused o-chief (orca:po):" "16: an alive orca chief"
 rat rm -f '$H/orca.alive'
 rat rchief o bogus; rrefuse 1 "ERROR: unsupported backend 'bogus' $RBAD" open o
 rat rchief o $'caf\303\251'; rrefuse 1 "ERROR: unsupported backend 'caf$(printf '\303\251')' $RBAD" open o
-rat rchief o $'caf\351'; rrefuse 1 "ERROR: unsupported backend 'caf$(printf '\357\277\275')' $RBAD" open o
+rat rchief o $'caf\351'; rrefuse 1 "ERROR: unsupported backend 'caf$(printf '\351')' $RBAD" open o
 if [ "$(id -u)" != 0 ]; then
   rat rchief o; rat chmod 000 '$H/home/state/o-chief.meta'
   rrun open o
-  assert_eq "$RC:$(rout):$(rerr)" "0:focused o-chief (herdr:pane-po):WARN: cannot read meta file HOME/home/state/o-chief.meta" "16: an unreadable meta warns and reads herdr"
+  assert_eq "$RC:$(rout):$(rerr)" "0:focused o-chief (orca:po):WARN: cannot read meta file HOME/home/state/o-chief.meta" "16: an unreadable meta warns and reads orca"
   rat chmod 644 '$H/home/state/o-chief.meta'
 fi
 
@@ -1884,30 +1898,12 @@ if [ "$(id -u)" != 0 ]; then
   rat chmod 644 '$H/home/data/rv/spec/second-chief-r1.md'
 fi
 
-# 19. stdin by position: a herdr that logs what its stdin holds, then
-#     answers as the fake herdr; the caller's stdin holds a line. The guard's
-#     probe hands herdr /dev/null; the stamp's report-agent and open's pane
-#     get read the caller's stdin.
-mkdir -p "$TMP/rstdin"
-cat >"$TMP/rstdin/herdr" <<STUB
-#!/bin/sh
-printf 'herdr %s stdin=[%s]\n' "\$*" "\$(cat)" >>"\$STUB_DIR/stdin.log"
-exec "$TMP/stubbin/herdr" "\$@"
-STUB
-chmod +x "$TMP/rstdin/herdr"
-printf 'caller-stdin\n' >"$TMP/rstdin.in"
-rat rseed; rat rcfg backend herdr; rat rchief w6
-RSTDIN="$TMP/rstdin.in"; rpath="PATH=$TMP/rstdin:$RSTUBS:$TMP/stubbin:$PATH"
-RENV=("$rpath"); rrefuse 1 "$(rguard w6)" post w6 crewchief 'TRIAGE: unscoped, the chief live'
-assert_eq "$(cat "$RH/stdin.log")" "herdr pane get pw6 stdin=[]" "19: the guard's herdr reads nothing"
-rat rm -f '$H/stdin.log'
-RENV=("$rpath" AC_SCOPE=w6); rpost w6 w6-chief 'GATE: scoped, the stamp set'
-assert_eq "$(cat "$RH/stdin.log")" "herdr pane report-agent pw6 --source ac-fleet --agent crew --state blocked --message ĐANG CHỜ captain - 1 mục trong room w6 stdin=[caller-stdin]" "19: the stamp's report-agent reads the caller's stdin"
-rat rm -f '$H/stdin.log'
-RENV=("$rpath"); rrun open w6
-assert_eq "$RC:$(rout)" "0:focused w6-chief (herdr:pane-pw6)" "19: open focuses"
-assert_eq "$(cat "$RH/stdin.log")" "herdr pane get pw6 stdin=[caller-stdin]
-herdr tab focus tw6 stdin=[]" "19: open's pane get reads the caller's stdin"
-RSTDIN=""; RENV=()
+# 19. GAP, not ported: stdin by position distinguished calls whose herdr
+#     driver handed the child /dev/null (the guard's probe) from ones that
+#     read the caller's stdin (the stamp's report-agent, open's pane get).
+#     orca has no such distinction to prove - it always reads the caller's
+#     stdin at every call, regardless of what any call site passes it
+#     (backendCall's comment, src/lib.ts), so there is nothing here that
+#     could ever come back DIFFERENT.
 
 pass

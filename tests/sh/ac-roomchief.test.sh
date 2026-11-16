@@ -13,12 +13,6 @@
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
 make_fake_orca
-# Fake herdr stays armed too, for the one ORPHAN-WINDOW case below (3) that
-# has no orca production signal: backend_kill_window_orca closes by HANDLE
-# alone (handle uniqueness is its own ownership proof, bin/ac-backend-orca.sh),
-# so there is no "foreign tab" shape to refuse - that KILL OWNERSHIP PROOF
-# check is herdr-only and stays pinned to herdr there.
-make_fake_herdr
 # Deliver the kickoff prompt immediately (default 8s) so the suite stays fast.
 export AC_SPAWN_SETTLE=0
 # Every pane here clears the composer-ready observation (bin/ac-spawn.sh
@@ -26,12 +20,11 @@ export AC_SPAWN_SETTLE=0
 # (tests/sh/ac-spawn-kickoff-ready.test.sh owns it), it just needs its spawns to
 # complete without a real harness's boot delay.
 printf '✳ fake\n' >"$FAKE_ORCA/.default-title"
-: >"$FAKE_HERDR/.pane-idle-by-default"   # the herdr-only case (3) needs this too
 export AC_KICKOFF_READY_BUDGET=5
 
 make_home
 # ac-spawn.sh pins a NEW task's AC_BACKEND from configReadSoft("backend",
-# "herdr") when no --backend flag is given (src/spawn.ts) - every promote
+# "orca") when no --backend flag is given (src/spawn.ts) - every promote
 # below must find orca pinned explicitly, not rely on ac_backend()'s own
 # session-level default.
 printf 'orca\n' >"$AC_HOME/config/backend"
@@ -470,8 +463,8 @@ assert_eq "$(find "$AC_HOME/state/.wake-spool.famE" -type f | wc -l | tr -d ' ')
 # refusal. Contract: ORPHAN-WINDOW SAFETY in bin/ac-spawn.sh.
 
 # (1) the launch line strands: the spawn dies, and takes its own window with it.
-# Orca's drop-enters knob is count-only (no pattern match, unlike fake herdr's),
-# so it drops whichever --enter sends come first; a HOME-ARM create for a new
+# Orca's drop-enters knob is count-only (no pattern match), so it drops
+# whichever --enter sends come first; a HOME-ARM create for a new
 # family presses exactly three before a strand is given up on - orca_type_cd's
 # `cd '<dir>'` enter, then backend_send_line_pane_orca's own press, then its
 # one focus-and-retry press (bin/ac-backend-orca.sh orca_submit_verified_pane)
@@ -513,25 +506,13 @@ assert_eq "$(awk -F= '$1=="initiated_by"{print $2}' "$AC_HOME/state/orph2-chief.
   "initiated_by - the cap counts on it too (absent reads as chief-initiated)"
 "$BIN/ac-teardown.sh" orph2-chief >/dev/null
 
-# (3) the reap stays INSIDE the KILL OWNERSHIP PROOF (ac-backend.sh header): a
-# tab no longer labelled crew:<id> is a co-tenant, and closing one has taken the
-# whole chiefs workspace down three times. It is refused and warned about, and
-# the spawn simply opens its own window. HERDR-ONLY: backend_kill_window_orca
+# (3) GAP, not ported: the "reap stays INSIDE the KILL OWNERSHIP PROOF" case
+# (a tab no longer labelled crew:<id> is a co-tenant, refused and warned about
+# rather than closed) had no orca shape to begin with - backend_kill_window_orca
 # closes by its unique HANDLE alone and never round-trips a label, so there is
-# no foreign-tab shape for fake orca to model here (fixture report,
-# "herdr observations deliberately left unmodeled") - this case stays pinned
-# to fake herdr, still armed above for exactly this one case.
-printf 'pFOR crew:someone-else\n' >"$FAKE_HERDR/tabs/tFOR"
-: >"$FAKE_HERDR/panes/pFOR.buf"
-printf 'tFOR\n' >"$FAKE_HERDR/panes/pFOR.tab"
-printf 'pFOR tFOR\n' >"$AC_HOME/state/.pane-orph3-chief"
-room_seed orph3
-out="$("$BIN/ac-spawn.sh" --roomchief orph3 --harness fake --backend herdr 2>&1)" \
-  || fail "a refused reap must still spawn: $out"
-assert_contains "$out" "spawned orph3-chief" "a refused reap still spawns"
-assert_contains "$out" "not closing tab tFOR" "a foreign tab is refused, never closed"
-assert_file "$FAKE_HERDR/tabs/tFOR" "the co-tenant's tab survives the reap attempt"
-"$BIN/ac-teardown.sh" orph3-chief >/dev/null
+# no foreign-tab state for orca to ever misidentify as its own. The mechanism
+# this case proved (backend_kill_window_herdr's label round-trip) no longer
+# exists in bin/ac-backend.sh.
 
 # --- SOLO CHIEF: a roomchief that works its family's slices itself -----------
 # A small family need not cost a crewmate. The
