@@ -24,9 +24,9 @@
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
-# The dashboard auto-open is NOT under test here, and `start` would otherwise
-# reach a REAL herdr server when one is running on the dev box - creating a
-# live "<test-home> (pane-agent)" workspace and tab from a test run.
+# The dashboard auto-open this knob used to gate is retired outright (T10):
+# `start` never opens one on any backend now, so AC_QA_WATCH is read by
+# nothing - kept set below only because every row already carries it.
 export AC_QA_WATCH=off
 
 make_home
@@ -2776,28 +2776,12 @@ assert_eq "$(cat "$QHLOG" 2>/dev/null)" "" "qa start invokes no herdr"
 assert_no_file "$wqrepo/.crew/qa/$(readlink "$wqrepo/.crew/qa/current")/watch.pane" "qa start records no board pane"
 cd "$repo" || fail "cd back from qawatchrepo"
 
-# --- finish retires a pre-cutover fleet's stale watch.pane --------------------
-# Nothing writes watch.pane anymore, but finish still closes one left over
-# from before the cutover, best-effort, through herdr when it is on PATH,
-# then removes the file.
-gstub="$TMP/qapaneopstub"; mkdir -p "$gstub"
-cat >"$gstub/herdr" <<'EOF'
-#!/usr/bin/env bash
-echo "herdr $*" >>"$WHLOG"
-exit 0
-EOF
-chmod +x "$gstub/herdr"
-qprepo="$(make_repo qapaneopsrepo)"
-cd "$qprepo" || fail "cd qapaneopsrepo"
-export WHLOG="$TMP/qa-paneops.log"
-: >"$WHLOG"
-"$QA" start --target HEAD --task paneopsfail >/dev/null
-qprun="$qprepo/.crew/qa/$(readlink "$qprepo/.crew/qa/current")"
-printf 'pW1\n' >"$qprun/watch.pane"
-PATH="$gstub:$PATH" "$QA" finish failed >/dev/null
-assert_contains "$(cat "$WHLOG")" "pane close pW1" "finish closes a stale watch.pane through herdr"
-assert_no_file "$qprun/watch.pane" "finish removes the stale watch.pane handle"
-cd "$repo" || fail "cd back from qapaneopsrepo"
+# GAP, not ported: a "finish retires a pre-cutover fleet's stale watch.pane"
+# block used to prove finish best-effort closed a watch.pane left over from
+# before the T10 cutover, through herdr when it was on PATH, then removed the
+# file. That whole sweep (the close call AND the file removal) is deleted
+# outright, not ported - nothing has written a watch.pane since T10, so a
+# fleet carrying one is pre-cutover legacy with no live path left to reach it.
 
 # --- completion gate negatives: grade / evidence root / web visual ----------------
 # One pass-shaped run, then break exactly one per-case guard at a time: the
