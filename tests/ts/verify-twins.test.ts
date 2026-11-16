@@ -9,7 +9,7 @@
 // own contract is tests/sh/ac-verify.test.sh's.
 //
 // DISPUTED: the implementation of each live-bash helper (the bash vs src/lib-verify.ts)
-// HELD-CONSTANT: one side root per side and row, seeded alike by the same bash snippet (a home at <side>/home with config/backend, state/ and data/); argv; env (PATH = a stub dir - sleep logging to <side>/sleep.log and returning, a fake herdr and orca logging their argv to <side>/herdr.log and <side>/orca.log - then the host's bun and jq, then /bin and /usr/bin without herdr, orca, docker, codegraph or sleep; LC_ALL=C unless a row names a locale; HOME and TMPDIR the test root; AC_HOME the side's home; SIDE the side root); cwd (the distro root); stdin (/dev/null); stdout, stderr and the status (the side root spelled S, the side process's pid PID) and the side root's world after the call - every path with its mode and bytes - compared whole. A row naming a shell-own line asserts it on the bash side and drops it there before the comparison (the twin writes none: SHELL-OWN STDERR).
+// HELD-CONSTANT: one side root per side and row, seeded alike by the same bash snippet (a home at <side>/home with config/backend, state/ and data/); argv; env (PATH = a stub dir - sleep logging to <side>/sleep.log and returning, a fake orca logging its argv to <side>/orca.log - then the host's bun and jq, then /bin and /usr/bin without orca, docker, codegraph or sleep; LC_ALL=C unless a row names a locale; HOME and TMPDIR the test root; AC_HOME the side's home; SIDE the side root); cwd (the distro root); stdin (/dev/null); stdout, stderr and the status (the side root spelled S, the side process's pid PID) and the side root's world after the call - every path with its mode and bytes - compared whole. A row naming a shell-own line asserts it on the bash side and drops it there before the comparison (the twin writes none: SHELL-OWN STDERR).
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -29,7 +29,7 @@ const BASE = join(W, "base");
 mkdirSync(BASE);
 for (const d of ["/usr/bin", "/bin"])
   for (const name of readdirSync(d)) {
-    if (["herdr", "orca", "docker", "codegraph", "jq", "sleep"].includes(name) || existsSync(join(BASE, name))) continue;
+    if (["orca", "docker", "codegraph", "jq", "sleep"].includes(name) || existsSync(join(BASE, name))) continue;
     symlinkSync(join(d, name), join(BASE, name));
   }
 const TOOLS = join(W, "tools");
@@ -40,11 +40,6 @@ const tool = (name: string, body: string): void => {
   chmodSync(join(TOOLS, name), 0o755);
 };
 tool("sleep", '#!/bin/sh\nprintf \'%s\\n\' "$*" >>"$SIDE/sleep.log"\n');
-// herdr's `pane read` prints 300 numbered lines (FAKE_HERDR=fail: exit 1).
-tool(
-  "herdr",
-  '#!/bin/sh\nprintf \'%s\\n\' "$*" >>"$SIDE/herdr.log"\n[ "${FAKE_HERDR:-ok}" = ok ] || exit 1\ncase "$1 $2" in "pane read") i=1; while [ "$i" -le 300 ]; do printf \'line %s\\n\' "$i"; i=$((i + 1)); done ;; esac\n',
-);
 // orca's `terminal read` answers per FAKE_ORCA: ok, notok (ok:false), notail, fail.
 tool(
   "orca",
@@ -118,7 +113,7 @@ function seeded(label: string, row: Row, s: string): void {
   mkdirSync(join(s, "home", "config"), { recursive: true });
   mkdirSync(join(s, "home", "state"), { recursive: true });
   mkdirSync(join(s, "home", "data"), { recursive: true });
-  writeFileSync(join(s, "home", "config", "backend"), "herdr\n");
+  writeFileSync(join(s, "home", "config", "backend"), "orca\n");
   if (row.seed) {
     const r = Bun.spawnSync(["/bin/bash", "-c", `set -e; ${row.seed}`], { cwd: s, env: { PATH, HOME: W, SIDE: s }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
     if (r.exitCode !== 0) throw new Error(`seed failed for ${label}: ${r.stderr.toString()}`);
@@ -309,27 +304,17 @@ const capture = (label: string, args: string[], env?: Record<string, string>, se
     twin: 'const r = L.backendCapturePane(A[0] ?? "", A[1] ?? "", { stdout: "pipe", stderr: "inherit" }); out(r.out); if (r.exited) process.exit(r.status); return r.status;',
   });
 
-test("C: herdr reads at least 200 lines and keeps the last <lines>", () => {
-  capture("40 lines", ["p_1", "40"]);
-  capture("250 lines", ["p_1", "250"]);
-  capture("no lines given", ["p_1"]);
-  capture("an empty lines value", ["p_1", ""]);
-  capture("a lines value tail refuses", ["p_1", "abc"]);
-  capture("a named session", ["p_1", "40"], { AC_HERDR_SESSION: "s1" });
-  capture("the session knob", ["p_1", "40"], undefined, "printf 'knob\\n' >home/config/herdr-session");
-}, 120000);
-
-test("C: herdr's refusals", () => {
-  capture("an empty pane", ["", "40"]);
-  capture("a read that fails", ["p_1", "40"], { FAKE_HERDR: "fail" });
-}, 120000);
+// herdr's 200-line capture floor and its AC_HERDR_SESSION/config/herdr-session
+// knob have no orca counterpart (orca_json carries no session concept, and
+// backend_capture_pane_orca passes --limit straight through with no floor) -
+// reported as a gap, not ported.
 
 test("C: orca reads the rendered screen", () => {
-  capture("ok", ["t_1", "40"], undefined, "printf 'orca\\n' >home/config/backend");
-  capture("ok:false", ["t_1", "40"], { FAKE_ORCA: "notok" }, "printf 'orca\\n' >home/config/backend");
-  capture("a read that fails", ["t_1", "40"], { FAKE_ORCA: "fail" }, "printf 'orca\\n' >home/config/backend");
-  capture("no tail", ["t_1", "40"], { FAKE_ORCA: "notail" }, "printf 'orca\\n' >home/config/backend");
-  capture("an empty pane", ["", "40"], undefined, "printf 'orca\\n' >home/config/backend");
+  capture("ok", ["t_1", "40"]);
+  capture("ok:false", ["t_1", "40"], { FAKE_ORCA: "notok" });
+  capture("a read that fails", ["t_1", "40"], { FAKE_ORCA: "fail" });
+  capture("no tail", ["t_1", "40"], { FAKE_ORCA: "notail" });
+  capture("an empty pane", ["", "40"]);
 }, 120000);
 
 test("C: a backend the route refuses exits 1", () => {
