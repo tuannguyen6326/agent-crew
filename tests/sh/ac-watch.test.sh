@@ -3525,36 +3525,20 @@ assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "report:pd1" \
 reset_state
 rm -rf "$AC_HOME/data/pd1"
 
-# (4) STALE-READ INTERLEAVING. The dedup stamp read at the TOP of the marker
-# branch is stale by the time that branch publishes: between the two sit the
-# status append and a BACKEND call costing tens of milliseconds, and a push
-# landing in THAT window used to make the watcher publish against a read it had
-# already invalidated - two records for one completion. The `pane report-agent`
-# hook runs the push exactly there, so this pins the interleaving with no
-# sleeps and no racing processes. (An ARMED watcher would then exit `push:` at
-# its next loop top; `--once` exits quiet and its caller drains - either way,
-# ONE record.)
-mkdir -p "$AC_HOME/data/pd2"
-printf 'window=crew:pd2\nbackend=herdr\n' >"$state/pd2.meta"
-seed_pane pd2 pPD2 tPD2 herdr
-# Indented exactly as a real capture renders it - the pushed text is the bare
-# line, so the stamp the push leaves is a SUFFIX of what the pane shows.
-printf '   needs-decision: keep or drop the cache?\n' >>"$(fake_pane_buf pd2)"
-cat >"$FAKE_HERDR/.hook-report-agent" <<EOF
-#!/usr/bin/env bash
-env -u AC_HOME -u AC_SCOPE AC_FLEET_STATE="$state" \
-  "$BIN/ac-done.sh" pd2 'needs-decision: keep or drop the cache?' >/dev/null
-EOF
-chmod +x "$FAKE_HERDR/.hook-report-agent"
-out="$(bash "$BIN/ac-watch.sh" --once)"
-assert_eq "$(fleet_spool | grep -c 'keep or drop the cache' || true)" "1" \
-  "a push landing inside the marker branch still yields ONE record"
-assert_contains "$out" "check:quiet" "the watcher does not also wake on the pane it was beaten to"
-assert_eq "$(cat "$state/.seen-pd2")" "needs-decision: keep or drop the cache?" \
-  "the push's stamp stands - the watcher never clobbers it back after losing the race"
-reset_state
-rm -f "$state"/.captain-wait-* "$state"/*.status "$FAKE_HERDR/.hook-report-agent.used"
-rm -rf "$AC_HOME/data/pd2"
+# (4) STALE-READ INTERLEAVING is herdr-only, with no orca counterpart to pin
+# it against: the race needs a BACKEND call sitting in the window between the
+# marker branch's status append and its publish, costing the tens of
+# milliseconds a push can land inside - herdr's mark_wait/clear_wait make
+# exactly that call (`pane report-agent`/`release-agent`, hookable via fake
+# herdr's .hook-report-agent, which is how the herdr suite pinned the
+# interleaving with no sleeps and no racing processes); orca's mark_wait/clear_wait (src/lib.ts)
+# are bare touch/rm on a local state file - no RPC, so no window exists to
+# land a push in, and fake orca carries no equivalent hook (helpers.sh, out
+# of this suite's write set) even if one did. The cutover also makes this
+# fixture's own premise - a LIVE backend=herdr crewmate - unreachable: any
+# real backend-validating call against it (ac-done.sh, below) now dies
+# `unsupported backend 'herdr'` before the race is ever reached. Tracked in
+# report.md, not ported.
 
 # (5) PUSH + ARTIFACT, ONE WAKE. A scout that finishes properly does BOTH: it
 # writes its stage report.md and it pushes. The push is the wake, so the report
@@ -4696,6 +4680,11 @@ EOF
 #!/bin/sh
 d="$STUB_DIR"
 printf 'orca %s\n' "$*" >>"$d/log"
+# .down: every call fails, herdr's list-fails pushed one level up - orca's
+# window_alive only reaches "unobservable" when BOTH `terminal show` and the
+# `status` fallback fail (bin/ac-backend-orca.sh's backend_window_alive_orca),
+# unlike herdr's single `pane list` outage.
+[ ! -e "$d/down" ] || exit 1
 case "$1 $2" in
   "terminal show") [ -e "$d/win-$4" ] && c=true || c=false
     w=null; [ ! -e "$d/wait-$4" ] || w='{"reason":"permission"}'
@@ -4712,12 +4701,11 @@ pane() { printf '%s t%s\n' "${2:-p$1}" "$1" >"$H/home/state/.pane-$1"; }  # pane
 win() { : >"$H/stub/win-$1"; }
 unwin() { rm -f "$H/stub/win-$1"; }
 ptail() { printf -- "$2" >"$H/stub/tail-$1"; }  # ptail <handle> <printf format>
-pstat() { printf '%s\n' "$2" >"$H/stub/status-$1"; }  # pstat <handle> <herdr agent_status>
 sent() { : >"$H/stub/$1"; }  # sent <sentinel>
 unsent() { rm -f "$H/stub/$1"; }
 put() { printf -- "$2" >"$H/stub/$1"; }  # put <stub file> <printf format>
-crew() {  # crew <id> [<tail format> [<meta extra>]] - a live herdr crewmate pane, its tail just captured
-  m "$1" "kind=implement\nbackend=herdr\n${3:-}"; pane "$1"; win "p$1"; ptail "p$1" "${2:-working on it\n}"
+crew() {  # crew <id> [<tail format> [<meta extra>]] - a live orca crewmate pane, its tail just captured
+  m "$1" "kind=implement\nbackend=orca\n${3:-}"; pane "$1"; win "p$1"; ptail "p$1" "${2:-working on it\n}"
 }
 ocrew() {  # ocrew <id> [<tail format>] - a live orca crewmate pane
   m "$1" 'kind=implement\nbackend=orca\n'; pane "$1" "h$1"; win "h$1"; ptail "h$1" "${2:-working on it\n}"
@@ -4732,7 +4720,7 @@ rec() { mkdir -p "$H/home/state/.wake-spool${1:+.$1}"; printf -- "$3" >"$H/home/
 brief() { mkdir -p "$H/home/data/$1"; printf 'b\n' >"$H/home/data/$1/brief.md"; }  # brief <dir under data>
 rep() { brief "$1"; printf -- "$2" >"$H/home/data/$1/report.md"; }  # rep <dir under data> <format>
 room() { mkdir -p "$H/home/data/$1"; printf -- "$2" >"$H/home/data/$1/room.md"; }  # room <fam> <format>
-chief() { m "$1-chief" "kind=roomchief\nbackend=herdr\n"; pane "$1-chief"; win "p$1-chief"; }  # chief <fam> - a live roomchief
+chief() { m "$1-chief" "kind=roomchief\nbackend=orca\n"; pane "$1-chief"; win "p$1-chief"; }  # chief <fam> - a live roomchief
 rmst() { local g; for g in "$@"; do (cd "$H/home/state" && rm -rf $g); done; }  # rmst <glob>... - state entries, globbed there
 WA_RAWL="$(printf 'You\342\200\231ve hit your usage limit.')"
 WA_BAD="$(printf 'caf\351')"
@@ -4868,27 +4856,33 @@ wa_call; assert_eq "$(wout)" "already running - pending: your inbox is empty - n
 wa_at rm -rf '$H/home/state/.watch.lock.d'
 reset_wa
 
-# 4. The pane pass (--once), herdr and orca.
+# 4. The pane pass (--once), orca.
 wa_at wa_fresh
 WA_ENV=(AC_HEARTBEAT=0)
 # Liveness: unreadable (once per outage), gone (once), back.
-wa_at crew t1; wa_at unwin pt1; wa_at sent list-fails
+wa_at crew t1; wa_at unwin pt1; wa_at sent down
 wa_call --once; assert_eq "$(wout)" "unobservable:t1" "row 4: an unreadable backend"
 wa_call --once; assert_eq "$(wout)" "check:quiet" "row 4: once per outage"
-wa_at unsent list-fails
+wa_at unsent down
 wa_call --once; assert_eq "$(wout)" "gone:t1" "row 4: gone"
 wa_call --once; assert_eq "$(wout)" "check:quiet" "row 4: gone once"
 wa_at win pt1; wa_call --once; assert_eq "$(wout)" "check:quiet" "row 4: back"
 assert_no_file "$WA_H/home/state/.gone-t1" "row 4: back clears the gone stamp"
 wa_at rm -f '$H/home/state/t1.meta'
-# ask, its two resume lines, the captain-wait mask.
-wa_at crew t2; wa_at pstat pt2 blocked
+# ask, its two resume lines, the captain-wait mask. orca's agent_blocked
+# reads agentWait (the fake's wait-<handle> file), never herdr's agent_status
+# string; its idle/working split (backendAgentIdle, src/lib.ts orcaAgentIdle)
+# comes off the title glyph - the idle glyph itself proves idle, and no glyph
+# with the wait unsatisfied (the fake's "terminal wait" always answers
+# unsatisfied) and no codex identity falls through to working.
+wa_at crew t2; wa_at touch '$H/stub/wait-pt2'
 wa_call --once; assert_eq "$(wout)" "ask:t2" "row 4: ask"
 wa_at touch '$H/home/state/.captain-wait-t2'; wa_call --once; assert_eq "$(wout)" "check:quiet" "row 4: one ask per episode"
 assert_file "$WA_H/home/state/.ask-t2" "row 4: the ask stamp held"
-wa_at rm -f '$H/home/state/.captain-wait-t2'; wa_at pstat pt2 idle; wa_call --once
+wa_at rm -f '$H/home/state/.captain-wait-t2' '$H/stub/wait-pt2'; wa_at put title-pt2 '✳ idle\n'; wa_call --once
 assert_contains "$(wsnap)" "idle: pane no longer blocked, turn complete" "row 4: the turn-complete resume"
-wa_at pstat pt2 blocked; wa_call --once; assert_eq "$(wout)" "ask:t2" "row 4: a new ask after the resume"; wa_at pstat pt2 working; wa_call --once
+wa_at touch '$H/stub/wait-pt2'; wa_call --once; assert_eq "$(wout)" "ask:t2" "row 4: a new ask after the resume"
+wa_at rm -f '$H/stub/wait-pt2'; wa_at put title-pt2 'working\n'; wa_call --once
 assert_contains "$(wsnap)" "working: pane no longer blocked, agent resumed" "row 4: the working resume"
 wa_at rm -f '$H/home/state/t2.meta'
 # Markers: new, seen, re-wake, push adopt, a foreign stamp, decision idle/busy,
@@ -4917,10 +4911,10 @@ wa_at crew t4 '⏺ done: pushed\n'; wa_at stamp seen t4 'done: pushed\n'
 wa_call --once; assert_eq "$(wout)" "check:quiet" "row 4: push adopt anchors silently"
 assert_file "$WA_H/home/state/.rewake-t4" "row 4: PUSH ADOPT arms the re-wake latch too - the push already told the chief"
 wa_at crew t5 'needs-decision: pick one\n'; wa_call --once
-assert_contains "$(wsnap)" "herdr pane report-agent pt5 --source ac-fleet --agent crew --state blocked --message needs-decision: pick one" "row 4: an idle decision stamps"
+assert_file "$WA_H/home/state/.captain-wait-t5" "row 4: an idle decision stamps"
 wa_at crew t6 'needs-decision: pick two\nesc to interrupt\n'; wa_call --once; assert_eq "$(wout)" "report:t6" "row 4: a busy decision"
 wa_at crew t7 'blocked: on review\n'; wa_at stamp seen t7 'blocked: on review\n'; wa_at stamp seen-hash t7 '%s\n' "$(ck 'blocked: on review\n')"
-wa_call --once; assert_contains "$(wsnap)" "herdr pane report-agent pt7" "row 4: reconcile re-stamps silently"
+wa_call --once; assert_file "$WA_H/home/state/.captain-wait-t7" "row 4: reconcile re-stamps silently"
 wa_at crew t8 'blocked: waiting\nesc to interrupt\n'; wa_at stamp seen t8 'blocked: waiting\n'; wa_at touch '$H/home/state/.captain-wait-t8'
 wa_call --once; assert_contains "$(wsnap)" "working: superseded blocked: waiting" "row 4: supersession"
 wa_at crew t9 'Working...\n'; wa_at stamp seen t9 'done: old\n'
@@ -4948,8 +4942,18 @@ wa_call --once; assert_eq "$(wout)" "check:quiet" "row 4: once per run"
 wa_at rm -f '$H/home/state/bs1.meta'
 # The quiet arm: limited (claude, codex), needs-login (claude, codex), a
 # completion already reported, ended, stale; unreadable idle stamps.
-wa_quiet() {  # wa_quiet <id> <tail format> <agent status> [<meta extra>]
-  crew "$1" "$2" "${4:-}"; pstat "p$1" "$3"; quiet "$1" 999 "$(ck "$2")"
+wa_quiet() {  # wa_quiet <id> <tail format> <agent status> [<meta extra>] - "idle"
+  # and "done" both prove ENDED-TURN for herdr (backend_agent_idle_pane_herdr,
+  # bin/ac-backend.sh: "idle|done" alike); orca has no "done" status at all -
+  # ENDED-TURN is purely the title's idle glyph (orcaAgentIdle, src/lib.ts),
+  # so both map to it. Any other status just needs to NOT be that glyph,
+  # which an ordinary word already is.
+  crew "$1" "$2" "${4:-}"
+  case "$3" in
+    idle|done) put "title-p$1" '✳ idle\n' ;;
+    *) put "title-p$1" "$3\n" ;;
+  esac
+  quiet "$1" 999 "$(ck "$2")"
 }
 wa_at wa_quiet q1 "You've hit your weekly limit · resets 10pm (UTC)\n" idle
 wa_call --once; assert_eq "$(wout)" "limited:q1" "row 4: limited"
@@ -4966,9 +4970,9 @@ wa_call --once; assert_eq "$(wout)" "ended:q6" "row 4: ended"
 # ENDED BUSY LATCH (watch-ended-busy-latch): the same tail, unchanged, is a
 # redraw-only repoll - anchored silently, never re-fired.
 wa_call --once; assert_eq "$(wout)" "check:quiet" "row 4: a redraw-only repoll after ended: is anchored silently"
-wa_at ptail pq6 'esc to interrupt\n'; wa_at pstat pq6 working
+wa_at ptail pq6 'esc to interrupt\n'; wa_at put title-pq6 'working\n'
 wa_call --once; assert_eq "$(wout)" "check:quiet" "row 4: busy again clears the ended latch"
-wa_at ptail pq6 'all quiet\n'; wa_at pstat pq6 idle; wa_at quiet q6 999 "$(ck 'all quiet\n')"
+wa_at ptail pq6 'all quiet\n'; wa_at put title-pq6 '✳ idle\n'; wa_at quiet q6 999 "$(ck 'all quiet\n')"
 wa_call --once; assert_eq "$(wout)" "ended:q6" "row 4: a genuinely new turn after it re-arms ended:"
 wa_at wa_quiet q7 'all quiet\n' working
 wa_call --once; assert_eq "$(wout)" "stale:q7" "row 4: stale"
@@ -5004,7 +5008,7 @@ wa_at rm -rf '$H/home/state/g1.meta' '$H/wt'
 wa_at rmst '.*-g1' 'g1.*'
 wa_at rm -rf '$H/home/state/.wake-spool'
 # A supervising chief stays quiet: a live child, a gate parked on the captain.
-wa_at chief famc; wa_at quiet famc-chief 999 "$(ck 'chief prose\n')"; wa_at ptail pfamc-chief 'chief prose\n'; wa_at pstat pfamc-chief idle
+wa_at chief famc; wa_at quiet famc-chief 999 "$(ck 'chief prose\n')"; wa_at ptail pfamc-chief 'chief prose\n'; wa_at put title-pfamc-chief '✳ idle\n'
 wa_at crew famc-t1 'working\nesc to interrupt\n' 'fleet_scope=famc\n'
 wa_call --once; assert_eq "$(wout)" "check:quiet" "row 4: a chief with a live child is quiet"
 wa_at rm -f '$H/home/state/famc-t1.meta'
@@ -5012,9 +5016,9 @@ wa_at room famc '- [2023-11-14 22:13] famc-chief> GATE: approve the plan\n'
 wa_call --once; assert_eq "$(wout)" "check:quiet" "row 4: a chief parked at a gate is quiet"
 wa_at rm -f '$H/home/state/famc-chief.meta'; wa_at rm -rf '$H/home/data/famc'
 # A verifier is polled, a self task is not.
-wa_at crew v1 'done: verdict\n' 'kind=verify-codereview\n'; wa_at m v1 'kind=verify-codereview\nbackend=herdr\n'
+wa_at crew v1 'done: verdict\n' 'kind=verify-codereview\n'; wa_at m v1 'kind=verify-codereview\nbackend=orca\n'
 wa_call --once; assert_eq "$(wout)" "report:v1" "row 4: a verifier is supervised"
-wa_at m v1 'kind=self\nbackend=herdr\n'; wa_at ptail pv1 'done: other\n'
+wa_at m v1 'kind=self\nbackend=orca\n'; wa_at ptail pv1 'done: other\n'
 wa_call --once; assert_eq "$(wout)" "check:quiet" "row 4: a self task is not polled"
 wa_at rm -f '$H/home/state/v1.meta'
 # The skip revalidation: live coverage skips, a stale beacon within the grace
@@ -5026,7 +5030,7 @@ wa_at beat 0 famk; wa_call --once; assert_eq "$(wout)" "check:quiet" "row 4: a s
 wa_at ptail pfamk-chief 'esc to interrupt\n'; wa_at put clock "$((WA_T + 900))\n"
 wa_call --once; assert_eq "$(wout)" "report:famk-t1" "row 4: a beacon stale past the grace revokes the skip"
 assert_contains "$(wsnap)" "coverage"$'\t'"famk-chief"$'\t'"scoped coverage down for famk" "row 4: the coverage record"
-assert_contains "$(wsnap)" "herdr pane send-text pfamk-chief wake: your scoped watcher for famk is down" "row 4: the typed line"
+assert_contains "$(wsnap)" "orca terminal send --terminal pfamk-chief --text wake: your scoped watcher for famk is down" "row 4: the typed line"
 wa_at rm -f '$H/home/state/famk-chief.meta' '$H/home/state/famk-t1.meta'
 wa_at put clock "$WA_T\n"
 reset_wa
