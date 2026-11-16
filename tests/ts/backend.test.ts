@@ -12,7 +12,7 @@
 // fails by name. A drift in the bash drivers turns these red.
 //
 // DISPUTED: the implementation of the backend verbs (the bash drivers vs src/lib.ts backendCall)
-// HELD-CONSTANT: one side root per side and row seeded alike (a home at <side>/home, the stubs' sentinels and log at <side>/stub); argv; env (PATH, LC_ALL=C unless a row names UTF-8, HOME, TMPDIR, STUB_DIR, AC_HOME unless homeless, the row's own names); cwd (the side root); stdin (/dev/null, or the row's bytes); PATH = a logging sleep on send_line rows, the herdr and orca stubs (or a variant without one), a dir holding the host's jq (dropped by the jq-absent rows, a noisy wrapper of it on the noisy-jq rows), and /bin plus /usr/bin without jq, herdr or orca - no row can reach a real herdr or orca.
+// HELD-CONSTANT: one side root per side and row seeded alike (a home at <side>/home, the stubs' sentinels and log at <side>/stub); argv; env (PATH, LC_ALL=C unless a row names UTF-8, HOME, TMPDIR, STUB_DIR, AC_HOME unless homeless, the row's own names); cwd (the side root); stdin (/dev/null, or the row's bytes); PATH = a logging sleep on send_line rows, the orca stub (or a variant without one), a dir holding the host's jq (dropped by the jq-absent rows, a noisy wrapper of it on the noisy-jq rows), and /bin plus /usr/bin without jq or orca - no row can reach a real orca.
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -43,93 +43,7 @@ const JQ = join(W, "jq");
 mkdirSync(JQ);
 symlinkSync(Bun.which("jq")!, join(JQ, "jq"));
 
-// A claude pane, when ui-<pane> exists: the transcript, then the composer
-// (cmp-<pane>, folded at 40 bytes) between two rules - empty, the dim hint
-// under --ansi - then a status row. send-text types into the composer (the
-// last keep-tail bytes of it, or the paste file's text); an Enter submits it
-// into the transcript unless the pane is unfocused (tab focus focuses it) or
-// drop-enters still counts, the redraw showing on the late-th read after it;
-// ctrl+u deletes the last composer row unless ctrlu-stuck. norules, onerule
-// and tight (no composer row) draw a broken frame; ticker heads every screen
-// with the read's number. read-fails-from and read-hangs-from count every pane
-// read from 1. nbsp draws the empty composer as claude 2.1.299 does: ❯, NBSP,
-// CR under --ansi, the bare ❯ in a plain read. kill-caller TERMs the process
-// that ran the stub.
 const RULE = "─".repeat(12);
-const HERDR = `#!/bin/sh
-d="$STUB_DIR"
-if [ -e "$d/readstdin" ]; then
-  printf 'herdr %s [%s] stdin=[%s]\\n' "$*" "\${HERDR_SESSION:-}" "$(cat)" >>"$d/log"
-elif [ -e "$d/readline" ]; then
-  IFS= read -r l
-  printf 'herdr %s [%s] line=[%s]\\n' "$*" "\${HERDR_SESSION:-}" "$l" >>"$d/log"
-else
-  printf 'herdr %s [%s]\\n' "$*" "\${HERDR_SESSION:-}" >>"$d/log"
-fi
-[ ! -e "$d/kill-caller" ] || kill -TERM "$PPID"
-n=0
-if [ "$1 $2" = "pane read" ]; then
-  n=$(($(cat "$d/reads" 2>/dev/null || echo 0) + 1))
-  echo "$n" >"$d/reads"
-fi
-if [ -e "$d/hang" ] || [ -e "$d/hang-$2" ] || { [ -e "$d/read-hangs-from" ] && [ "$n" -ge "$(cat "$d/read-hangs-from")" ]; }; then
-  ( trap '' TERM; exec /bin/sleep 97 ) &
-  printf '%s\\n' "$!" >>"$d/hang-children"
-  wait
-  exit 0
-fi
-[ ! -e "$d/slow-get" ] || [ "$1 $2" != "pane get" ] || sleep 1.4
-case "$1 $2" in
-  "pane get") [ -e "$d/win-$3" ] || exit 1; [ ! -e "$d/get-$3" ] || cat "$d/get-$3" ;;
-  "pane list") [ ! -e "$d/list-fails" ] || exit 1; if [ -e "$d/list" ]; then cat "$d/list"; else printf '{"result":{"panes":[]}}\\n'; fi ;;
-  "status server") [ ! -e "$d/status-fails" ] || exit 1; if [ -e "$d/status" ]; then cat "$d/status"; else printf '{"running":true}\\n'; fi ;;
-  "pane read")
-    [ ! -e "$d/read-fails-from" ] || [ "$n" -lt "$(cat "$d/read-fails-from")" ] || exit 1
-    [ -e "$d/ui-$3" ] || { [ -e "$d/read-$3" ] || exit 1; cat "$d/read-$3"; exit 0; }
-    if [ -e "$d/lag" ]; then
-      if [ "$(cat "$d/lag")" -gt 1 ]; then echo $(($(cat "$d/lag") - 1)) >"$d/lag"; else rm "$d/lag"; mv "$d/next-ui" "$d/ui-$3"; mv "$d/next-cmp" "$d/cmp-$3"; fi
-    fi
-    [ ! -e "$d/ticker" ] || echo "tick $n"
-    cat "$d/ui-$3"
-    [ -e "$d/norules" ] || [ -e "$d/onerule" ] || echo '${RULE}'
-    if [ -s "$d/cmp-$3" ]; then LC_ALL=C sed -e '1s/^/❯ /' -e '2,$s/^/  /' "$d/cmp-$3"
-    elif [ ! -e "$d/tight" ]; then
-      case "$*" in
-        *--ansi*) if [ -e "$d/nbsp" ]; then printf '❯\\302\\240\\r\\n'; else printf '❯ \\033[2mTry "fix lint errors"\\033[22m\\n'; fi ;;
-        *) if [ -e "$d/nbsp" ]; then echo '❯'; else echo '❯ Try "fix lint errors"'; fi ;;
-      esac
-    fi
-    [ -e "$d/norules" ] || echo '${RULE}'
-    echo '  ? for shortcuts' ;;
-  "pane send-text")
-    [ ! -e "$d/text-rc" ] || exit "$(cat "$d/text-rc")"
-    [ -e "$d/ui-$3" ] || exit 0
-    t="$4"
-    [ ! -e "$d/keep-tail" ] || t="$(printf '%s' "$t" | tail -c "$(cat "$d/keep-tail")")"
-    [ ! -e "$d/paste" ] || t="$(cat "$d/paste")"
-    { LC_ALL=C tr -d '\\n' <"$d/cmp-$3"; printf '%s\\n' "$t"; } | LC_ALL=C fold -w 40 | LC_ALL=C sed '/^$/d' >"$d/cmp.new"
-    mv "$d/cmp.new" "$d/cmp-$3" ;;
-  "tab focus") [ ! -e "$d/focus-rc" ] || exit "$(cat "$d/focus-rc")"; rm -f "$d/unfocused" ;;
-  "pane report-agent") [ ! -e "$d/report-fails" ] ;;
-  "pane release-agent") [ ! -e "$d/release-fails" ] ;;
-  "pane process-info") [ -e "$d/pinfo-$4" ] || exit 1; cat "$d/pinfo-$4" ;;
-  "pane send-keys")
-    [ ! -e "$d/keys-rc" ] || exit "$(cat "$d/keys-rc")"
-    [ -e "$d/ui-$3" ] || exit 0
-    case "$4" in
-      enter)
-        if [ -e "$d/unfocused" ]; then :
-        elif [ "$(cat "$d/drop-enters" 2>/dev/null || echo 0)" -gt 0 ]; then echo $(($(cat "$d/drop-enters") - 1)) >"$d/drop-enters"
-        else
-          { cat "$d/ui-$3"; printf '> %s\\n' "$(LC_ALL=C tr -d '\\n' <"$d/cmp-$3")"; } >"$d/next-ui"
-          : >"$d/next-cmp"
-          if [ -e "$d/late" ]; then mv "$d/late" "$d/lag"; else mv "$d/next-ui" "$d/ui-$3"; mv "$d/next-cmp" "$d/cmp-$3"; fi
-        fi ;;
-      ctrl+u) [ -e "$d/ctrlu-stuck" ] || { LC_ALL=C sed '$d' "$d/cmp-$3" >"$d/cmp.new"; mv "$d/cmp.new" "$d/cmp-$3"; } ;;
-    esac ;;
-  *) exit 2 ;;
-esac
-`;
 // The send verbs' waits, logged in line with the stubs' calls and then slept.
 const SLEEPS = join(W, "sleeps");
 mkdirSync(SLEEPS);
@@ -142,8 +56,7 @@ writeFileSync(join(SLEEPS, "sleep"), `#!/bin/sh\nprintf 'sleep %s\\n' "$*" >>"$S
 // refuses it); `send --enter` submits it into the transcript unless the pane
 // is unfocused (`terminal switch` focuses it), drop-enters still counts, or a
 // popup eats it (the render changes, the text stays); late, norules, onerule,
-// ticker and read-fails-from as the herdr pane has them, counting `terminal
-// read`s.
+// ticker and read-fails-from all count `terminal read`s.
 const ORCA = `#!/bin/sh
 d="$STUB_DIR"
 if [ -e "$d/readstdin" ]; then
@@ -155,6 +68,7 @@ else
   printf 'orca %s\\n' "$*" >>"$d/log"
 fi
 [ ! -e "$d/orca-slow" ] || sleep 3
+[ ! -e "$d/kill-caller" ] || kill -TERM "$PPID"
 n=0
 if [ "$1 $2" = "terminal read" ]; then
   n=$(($(cat "$d/reads" 2>/dev/null || echo 0) + 1))
@@ -210,13 +124,12 @@ case "$1 $2" in
   *) exit 2 ;;
 esac
 `;
-// One stub dir per PATH variant: both CLIs, herdr absent, herdr not
-// executable, orca absent; and a jq that names each call on its stderr, so a
-// row shows which jq's stderr reached the caller.
-function stubs(name: string, herdr: number | null, orca: boolean): string {
+// One stub dir per PATH variant: orca present or absent; and a jq that names
+// each call on its stderr, so a row shows which jq's stderr reached the
+// caller.
+function stubs(name: string, orca: boolean): string {
   const d = join(W, name);
   mkdirSync(d);
-  if (herdr !== null) writeFileSync(join(d, "herdr"), HERDR, { mode: herdr });
   if (orca) writeFileSync(join(d, "orca"), ORCA, { mode: 0o755 });
   return d;
 }
@@ -224,11 +137,9 @@ const NOISY = join(W, "noisyjq");
 mkdirSync(NOISY);
 writeFileSync(join(NOISY, "jq"), `#!/bin/sh\nprintf 'jq-stderr %s\\n' "$*" >&2\nexec '${Bun.which("jq")}' "$@"\n`, { mode: 0o755 });
 const PATHS = {
-  both: `${stubs("stubs", 0o755, true)}:${JQ}:${BASE}`,
+  both: `${stubs("stubs", true)}:${JQ}:${BASE}`,
   nojq: `${join(W, "stubs")}:${BASE}`,
-  noherdr: `${stubs("stubs-noherdr", null, true)}:${JQ}:${BASE}`,
-  noexec: `${stubs("stubs-noexec", 0o644, true)}:${JQ}:${BASE}`,
-  noorca: `${stubs("stubs-noorca", 0o755, false)}:${JQ}:${BASE}`,
+  noorca: `${stubs("stubs-noorca", false)}:${JQ}:${BASE}`,
   noisyjq: `${join(W, "stubs")}:${NOISY}:${BASE}`,
 };
 
@@ -298,8 +209,6 @@ function side(row: Row, s: string, oracle: boolean, label: string): Side {
   };
   if (!row.homeless) env.AC_HOME = join(s, "home");
   for (const [k, v] of Object.entries(row.env ?? {})) env[k] = v.replaceAll("@S", s);
-  const direct = env.AC_BACKEND === HERDR_DIRECT;
-  if (direct) env.AC_BACKEND = "orca"; // sourcing needs a valid pin; overridden (oracle) or unused (twin) below
   let cmd: string[];
   if (oracle) {
     let call = `backend_${row.fn} "$@"`;
@@ -308,12 +217,9 @@ function side(row: Row, s: string, oracle: boolean, label: string): Side {
     if (io.stdout === "ignore") call += " >/dev/null";
     if (io.stderr === "ignore") call += " 2>/dev/null";
     call = row.errexit ? `set -e; trap 'printf "|rc=%s" "$?"' EXIT; ${call}` : `${call}; printf "|rc=%s" "$?"`;
-    const override = direct ? `ac_backend() { printf 'herdr\\n'; }; ` : "";
-    cmd = ["/bin/bash", "-c", `set -uo pipefail; . "$0/ac-lib.sh" || exit $?; . "$0/ac-backend.sh" || exit $?; ${override}${call}`, BIN, ...row.args];
+    cmd = ["/bin/bash", "-c", `set -uo pipefail; . "$0/ac-lib.sh" || exit $?; . "$0/ac-backend.sh" || exit $?; ${call}`, BIN, ...row.args];
   } else {
-    const twinCall = direct
-      ? `(() => { const chunks = []; const say = (b) => { if (io.stdout === "pipe") chunks.push(b); else if (io.stdout === "inherit") writeSync(1, b); }; return { status: L.herdrVerb(${JSON.stringify(row.fn)}, ${JSON.stringify(row.args)}, io, say), exited: false, out: Buffer.concat(chunks) }; })()`
-      : `L.backendCall(${JSON.stringify(row.fn)}, ${JSON.stringify(row.args)}, io)`;
+    const twinCall = `L.backendCall(${JSON.stringify(row.fn)}, ${JSON.stringify(row.args)}, io)`;
     cmd = [
       process.execPath,
       "-e",
@@ -369,20 +275,6 @@ function same(label: string, row: Row): { o: Side; t: Side } {
 }
 
 const X = (s: string): void => pane(s, "x", "px tx\n");
-// A sentinel, never a real AC_BACKEND value: ac_backend's own ladder (T8)
-// now refuses herdr before any primitive runs, and herdr_cli re-derives
-// and enforces the SAME refusal on every RPC (its own per-call leak
-// guard), so a plain bypass of the public dispatcher cannot reach the
-// driver either. Every row below that means to exercise the HERDR
-// DRIVER's own behavior - not backend SELECTION itself, which test 1
-// alone covers - asks side() to force ac_backend to answer herdr for the
-// oracle (an override defined after sourcing, local to that subshell) and
-// to call herdrVerb directly for the twin (which carries no such guard);
-// T11 deletes the driver and this override together. A literal "herdr"
-// string (test 1's own rows) is never the sentinel, so it keeps going
-// through the real ladder and is refused like any other row there.
-const HERDR_DIRECT = "\u0000herdr-driver-direct\u0000";
-const HERDR_ = { AC_BACKEND: HERDR_DIRECT };
 const ORCA_ = { AC_BACKEND: "orca" };
 // A fleet state dir whose ../config/backend holds <body>.
 const fleet = (body: string) => (s: string): void => {
@@ -392,25 +284,29 @@ const fleet = (body: string) => (s: string): void => {
 };
 
 test("0. the harness: a side a signal ended fails its row by name - two killed sides are never compared as answers", () => {
-  expect(() => same("killed", { fn: "window_alive", args: ["x"], env: { ...HERDR_, AC_HERDR_RPC_TIMEOUT: "1" }, seed: (s) => (X(s), sent(s, "kill-caller")) })).toThrow(
-    /^killed: the oracle side ended by SIGTERM after [0-9]+ ms/,
-  );
+  const H = (s: string): void => pane(s, "x", "h1 tab1\n");
+  // kill-caller signals its own $PPID, which the oracle's nested `$( )`
+  // command substitutions shield (orca_json's own, inside
+  // backend_window_alive_orca's) - the oracle reads the kill as an ordinary
+  // orca_json failure and answers normally. The twin spawns orca directly,
+  // no shell between it and the signal, so it is the twin that dies here.
+  expect(() => same("killed", { fn: "window_alive", args: ["x"], env: ORCA_, seed: (s) => (H(s), sent(s, "kill-caller")) })).toThrow(/^killed: the twin side ended by SIGTERM after [0-9]+ ms/);
 }, 30000);
 
 test("1. the route: AC_BACKEND verbatim, config/backend trimmed, AC_FLEET_STATE cut at its first space, orca; any other name refused before anything is read or minted", () => {
-  const accepted: [string, Record<string, string>, (s: string) => void, string][] = [
-    ["AC_BACKEND orca", ORCA_, () => {}, "orca"],
-    ["config orca", {}, (s) => cfg(s, "backend", "orca\n"), "orca"],
-    ["config ' orca\\r'", {}, (s) => cfg(s, "backend", " orca\r\n"), "orca"],
-    ["fleet state orca", { AC_FLEET_STATE: "@S/fleet/state/" }, fleet("orca\n"), "orca"],
-    ["fleet state ' orca'", { AC_FLEET_STATE: "@S/fleet/state" }, fleet(" orca\n"), "orca"],
-    ["fleet state 'orca x'", { AC_FLEET_STATE: "@S/fleet/state" }, fleet("orca x\n"), "orca"],
-    ["no rung at all", {}, () => {}, "orca"],
+  const accepted: [string, Record<string, string>, (s: string) => void][] = [
+    ["AC_BACKEND orca", ORCA_, () => {}],
+    ["config orca", {}, (s) => cfg(s, "backend", "orca\n")],
+    ["config ' orca\\r'", {}, (s) => cfg(s, "backend", " orca\r\n")],
+    ["fleet state orca", { AC_FLEET_STATE: "@S/fleet/state/" }, fleet("orca\n")],
+    ["fleet state ' orca'", { AC_FLEET_STATE: "@S/fleet/state" }, fleet(" orca\n")],
+    ["fleet state 'orca x'", { AC_FLEET_STATE: "@S/fleet/state" }, fleet("orca x\n")],
+    ["no rung at all", {}, () => {}],
   ];
-  for (const [label, env, seed, b] of accepted)
+  for (const [label, env, seed] of accepted)
     for (const fn of ["window_alive", "target"] as Fn[]) {
       const p = same(`${label} ${fn}`, { fn, args: ["x"], env, seed: (s) => (X(s), sent(s, "win-px"), seed(s)) });
-      if (fn === "target") expect({ label, out: p.t.out }).toEqual({ label, out: b === "herdr" ? "herdr:pane-px\n|rc=0" : "orca:px\n|rc=0" });
+      if (fn === "target") expect({ label, out: p.t.out }).toEqual({ label, out: "orca:px\n|rc=0" });
     }
   const refused: [string, Record<string, string>, (s: string) => void][] = [
     ["AC_BACKEND herdr", { AC_BACKEND: "herdr" }, () => {}],
@@ -456,116 +352,6 @@ test("1. the route, named: an unreadable knob prints head's line once per call -
   }
 }, 30000);
 
-test("2. window_alive herdr: pane get, then the list's verdict, then the server's status; no handle is gone with no call", () => {
-  const list = (body: string) => (s: string) => sent(s, "list", body);
-  const cases: [string, (s: string) => void][] = [
-    ["alive", (s) => (X(s), sent(s, "win-px"))],
-    ["list without the pane", X],
-    ["get fails, the list has it", (s) => (X(s), list('{"result":{"panes":[{"pane_id":"px"}]}}\n')(s))],
-    ["list fails, running false", (s) => (X(s), sent(s, "list-fails"), sent(s, "status", '{"running":false}\n'))],
-    ["list fails, running \"false\"", (s) => (X(s), sent(s, "list-fails"), sent(s, "status", '{"running":"false"}\n'))],
-    ["list fails, running true", (s) => (X(s), sent(s, "list-fails"))],
-    ["list fails, status not JSON", (s) => (X(s), sent(s, "list-fails"), sent(s, "status", "garbage\n"))],
-    ["list fails, status fails", (s) => (X(s), sent(s, "list-fails"), sent(s, "status-fails"))],
-    ["list without panes", (s) => (X(s), list('{"result":{}}\n')(s))],
-    ["list then garbage", (s) => (X(s), list('{"result":{"panes":[{"pane_id":"px"}]}} garbage\n')(s))],
-    ["two list documents", (s) => (X(s), list('{"result":{"panes":[]}}\n{"result":{"panes":[]}}\n')(s))],
-    ["a numeric pane_id", (s) => (pane(s, "x", "7 t\n"), list('{"result":{"panes":[{"pane_id":7}]}}\n')(s))],
-    ["no handle file", () => {}],
-    ["a blank first line", (s) => pane(s, "x", "\npx tx\n")],
-    ["a CR handle", (s) => (pane(s, "x", "px\r\n"), sent(s, "win-px"))],
-    ["one field", (s) => (pane(s, "x", "px\n"), sent(s, "win-px"))],
-    ["tab-separated, leading blanks", (s) => (pane(s, "x", " \t px\ttx\n"), sent(s, "win-px"))],
-    ["a NUL inside the handle", (s) => (pane(s, "x", "p\0x tx\n"), sent(s, "win-px"), sent(s, "win-p"))],
-    ["the handle a directory", (s) => mkdirSync(join(s, "home", "state", ".pane-x"))],
-  ];
-  for (const [label, seed] of cases) same(label, { fn: "window_alive", args: ["x"], env: HERDR_, seed });
-  same("the empty id", { fn: "window_alive", args: [""], env: HERDR_, seed: (s) => (pane(s, "", "px tx\n"), sent(s, "win-px")) });
-  same("id ../x", { fn: "window_alive", args: ["../x"], env: HERDR_, seed: (s) => (mkdirSync(join(s, "home", "state", ".pane-..")), pane(s, "../x", "px t\n"), sent(s, "win-px")) });
-  same("a U+FFFD id", { fn: "window_alive", args: ["a�b"], env: HERDR_, seed: (s) => (writeFileSync(join(s, "home", "state", ".pane-a�b"), "px t\n"), sent(s, "win-px")) });
-}, 30000);
-
-test("2. window_alive herdr: the session, jq and herdr absent, a herdr that is not executable, stdin by position (W6), homeless", () => {
-  const gone = (s: string): void => X(s);
-  same("AC_HERDR_SESSION", { fn: "window_alive", args: ["x"], env: { ...HERDR_, AC_HERDR_SESSION: "s1" }, seed: gone });
-  same("config/herdr-session", { fn: "window_alive", args: ["x"], env: HERDR_, seed: (s) => (gone(s), cfg(s, "herdr-session", " s2 \n")) });
-  same("AC_HERDR_SESSION over the knob", { fn: "window_alive", args: ["x"], env: { ...HERDR_, AC_HERDR_SESSION: "s1" }, seed: (s) => (gone(s), cfg(s, "herdr-session", "s2\n")) });
-  if (!ROOTED)
-    same("an unreadable herdr-session knob, stderr passed", {
-      fn: "window_alive",
-      args: ["x"],
-      env: HERDR_,
-      seed: (s) => (gone(s), cfg(s, "herdr-session", "s2\n"), cfg(s, "herdr-rpc-timeout", "3\n"), chmodSync(join(s, "home", "config", "herdr-session"), 0), chmodSync(join(s, "home", "config", "herdr-rpc-timeout"), 0)),
-    });
-  same("herdr absent", { fn: "window_alive", args: ["x"], env: HERDR_, seed: gone, path: "noherdr" });
-  same("herdr not executable", { fn: "window_alive", args: ["x"], env: HERDR_, seed: gone, path: "noexec" });
-  same("jq absent, pane get hits", { fn: "window_alive", args: ["x"], env: HERDR_, seed: (s) => (X(s), sent(s, "win-px")), path: "nojq" });
-  same("jq absent, gone", { fn: "window_alive", args: ["x"], env: HERDR_, seed: gone, path: "nojq" });
-  for (const subshell of [false, true]) {
-    const io: Io = { stdout: "inherit", stderr: "inherit", subshell };
-    const p = same(`readstdin, subshell ${subshell}`, { fn: "window_alive", args: ["x"], env: HERDR_, io, input: "from-caller\n", seed: (s) => (gone(s), sent(s, "readstdin")) });
-    expect(p.t.log.split("\n")[0]).toBe(`herdr pane get px [] stdin=[${subshell ? "" : "from-caller"}]`);
-    same(`readstdin, list fails, subshell ${subshell}`, { fn: "window_alive", args: ["x"], env: HERDR_, io, input: "from-caller\n", seed: (s) => (gone(s), sent(s, "readstdin"), sent(s, "list-fails")) });
-    same(`readstdin, stdin ignored, subshell ${subshell}`, { fn: "window_alive", args: ["x"], env: HERDR_, io: { ...io, stdin: "ignore" }, input: "from-caller\n", seed: (s) => (gone(s), sent(s, "readstdin")) });
-  }
-  same("the guard's io: stdin and stdout dropped, a subshell", { fn: "window_alive", args: ["x"], env: HERDR_, io: { stdin: "ignore", stdout: "ignore", stderr: "ignore", subshell: true }, seed: (s) => (X(s), sent(s, "win-px")) });
-  same("deputy's io: stdout piped", { fn: "window_alive", args: ["x"], env: HERDR_, io: { stdin: "ignore", stdout: "pipe", stderr: "inherit", subshell: true }, seed: gone });
-  same("homeless", { fn: "window_alive", args: ["x"], env: HERDR_, homeless: true });
-  // Named (W17): a handle byte that is not UTF-8 reaches herdr's argv as
-  // U+FFFD where the bash passed the byte.
-  const b17 = pair({ fn: "window_alive", args: ["x"], env: HERDR_, seed: (s) => pane(s, "x", "p\xe9 t\n") });
-  expect({ out: b17.t.out, err: b17.t.err, o: b17.o.log, t: b17.t.log }).toEqual({
-    out: b17.o.out,
-    err: b17.o.err,
-    o: "herdr pane get p\xe9 []\nherdr pane list []\n",
-    t: "herdr pane get p\xef\xbf\xbd []\nherdr pane list []\n",
-  });
-  const p = pair({ fn: "window_alive", args: ["x"], env: { ...HERDR_, AC_HOME: "@S/nope" } });
-  // Named (the HOME RESOLUTION ruling): an AC_HOME cd cannot enter is the
-  // twin's own line where the shell printed cd's.
-  expect({ out: p.t.out, log: p.t.log, err: p.t.err }).toEqual({ out: p.o.out, log: p.o.log, err: "ERROR: AC_HOME is not a readable directory: S/nope\n" });
-  expect(p.o.err).toBe("");
-}, 30000);
-
-test("2. window_alive herdr: a hung herdr is three bounded calls, unreadable, and no grandchild survives", () => {
-  const p = same("hang", { fn: "window_alive", args: ["x"], env: { ...HERDR_, AC_HERDR_RPC_TIMEOUT: "1" }, seed: (s) => (X(s), sent(s, "hang")) });
-  expect(p.t.out).toBe("|rc=2");
-  expect(p.t.log).toBe("herdr pane get px []\nherdr pane list []\nherdr status server --json []\n");
-  for (const x of [p.o, p.t]) {
-    expect(x.ms).toBeLessThan(6000);
-    expect(x.ms).toBeGreaterThan(2900);
-    expect(x.hangers.length).toBe(3);
-    expect(x.hangers.filter(alive)).toEqual([]);
-  }
-}, 30000);
-
-test("2. window_alive herdr: the ceiling's grammar - a pane get that answers in 1.4 s, timed out at 1 s", () => {
-  const slow = (s: string): void => (X(s), sent(s, "win-px"), sent(s, "slow-get"));
-  for (const [label, env, seed, rc] of [
-    ["1", { AC_HERDR_RPC_TIMEOUT: "1" }, slow, 1],
-    ["config 1", {}, (s: string) => (slow(s), cfg(s, "herdr-rpc-timeout", "1\n")), 1],
-    ["0 is the default", { AC_HERDR_RPC_TIMEOUT: "0" }, slow, 0],
-    ["abc is the default, the knob unread", { AC_HERDR_RPC_TIMEOUT: "abc" }, (s: string) => (slow(s), cfg(s, "herdr-rpc-timeout", "1\n")), 0],
-    ["' 2' is the default", { AC_HERDR_RPC_TIMEOUT: " 2" }, slow, 0],
-    ["007 is seven", { AC_HERDR_RPC_TIMEOUT: "007" }, slow, 0],
-    ["2147483647 sleeps", { AC_HERDR_RPC_TIMEOUT: "2147483647" }, slow, 0],
-    ["2147484 sleeps, past Bun's 2^31 ms timeout", { AC_HERDR_RPC_TIMEOUT: "2147484" }, slow, 0],
-    ["4294968 sleeps", { AC_HERDR_RPC_TIMEOUT: "4294968" }, slow, 0],
-  ] as const) {
-    const p = same(label, { fn: "window_alive", args: ["x"], env: { ...HERDR_, ...env }, seed });
-    expect({ label, out: p.t.out }).toEqual({ label, out: `|rc=${rc}` });
-  }
-}, 60000);
-
-test("2. window_alive herdr: a ceiling sleep(1) will not take fires at once - every call 124, unreadable", () => {
-  for (const t of ["00", "2147483648"]) {
-    // The kill races the stub's own log line, so the log is not compared.
-    const p = same(t, { fn: "window_alive", args: ["x"], env: { ...HERDR_, AC_HERDR_RPC_TIMEOUT: t }, seed: (s) => (X(s), sent(s, "win-px")), noLog: true });
-    expect(p.t.out).toBe("|rc=2");
-    same(`${t} focus`, { fn: "focus", args: ["x"], env: { ...HERDR_, AC_HERDR_RPC_TIMEOUT: t }, seed: X, noLog: true });
-  }
-}, 30000);
-
 test("3. window_alive orca: connected is JSON true, a failing show asks status, no ceiling, the caller's stdin", () => {
   const H = (s: string): void => pane(s, "x", "h1 tab1\n");
   const show = (body: string) => (s: string) => (H(s), sent(s, "show", body));
@@ -589,37 +375,11 @@ test("3. window_alive orca: connected is JSON true, a failing show asks status, 
     const p = same(`readstdin, show fails, subshell ${subshell}`, { fn: "window_alive", args: ["x"], env: ORCA_, io, input: "from-caller\n", seed: (s) => (H(s), sent(s, "readstdin"), sent(s, "show-fails")) });
     expect(p.t.log).toBe("orca terminal show --terminal h1 --json stdin=[from-caller]\norca status --json stdin=[]\n");
   }
-  const p = same("a 3 s orca under a 1 s herdr ceiling", { fn: "window_alive", args: ["x"], env: { ...ORCA_, AC_HERDR_RPC_TIMEOUT: "1" }, seed: (s) => (H(s), sent(s, "orca-slow")) });
+  // The orca driver carries no per-call RPC ceiling of its own (ac-backend.sh
+  // HUNG RPC); a 3 s call completes fine, and the retired timeout knob - set
+  // here to prove it is truly inert, not merely unset - changes nothing.
+  const p = same("a 3 s orca call, no ceiling", { fn: "window_alive", args: ["x"], env: { ...ORCA_, AC_HERDR_RPC_TIMEOUT: "1" }, seed: (s) => (H(s), sent(s, "orca-slow")) });
   expect(p.t.out).toBe("|rc=0");
-}, 30000);
-
-test("4. capture herdr: the read through `$( )` and tail, fetching 200 at least", () => {
-  const read = (body: string) => (s: string) => (X(s), sent(s, "read-px", body));
-  const sixty = Array.from({ length: 60 }, (_, i) => `line ${i}`).join("\n") + "\n";
-  const cases: [string, string[], (s: string) => void, string?][] = [
-    ["three lines", ["x", "40"], read("a\nb\nc\n")],
-    ["sixty lines, the last 40", ["x", "40"], read(sixty)],
-    ["trailing blank lines", ["x", "40"], read("a\n\n\n")],
-    ["a NUL", ["x", "40"], read("a\0b\n")],
-    ["CR", ["x", "40"], read("a\r\nb\r\n")],
-    ["a 0xE9 byte", ["x", "40"], read("caf\xe9\n")],
-    ["a 0xE9 byte under UTF-8", ["x", "40"], read("caf\xe9\n"), "en_US.UTF-8"],
-    ["an empty read", ["x", "40"], read("")],
-    ["the read fails", ["x", "40"], X],
-    ["no handle", ["x", "40"], () => {}],
-    ["lines 250", ["x", "250"], read(sixty)],
-    ["lines ''", ["x", ""], read(sixty)],
-    ["lines absent", ["x"], read(sixty)],
-    ["lines 3", ["x", "3"], read(sixty)],
-    ["lines abc", ["x", "abc"], read(sixty)],
-  ];
-  for (const [label, args, seed, lc] of cases) same(label, { fn: "capture", args, env: HERDR_, seed, lc });
-  same("the drain's io: stdout piped, stderr dropped", { fn: "capture", args: ["x", "40"], env: HERDR_, io: { stdin: "inherit", stdout: "pipe", stderr: "ignore" }, seed: read("a\nb\n") });
-  same("readstdin: the read is nested", { fn: "capture", args: ["x", "40"], env: HERDR_, input: "from-caller\n", seed: (s) => (read("a\n")(s), sent(s, "readstdin")) });
-  same("jq absent", { fn: "capture", args: ["x", "40"], env: HERDR_, seed: read("a\n"), path: "nojq" });
-  const p = same("hang", { fn: "capture", args: ["x", "40"], env: { ...HERDR_, AC_HERDR_RPC_TIMEOUT: "1" }, seed: (s) => (X(s), sent(s, "hang")) });
-  expect(p.t.out).toBe("|rc=1");
-  for (const x of [p.o, p.t]) expect(x.hangers.filter(alive)).toEqual([]);
 }, 30000);
 
 test("5. capture orca: jq prints the tail, strings raw", () => {
@@ -641,43 +401,21 @@ test("5. capture orca: jq prints the tail, strings raw", () => {
 }, 30000);
 
 test("6. target: the handle's bytes behind the backend's prefix, never a call", () => {
-  for (const env of [HERDR_, ORCA_])
-    for (const [label, seed] of [
-      ["present", (s: string) => pane(s, "x", "h1 t1\n")],
-      ["absent", () => {}],
-      ["blank", (s: string) => pane(s, "x", "\n")],
-      ["one field", (s: string) => pane(s, "x", "h1\n")],
-      ["a 0xE9 byte", (s: string) => pane(s, "x", "h\xe9 t\n")],
-    ] as const) {
-      same(`${env.AC_BACKEND} ${label}`, { fn: "target", args: ["x"], env, seed });
-      same(`${env.AC_BACKEND} ${label}, piped`, { fn: "target", args: ["x"], env, seed, io: { stdout: "pipe", stderr: "inherit" } });
-    }
-  same("no state dir yet", { fn: "target", args: ["x"], env: HERDR_, seed: (s) => rmSync(join(s, "home", "state"), { recursive: true }) });
-  for (const env of [HERDR_, ORCA_]) same(`${env.AC_BACKEND} homeless`, { fn: "target", args: ["x"], env, homeless: true });
+  for (const [label, seed] of [
+    ["present", (s: string) => pane(s, "x", "h1 t1\n")],
+    ["absent", () => {}],
+    ["blank", (s: string) => pane(s, "x", "\n")],
+    ["one field", (s: string) => pane(s, "x", "h1\n")],
+    ["a 0xE9 byte", (s: string) => pane(s, "x", "h\xe9 t\n")],
+  ] as const) {
+    same(`${label}`, { fn: "target", args: ["x"], env: ORCA_, seed });
+    same(`${label}, piped`, { fn: "target", args: ["x"], env: ORCA_, seed, io: { stdout: "pipe", stderr: "inherit" } });
+  }
+  same("no state dir yet", { fn: "target", args: ["x"], env: ORCA_, seed: (s) => rmSync(join(s, "home", "state"), { recursive: true }) });
+  same("homeless", { fn: "target", args: ["x"], env: ORCA_, homeless: true });
 }, 30000);
 
-test("7. focus: herdr's own status, the tab field even when empty; orca's switch", () => {
-  const focus = (rc: string) => (s: string) => (X(s), sent(s, "focus-rc", rc));
-  for (const [label, seed, path] of [
-    ["ok", X],
-    ["fails 1", focus("1")],
-    ["fails 2", focus("2")],
-    ["herdr absent", X, "noherdr"],
-    ["no handle", () => {}],
-    ["one field", (s: string) => pane(s, "x", "px\n")],
-    ["a CR tab", (s: string) => pane(s, "x", "px tx\r\n")],
-  ] as const)
-    same(label, { fn: "focus", args: ["x"], env: HERDR_, seed, path: path as keyof typeof PATHS | undefined });
-  same("homeless", { fn: "focus", args: ["x"], env: HERDR_, homeless: true, path: "noherdr" });
-  for (const subshell of [false, true])
-    same(`readstdin, subshell ${subshell}`, { fn: "focus", args: ["x"], env: HERDR_, io: { stdout: "inherit", stderr: "inherit", subshell }, input: "from-caller\n", seed: (s) => (X(s), sent(s, "readstdin")) });
-  const p = same("hang", { fn: "focus", args: ["x"], env: { ...HERDR_, AC_HERDR_RPC_TIMEOUT: "1" }, seed: (s) => (X(s), sent(s, "hang")) });
-  expect(p.t.out).toBe("|rc=124");
-  for (const x of [p.o, p.t]) expect(x.hangers.filter(alive)).toEqual([]);
-  // Named (W16): bash runs a herdr it finds but cannot execute as 126, the
-  // twin's lookup skips it - 127; every caller reads any non-zero alike.
-  const ne = pair({ fn: "focus", args: ["x"], env: HERDR_, seed: X, path: "noexec" });
-  expect({ o: ne.o.out, t: ne.t.out, err: ne.t.err, log: ne.t.log }).toEqual({ o: "|rc=126", t: "|rc=127", err: ne.o.err, log: ne.o.log });
+test("7. focus: orca's switch", () => {
   const H = (s: string): void => pane(s, "x", "h1 tab1\n");
   for (const [label, seed, path] of [
     ["orca ok", H],
@@ -686,48 +424,42 @@ test("7. focus: herdr's own status, the tab field even when empty; orca's switch
     ["orca absent", H, "noorca"],
   ] as const)
     same(label, { fn: "focus", args: ["x"], env: ORCA_, seed, path: path as keyof typeof PATHS | undefined, input: "from-caller\n" });
+  same("homeless", { fn: "focus", args: ["x"], env: ORCA_, homeless: true });
 }, 30000);
 
-test("8. mark_wait: herdr reports blocked then stamps; orca stamps on a handle", () => {
-  const VN = "ĐANG CHỜ captain - 2 mục trong room fam";
-  for (const [label, args, seed, lc] of [
-    ["ok", ["x", "a message"], X],
-    ["the Vietnamese message", ["x", VN], X],
-    ["the Vietnamese message under UTF-8", ["x", VN], X, "en_US.UTF-8"],
-    ["msg empty", ["x", ""], X],
-    ["msg absent", ["x"], X],
-    ["report fails", ["x", "m"], (s: string) => (X(s), sent(s, "report-fails"))],
-    ["no handle", ["x", "m"], () => {}],
-    ["a dangling-symlink stamp", ["x", "m"], (s: string) => (X(s), symlinkSync(join(s, "home", "made"), join(s, "home", "state", ".captain-wait-x")))],
+// GAP, not ported, in mark_wait and clear_wait below: herdr's own mark_wait
+// RPC'd the message to a real "report-agent" call (so a report failure, a
+// hung RPC and the message's own bytes - Vietnamese, empty, absent - were
+// all live concerns); backend_mark_wait_orca ignores the message argument
+// entirely and only ever touches the stamp file, so none of that has an
+// orca shape to port to. The stamp file itself (ac_wait_file) is shared
+// code regardless of backend, so its own write mechanics (an unwritable
+// state dir, a dangling-symlink stamp) are proven below against orca.
+test("8. mark_wait: orca touches the stamp file on a handle, ignoring the message", () => {
+  for (const [label, seed] of [
+    ["with a handle", (s: string) => pane(s, "x", "h1 t\n")],
+    ["without one", () => {}],
+    ["a dangling-symlink stamp", (s: string) => (pane(s, "x", "h1 t\n"), symlinkSync(join(s, "home", "made"), join(s, "home", "state", ".captain-wait-x")))],
   ] as const)
-    same(label, { fn: "mark_wait", args: [...args], env: HERDR_, seed, lc });
+    same(label, { fn: "mark_wait", args: ["x", "m"], env: ORCA_, seed });
   if (!ROOTED) {
-    same("state unwritable", { fn: "mark_wait", args: ["x", "m"], env: HERDR_, seed: (s) => (X(s), chmodSync(join(s, "home", "state"), 0o555)) });
+    same("state unwritable", { fn: "mark_wait", args: ["x", "m"], env: ORCA_, seed: (s) => (pane(s, "x", "h1 t\n"), chmodSync(join(s, "home", "state"), 0o555)) });
     for (const x of ["o", "t"]) chmodSync(join(W, `r${rows - 1}`, x, "home", "state"), 0o755);
   }
-  same("room's io: stderr dropped", { fn: "mark_wait", args: ["x", "m"], env: HERDR_, io: { stdout: "inherit", stderr: "ignore" }, seed: X });
-  same("readstdin", { fn: "mark_wait", args: ["x", "m"], env: HERDR_, input: "from-caller\n", seed: (s) => (X(s), sent(s, "readstdin")) });
-  same("hang", { fn: "mark_wait", args: ["x", "m"], env: { ...HERDR_, AC_HERDR_RPC_TIMEOUT: "1" }, seed: (s) => (X(s), sent(s, "hang")) });
-  same("homeless", { fn: "mark_wait", args: ["x", "m"], env: HERDR_, homeless: true });
-  same("orca with a handle", { fn: "mark_wait", args: ["x", "m"], env: ORCA_, seed: (s) => pane(s, "x", "h1 t\n") });
-  same("orca without one", { fn: "mark_wait", args: ["x", "m"], env: ORCA_ });
+  same("homeless", { fn: "mark_wait", args: ["x", "m"], env: ORCA_, homeless: true });
 }, 30000);
 
-test("9. clear_wait: no stamp is no call; a stamp is released (herdr, ignored status) and removed", () => {
+test("9. clear_wait: no stamp is no call; a stamp is released and removed", () => {
   const stamp = (s: string): void => writeFileSync(join(s, "home", "state", ".captain-wait-x"), "");
   for (const [label, seed] of [
-    ["no stamp", X],
-    ["stamp and handle", (s: string) => (X(s), stamp(s))],
+    ["no stamp", (s: string) => pane(s, "x", "h1 t\n")],
+    ["stamp and handle", (s: string) => (pane(s, "x", "h1 t\n"), stamp(s))],
     ["stamp, no handle", stamp],
-    ["release fails", (s: string) => (X(s), stamp(s), sent(s, "release-fails"))],
-    ["a dangling-symlink stamp", (s: string) => (X(s), symlinkSync(join(s, "home", "gone"), join(s, "home", "state", ".captain-wait-x")))],
-    ["a directory stamp", (s: string) => (X(s), mkdirSync(join(s, "home", "state", ".captain-wait-x")))],
+    ["a dangling-symlink stamp", (s: string) => (pane(s, "x", "h1 t\n"), symlinkSync(join(s, "home", "gone"), join(s, "home", "state", ".captain-wait-x")))],
+    ["a directory stamp", (s: string) => (pane(s, "x", "h1 t\n"), mkdirSync(join(s, "home", "state", ".captain-wait-x")))],
   ] as const)
-    same(label, { fn: "clear_wait", args: ["x"], env: HERDR_, seed });
-  same("readstdin", { fn: "clear_wait", args: ["x"], env: HERDR_, input: "from-caller\n", seed: (s) => (X(s), stamp(s), sent(s, "readstdin")) });
-  same("homeless", { fn: "clear_wait", args: ["x"], env: HERDR_, homeless: true });
-  same("orca stamp", { fn: "clear_wait", args: ["x"], env: ORCA_, seed: (s) => (pane(s, "x", "h1 t\n"), stamp(s)) });
-  same("orca no stamp", { fn: "clear_wait", args: ["x"], env: ORCA_ });
+    same(label, { fn: "clear_wait", args: ["x"], env: ORCA_, seed });
+  same("homeless", { fn: "clear_wait", args: ["x"], env: ORCA_, homeless: true });
 }, 30000);
 
 test("10. ids: the empty id and a U+FFFD id name the same path bytes on both sides, every verb", () => {
@@ -737,31 +469,22 @@ test("10. ids: the empty id and a U+FFFD id name the same path bytes on both sid
         fn,
         args: [id, ...(fn === "capture" ? ["40"] : fn === "mark_wait" ? ["m"] : fn === "send_key" ? ["Enter"] : fn === "send_line" ? ["hi"] : [])],
         errexit: fn === "send_key",
-        env: { ...HERDR_, AC_SEND_SETTLE: "0" },
-        seed: (s) => (pane(s, id, "px tx\n"), sent(s, "win-px"), sent(s, "read-px", "r\n"), writeFileSync(join(s, "home", "state", `.captain-wait-${id}`), "")),
+        env: { ...ORCA_, AC_SEND_SETTLE: "0" },
+        seed: (s) => (pane(s, id, "h1 tab1\n"), sent(s, "show", '{"ok":true,"result":{"terminal":{"connected":true}}}\n'), sent(s, "oread", "r\n"), writeFileSync(join(s, "home", "state", `.captain-wait-${id}`), "")),
       });
 }, 30000);
 
-test("11. a driver that failed to load is the oracle's 127 alone - the twin has no driver to lose (named)", () => {
+test("11. a driver that failed to load is the oracle's 127 alone - the twin has no driver file to lose (named)", () => {
   const lab = join(W, "loadfail");
   cpSync(BIN, join(lab, "bin"), { recursive: true });
-  const f = join(lab, "bin", "ac-backend.sh");
-  writeFileSync(f, readFileSync(f, "utf8").replace(/^backend_window_alive_herdr\(\) \{/m, "backend_window_alive_herdr_MISSING_DRIVER() {"));
+  const f = join(lab, "bin", "ac-backend-orca.sh");
+  writeFileSync(f, readFileSync(f, "utf8").replace(/^backend_window_alive_orca\(\) \{/m, "backend_window_alive_orca_MISSING_DRIVER() {"));
   const s = join(W, "r-loadfail");
   mkdirSync(join(s, "home", "state"), { recursive: true });
   mkdirSync(join(s, "stub"));
   X(s);
   const r = Bun.spawnSync(
-    [
-      "/bin/bash",
-      "-c",
-      // The cutover (T8) refuses herdr at ac_backend's own ladder, so this
-      // override reaches the (deliberately broken) driver exactly as the
-      // pre-cutover AC_BACKEND=herdr pin did, confined to this subshell.
-      'set -uo pipefail; . "$0/ac-lib.sh" || exit $?; . "$0/ac-backend.sh" || exit $?; ac_backend() { printf "herdr\\n"; }; backend_window_alive "$@"; printf "|rc=%s" "$?"',
-      join(lab, "bin"),
-      "x",
-    ],
+    ["/bin/bash", "-c", 'set -uo pipefail; . "$0/ac-lib.sh" || exit $?; . "$0/ac-backend.sh" || exit $?; backend_window_alive "$@"; printf "|rc=%s" "$?"', join(lab, "bin"), "x"],
     {
       cwd: s,
       env: { PATH: PATHS.both, HOME: process.env.HOME!, LC_ALL: "C", STUB_DIR: join(s, "stub"), AC_HOME: join(s, "home"), AC_BACKEND: "orca" },
@@ -770,7 +493,7 @@ test("11. a driver that failed to load is the oracle's 127 alone - the twin has 
     },
   );
   expect(r.stdout.toString()).toBe("|rc=127");
-  expect(r.stderr.toString()).toContain("backend_window_alive_herdr: command not found");
+  expect(r.stderr.toString()).toContain("backend_window_alive_orca: command not found");
 }, 30000);
 
 const STAMP = (s: string): void => writeFileSync(join(s, "home", "state", ".captain-wait-x"), "");
@@ -781,51 +504,6 @@ const and =
     for (const f of fs) f(s);
   };
 type Case = [string, (s: string) => void, number, (keyof typeof PATHS)?, string?];
-
-test("12. agent_blocked herdr: the stamp masks, then pane get's first non-empty agent_status must be blocked; jq's stderr is the caller's", () => {
-  const get = (body: string) => (s: string): void => (X(s), sent(s, "win-px"), sent(s, "get-px", body));
-  const B = '{"result":{"pane":{"agent_status":"blocked"}}}\n';
-  const cases: Case[] = [
-    ["blocked", get(B), 0],
-    ["idle", get('{"result":{"pane":{"agent_status":"idle"}}}\n'), 1],
-    ["the first non-empty status, at any depth", get('{"result":{"agent_status":"","pane":{"agent_status":null,"agent":{"agent_status":"blocked"}}}}\n'), 0],
-    ["working ahead of blocked", get('{"a":{"agent_status":"working"},"b":{"agent_status":"blocked"}}\n'), 1],
-    ["no status", get('{"result":{}}\n'), 1],
-    ["an empty answer", (s) => (X(s), sent(s, "win-px")), 1],
-    ["two blocked documents", get(B + B), 1],
-    ["blocked, then garbage", get('{"agent_status":"blocked"} garbage\n'), 0],
-    ["pane get fails", X, 1],
-    ["no handle", () => {}, 1],
-    ["stamped", and(get(B), STAMP), 1],
-    ["a directory stamp", and(get(B), (s) => mkdirSync(join(s, "home", "state", ".captain-wait-x"))), 1],
-    ["a dangling-symlink stamp", and(get(B), DANGLING), 0],
-    ["herdr absent", get(B), 1, "noherdr"],
-    ["jq absent", get(B), 1, "nojq"],
-  ];
-  for (const [label, seed, rc, path] of cases) {
-    const p = same(label, { fn: "agent_blocked", args: ["x"], env: HERDR_, seed, path });
-    expect({ label, out: p.t.out }).toEqual({ label, out: `|rc=${rc}` });
-  }
-  const bad = same("not JSON: jq's parse error on the caller's stderr", { fn: "agent_blocked", args: ["x"], env: HERDR_, seed: get("garbage\n") });
-  expect({ out: bad.t.out, err: bad.t.err }).toEqual({ out: "|rc=1", err: "jq: parse error: Invalid numeric literal at line 2, column 0\n" });
-  same("not JSON, the caller's stderr dropped", { fn: "agent_blocked", args: ["x"], env: HERDR_, seed: get("garbage\n"), io: { stdout: "inherit", stderr: "ignore" } });
-  const noisy = same("the noisy jq", { fn: "agent_blocked", args: ["x"], env: HERDR_, seed: get(B), path: "noisyjq" });
-  expect(noisy.t.err).toBe('jq-stderr -r [.. | .agent_status? // empty] | map(select(. != "")) | first // empty\n');
-  same("AC_HERDR_SESSION", { fn: "agent_blocked", args: ["x"], env: { ...HERDR_, AC_HERDR_SESSION: "s1" }, seed: get(B) });
-  for (const subshell of [false, true]) {
-    const p = same(`readstdin, subshell ${subshell}: pane get sits in a $( )`, { fn: "agent_blocked", args: ["x"], env: HERDR_, io: { stdout: "inherit", stderr: "inherit", subshell }, input: "from-caller\n", seed: and(get(B), (s) => sent(s, "readstdin")) });
-    expect(p.t.log).toBe("herdr pane get px [] stdin=[]\n");
-  }
-  const h = same("hang", { fn: "agent_blocked", args: ["x"], env: { ...HERDR_, AC_HERDR_RPC_TIMEOUT: "1" }, seed: and(get(B), (s) => sent(s, "hang")) });
-  expect(h.t.out).toBe("|rc=1");
-  for (const x of [h.o, h.t]) {
-    expect(x.ms).toBeLessThan(4000);
-    expect(x.ms).toBeGreaterThan(900);
-    expect(x.hangers.length).toBe(1);
-    expect(x.hangers.filter(alive)).toEqual([]);
-  }
-  same("homeless", { fn: "agent_blocked", args: ["x"], env: HERDR_, homeless: true });
-}, 60000);
 
 test("13. agent_blocked orca: the stamp masks, then jq -e's own status on agentWait", () => {
   const H = (s: string): void => pane(s, "x", "h1 tab1\n");
@@ -858,54 +536,6 @@ test("13. agent_blocked orca: the stamp masks, then jq -e's own status on agentW
   }
   same("homeless", { fn: "agent_blocked", args: ["x"], env: ORCA_, homeless: true });
 }, 30000);
-
-test("14. harness_up herdr: any non-shell foreground name is up, all shells a bare shell, no name unobservable", () => {
-  const info = (body: string) => (s: string): void => (X(s), sent(s, "pinfo-px", body));
-  const fg = (procs: string) => info(`{"result":{"process_info":{"foreground_processes":${procs}}}}\n`);
-  const cases: Case[] = [
-    ["a harness", fg('[{"argv0":"claude"}]'), 0],
-    ["a login shell", fg('[{"argv0":"-zsh","name":"zsh"}]'), 1],
-    ["every shell: by path, by name, IFS-padded, the dash before the path", fg('[{"argv0":"/bin/bash"},{"name":"fish"},{"argv0":" \\t sh\\t "},{"argv0":"-/bin/dash"},{"argv0":"/usr/bin/-ksh"},{"argv0":"tcsh"},{"argv0":"csh"}]'), 1],
-    ["a shell, then a harness", fg('[{"argv0":"-zsh"},{"argv0":"node"}]'), 0],
-    ["two dashes", fg('[{"argv0":"--zsh"}]'), 0],
-    ["argv0 null or false: the name", fg('[{"argv0":null,"name":"zsh"},{"argv0":false,"name":"bash"}]'), 1],
-    ["no argv0, a harness name", fg('[{"name":"codex"}]'), 0],
-    ["an empty argv0 first", fg('[{"argv0":""},{"argv0":"zsh"}]'), 0],
-    ["an empty argv0 last, cut by $( )", fg('[{"argv0":"zsh"},{"argv0":""}]'), 1],
-    ["a CR after the shell", fg('[{"argv0":"zsh\\r"}]'), 0],
-    ["a NUL inside the shell, dropped by $( )", fg('[{"argv0":"z\\u0000sh"}]'), 1],
-    ["a number", fg('[{"argv0":7}]'), 0],
-    ["an object, pretty-printed", fg('[{"argv0":{"a":"zsh"}}]'), 0],
-    ["no foreground process", fg("[]"), 2],
-    ["foreground_processes absent", info('{"result":{"process_info":{}}}\n'), 2],
-    ["process_info a string", info('{"result":{"process_info":"x"}}\n'), 2],
-    ["not JSON", info("garbage\n"), 2],
-    ["an empty answer", info(""), 2],
-    ["process-info fails", X, 2],
-    ["no handle", () => {}, 2],
-    ["herdr absent", fg('[{"argv0":"claude"}]'), 2, "noherdr"],
-    ["jq absent", fg('[{"argv0":"claude"}]'), 2, "nojq"],
-    ["the noisy jq: its stderr dropped", fg('[{"argv0":"claude"}]'), 0, "noisyjq"],
-  ];
-  for (const [label, seed, rc, path] of cases) {
-    const p = same(label, { fn: "harness_up", args: ["x"], env: HERDR_, seed, path });
-    expect({ label, out: p.t.out, err: p.t.err }).toEqual({ label, out: `|rc=${rc}`, err: "" });
-  }
-  same("AC_HERDR_SESSION", { fn: "harness_up", args: ["x"], env: { ...HERDR_, AC_HERDR_SESSION: "s1" }, seed: fg('[{"argv0":"claude"}]') });
-  for (const subshell of [false, true]) {
-    const p = same(`readstdin, subshell ${subshell}: process-info sits in a $( )`, { fn: "harness_up", args: ["x"], env: HERDR_, io: { stdout: "inherit", stderr: "inherit", subshell }, input: "from-caller\n", seed: and(fg('[{"argv0":"zsh"}]'), (s) => sent(s, "readstdin")) });
-    expect(p.t.log).toBe("herdr pane process-info --pane px [] stdin=[]\n");
-  }
-  const h = same("hang", { fn: "harness_up", args: ["x"], env: { ...HERDR_, AC_HERDR_RPC_TIMEOUT: "1" }, seed: and(fg('[{"argv0":"claude"}]'), (s) => sent(s, "hang")) });
-  expect(h.t.out).toBe("|rc=2");
-  for (const x of [h.o, h.t]) {
-    expect(x.ms).toBeLessThan(4000);
-    expect(x.ms).toBeGreaterThan(900);
-    expect(x.hangers.length).toBe(1);
-    expect(x.hangers.filter(alive)).toEqual([]);
-  }
-  same("homeless", { fn: "harness_up", args: ["x"], env: HERDR_, homeless: true });
-}, 60000);
 
 test("15. harness_up orca: a shell title is a bare shell; Orca's identity, a harness glyph or tui-idle is up; anything else unobservable", () => {
   const H = (s: string): void => pane(s, "x", "h1 tab1\n");
@@ -995,90 +625,21 @@ test("15. harness_up orca: a shell title is a bare shell; Orca's identity, a har
   same("homeless", { fn: "harness_up", args: ["x"], env: ORCA_, homeless: true });
 }, 60000);
 
-test("16. named (V1): once harness_up's `done <<<` ran, bash 3.2 handed a later `$( )`'s herdr the caller's stdin - the twin keeps a fresh shell's /dev/null", () => {
-  const logs: string[] = [];
-  for (const oracle of [true, false]) {
-    const s = join(W, `r-v1-${oracle ? "o" : "t"}`);
-    mkdirSync(join(s, "home", "state"), { recursive: true });
-    mkdirSync(join(s, "stub"));
-    X(s);
-    for (const [name, body] of [["win-px", ""], ["readstdin", ""], ["pinfo-px", '{"result":{"process_info":{"foreground_processes":[{"argv0":"claude"}]}}}\n']]) sent(s, name!, body);
-    // Both sides reach the herdr driver despite the cutover's refusal: the
-    // oracle via a local ac_backend override (confined to this subshell),
-    // the twin via herdrVerb directly (it carries no per-call leak guard).
-    const cmd = oracle
-      ? ["/bin/bash", "-c", 'set -uo pipefail; . "$0/ac-lib.sh" || exit $?; . "$0/ac-backend.sh" || exit $?; ac_backend() { printf "herdr\\n"; }; backend_harness_up x; backend_agent_blocked x', BIN]
-      : [
-          process.execPath,
-          "-e",
-          `const L = await import(${JSON.stringify(LIB)}); const io = { stdout: "inherit", stderr: "inherit" }; const say = () => {}; L.herdrVerb("harness_up", ["x"], io, say); L.herdrVerb("agent_blocked", ["x"], io, say);`,
-        ];
-    Bun.spawnSync(cmd, { cwd: s, env: { PATH: PATHS.both, HOME: process.env.HOME!, TMPDIR: W, LC_ALL: "C", STUB_DIR: join(s, "stub"), AC_HOME: join(s, "home"), AC_BACKEND: "orca" }, stdin: Buffer.from("from-caller\n"), stdout: "pipe", stderr: "pipe" });
-    logs.push(read(join(s, "stub", "log")));
-  }
-  expect(logs).toEqual([
-    "herdr pane process-info --pane px [] stdin=[]\nherdr pane get px [] stdin=[from-caller]\n",
-    "herdr pane process-info --pane px [] stdin=[]\nherdr pane get px [] stdin=[]\n",
-  ]);
-}, 30000);
+// GAP, not ported: a V1 regression test here used to prove that bash 3.2
+// hands a LATER `$( )` call the caller's stdin once an earlier `done <<<`
+// in the same call sequence had already consumed it - a herdr-driver-only
+// quirk (herdrVerb had no per-call leak guard to carry the proof through,
+// and that function is gone). orca's own per-call stdin behavior across a
+// multi-call sequence is proven directly in test 15's own readline cases.
 
-// The three keys ac-send.sh's usage names, in every spelling herdr_key_name
-// and the orca case map, with herdr's name and orca's flags for each.
-const KEYS: [string[], string, string][] = [
-  [["Enter", "enter"], "enter", "--enter"],
-  [["Escape", "escape", "Esc", "esc"], "escape", "--text \x1b"],
-  [["C-c", "c-c", "ctrl+c", "Ctrl+C"], "ctrl+c", "--interrupt"],
+// The three keys ac-send.sh's usage names, in every spelling the orca case
+// map uses, with orca's flags for each.
+const KEYS: [string[], string][] = [
+  [["Enter", "enter"], "--enter"],
+  [["Escape", "escape", "Esc", "esc"], "--text \x1b"],
+  [["C-c", "c-c", "ctrl+c", "Ctrl+C"], "--interrupt"],
 ];
 const UNKNOWN = ["ENTER", "Tab", "a b", "x\n\n"];
-
-test("17. send_key herdr: tab focus, then pane send-keys <pane> <herdr's key name>, bare under errexit - a failing focus ends it before any key", () => {
-  const K = (label: string, args: string[], rc: number, log: string, row: Partial<Row> = {}): { o: Side; t: Side } => {
-    const p = same(label, { fn: "send_key", args, env: HERDR_, seed: X, errexit: true, ...row });
-    expect({ label, out: p.t.out, log: p.t.log }).toEqual({ label, out: `|rc=${rc}`, log });
-    return p;
-  };
-  const pressed = (key: string, pane = "px", tab = "tx"): string => `herdr tab focus ${tab} []\nherdr pane send-keys ${pane} ${key} []\n`;
-  for (const [spellings, name] of KEYS) for (const k of spellings) K(k, ["x", k], 0, pressed(name));
-  for (const k of UNKNOWN) K(`an unknown key ${JSON.stringify(k)}: verbatim, its trailing LFs cut by $( )`, ["x", k], 0, pressed(k.replace(/\n+$/, "")));
-  for (const rc of [1, 7]) K(`focus fails ${rc}: no key`, ["x", "Enter"], rc, "herdr tab focus tx []\n", { seed: (s) => (X(s), sent(s, "focus-rc", String(rc))) });
-  K("send-keys fails 3", ["x", "Enter"], 3, pressed("enter"), { seed: (s) => (X(s), sent(s, "keys-rc", "3")) });
-  K("herdr absent: focus's 127, no key", ["x", "Enter"], 127, "", { path: "noherdr" });
-  K("no handle: both RPCs with an empty argument", ["x", "Enter"], 0, pressed("enter", "", ""), { seed: () => {} });
-  K("one field: tab focus ''", ["x", "Enter"], 0, pressed("enter", "px", ""), { seed: (s) => pane(s, "x", "px\n") });
-  K("a CR tab", ["x", "Enter"], 0, pressed("enter", "px", "tx\r"), { seed: (s) => pane(s, "x", "px tx\r\n") });
-  const hl = K("homeless: both RPCs with an empty argument", ["x", "Enter"], 0, pressed("enter", "", ""), { homeless: true });
-  expect(hl.t.err.split("\n").filter((l) => l.startsWith("ERROR: AC_HOME is not set")).length).toBe(2);
-  K("AC_HERDR_SESSION", ["x", "Enter"], 0, "herdr tab focus tx --session s1 [s1]\nherdr pane send-keys px enter --session s1 [s1]\n", { env: { ...HERDR_, AC_HERDR_SESSION: "s1" } });
-  for (const [label, io, l1, l2] of [
-    ["top level: both read the caller's stdin", { stdout: "inherit", stderr: "inherit" }, "l1", "l2"],
-    ["in a subshell", { stdout: "inherit", stderr: "inherit", subshell: true }, "", ""],
-    ["stdin ignored", { stdin: "ignore", stdout: "inherit", stderr: "inherit" }, "", ""],
-  ] as const)
-    K(`readline, ${label}`, ["x", "Enter"], 0, `herdr tab focus tx [] line=[${l1}]\nherdr pane send-keys px enter [] line=[${l2}]\n`, { io, input: "l1\nl2\n", seed: (s) => (X(s), sent(s, "readline")) });
-  for (const [label, sentinel, log] of [
-    ["a hung focus is killed at the ceiling: 124, no key", "hang", "herdr tab focus tx []\n"],
-    ["a hung send-keys is killed at the ceiling: 124", "hang-send-keys", pressed("enter")],
-  ] as const) {
-    const p = K(label, ["x", "Enter"], 124, log, { env: { ...HERDR_, AC_HERDR_RPC_TIMEOUT: "1" }, seed: (s) => (X(s), sent(s, sentinel)) });
-    for (const x of [p.o, p.t]) {
-      expect(x.ms).toBeLessThan(4000);
-      expect(x.ms).toBeGreaterThan(900);
-      expect(x.hangers.length).toBe(1);
-      expect(x.hangers.filter(alive)).toEqual([]);
-    }
-  }
-  // Named: where errexit sleeps (`"$send" ... || true` in ac_startup_dialogs)
-  // the bash presses the key after a failed focus; the twin answers ac-send's
-  // bare position alone.
-  const n = pair({ fn: "send_key", args: ["x", "Enter"], env: HERDR_, seed: (s) => (X(s), sent(s, "focus-rc", "7")) });
-  expect({ o: [n.o.out, n.o.log], t: [n.t.out, n.t.log] }).toEqual({ o: ["|rc=0", pressed("enter")], t: ["|rc=7", "herdr tab focus tx []\n"] });
-  // A ceiling past 2147483647 s, which sleep(1) refuses, fires at once under
-  // errexit on both sides (the bash watchdog's wait survives the refusal), so
-  // no key is pressed; the kill races the stub's log line, so only the status
-  // is compared.
-  const big = pair({ fn: "send_key", args: ["x", "Enter"], env: { ...HERDR_, AC_HERDR_RPC_TIMEOUT: "2147483648" }, seed: X, errexit: true });
-  expect({ o: big.o.out, t: big.t.out }).toEqual({ o: "|rc=124", t: "|rc=124" });
-}, 60000);
 
 test("18. send_key orca: one terminal send - --enter, ESC as --text, --interrupt, else the key as --text - answering 0 or 1, no focus", () => {
   const H = (s: string): void => pane(s, "x", "h1 tab1\n");
@@ -1088,7 +649,7 @@ test("18. send_key orca: one terminal send - --enter, ESC as --text, --interrupt
     return p;
   };
   const pressed = (flags: string, h = "h1"): string => `orca terminal send --terminal ${h} ${flags} --json\n`;
-  for (const [spellings, , flags] of KEYS) for (const k of spellings) K(k, ["x", k], 0, pressed(flags));
+  for (const [spellings, flags] of KEYS) for (const k of spellings) K(k, ["x", k], 0, pressed(flags));
   for (const k of UNKNOWN) K(`an unknown key ${JSON.stringify(k)}: the text, verbatim`, ["x", k], 0, pressed(`--text ${k}`));
   for (const [label, seed, rc] of [
     ["send fails", (s: string) => (H(s), sent(s, "send-fails")), 1],
@@ -1111,37 +672,17 @@ test("18. send_key orca: one terminal send - --enter, ESC as --text, --interrupt
     });
 }, 60000);
 
-const UI = (s: string): void => (X(s), sent(s, "ui-px", "> earlier turn\n"), sent(s, "cmp-px"));
 const META = (body: string) => (s: string): void => writeFileSync(join(s, "home", "state", "x.meta"), body);
 const CLAUDE = META("harness=claude\n");
 const TEXT = "hello world";
-const QUICK = { ...HERDR_, AC_SEND_SETTLE: "0" };
-// One call as the stubs log it.
-const TYPE = (t = TEXT, p = "px"): string => `herdr pane send-text ${p} ${t} []\n`;
 const SLEPT = (v = "0"): string => `sleep ${v}\n`;
-const READ = (p = "px"): string => `herdr pane read ${p} --source recent --lines 200 []\n`;
-const ANSI = (p = "px"): string => `herdr pane read ${p} --source recent --lines 200 --ansi []\n`;
-const ENTER = (p = "px"): string => `herdr pane send-keys ${p} enter []\n`;
-const CTRLU = (p = "px"): string => `herdr pane send-keys ${p} ctrl+u []\n`;
-const FOCUS = (t = "tx"): string => `herdr tab focus ${t} []\n`;
-// The submit verifier: a render read, the Enter, then <k> probes.
-const VERIFY = (k: number, v = "0", p = "px"): string => READ(p) + ENTER(p) + (SLEPT(v) + READ(p)).repeat(k);
-const SAYS = {
-  noread: "ac-backend: could not read the pane of herdr:pane-px - NOTHING was typed or submitted (peek it: ac-peek.sh x)\n",
-  nosee: "ac-backend: cannot see the composer of herdr:pane-px (no claude composer on screen) - NOTHING was typed; peek it (ac-peek.sh x), or type anyway with ac-send.sh x --force\n",
-  draft: "ac-backend: the composer of herdr:pane-px holds an unsent draft - NOTHING was typed or submitted, so the draft is untouched; send it or clear it first (peek: ac-peek.sh x)\n",
-  tail: (draft: string): string =>
-    `ac-backend: the composer of herdr:pane-px did not show the whole message before Enter (a long send lands as its tail) - NOTHING was submitted, draft ${draft}; write the instruction to a file and send a short pointer to it\n`,
-  unverified: "ac-backend: could not read the pane of herdr:pane-px - submit UNVERIFIED, so the text may or may not have gone through (peek it: ac-peek.sh x)\n",
-  stranded: "ac-backend: submit not acknowledged by herdr:pane-px - text likely stranded unsubmitted in the composer (peek, then resubmit: ac-send.sh x --key Enter)\n",
-};
-const NOT_CLEARED = "NOT cleared - peek it (ac-peek.sh x)";
 
 // One send_line row: both sides alike, the stub pane's composer and
 // transcript included; then the twin's status and, where the row names them,
-// its stderr and log.
+// its stderr and log. env and seed always come from the caller (OSL's own
+// orca defaults) - there is no second driver left to default to here.
 function SL(label: string, rc: number, want: { err?: string; log?: string }, row: Partial<Row> = {}): { o: Side; t: Side; cmp: string; ui: string; ocmp: string; oui: string } {
-  const p = same(label, { fn: "send_line", args: ["x", TEXT], env: QUICK, seed: UI, ...row });
+  const p = same(label, { fn: "send_line", args: ["x", TEXT], ...row });
   const r = join(W, `r${rows - 1}`);
   const at = (x: string, f: string): string => read(join(r, x, "stub", f));
   const screen = (x: string) => ({ cmp: at(x, "cmp-px"), ui: at(x, "ui-px"), ocmp: at(x, "ocmp-h1"), oui: at(x, "oui-h1") });
@@ -1153,155 +694,12 @@ function SL(label: string, rc: number, want: { err?: string; log?: string }, row
   return { ...p, ...screen("t") };
 }
 
-test("19. send_line herdr: send-text, the settle, then the verified Enter - a strand focuses the tab and verifies ONE retry; 0 accepted, 1 stranded", () => {
-  const typed = TYPE() + SLEPT();
-  const ok = SL("delivered first try", 0, { err: "", log: typed + VERIFY(1) });
-  expect({ cmp: ok.cmp, ui: ok.ui }).toEqual({ cmp: "", ui: "> earlier turn\n> hello world\n" });
-  SL("several arguments: joined by one space", 0, { log: TYPE("a  b c") + SLEPT() + VERIFY(1) }, { args: ["x", "a ", "b", "c"] });
-  const retry = SL("an Enter dropped on an unfocused pane: seven probes, the focus, then the verified retry", 0, { err: "", log: typed + VERIFY(7) + FOCUS() + VERIFY(1) }, { seed: and(UI, (s) => sent(s, "unfocused")) });
-  expect(retry.ui).toBe("> earlier turn\n> hello world\n");
-  const lost = SL("every Enter dropped: NOT confirmed, the text left in the composer", 1, { err: SAYS.stranded, log: typed + VERIFY(7) + FOCUS() + VERIFY(7) }, { seed: and(UI, (s) => sent(s, "drop-enters", "99")) });
-  expect({ cmp: lost.cmp, ui: lost.ui }).toEqual({ cmp: "hello world\n", ui: "> earlier turn\n" });
-  SL("the redraw shows on the third probe: accepted there", 0, { log: typed + VERIFY(3) }, { seed: and(UI, (s) => sent(s, "late", "3")) });
-  const twice = SL("named: a redraw later than the seven probes - the retry's Enter submits the emptied composer", 0, { log: typed + VERIFY(7) + FOCUS() + VERIFY(1) }, { seed: and(UI, (s) => sent(s, "late", "8")) });
-  expect(twice.ui).toBe("> earlier turn\n> hello world\n> \n");
-  SL("the focus fails: its status ignored, the retry verified all the same", 1, { err: SAYS.stranded, log: typed + VERIFY(7) + FOCUS() + VERIFY(7) }, { seed: and(UI, (s) => sent(s, "unfocused"), (s) => sent(s, "focus-rc", "1")) });
-  SL("send-keys fails 3: the Enter's status ignored, a strand", 1, { err: SAYS.stranded, log: typed + VERIFY(7) + FOCUS() + VERIFY(7) }, { seed: and(UI, (s) => sent(s, "keys-rc", "3")) });
-  const blank = SL("named (V6): send-text fails 1, its status ignored - the Enter submits the empty composer and reads accepted", 0, { log: typed + VERIFY(1) }, { seed: and(UI, (s) => sent(s, "text-rc", "1")) });
-  expect(blank.ui).toBe("> earlier turn\n> \n");
-  const scroll = (s: string): void => sent(s, "ui-px", Array.from({ length: 20 }, (_, i) => `> turn ${i}\n`).join(""));
-  SL("a ticker above the render's last 15 lines: a dropped Enter still reads stranded", 1, { err: SAYS.stranded, log: typed + VERIFY(7) + FOCUS() + VERIFY(7) }, { seed: and(UI, scroll, (s) => sent(s, "ticker"), (s) => sent(s, "drop-enters", "99")) });
-  SL("no dialog guard on herdr: a pane whose agent reports blocked is typed into with no pane get", 0, { log: typed + VERIFY(1) }, {
-    seed: and(UI, (s) => sent(s, "win-px"), (s) => sent(s, "get-px", '{"result":{"pane":{"agent_status":"blocked"}}}\n')),
-  });
-}, 120000);
-
-test("20. send_line herdr: a claude pane's composer is proven before Enter - unreadable 2, no frame, a draft or a partial message 3, nothing submitted", () => {
-  const C = (...fs: ((s: string) => void)[]) => and(UI, CLAUDE, ...fs);
-  const proven = ANSI() + TYPE() + SLEPT() + ANSI();
-  const ok = SL("proven: the composer empty before, the whole message after", 0, { err: "", log: proven + VERIFY(1) }, { seed: C() });
-  expect(ok.ui).toBe("> earlier turn\n> hello world\n");
-  SL("proven, then a strand: the retry as without the proof", 0, { log: proven + VERIFY(7) + FOCUS() + VERIFY(1) }, { seed: C((s) => sent(s, "unfocused")) });
-  SL("the first read fails: 2, nothing typed", 2, { err: SAYS.noread, log: ANSI() }, { seed: C((s) => sent(s, "read-fails-from", "1")) });
-  SL("no rules on screen: 3", 3, { err: SAYS.nosee, log: ANSI() }, { seed: C((s) => sent(s, "norules")) });
-  SL("one rule: 3", 3, { err: SAYS.nosee, log: ANSI() }, { seed: C((s) => sent(s, "onerule")) });
-  SL("named: two adjacent rules - sed's reversed range prints the second rule, read as a draft", 3, { err: SAYS.draft, log: ANSI() }, { seed: C((s) => sent(s, "tight")) });
-  SL("an older rule above the read's last 20 lines is cut: one rule, 3", 3, { err: SAYS.nosee, log: ANSI() }, {
-    seed: C((s) => sent(s, "ui-px", `${Buffer.from(RULE).toString("latin1")}\n${Array.from({ length: 20 }, (_, i) => `> turn ${i}\n`).join("")}`), (s) => sent(s, "onerule")),
-  });
-  const draft = SL("a draft in the composer: 3, untouched", 3, { err: SAYS.draft, log: ANSI() }, { seed: C((s) => sent(s, "cmp-px", "old draft\n")) });
-  expect(draft.cmp).toBe("old draft\n");
-  const cut = SL("the composer shows a tail: cleared, 3", 3, { err: SAYS.tail("cleared"), log: proven + CTRLU() + ANSI() }, { seed: C((s) => sent(s, "keep-tail", "5")) });
-  expect(cut.cmp).toBe("");
-  SL("an empty composer drawn as ❯ and an NBSP, no hint (claude 2.1.299): proven, sent", 0, { err: "", log: proven + VERIFY(1) }, { seed: C((s) => sent(s, "nbsp")) });
-  SL("a tail under the NBSP frame: cleared, 3", 3, { err: SAYS.tail("cleared"), log: proven + CTRLU() + ANSI() }, { seed: C((s) => sent(s, "nbsp"), (s) => sent(s, "keep-tail", "5")) });
-  const long = "x".repeat(100);
-  SL("a tail of three rows: three ctrl+u", 3, { err: SAYS.tail("cleared"), log: ANSI() + TYPE(long) + SLEPT() + ANSI() + (CTRLU() + ANSI()).repeat(3) }, { args: ["x", long], seed: C((s) => sent(s, "keep-tail", "90")) });
-  const tall = "x".repeat(1000);
-  SL("a tail of 23 rows: every re-read takes the message's 33 rows, 23 ctrl+u", 3, { err: SAYS.tail("cleared"), log: ANSI() + TYPE(tall) + SLEPT() + ANSI() + (CTRLU() + ANSI()).repeat(23) }, { args: ["x", tall], seed: C((s) => sent(s, "keep-tail", "900")) });
-  SL("ctrl+u stuck: one press per row read, NOT cleared", 3, { err: SAYS.tail(NOT_CLEARED), log: proven + (CTRLU() + ANSI()).repeat(20) }, { seed: C((s) => sent(s, "keep-tail", "5"), (s) => sent(s, "ctrlu-stuck")) });
-  SL("ctrl+u fails: one press, NOT cleared", 3, { err: SAYS.tail(NOT_CLEARED), log: proven + CTRLU() }, { seed: C((s) => sent(s, "keep-tail", "5"), (s) => sent(s, "keys-rc", "1")) });
-  SL("the read after typing fails: one ctrl+u, its re-read fails, NOT cleared", 3, { err: SAYS.tail(NOT_CLEARED), log: proven + CTRLU() + ANSI() }, { seed: C((s) => sent(s, "read-fails-from", "2")) });
-  for (const [label, paste, rc] of [
-    ["the paste placeholder alone: proven", "[Pasted text #1 +3 lines]", 0],
-    ["one line, singular", "[Pasted text #2 +1 line]", 0],
-    ["no line count", "[Pasted text #12]", 0],
-    ["two placeholders", "[Pasted text #1 +3 lines] [Pasted text #2]", 0],
-    ["a placeholder and a remainder: 3", "[Pasted text #1 +3 lines] tail", 3],
-    ["no number: 3", "[Pasted text #]", 3],
-  ] as const)
-    SL(label, rc, { err: rc ? SAYS.tail("cleared") : "" }, { seed: C((s) => sent(s, "paste", paste)) });
-  SL("an empty message is never proven: 3, the composer cleared", 3, { err: SAYS.tail("cleared"), log: ANSI() + TYPE("") + SLEPT() + ANSI() + CTRLU() + ANSI() }, { args: ["x", ""], seed: C() });
-  const unproven = SL("AC_SEND_UNPROVEN=1: no proof, typed after a draft", 0, { log: TYPE() + SLEPT() + VERIFY(1) }, { env: { ...QUICK, AC_SEND_UNPROVEN: "1" }, seed: C((s) => sent(s, "cmp-px", "old draft\n")) });
-  expect(unproven.ui).toBe("> earlier turn\n> old drafthello world\n");
-  for (const v of ["0", "", "yes", " 1"])
-    SL(`AC_SEND_UNPROVEN ${JSON.stringify(v)}: proven`, 3, { err: SAYS.draft, log: ANSI() }, { env: { ...QUICK, AC_SEND_UNPROVEN: v }, seed: C((s) => sent(s, "cmp-px", "old draft\n")) });
-  for (const [label, meta, proof] of [
-    ["harness codex: no proof", "harness=codex\n", false],
-    ["no harness key", "backend=herdr\n", false],
-    ["harness claude with a CR: no proof", "harness=claude\r\n", false],
-    ["the last harness line wins", "harness=codex\nharness=claude\n", true],
-    ["an empty last value reads absent", "harness=claude\nharness=\n", false],
-    ["a NUL inside the value", "harness=claude\0x\n", true],
-  ] as const)
-    SL(label, proof ? 3 : 0, { log: proof ? ANSI() : TYPE() + SLEPT() + VERIFY(1) }, { seed: and(UI, META(meta), (s) => sent(s, "cmp-px", "old draft\n")) });
-  SL("the meta a directory: no proof", 0, { err: "", log: TYPE() + SLEPT() + VERIFY(1) }, { seed: and(UI, (s) => mkdirSync(join(s, "home", "state", "x.meta"))) });
-  if (!ROOTED) SL("an unreadable meta: no proof, no warning", 0, { err: "", log: TYPE() + SLEPT() + VERIFY(1) }, { seed: and(UI, CLAUDE, (s) => chmodSync(join(s, "home", "state", "x.meta"), 0)) });
-  const k = "x".repeat(1000);
-  SL("a 1000-byte message: 33 rows hold its 25 wrapped rows", 0, { log: ANSI() + TYPE(k) + SLEPT() + ANSI() + VERIFY(1) }, { args: ["x", k], seed: C() });
-  const huge = "x".repeat(8000);
-  SL("an 8000-byte message: the 200-row clamp cannot hold its frame - one ctrl+u, NOT cleared", 3, { err: SAYS.tail(NOT_CLEARED), log: ANSI() + TYPE(huge) + SLEPT() + ANSI() + CTRLU() + ANSI() }, { args: ["x", huge], seed: C() });
-  const e = "é".repeat(300);
-  for (const [lc, presses] of [["C", 23], ["en_US.UTF-8", 20]] as const)
-    SL(`300 x é under ${lc}: ${presses} rows - bash counts the message in ${lc === "C" ? "bytes" : "characters"}`, 3, { log: ANSI() + TYPE(Buffer.from(e).toString("latin1")) + SLEPT() + ANSI() + (CTRLU() + ANSI()).repeat(presses) }, {
-      args: ["x", e],
-      lc,
-      seed: C((s) => sent(s, "keep-tail", "10"), (s) => sent(s, "ctrlu-stuck")),
-    });
-  SL("an invalid byte in the composer under UTF-8: not the message (the placeholder sed runs under C), cleared", 3, { err: SAYS.tail("cleared") }, { args: ["x", "é".repeat(30)], lc: "en_US.UTF-8", seed: C((s) => sent(s, "keep-tail", "59")) });
-}, 180000);
-
-test("21. send_line herdr: reads that fail or hang (2, bounded), no handle, the session, stdin by position, homeless, herdr absent", () => {
-  const typed = TYPE() + SLEPT();
-  SL("the verifier's first read fails: the Enter pressed all the same, twice - UNVERIFIED", 2, { err: SAYS.unverified, log: typed + READ() + ENTER() + FOCUS() + READ() + ENTER() }, { seed: and(UI, (s) => sent(s, "read-fails-from", "1")) });
-  SL("a probe's read fails: 2 at once, then the retry's", 2, { err: SAYS.unverified, log: typed + READ() + ENTER() + SLEPT() + READ() + FOCUS() + READ() + ENTER() }, { seed: and(UI, (s) => sent(s, "read-fails-from", "2")) });
-  const hung = SL("a hung probe read is killed at the ceiling: 2, bounded", 2, { err: SAYS.unverified, log: typed + READ() + ENTER() + SLEPT() + READ() + FOCUS() + READ() + ENTER() }, {
-    env: { ...QUICK, AC_HERDR_RPC_TIMEOUT: "1" },
-    seed: and(UI, (s) => sent(s, "read-hangs-from", "2")),
-  });
-  for (const x of [hung.o, hung.t]) {
-    expect(x.ms).toBeLessThan(5000);
-    expect(x.ms).toBeGreaterThan(1900);
-    expect(x.hangers.length).toBe(2);
-    expect(x.hangers.filter(alive)).toEqual([]);
-  }
-  const ht = SL("named (V6): a hung send-text is killed at the ceiling, 124 ignored, the Enter pressed", 0, { log: typed + VERIFY(1) }, { env: { ...QUICK, AC_HERDR_RPC_TIMEOUT: "1" }, seed: and(UI, (s) => sent(s, "hang-send-text")) });
-  for (const x of [ht.o, ht.t]) {
-    expect(x.ms).toBeGreaterThan(900);
-    expect(x.hangers.filter(alive)).toEqual([]);
-  }
-  SL("a claude pane's first read hangs: 2, nothing typed", 2, { err: SAYS.noread, log: ANSI() }, { env: { ...QUICK, AC_HERDR_RPC_TIMEOUT: "1" }, seed: and(UI, CLAUDE, (s) => sent(s, "hang-read")) });
-  SL("no handle: every call with an empty pane or tab, the reads never issued - UNVERIFIED", 2, { err: SAYS.unverified.replace("pane-px", "pane-"), log: TYPE(TEXT, "") + SLEPT() + ENTER("") + FOCUS("") + ENTER("") }, { seed: () => {} });
-  SL("no handle on a claude pane: the proof reads pane '' - 2, nothing typed", 2, { err: SAYS.noread.replace("pane-px", "pane-"), log: ANSI("") }, { seed: CLAUDE });
-  SL("one field: the retry focuses tab ''", 1, { log: typed + VERIFY(7) + FOCUS("") + VERIFY(7) }, { seed: and(UI, (s) => pane(s, "x", "px\n"), (s) => sent(s, "drop-enters", "99")) });
-  const session = (l: string, s: string): string => l.replace(/ \[\]\n/g, ` --session ${s} [${s}]\n`);
-  SL("AC_HERDR_SESSION: every call suffixed", 0, { log: session(typed + VERIFY(1), "s1") }, { env: { ...QUICK, AC_HERDR_SESSION: "s1" } });
-  SL("config/herdr-session on a claude pane", 0, { log: session(ANSI() + typed + ANSI() + VERIFY(1), "s2") }, { seed: and(UI, CLAUDE, (s) => cfg(s, "herdr-session", "s2\n")) });
-  const nested = (l: string): string => l.replace(/\n$/, " line=[]\n");
-  for (const [label, io, top] of [
-    ["top level: send-text, the Enters and the focus read the caller's stdin, every read nests", { stdout: "inherit", stderr: "inherit" }, true],
-    ["in a subshell", { stdout: "inherit", stderr: "inherit", subshell: true }, false],
-    ["stdin ignored", { stdin: "ignore", stdout: "inherit", stderr: "inherit" }, false],
-  ] as const) {
-    const at = (l: string, n: string): string => l.replace(/\n$/, ` line=[${top ? n : ""}]\n`);
-    SL(`readline, ${label}`, 0, { log: at(TYPE(), "l1") + SLEPT() + nested(READ()) + at(ENTER(), "l2") + (SLEPT() + nested(READ())).repeat(7) + at(FOCUS(), "l3") + nested(READ()) + at(ENTER(), "l4") + SLEPT() + nested(READ()) }, {
-      io,
-      input: "l1\nl2\nl3\nl4\nl5\n",
-      seed: and(UI, (s) => sent(s, "readline"), (s) => sent(s, "unfocused")),
-    });
-    SL(`readline, a claude pane cleared, ${label}`, 3, { log: nested(ANSI()) + at(TYPE(), "l1") + SLEPT() + nested(ANSI()) + at(CTRLU(), "l2") + nested(ANSI()) }, {
-      io,
-      input: "l1\nl2\nl3\n",
-      seed: and(UI, CLAUDE, (s) => sent(s, "readline"), (s) => sent(s, "keep-tail", "5")),
-    });
-  }
-  const hl = SL("homeless: an empty pane, the meta unread, the refusal per handle read", 2, {}, { homeless: true });
-  expect(hl.t.err.split("\n").filter((l) => l.startsWith("ERROR: AC_HOME is not set")).length).toBe(6);
-  SL("homeless, the caller's stderr dropped: silent", 2, { err: "" }, { homeless: true, io: { stdout: "inherit", stderr: "ignore" } });
-  SL("herdr absent: every call 127 - UNVERIFIED", 2, { err: SAYS.unverified, log: SLEPT() }, { path: "noherdr" });
-  SL("herdr absent on a claude pane: 2, nothing typed", 2, { err: SAYS.noread, log: "" }, { path: "noherdr", seed: and(UI, CLAUDE) });
-}, 120000);
-
-test("22. send_line herdr: AC_SEND_SETTLE is the pause after typing and between probes, read per pause, slept by PATH's sleep", () => {
-  const d = SL("unset: 0.4 s", 0, { log: TYPE() + SLEPT("0.4") + VERIFY(1, "0.4") }, { env: HERDR_ });
-  for (const x of [d.o, d.t]) expect(x.ms).toBeGreaterThan(750);
-  SL("empty: 0.4 s", 0, { log: TYPE() + SLEPT("0.4") + VERIFY(1, "0.4") }, { env: { ...HERDR_, AC_SEND_SETTLE: "" } });
-  const tenth = SL("0.1 across a strand: nine pauses", 0, { log: TYPE() + SLEPT("0.1") + VERIFY(7, "0.1") + FOCUS() + VERIFY(1, "0.1") }, { env: { ...HERDR_, AC_SEND_SETTLE: "0.1" }, seed: and(UI, (s) => sent(s, "unfocused")) });
-  for (const x of [tenth.o, tenth.t]) expect(x.ms).toBeGreaterThan(850);
-  const bad = SL("abc: sleep refuses every pause on the caller's stderr, the probes spin", 1, { log: TYPE() + SLEPT("abc") + VERIFY(7, "abc") + FOCUS() + VERIFY(7, "abc") }, { env: { ...HERDR_, AC_SEND_SETTLE: "abc" }, seed: and(UI, (s) => sent(s, "drop-enters", "99")) });
-  expect(bad.t.err.split("\n").filter((l) => l.startsWith("sleep: invalid time interval")).length).toBe(15);
-  SL("abc and a strand, the caller's stderr dropped: silent", 1, { err: "" }, { env: { ...HERDR_, AC_SEND_SETTLE: "abc" }, seed: and(UI, (s) => sent(s, "drop-enters", "99")), io: { stdout: "inherit", stderr: "ignore" } });
-}, 60000);
+// GAP, not ported, tests 19-22 (send_line herdr): herdr's own composer-proof
+// and strand-retry mechanics had no orca shape until T9's cutover built
+// orca's own (OSHOW/OREAD/OENTER's pending check, tests 23-27 below), which
+// this suite already proves end to end against orca's actual driver - a
+// byte-for-byte port of herdr's call shapes onto a driver that is gone would
+// prove nothing.
 
 const OUI = (s: string): void => (pane(s, "x", "h1 tab1\n"), sent(s, "oui-h1", "> earlier turn\n"), sent(s, "ocmp-h1"));
 const OQUICK = { ...ORCA_, AC_SEND_SETTLE: "0" };
