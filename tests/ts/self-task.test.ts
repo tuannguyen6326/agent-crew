@@ -116,8 +116,10 @@ function side(row: Row, s: string, oracle: boolean): Side {
     ? ["/bin/bash", "-c", `set -uo pipefail; . "$0/ac-lib.sh" || exit $?; . "$0/ac-backend.sh" || exit $?; ${row.bash}; printf '|rc=%s' "$?"`, BIN, ...args]
     : [process.execPath, "-e", `${PRE} const A = ${JSON.stringify(args)}; const rc = await (async () => { ${row.twin} })(); writeSync(1, "|rc=" + rc); process.exit(0);`];
   const r = Bun.spawnSync(cmd, { cwd: ROOT, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-  // bash 3.2's `set -m` (herdr_rpc_bounded) now and then prints its own
-  // `child setpgid` line - shell-own stderr, never reproduced.
+  // bash 3.2's `set -m` now and then prints its own `child setpgid` line -
+  // shell-own stderr, never reproduced. Defensive: nothing in the dispatch
+  // path this file drives sets -m today, but a stray line here would be
+  // cryptic to chase, so the filter stays.
   const norm = (t: string): string => t.replaceAll(s, "S").replace(/^.*: child setpgid \([0-9]+ to [0-9]+\): Operation not permitted\n/gm, "");
   let err = norm(r.stderr.toString("latin1"));
   if (oracle) err = err.replace(/^.*: line [0-9]+: .*\n/gm, "");
@@ -145,7 +147,7 @@ const put = (s: string, rel: string, body: string, mode = 0o644): void => {
   writeFileSync(join(s, rel), Buffer.from(body, "latin1"), { mode });
   chmodSync(join(s, rel), mode);
 };
-const meta = (s: string, name: string, kind: string): void => put(s, `home/state/${name}.meta`, kind === "" ? "backend=herdr\n" : `kind=${kind}\nbackend=herdr\n`);
+const meta = (s: string, name: string, kind: string): void => put(s, `home/state/${name}.meta`, kind === "" ? "backend=orca\n" : `kind=${kind}\nbackend=orca\n`);
 
 const OWNED: Row = {
   bash: `if ac_family_owned "$1" "$2"; then printf owned; else printf free; fi`,
@@ -172,17 +174,10 @@ test("familyOwned reads what ac_family_owned reads: an in-flight meta of the id'
   same("no state dir", { ...owned("fam"), args: ["fam", "@S/home/none"] });
 }, 120000);
 
-// GAP: backend_window_new's herdr arm (workspace/tab verbs) cannot be
-// exercised through either side's dispatcher pinned to AC_BACKEND=herdr: the
-// bash oracle dies sourcing ac-backend.sh before backend_window_new is ever
-// called, and the TS twin's backendRoute() returns null before reaching the
-// herdr branch - so every one of the fixture's twelve seeded scenarios
-// (tab-create failures, workspace-list races, the missing-herdr-binary row)
-// collapses to the SAME "unsupported backend 'herdr'" refusal on both sides,
-// never exercising backendWindowNew's herdr arm at all. A driver-internal
-// bypass that skips the dispatcher exists in tests/ts/backend.test.ts and
-// tests/ts/teardown.test.ts, via the exported herdrVerb/herdrKillWindow
-// primitives - but backendWindowNew's herdr branch is inlined in that one
-// function behind the unexported backendRoute(), with no equivalent exported
-// low-level entry point to call directly, so no bypass is reachable from a
-// test file alone. Not ported for this reason.
+// GAP, not ported: a twelve-scenario fixture here used to drive
+// backend_window_new's herdr arm (tab-create failures, workspace-list races,
+// the missing-herdr-binary row) through a driver-internal bypass in
+// tests/ts/backend.test.ts and tests/ts/teardown.test.ts. The herdr driver
+// and that bypass's own primitives (herdrVerb, herdrKillWindow) are deleted
+// outright now, not merely unreachable through the dispatcher - there is no
+// arm left to exercise, bypass or otherwise.
