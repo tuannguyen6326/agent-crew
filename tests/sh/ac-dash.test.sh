@@ -141,9 +141,9 @@ fresh_home() {  # fresh_home <name> - a new five-dir home, exported as AC_HOME
 # buffer's text decides busy); without a handle the state is gone/detached.
 mk_live() { printf '%s %s\n' "p$1" "t$1" >"$AC_HOME/state/.pane-$1"; printf 'p%s\n' "$1" >"$FAKE_HERDR/tabs/t$1"; printf '%s\n' "${2:-\$ }" >"$FAKE_HERDR/panes/p$1.buf"; }
 
-# 1. the header line of an empty home.
+# 1. the header line of an empty home: no config/backend selects orca.
 fresh_home h1; render
-assert_contains "$(nout)" "⚓ h1  captain: captain  backend: herdr  flow: auto" "the header line, byte for byte"
+assert_contains "$(nout)" "⚓ h1  captain: captain  backend: orca  flow: auto" "the header line, byte for byte"
 
 # 2. the populated fixture of the legs above (herdr backend, no pane: gone).
 fresh_home h2

@@ -55,7 +55,7 @@ home="$(ac_home)"
 printf '== agent-crew session start ==\n'
 printf 'home: %s\n' "$home"
 printf 'captain: %s\n' "$(ac_captain)"
-printf 'backend: %s\n' "$(ac_config_read backend herdr)"
+printf 'backend: %s\n' "$(ac_config_read backend orca)"
 printf 'flow: %s\n' "$(ac_config_read flow auto)"
 printf 'promote: %s\n' "$(ac_config_read promote always)"
 

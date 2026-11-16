@@ -16,6 +16,11 @@
 # the tool it was really testing worked fine.
 make_fake_herdr
 
+# Pin every scenario below to herdr explicitly: the fallback default is now
+# orca (ac_config_read backend orca), and this suite migrates to fake Orca
+# only at orca-tests-core.
+printf 'herdr\n' >"$AC_HOME/config/backend"
+
 # Nor from the box's gh, which helpers.sh mirrors out of PATH: a logged-in
 # stand-in is the gh every copy below links.
 mkdir -p "$TMP/gh-in"
@@ -261,6 +266,25 @@ Usage: orca <command> [options]
 exit 0
 FAKEORCA
 chmod +x "$TMP/orca-bin/orca"
+
+# No config/backend at all (a freshly bootstrapped home) must now resolve
+# orca, never herdr - the fallback ac_config_read default flips.
+rm -f "$AC_HOME/config/backend"
+out="$(PATH="$TMP/orca-bin:$HEALTHY_PATH" "$BIN/ac-bootstrap.sh")"
+assert_contains "$out" "OK: orca" "an unconfigured home now probes orca"
+case "$out" in *herdr*) fail "an unconfigured home must not still probe herdr: $out" ;; esac
+
+# An unsupported config/backend name must refuse outright, never fall back
+# to probing herdr OR orca as if the name had been one of them.
+printf 'bogus\n' >"$AC_HOME/config/backend"
+rc=0
+out="$(PATH="$TMP/orca-bin:$HEALTHY_PATH" "$BIN/ac-bootstrap.sh" --quiet)" || rc=$?
+assert_eq "$rc" "1" "an invalid backend name blocks"
+assert_contains "$out" "MISSING: config/backend names unsupported backend bogus" "the invalid name is named"
+if printf '%s\n' "$out" | grep -qE '^(OK|MISSING|BELOW-FLOOR|NO-CAPABILITY): (herdr|orca)( |$)'; then
+  fail "an invalid name must not silently fall back to either backend's checks: $out"
+fi
+
 printf 'orca
 ' >"$AC_HOME/config/backend"
 out="$(PATH="$TMP/orca-bin:$TMP/single:$TMP/stubbin" "$BIN/ac-bootstrap.sh" --quiet)"

@@ -1839,7 +1839,7 @@ export function shellSpaceClass(): RegExp {
 // ac_backend's twin (bin/ac-backend.sh keeps its own for the drivers):
 // AC_BACKEND, else config/backend, else the first line of
 // <AC_FLEET_STATE less one trailing slash>/../config/backend cut at its first
-// [:space:], else herdr; any other name is refused with the bash's text. That
+// [:space:], else orca; any other name is refused with the bash's text. That
 // last file unreadable ended the bash with head's line and status, and so here.
 // `soft` is ac-backend.sh sourced with stderr dropped and errexit asleep
 // (bin/ac-guard.sh's `. ac-backend.sh 2>/dev/null || exit 0`): nothing is
@@ -1858,7 +1858,7 @@ export function backendName(soft = false): string {
       b = b.split(shellSpaceClass())[0]!;
     }
   }
-  b ||= "herdr";
+  b ||= "orca";
   if (b !== "herdr" && b !== "orca") {
     if (soft) process.exit(1);
     die(`unsupported backend '${b}' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)`);
@@ -2461,7 +2461,7 @@ export const argvOf = (b: string): string => Buffer.from(b, "latin1").toString("
 // asleep): AC_BACKEND verbatim, else config/backend (configReadSoft), else
 // the first line of <AC_FLEET_STATE less one trailing slash>/../config/backend
 // cut at its first [:space:] - unreadable, head's line and no name - else
-// herdr. Any other name is the ERROR line and null. The driver also ran this
+// orca. Any other name is the ERROR line and null. The driver also ran this
 // ladder once when it was sourced, so an unreadable knob's head line came
 // once more per sourcing process (named).
 function backendRoute(stderr: "inherit" | "ignore"): string | null {
@@ -2478,7 +2478,7 @@ function backendRoute(stderr: "inherit" | "ignore"): string | null {
       b = b.split(shellSpaceClass())[0]!;
     }
   }
-  b ||= "herdr";
+  b ||= "orca";
   if (b === "herdr" || b === "orca") return b;
   if (stderr === "inherit") writeSync(2, prefixed("ERROR: ", `unsupported backend '${b}' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)`));
   return null;

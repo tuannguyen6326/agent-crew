@@ -378,17 +378,17 @@ test("0. the harness: a side a signal ended fails its row by name - two killed s
   );
 }, 30000);
 
-test("1. the route: AC_BACKEND verbatim, config/backend trimmed, AC_FLEET_STATE cut at its first space, herdr; any other name refused before anything is read or minted", () => {
+test("1. the route: AC_BACKEND verbatim, config/backend trimmed, AC_FLEET_STATE cut at its first space, orca; any other name refused before anything is read or minted", () => {
   const accepted: [string, Record<string, string>, (s: string) => void, string][] = [
     ["AC_BACKEND herdr", HERDR_, () => {}, "herdr"],
     ["AC_BACKEND orca", ORCA_, () => {}, "orca"],
     ["config orca", {}, (s) => cfg(s, "backend", "orca\n"), "orca"],
     ["config ' orca\\r'", {}, (s) => cfg(s, "backend", " orca\r\n"), "orca"],
     ["fleet state orca", { AC_FLEET_STATE: "@S/fleet/state/" }, fleet("orca\n"), "orca"],
-    ["fleet state ' orca'", { AC_FLEET_STATE: "@S/fleet/state" }, fleet(" orca\n"), "herdr"],
+    ["fleet state ' orca'", { AC_FLEET_STATE: "@S/fleet/state" }, fleet(" orca\n"), "orca"],
     ["fleet state 'orca x'", { AC_FLEET_STATE: "@S/fleet/state" }, fleet("orca x\n"), "orca"],
     ["fleet state under the home's knob", { AC_FLEET_STATE: "@S/fleet/state" }, (s) => (fleet("orca\n")(s), cfg(s, "backend", "herdr\n")), "herdr"],
-    ["no rung at all", {}, () => {}, "herdr"],
+    ["no rung at all", {}, () => {}, "orca"],
   ];
   for (const [label, env, seed, b] of accepted)
     for (const fn of ["window_alive", "target"] as Fn[]) {

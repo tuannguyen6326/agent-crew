@@ -334,22 +334,25 @@ need jq "brew install jq (worktree pool state, herdr backend)"
 need bun "curl -fsSL https://bun.sh/install | bash (the TypeScript under src/ that bin/ runs, the dashboard, the brain engine)"
 
 # Session backend: the configured one is required, the others stay optional.
-backend="$(ac_config_read backend herdr)"
+backend="$(ac_config_read backend orca)"
 case "$backend" in
   herdr|orca) : ;;
   *)
     printf 'MISSING: config/backend names unsupported backend %s (valid backends: herdr, orca)\n' "$backend"
     rc=1
-    backend=herdr
+    backend=
     ;;
 esac
 # The hint names the binary outright rather than "$backend": the case above
-# already forced any unknown value back to herdr, so the name is fixed per
-# branch - and "MISSING: <backend> - configured session backend" told an
-# operator the one thing they already knew, while withholding the one thing
-# they needed. Nothing spawns without the configured backend's CLI. The
-# `need` lines themselves sit inside the backend blocks below: herdr's
-# capability arm reads the bounded status probe, which must run first.
+# already confines the backend blocks below to a known name, so the name is
+# fixed per branch - and "MISSING: <backend> - configured session backend"
+# told an operator the one thing they already knew, while withholding the
+# one thing they needed. An unsupported name clears $backend instead of
+# forcing a fallback driver, so neither block below silently probes a tool
+# the operator never asked for. Nothing spawns without the configured
+# backend's CLI. The `need` lines themselves sit inside the backend blocks
+# below: herdr's capability arm reads the bounded status probe, which must
+# run first.
 
 # Present is not enough: a client/server PROTOCOL mismatch (brew upgrades the CLI
 # while the old server keeps running - herdr's README: a running server keeps its
@@ -422,7 +425,7 @@ if [ "$backend" = herdr ]; then
     printf 'MISSING: herdr protocol compat - the running server disagrees with the client (herdr status server: compatible false), so EVERY socket call fails and no pane can be spawned, read or steered; restart the herdr server (it exits every pane, the captain owns that call)\n'
     rc=1
   fi
-else
+elif [ "$backend" = orca ]; then
   # Same flag-only-explicit-false philosophy for the orca runtime: silence
   # (no binary, no --json, unparseable) says nothing about reachability -
   # and a REACHABLE runtime still starting (or errored) cannot spawn either,

@@ -130,6 +130,7 @@ case "$out" in
   *"WARN:"*"proj1"*) fail "an ordinary empty reap must not warn: $out" ;;
 esac
 assert_contains "$out" "-- fleet --" "the digest still completes"
+assert_contains "$out" $'backend: orca\n' "no config/backend selects orca in the digest"
 
 rm -f "$dstub/docker"
 unset AC_SESSION_QA_TIMEOUT

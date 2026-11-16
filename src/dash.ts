@@ -400,7 +400,7 @@ async function render(): Promise<void> {
     }
   };
   const name = bytes(home.slice(home.lastIndexOf("/") + 1)).replace(/\n+$/, "");
-  out(`${C_H}${ANCHOR} ${name}${C_0}  ${C_D}captain:${C_0} ${cfg("captain", "captain")}  ${C_D}backend:${C_0} ${cfg("backend", "herdr")}  ${C_D}flow:${C_0} ${cfg("flow", "auto")}\n`);
+  out(`${C_H}${ANCHOR} ${name}${C_0}  ${C_D}captain:${C_0} ${cfg("captain", "captain")}  ${C_D}backend:${C_0} ${cfg("backend", "orca")}  ${C_D}flow:${C_0} ${cfg("flow", "auto")}\n`);
   renderCrew(mintDir(home, "state"));
   await renderRooms();
   renderBacklog(mintDir(home, "records"));

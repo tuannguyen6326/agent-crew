@@ -5,7 +5,7 @@
 #
 # Backend selection: $AC_BACKEND (consumers export it from the task meta's
 # `backend=` key), else config/backend, else the fleet's config/backend
-# found through AC_FLEET_STATE (a homeless crewmate's channel), else herdr -
+# found through AC_FLEET_STATE (a homeless crewmate's channel), else orca -
 # and every value other than `herdr`/`orca` is refused. tmux and wezterm support was removed
 # by design: one contract, one test surface - both survive
 # the orca driver (per-fleet config/backend picks the driver; the contract
@@ -406,16 +406,16 @@
 
 ac_backend() {
   # AC_BACKEND (per-call/per-task pin) > $AC_HOME/config/backend > the fleet
-  # config derived from AC_FLEET_STATE > herdr. The third rung exists because
+  # config derived from AC_FLEET_STATE > orca. The third rung exists because
   # a crewmate pane deliberately carries NO AC_HOME - only the AC_FLEET_*
   # channel (ac-spawn fleet_env) - so a verifier it calls would otherwise
-  # resolve the herdr default on an orca fleet and lease from the wrong pool.
+  # resolve the default on an orca fleet and lease from the wrong pool.
   local b="${AC_BACKEND:-$(ac_config_read backend '')}" f
   if [ -z "$b" ] && [ -n "${AC_FLEET_STATE:-}" ]; then
     f="${AC_FLEET_STATE%/}/../config/backend"
     [ ! -f "$f" ] || { b="$(head -n1 "$f")"; b="${b%%[[:space:]]*}"; }
   fi
-  b="${b:-herdr}"
+  b="${b:-orca}"
   case "$b" in
     herdr|orca) printf '%s\n' "$b" ;;
     *) ac_die "unsupported backend '$b' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)" ;;

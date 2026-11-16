@@ -15,7 +15,7 @@
 #                          session-start goes read-only under it
 #   --backend=<b>       -> where the chief OPENS: herdr | orca. Default ladder
 #                          (same as ac-spawn): flag > the home's config/backend
-#                          > herdr. herdr attaches the fleet's root "<fleet>"
+#                          > orca. herdr attaches the fleet's root "<fleet>"
 #                          workspace; orca runs the chief inline in the CURRENT
 #                          terminal (Orca-native when launched from an Orca
 #                          terminal - there is no herdr surface to attach)
@@ -33,11 +33,11 @@ _ac_home() {
     ach="$ach/crewdeputies/$deputy"
     [[ -d "$ach" ]] || { print -u2 "ac: no deputy home at $ach"; return 1 }
   fi
-  # backend ladder: --backend flag > the home's config/backend > herdr; knobs
+  # backend ladder: --backend flag > the home's config/backend > orca; knobs
   # are read through ac_config_read (trimmed) exactly as bin/ac-backend.sh does.
   local bin="$HOME/Work/agent-crew/bin"
   [[ -n "$backend" ]] || backend="$(AC_HOME="$ach" bash -c '. "$1/ac-lib.sh" && ac_config_read backend ""' _ "$bin" 2>/dev/null)"
-  backend="${backend:-herdr}"
+  backend="${backend:-orca}"
   case "$backend" in
     herdr|orca) ;;
     *) print -u2 "ac: unknown backend '$backend' (valid: herdr, orca)"; return 1 ;;

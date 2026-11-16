@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# ac-backend.test.sh - backend dispatch: the herdr driver (the default backend)
-# against a stub CLI (pane handle persistence, alive, capture, send, kill,
-# focus), and rejection of removed (tmux/wezterm) and unknown backend names.
+# ac-backend.test.sh - backend dispatch: the herdr driver against a stub CLI
+# (pane handle persistence, alive, capture, send, kill, focus), the no-config
+# default, and rejection of removed (tmux/wezterm) and unknown backend names.
 # The orca driver's own leg is tests/sh/ac-backend-orca.test.sh.
 # shellcheck disable=SC2016  # script bodies are deliberately unexpanded here
 
@@ -903,6 +903,16 @@ assert_contains "$out" "CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1" \
 case "$out" in *CLAUDE_CONFIG_DIR*) fail "no CLAUDE_CONFIG_DIR emitted when the chief has none" ;; esac
 out="$(CLAUDE_CONFIG_DIR=/tmp/cfg run_backend herdr 'ac_claude_config_env')"
 assert_contains "$out" "CLAUDE_CONFIG_DIR=/tmp/cfg" "chief's config dir rides the launch line"
+
+# --- no-config default: AC_BACKEND unset, no config/backend -> orca -----------------
+rm -f "$AC_HOME/config/backend"
+out="$(PATH="$stub:$PATH" AC_HOME="$AC_HOME" bash -c '
+  unset AC_BACKEND AC_FLEET_STATE
+  . "'"$BIN"'/ac-lib.sh"
+  . "'"$BIN"'/ac-backend.sh"
+  ac_backend
+')"
+assert_eq "$out" "orca" "an isolated home with no config/backend and AC_BACKEND unset selects orca"
 
 # --- dispatch validation: herdr and orca are the valid backends ----------------------
 

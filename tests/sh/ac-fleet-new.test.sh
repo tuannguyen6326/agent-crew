@@ -30,7 +30,7 @@ assert_eq "$home" "$container/alpha" "prints the home path on stdout"
 for d in state data records config projects; do
   [ -d "$container/alpha/$d" ] || fail "missing $d/ in the seeded fleet"
 done
-assert_eq "$(cat "$container/alpha/config/backend")" "herdr" "backend seeded unasked - herdr is the default backend"
+assert_eq "$(cat "$container/alpha/config/backend")" "orca" "backend seeded unasked - orca is the default backend"
 
 # Runtime symlinks: the chief runs with cwd = home (workspace = home, repo =
 # code), so the seed links the distro runtime set into the new home.
@@ -62,7 +62,7 @@ done
 # --- every knob declined ------------------------------------------------------
 printf '\n\n\n\n\n\n\n\n\n' | "$BIN/ac-fleet-new.sh" beta --container "$container" >/dev/null 2>&1
 
-assert_eq "$(cat "$container/beta/config/backend")" "herdr" "backend is written even when everything else is declined"
+assert_eq "$(cat "$container/beta/config/backend")" "orca" "backend is written even when everything else is declined"
 for k in captain model effort gate-agent gate-model gate-effort promote flow; do
   assert_no_file "$container/beta/config/$k" "an empty answer writes no $k file - absence IS the reader's default"
 done

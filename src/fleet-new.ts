@@ -90,7 +90,7 @@
 //      projectsDir, each run with AC_HOME=<home>; the caller's own AC_HOME is
 //      never read) - the twins ARE the layout ac-lib.sh defines, so this file
 //      cannot drift from it
-//   c. config/backend := `herdr\n`, unasked - the default backend (orca is the
+//   c. config/backend := `orca\n`, unasked - the default backend (herdr is the
 //      per-fleet opt-in)
 //   d. a knob file `<value>\n` for captain model effort gate-agent gate-model
 //      gate-effort promote flow ONLY when the answer was non-empty (a
@@ -286,7 +286,7 @@ function main(args: string[], atCaller: boolean): void {
   if (callerHome === undefined) delete process.env.AC_HOME;
   else process.env.AC_HOME = callerHome;
 
-  writeFileSync(`${config}/backend`, "herdr\n");
+  writeFileSync(`${config}/backend`, "orca\n");
   const knobs: [string, string][] = [
     ["captain", captain], ["model", model], ["effort", effort], ["gate-agent", gateAgent],
     ["gate-model", gateModel], ["gate-effort", gateEffort], ["promote", promote], ["flow", flow],
