@@ -746,4 +746,114 @@ ka_rc=0; wait "$ka_pid" || ka_rc=$?
 assert_eq "$ka_rc" "137" "kill_after ... group takes the leader"
 wait_all_dead "$TMP/ka-group.inner" 2 || fail "kill_after ... group left a member of the group alive"
 
+# --- 21. fake orca: a partial API outage, mirroring fake herdr's .pane-api-down -
+
+# orca_handle <json> - pull the literal "handle":"..." field fake orca's own
+# output always carries at this exact shape; no jq dependency, like every
+# other assertion in this file.
+orca_handle() { printf '%s' "$1" | sed -n 's/.*"handle":"\([^"]*\)".*/\1/p'; }
+
+make_fake_orca
+oh1="$(orca_handle "$(orca terminal create --json)")"
+[ -n "$oh1" ] || fail "fixture: terminal create must return a handle"
+assert_contains "$(orca terminal show --terminal "$oh1" --json)" '"ok":true' \
+  "control: terminal show answers before the outage"
+
+# The window-collision guard (ORPHAN-WINDOW SAFETY, src/spawn.ts) is proved
+# by a liveness probe that is BLIND while window creation still works - the
+# same partial shape fake herdr's .pane-api-down models for `pane get`/`pane
+# list` against `tab create`. Read-side orca calls are `terminal show`/`list`;
+# the create-side call that must stay healthy is `terminal create`. `status`
+# must fail TOO: backend_window_alive_orca falls back to a bare `orca status`
+# the instant `terminal show` fails, and a status that still answers reads as
+# "really gone" (rc=1), never "unobservable" (rc=2) - the verdict a
+# window-collision guard actually needs to stay blind-safe.
+touch "$FAKE_ORCA/.terminal-api-down"
+rc=0
+orca terminal show --terminal "$oh1" --json >/dev/null 2>&1 || rc=$?
+assert_eq "$rc" "1" "terminal show fails during the outage"
+rc=0
+orca terminal list --json >/dev/null 2>&1 || rc=$?
+assert_eq "$rc" "1" "terminal list fails during the outage"
+rc=0
+orca status --json >/dev/null 2>&1 || rc=$?
+assert_eq "$rc" "1" \
+  "status fails too - the window-liveness fallback must have NOTHING left to answer, or it reads this outage as a dead pane instead of an unreadable one"
+oh2="$(orca_handle "$(orca terminal create --json)")"
+[ -n "$oh2" ] || fail "terminal create must still succeed during the outage - the gap an unguarded spawn would open a second window through (the outage is PARTIAL, never total)"
+rm -f "$FAKE_ORCA/.terminal-api-down"
+assert_contains "$(orca terminal show --terminal "$oh1" --json)" '"ok":true' \
+  "terminal show answers again once the outage clears"
+
+# --- 22. fake orca: a per-terminal read failure, distinct from a gone terminal -
+
+# Mirrors fake herdr's per-pane `.read-fails`: the terminal is otherwise alive
+# (show still answers) but its capture specifically cannot be read - the
+# unreadable-composer case a verified send/peek must treat as UNVERIFIED,
+# never as "gone".
+oh3="$(orca_handle "$(orca terminal create --json)")"
+[ -n "$oh3" ] || fail "fixture: terminal create must return a handle"
+: >"$FAKE_ORCA/terminals/$oh3.read-fails"
+rc=0
+orca terminal read --terminal "$oh3" --json >/dev/null 2>&1 || rc=$?
+assert_eq "$rc" "1" "terminal read fails while the knob is armed"
+assert_contains "$(orca terminal show --terminal "$oh3" --json)" '"ok":true' \
+  "terminal show still answers - the failure is read-specific, not a dead terminal"
+rm -f "$FAKE_ORCA/terminals/$oh3.read-fails"
+assert_contains "$(orca terminal read --terminal "$oh3" --json)" '"ok":true' \
+  "terminal read answers again once the knob clears"
+
+# --- 23. fake orca: a per-terminal delayed-ready composer (herdr's delay-ready-secs twin) -
+
+# kickoffWaitInputReady (src/spawn.ts) reads harnessUp (title) then
+# backendAgentIdle (title, falling back to `wait --for tui-idle`) - never a
+# process-info verb, which orca has none of. The clock therefore starts on
+# this terminal's FIRST `terminal show` (the "up" probe orca actually calls),
+# mirroring where fake herdr's own clock starts (the first `pane
+# process-info`, never the launch-line send-text) - title is the only part of
+# the delay this knob models; kickoffWaitInputReady also reads
+# backendDialogAnswer and a stable, non-blank render, neither timing-gated.
+oh4="$(orca_handle "$(orca terminal create --json)")"
+[ -n "$oh4" ] || fail "fixture: terminal create must return a handle"
+printf '1\n' >"$FAKE_ORCA/terminals/$oh4.delay-ready-secs"
+out="$(orca terminal show --terminal "$oh4" --json)"
+assert_contains "$out" '"ok":true' "the delayed terminal still answers show"
+assert_contains "$out" '"title":"◐' \
+  "harnessUp must read UP during the delay too (a shell-like title would wrongly refuse the spawn) - a spinner glyph, not idle"
+case "$out" in
+  *'"title":"✳'*) fail "the composer must not read idle before its delay elapses" ;;
+esac
+
+# A send issued before the clock has elapsed must be DROPPED, exactly like
+# fake herdr's own pane send-text: without this, a send typed blind (no
+# readiness gate at all) would still land, and a ported readiness-gate test
+# could not tell "waited for ready" from "typed early and got lucky".
+orca terminal send --terminal "$oh4" --text "typed too early" --json >/dev/null
+assert_contains "$(cat "$FAKE_ORCA/log")" "dropped-before-ready" \
+  "a send before the delay elapses is dropped, not delivered"
+case "$(orca terminal read --terminal "$oh4" --json)" in
+  *"typed too early"*) fail "a dropped send must never reach the terminal's composer" ;;
+esac
+
+sleep 1.2
+assert_contains "$(orca terminal show --terminal "$oh4" --json)" '"title":"✳' \
+  "the composer reads idle once the delay has elapsed"
+orca terminal send --terminal "$oh4" --text "typed once ready" --json >/dev/null
+case "$(orca terminal read --terminal "$oh4" --json)" in
+  *"typed once ready"*) ;;
+  *) fail "a send issued once the delay has elapsed must land normally, not keep dropping forever" ;;
+esac
+
+# --- 24. fake_orca_buf resolves a task's orca terminal buffer (fake_pane_buf's orca sibling) -
+
+make_home
+oh5="$(orca_handle "$(orca terminal create --json)")"
+[ -n "$oh5" ] || fail "fixture: terminal create must return a handle"
+printf '%s tabX\n' "$oh5" >"$AC_HOME/state/.pane-otask1"
+printf 'orca transcript line\n' >"$FAKE_ORCA/terminals/$oh5.buf"
+assert_eq "$(fake_orca_buf otask1)" "$FAKE_ORCA/terminals/$oh5.buf" \
+  "fake_orca_buf resolves the same 2-field .pane-<id> grammar fake_pane_buf does, into the orca terminal dir"
+assert_contains "$(cat "$(fake_orca_buf otask1)")" "orca transcript line" \
+  "the resolved path is the task's actual terminal transcript"
+
 pass
