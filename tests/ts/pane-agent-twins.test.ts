@@ -10,7 +10,7 @@
 // the status, the stub log and the side's tree.
 //
 // DISPUTED: the implementation of each helper (the live bash vs the pane-agent twins of src/lib.ts and src/lib-verify.ts)
-// HELD-CONSTANT: one side root per side and row seeded alike (a home at <side>/home with state/ records/ data/ config/, transcripts under <side>, the stubs' answer files, call counters and log at <side>/stub, TMPDIR at <side>/tmp); argv; env (PATH = refusing claude/codex/opencode/pi/cursor-agent/docker/codegraph/gh stand-ins, then herdr, orca, sleep and date stubs, the host's jq and git, bun alone, /bin plus /usr/bin without those names - no row can reach a real backend or harness; LC_ALL=C unless a row names UTF-8; TZ=UTC; HOME an empty dir unless a row unsets it; AC_SEND_SETTLE=0 and AC_STARTUP_DIALOG_BUDGET=2 unless a row names others; STUB_DIR, TMPDIR, AC_HOME, the row's own names); cwd (the distro root, so the bash's ac_bun_exec and the twins name one src/); stdin (/dev/null).
+// HELD-CONSTANT: one side root per side and row seeded alike (a home at <side>/home with state/ records/ data/ config/, transcripts under <side>, the stubs' answer files, call counters and log at <side>/stub, TMPDIR at <side>/tmp); argv; env (PATH = refusing claude/codex/opencode/pi/cursor-agent/docker/codegraph/gh stand-ins, then orca, sleep and date stubs, the host's jq and git, bun alone, /bin plus /usr/bin without those names - no row can reach a real backend or harness; LC_ALL=C unless a row names UTF-8; TZ=UTC; HOME an empty dir unless a row unsets it; AC_SEND_SETTLE=0 and AC_STARTUP_DIALOG_BUDGET=2 unless a row names others; STUB_DIR, TMPDIR, AC_HOME, the row's own names); cwd (the distro root, so the bash's ac_bun_exec and the twins name one src/); stdin (/dev/null).
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -44,27 +44,9 @@ const BUN = join(W, "bun");
 mkdirSync(BUN);
 symlinkSync(process.execPath, join(BUN, "bun"));
 
-// A file-backed herdr: every call logged with its argv bracketed and the
-// HERDR_SESSION it saw; the n-th call of a verb (`<a>-<b>`) answers from
-// <verb>.<n>.{err,out,rc} when any exists, else <verb>.{err,out,rc}, else
-// nothing and 0.
-const HERDR = String.raw`#!/bin/sh
-d="$STUB_DIR"
-{ printf herdr; for a in "$@"; do printf ' [%s]' "$a"; done; printf ' {%s}\n' "$HERDR_SESSION"; } >>"$d/log"
-v="$1-$2"
-n=$(($(cat "$d/$v.n" 2>/dev/null || echo 0) + 1))
-echo "$n" >"$d/$v.n"
-for f in "$v.$n" "$v"; do
-  if [ -e "$d/$f.out" ] || [ -e "$d/$f.rc" ] || [ -e "$d/$f.err" ]; then
-    [ ! -e "$d/$f.err" ] || cat "$d/$f.err" >&2
-    [ ! -e "$d/$f.out" ] || cat "$d/$f.out"
-    exit "$(cat "$d/$f.rc" 2>/dev/null || echo 0)"
-  fi
-done
-exit 0
-`;
-// orca, the same file-backed shape; a verb with no answer file is an ok
-// envelope with an empty result.
+// A file-backed orca: every call logged with its argv bracketed; the n-th
+// call of a verb (`<a>-<b>`) answers from <verb>.<n>.{err,out,rc} when any
+// exists, else <verb>.{err,out,rc}, else an ok envelope with an empty result.
 const ORCA = String.raw`#!/bin/sh
 d="$STUB_DIR"
 { printf orca; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'; } >>"$d/log"
@@ -89,7 +71,6 @@ case "$*" in *%Y-%m-%dT*) echo 2026-01-01T00:00:00Z ;; *%s*) echo 1767225600 ;; 
 `;
 const STUBS = join(W, "stubs");
 mkdirSync(STUBS);
-writeFileSync(join(STUBS, "herdr"), HERDR, { mode: 0o755 });
 writeFileSync(join(STUBS, "orca"), ORCA, { mode: 0o755 });
 writeFileSync(join(STUBS, "sleep"), SLEEP, { mode: 0o755 });
 writeFileSync(join(STUBS, "date"), DATE, { mode: 0o755 });
@@ -161,8 +142,9 @@ function side(row: Row, s: string, oracle: boolean): Side {
     ? ["/bin/bash", "-c", `set -uo pipefail; . "$0/ac-lib.sh" || exit $?; . "$0/ac-backend.sh" || exit $?; ${row.bash}; printf '|rc=%s' "$?"`, BIN, ...args]
     : [process.execPath, "-e", `${PRE} const A = ${JSON.stringify(args)}; const rc = await (async () => { ${row.twin} })(); writeSync(1, "|rc=" + rc); process.exit(0);`];
   const r = Bun.spawnSync(cmd, { cwd: ROOT, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-  // bash 3.2's `set -m` (herdr_rpc_bounded) now and then prints its own
-  // `child setpgid` line - shell-own stderr, never reproduced.
+  // bash 3.2's `set -m` now and then prints its own `child setpgid` line -
+  // shell-own stderr, never reproduced. Defensive: nothing in this file's
+  // dispatch path sets -m today.
   const norm = (t: string): string => t.replaceAll(s, "S").replace(/^.*: child setpgid \([0-9]+ to [0-9]+\): Operation not permitted\n/gm, "");
   let err = norm(r.stderr.toString("latin1"));
   if (oracle) err = err.replace(/^.*: line [0-9]+: .*\n/gm, "");
