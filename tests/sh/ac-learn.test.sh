@@ -249,15 +249,15 @@ rm -f "$AC_HOME/state/.learn.meta"
 # --- the digest block: silent below threshold, LEARNING DUE at/over ---------
 
 # Drive the REAL digest (ac-session-start.sh) in this isolated home; a fake
-# herdr keeps the backend probes hermetic. The learning block is the assertion.
-make_fake_herdr
+# orca keeps the backend probes hermetic. The learning block is the assertion.
+make_fake_orca
 
 # ac-wake-drain.sh runs `ac-learn.sh autoroom` as an unconditional ride-along
 # on every real drain (src/wake-drain.ts), and this fresh fixture home holds
 # no live-session lock, so ac-session-start.sh never degrades to read-only
 # here. Pre-claiming the autoroom lock makes `cmdAutoroom`'s own `lock(lk, 0)`
 # fail instantly for every call below, before it ever reaches a real
-# `ac-spawn.sh --roomchief learning` - a pane spawn make_fake_herdr never
+# `ac-spawn.sh --roomchief learning` - a pane spawn make_fake_orca never
 # serves, so it would wait out the pane-readiness budget.
 autoroom_lock="$AC_HOME/state/.learn-autoroom.lock"
 mkdir -p "$autoroom_lock" && printf '%s\n' "$$" >"$autoroom_lock/pid"
@@ -299,7 +299,7 @@ assert_contains "$out" "ac-learn.sh maintenance status" "and where to settle it"
 rm -rf "$AC_HOME/state/.maintenance-transactions"
 
 assert_no_file "$AC_HOME/state/learning-chief.status" \
-  "the held autoroom lock must keep the digest calls off a real roomchief spawn the fake herdr cannot serve"
+  "the held autoroom lock must keep the digest calls off a real roomchief spawn the fake orca cannot serve"
 ac_lock_release "$autoroom_lock"
 
 # --- cmd_run: the learning scout is a durable, supervised verify-learning agent
@@ -411,9 +411,9 @@ assert_contains "$(cat "$learn_rundir/brief.md")" "Do NOT launch any async/backg
 [ -z "$(ls "$AC_HOME"/state/.pane-verify-learning-* 2>/dev/null)" ] || fail "the scout pane handle is removed at harvest"
 
 # The meta's backend= names the driver every liveness reader (the watcher,
-# ac-crew-state.sh) asks about the scout pane, so it must be the fleet's own: an
-# orca fleet's scout recorded as herdr was asked of herdr, read gone seconds into
-# a live run, and woke the chief with a false gone wake.
+# ac-crew-state.sh) asks about the scout pane, so it must be the fleet's own: a
+# meta recording any other name is refused outright (ac_backend's own ladder),
+# never silently probed against the wrong driver.
 printf 'orca\n' >"$AC_HOME/config/backend"
 make_fake_orca
 : >"$FAKE_ORCA/terminals/termLearn.buf"
@@ -430,20 +430,9 @@ assert_eq "$(cat "$LEARN_CREW_STATE_CAPTURE")" "status| started learning scout p
 unset LEARN_PANE LEARN_CREW_STATE LEARN_CREW_STATE_CAPTURE
 rm -f "$AC_HOME/config/backend"
 
-# Herdr still routes too when a fleet explicitly pins it (T1-T7: both drivers
-# stay operational) - same proof, the herdr driver's own fake.
-printf 'herdr\n' >"$AC_HOME/config/backend"
-: >"$FAKE_HERDR/panes/pLearnH.buf"
-printf 'pLearnH\n' >"$FAKE_HERDR/tabs/tLearnH"
-export LEARN_PANE='pLearnH tLearnH'
-export LEARN_CREW_STATE="$BIN/ac-crew-state.sh" LEARN_CREW_STATE_CAPTURE="$TMP/learn-crew-state-herdr.capture"
-rm -rf "$LEARN_META_CAPTURE" "$AC_HOME"/data/learning-*
-"$BIN/ac-learn.sh" run >/dev/null 2>&1 || fail "learning run completes on a herdr fleet"
-assert_contains "$(cat "$LEARN_META_CAPTURE")" "backend=herdr" "a herdr fleet's scout meta records backend=herdr"
-assert_eq "$(cat "$LEARN_CREW_STATE_CAPTURE")" "status| started learning scout pane=pLearnH" \
-  "a herdr fleet's live scout reads alive through its own driver too"
-unset LEARN_PANE LEARN_CREW_STATE LEARN_CREW_STATE_CAPTURE
-rm -f "$AC_HOME/config/backend"
+# GAP, not ported: this block used to re-run the same proof pinned to
+# config/backend=herdr, showing both drivers stayed operational. orca is now
+# the only backend - that line refuses before a pane is ever touched.
 
 unset AC_PANE_AGENT
 rm -f "$AC_HOME/state/.learn.meta"
@@ -1270,7 +1259,7 @@ rm -f "$AC_HOME/config/jev"
 # One side root ($H): a home at $H/home rebuilt per row; a bin holding an
 # ac-spawn.sh stub beside the live siblings; AC_HOME=$H/home,
 # AC_PANE_AGENT, AC_GATE and AC_CURATE the leg's stubs unless a row names
-# others; FAKE_HERDR and FAKE_ORCA under $H; cwd $H/cwd; stdin /dev/null;
+# others; FAKE_ORCA under $H; cwd $H/cwd; stdin /dev/null;
 # LC_ALL=C unless a row names en_US.UTF-8; TMPDIR $H/tmp; PATH stubs - date
 # answering one instant per format (BSD date itself for an age's -j -f and an
 # epoch's -r), sleep logging each call but the early-pane poll's 0.05 and
@@ -1444,14 +1433,14 @@ STUB
 chmod +x "$lnbin/ac-spawn.sh"
 chmod +x "$LSTUBS"/* "$LGITSTUBS/git"
 
-lseed() { [ ! -e "$H" ] || chmod -R u+rwX "$H"; rm -rf "$H"; mkdir -p "$H/home" "$H/cwd" "$H/tmp" "$H/stub" "$H/herdr/panes" "$H/herdr/tabs" "$H/orca/terminals"; }
+lseed() { [ ! -e "$H" ] || chmod -R u+rwX "$H"; rm -rf "$H"; mkdir -p "$H/home" "$H/cwd" "$H/tmp" "$H/stub" "$H/orca/terminals"; }
 lstd() { lseed; mkdir -p "$H/home/records" "$H/home/state" "$H/home/data" "$H/home/config" "$H/home/projects" "$H/home/skills"; }
 lput() { mkdir -p "$(dirname "$H/$1")"; printf '%s' "${2//@H/$H}" >"$H/$1"; }   # lput <path under the side> <bytes>
 LLC=C; LENV=(); LHOME=@H/home; LPATH=""; LPLANT=""; LN_RC=0
 lrun() {  # lrun <args...> - one run of the entry; @H in an argument or an LENV value is the side root; LPLANT=<path under the side> links <path>.<the entry's pid> to <side>/victim first
   local x v path a=() e
   path="$LSTUBS:$PATH"; [ -z "$LPATH" ] || path="${LPATH//@H/$H}"
-  e=("LC_ALL=$LLC" "PATH=$path" "TMPDIR=$H/tmp" "STUB_DIR=$H/stub" "FAKE_HERDR=$H/herdr" "FAKE_ORCA=$H/orca"
+  e=("LC_ALL=$LLC" "PATH=$path" "TMPDIR=$H/tmp" "STUB_DIR=$H/stub" "FAKE_ORCA=$H/orca"
     "AC_PANE_AGENT=$LSTUBS/pane" "AC_GATE=$LSTUBS/gate" "AC_CURATE=$LSTUBS/curate")
   [ -z "$LHOME" ] || e+=("AC_HOME=${LHOME//@H/$H}")
   for x in ${LENV[@]+"${LENV[@]}"}; do v="${x#*=}"; e+=("${x%%=*}=${v//@H/$H}"); done
@@ -1487,7 +1476,7 @@ lstd
 lrefuse "$LUSAGE"
 lrefuse "$LUSAGE" -h
 lrefuse "$LUSAGE" bogus
-LTMUX="ERROR: unsupported backend 'tmux' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)"
+LTMUX="ERROR: unsupported backend 'tmux' (valid backend: orca)"
 lput home/config/backend $'tmux\n'
 lrefuse "$LTMUX" note '- a lesson'
 lrefuse "$LTMUX" promote some-skill
@@ -1791,7 +1780,7 @@ assert_eq "$LN_RC:$(sed -n '/^## Distilled$/q;p' "$LLEDGER" | grep -cxF -- "$lno
 assert_contains "$(cat "$H/home/$ltxn3")" "status=complete" "staging: the transaction completes"
 
 # 9. autoroom: a failing promote with and without its meta, and a failing
-#    `workspace list` walked past by the suite launch.
+#    `worktree list` walked past by the suite launch.
 lstd
 lput home/state/.learn.meta $'generation=4\ndebriefs=8\n'
 lput home/records/learnings.md $'# Learning Ledger\n\n## Pending\n\n## Distilled\n\n'
@@ -1805,11 +1794,11 @@ lstd
 lput home/state/.learn.meta $'generation=4\ndebriefs=8\n'
 lput home/config/learn-suite-gate $'on\n'
 mkdir -p "$TMP/lwsfail"
-printf '#!/bin/sh\n[ "$1 $2" != "workspace list" ] || exit 1\nexec "%s/stubbin/herdr" "$@"\n' "$TMP" >"$TMP/lwsfail/herdr"
-chmod +x "$TMP/lwsfail/herdr"
+printf '#!/bin/sh\n[ "$1 $2" != "worktree list" ] || exit 1\nexec "%s/stubbin/orca" "$@"\n' "$TMP" >"$TMP/lwsfail/orca"
+chmod +x "$TMP/lwsfail/orca"
 LPATH="$TMP/lwsfail:$LGITSTUBS:$LSTUBS:$PATH"
 lok autoroom
-assert_contains "$(lout)" "HELD: started the full-suite run verify-suite-" "a failing workspace list still starts the suite run"
+assert_contains "$(lout)" "HELD: started the full-suite run verify-suite-" "a failing worktree list still starts the suite run"
 LPATH=""
 
 # 10. signals: TERM while the scout runs, before the pane ledger is armed,
