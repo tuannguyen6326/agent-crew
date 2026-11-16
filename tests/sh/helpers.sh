@@ -958,8 +958,42 @@ make_fake_orca() {
   #   <h>.popup-once  one-shot: the next `--enter` on a non-empty composer is
   #                   CONSUMED by a popup (render changes, composer keeps its
   #                   text) - the false-success class the pending check closes
+  #   <h>.read-fails  `terminal read` of this terminal fails outright while
+  #                   `terminal show` still answers - the orca twin of fake
+  #                   herdr's per-pane `.read-fails`: an unreadable composer,
+  #                   never a gone terminal (ac-send.sh/ac-peek.sh's UNVERIFIED
+  #                   case, distinct from "terminal_not_found")
+  #   <h>.delay-ready-secs  "<n>" - id-scoped, like `.drop-enters`: before <n>
+  #                   real seconds have passed since this terminal's FIRST
+  #                   `terminal show` (the only "is it up yet" probe orca has -
+  #                   never read, and send only DROPS, below), `show` reports
+  #                   a SPINNER title (harnessUp: up via the spinner match;
+  #                   agentIdle: not idle, same match) and `send --text`
+  #                   drops silently (logs `dropped-before-ready`, like fake
+  #                   herdr's own pane send-text) - without the drop, a send
+  #                   issued before the clock's read counterpart EVER checks
+  #                   it would still land, so a ported readiness-gate test
+  #                   could not tell "waited" from "typed blind and got
+  #                   lucky". At or after <n> seconds `show` reports the idle
+  #                   glyph title and sends stop dropping. While this knob is
+  #                   armed it OVERRIDES <h>.title outright (`terminal list`
+  #                   still reports the real file, untouched - nothing reads
+  #                   a title from `list`). The orca twin of fake herdr's
+  #                   per-pane `.delay-ready-secs`: the delay signal itself is
+  #                   narrower (title alone - kickoffWaitInputReady in
+  #                   src/spawn.ts also reads backendDialogAnswer and a
+  #                   stable render, neither of which is timing-gated here),
+  #                   but the drop-while-not-ready half is ported whole.
   # Root knobs: .unreachable (every call fails with an error envelope),
-  # .default-title (title newly created terminals report),
+  # .terminal-api-down - the orca twin of fake herdr's `.pane-api-down` (a
+  # window-collision guard must stay blind-safe, never read "unobservable" as
+  # license to create a second window); see the in-heredoc comment at its
+  # check for the exact call set,
+  # .default-title (title newly created terminals report - this is ALSO the
+  # orca twin of fake herdr's `.pane-idle-by-default`: writing the idle glyph
+  # here before `make_fake_orca` creates/splits seeds every pane idle the same
+  # way, with no separate knob needed - precedent:
+  # tests/sh/ac-spawn-teardown.test.sh's orca block),
   # .require-repo-reg (worktree create and repo show resolve a path only when
   # $FAKE_ORCA/repos lists it; repo add registers - and fails runtime_error on
   # an already-registered path, measured on the real CLI).
@@ -975,6 +1009,22 @@ d="$FAKE_ORCA"
 printf 'orca %s\n' "$*" >>"$d/log"
 if [ -f "$d/.unreachable" ]; then
   printf '{"ok":false,"error":{"message":"runtime unreachable"}}\n'; exit 1
+fi
+if [ -f "$d/.terminal-api-down" ]; then
+  # Partial outage, the orca twin of fake herdr's `.pane-api-down`: window
+  # liveness is blind while window CREATION stays healthy - the shape that
+  # makes an unguarded window-collision guard actually open a second window.
+  # `status` MUST fail alongside `terminal show`/`list`, not just the two:
+  # backend_window_alive_orca (bin/ac-backend-orca.sh) falls back to a plain
+  # `orca status` the instant `terminal show` fails, and reads THAT success
+  # as "really gone" (rc=1) - only a failing status earns the "unobservable"
+  # verdict (rc=2) a window-collision guard must see to stay blind-safe
+  # (measured: with status left healthy here, the production driver read
+  # this outage as a dead pane and opened a second window).
+  case "${1:-} ${2:-}" in
+    "terminal show"|"terminal list"|"status "*)
+      printf '{"ok":false,"error":{"message":"terminal api unavailable"}}\n'; exit 1 ;;
+  esac
 fi
 term="" text="" has_text=0 enter=0 interrupt=0 limit=40 wt="" cond="" title_flag="" screen=0
 args=("$@"); i=0
@@ -1113,10 +1163,34 @@ case "${2:-}" in
     aw='null'; [ -e "$d/terminals/$term.agentwait" ] && aw='{"evidence":"prompt-text"}'
     [ -s "$d/terminals/$term.dialog" ] && aw="{\"source\":\"prompt-text\",\"reason\":\"$(head -1 "$d/terminals/$term.dialog")\"}"
     ag='null'; [ -s "$d/terminals/$term.agent" ] && ag="\"$(head -1 "$d/terminals/$term.agent")\""
+    shown_title="$(head -1 "$d/terminals/$term.title" 2>/dev/null)"
+    if [ -f "$d/terminals/$term.delay-ready-secs" ]; then
+      # kickoffWaitInputReady (src/spawn.ts) proves UP and IDLE off the title
+      # alone (harnessUp's spinner/✳ checks, agentIdle's same two) - so the
+      # delay lives in the TITLE this `show` reports, clocked from THIS
+      # terminal's FIRST show (the only "up" probe orca has): the fake herdr
+      # twin starts its own clock on the first `pane process-info` likewise.
+      # ONE `date +%s` read for both the write and the compare below - two
+      # separate reads straddling a second boundary let elapsed read >= n on
+      # the very first show (measured: ~3 in 400 runs at n=1), reporting idle
+      # before any delay was actually observed. The write is tmp-then-mv so a
+      # second `show` racing the first can never read a truncated start file.
+      dr_now="$(date +%s)"
+      if [ ! -f "$d/terminals/$term.ready-start" ]; then
+        printf '%s\n' "$dr_now" >"$d/terminals/$term.ready-start.tmp"
+        mv "$d/terminals/$term.ready-start.tmp" "$d/terminals/$term.ready-start"
+      fi
+      dr_n="$(cat "$d/terminals/$term.delay-ready-secs")"
+      dr_start="$(cat "$d/terminals/$term.ready-start")"
+      if [ $(( dr_now - dr_start )) -ge "$dr_n" ]; then shown_title='✳ fake'
+      else shown_title='◐ fake'
+      fi
+    fi
     printf '{"ok":true,"result":{"terminal":{"handle":"%s","connected":%s,"writable":%s,"title":"%s","agentIdentity":%s,"agentWait":%s}}}\n' \
-      "$term" "$conn" "$conn" "$(head -1 "$d/terminals/$term.title" 2>/dev/null)" "$ag" "$aw"; exit 0 ;;
+      "$term" "$conn" "$conn" "$shown_title" "$ag" "$aw"; exit 0 ;;
   read)
     [ -f "$d/terminals/$term.buf" ] || { printf '{"ok":false,"error":{"message":"terminal_not_found"}}\n'; exit 1; }
+    [ -f "$d/terminals/$term.read-fails" ] && { printf '{"ok":false,"error":{"message":"read_failed"}}\n'; exit 1; }
     st=running; [ -e "$d/terminals/$term.exited" ] && st=exited
     src="$term"
     # --screen reads what the terminal RENDERS; the default reads accumulated
@@ -1140,7 +1214,19 @@ case "${2:-}" in
       fi
       printf '{"ok":true,"result":{}}\n'; exit 0
     fi
-    [ "$has_text" = 1 ] && printf '%s' "$text" >>"$d/terminals/$term.in"
+    if [ "$has_text" = 1 ]; then
+      dropped=0
+      if [ -f "$d/terminals/$term.delay-ready-secs" ] && [ -f "$d/terminals/$term.ready-start" ]; then
+        dr_n="$(cat "$d/terminals/$term.delay-ready-secs")"
+        dr_start="$(cat "$d/terminals/$term.ready-start")"
+        [ $(( $(date +%s) - dr_start )) -lt "$dr_n" ] && dropped=1
+      fi
+      if [ "$dropped" = 1 ]; then
+        printf 'dropped-before-ready\n' >>"$d/log"
+      else
+        printf '%s' "$text" >>"$d/terminals/$term.in"
+      fi
+    fi
     if [ "$enter" = 1 ]; then
       if [ -e "$d/terminals/$term.popup-once" ] && [ -s "$d/terminals/$term.in" ]; then
         rm -f "$d/terminals/$term.popup-once"
@@ -1223,6 +1309,16 @@ fake_pane() {
 fake_pane_buf() {
   # fake_pane_buf <task-id> - path of that task's pane buffer.
   printf '%s/panes/%s.buf\n' "$FAKE_HERDR" "$(fake_pane "$1")"
+}
+
+fake_orca_buf() {
+  # fake_orca_buf <task-id> - path of that task's fake-orca terminal buffer,
+  # the orca sibling of fake_pane_buf above. fake_pane already works
+  # unchanged for an orca task too: backend_window_new_orca records
+  # "<handle> <tab>" into the same 2-field state/.pane-<id> grammar herdr
+  # does, so only the directory layout below it differs (terminals/, not
+  # panes/).
+  printf '%s/terminals/%s.buf\n' "$FAKE_ORCA" "$(fake_pane "$1")"
 }
 
 pass() { AC_SUITE_DECIDED=1; printf 'PASS: %s\n' "$(basename "$0")"; }
