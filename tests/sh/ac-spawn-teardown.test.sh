@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ac-spawn-teardown.test.sh - e2e: spawn a fake-harness crewmate into an
 # in-repo worktree + herdr tab, verify fleet state, then fail-closed
-# teardown (refuses unlanded branch work, --force discards).
-# Driven through the fake herdr CLI (tests/sh/helpers.sh): launch lines land
-# VERBATIM in the pane buffer, nothing executes them.
+# teardown (refuses unlanded branch work, --force discards); a later section
+# drives the same contracts through the fake orca CLI's own lease model.
+# Launch lines land VERBATIM in the pane/terminal buffer, nothing executes them.
 
 # FAIL-CLOSED SOURCING (this suite pushes): run from anywhere but tests/sh/, the
 # source below no-ops, errexit is never armed, every helper var stays EMPTY -
@@ -13,6 +13,11 @@
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
 make_fake_herdr
+# This section drives the in-repo worktree POOL (bin/ac-tree.sh: lease slots,
+# hold/affinity, resume-into-slot) - a mechanism only a non-orca backend ever
+# reaches (src/spawn.ts, the pool-vs-lease fork); pin herdr explicitly so a
+# no-config default (orca) cannot resolve here by accident.
+printf 'herdr\n' >"$AC_HOME/config/backend"
 # Deliver the kickoff prompt immediately (default 8s) so the suite stays fast.
 export AC_SPAWN_SETTLE=0
 # Every pane here clears the composer-ready observation (bin/ac-spawn.sh
@@ -844,6 +849,53 @@ assert_contains "$err" "could not be READ" "the crew refusal blames the BACKEND,
 case "$err" in *"already exists"*) fail "an unreadable backend is not a window-already-exists verdict" ;; esac
 assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" "no second crewmate window was created"
 assert_no_file "$AC_HOME/state/bw1.meta" "the refused spawn leaves no task in flight"
+
+# ...and the ORCA twin of the two rows above: `.terminal-api-down` is the
+# partial-outage knob (orca's own `.pane-api-down`) - `terminal show`/`list`
+# AND `status` fail while `terminal create` stays healthy, so the guard still
+# reads UNOBSERVABLE (rc=2), never "gone", and must not open a second terminal.
+# The orphan is hand-fabricated (handle + terminal, no meta), never leased
+# through a real spawn: an orca lease mints its crew/<id> branch immediately
+# (unlike herdr's pool, where the branch comes later from the agent's own
+# work), so a real-then-deleted spawn here would trip the EARLIER branch-
+# already-exists guard instead of the window-collision guard under test.
+make_fake_orca
+"$BIN/ac-brief.sh" bw1o proj --mode local-only >/dev/null
+printf 'termBW1O tabBW1O\n' >"$AC_HOME/state/.pane-bw1o"
+: >"$FAKE_ORCA/terminals/termBW1O.buf"
+printf 'orca\n' >"$AC_HOME/config/backend"
+
+: >"$FAKE_ORCA/log"
+err="$("$BIN/ac-spawn.sh" bw1o "$repo" --harness fake --mode local-only 2>&1)" \
+  && fail "an orca crew spawn must refuse a genuinely alive orphan terminal"
+assert_contains "$err" "already exists" "a genuinely alive orca orphan still refuses as before"
+assert_eq "$(grep -c 'terminal create' "$FAKE_ORCA/log" || true)" "0" "no second orca terminal was created"
+# An orca lease mints crew/<id> BEFORE the window-collision check runs
+# (src/spawn.ts: orcaWorktreeLease precedes the alive() probe), so even a
+# window-refused attempt leaves the branch behind - drop it before the next
+# attempt or it trips the EARLIER branch-collision guard instead.
+git -C "$repo" branch -D crew/bw1o >/dev/null 2>&1 || true
+
+touch "$FAKE_ORCA/.terminal-api-down"
+: >"$FAKE_ORCA/log"
+err="$("$BIN/ac-spawn.sh" bw1o "$repo" --harness fake --mode local-only 2>&1)" \
+  && fail "an orca crew spawn must refuse a backend it cannot READ, never open a second terminal"
+rm -f "$FAKE_ORCA/.terminal-api-down"
+assert_contains "$err" "could not be READ" "the orca crew refusal blames the BACKEND, not the terminal"
+case "$err" in *"already exists"*) fail "an unreadable orca backend is not a window-already-exists verdict" ;; esac
+assert_eq "$(grep -c 'terminal create' "$FAKE_ORCA/log" || true)" "0" "no second orca terminal was created"
+assert_no_file "$AC_HOME/state/bw1o.meta" "the refused orca spawn leaves no task in flight"
+git -C "$repo" branch -D crew/bw1o >/dev/null 2>&1 || true
+# The lease closes its own startup terminal by finding it through `terminal
+# list` (src/lib.ts) - which itself fails under `.terminal-api-down`, so
+# ONLY the second attempt above leaves one behind (the first, a healthy
+# backend, closed its own cleanly). Drop the stray so the later
+# ORCA-MANAGED section's own startup-terminal check (its FIRST lease,
+# asserted empty) does not see it.
+rm -f "$FAKE_ORCA/terminals/"termS*.buf "$FAKE_ORCA/terminals/"termS*.in \
+      "$FAKE_ORCA/terminals/"termS*.tab "$FAKE_ORCA/terminals/"termS*.title \
+      "$FAKE_ORCA/terminals/"termS*.wt
+printf 'herdr\n' >"$AC_HOME/config/backend"
 
 # ...and any code but 0 and 1 refuses the SAME way at the ordinary spawn path
 # too - the exact production shape a missing default branch let fall through
@@ -1985,6 +2037,11 @@ make_fake_orca
 # idle glyph title) - the orca twin of .pane-idle-by-default above.
 printf '\342\234\263 fake\n' >"$FAKE_ORCA/.default-title"
 printf 'orca\n' >"$AC_HOME/config/backend"
+# The earlier bw1o block above already wrote matching `worktree create ...
+# --setup run` lines into this same log (that flag is unconditional, never
+# evidence specific to THIS lease) - clear it so the checks below can only
+# pass on ow1's own calls.
+: >"$FAKE_ORCA/log"
 "$BIN/ac-brief.sh" ow1 proj --mode local-only >/dev/null
 mkdir -p "$repo/node_modules/dep"
 printf 'marker\n' >"$repo/node_modules/dep/marker.js"

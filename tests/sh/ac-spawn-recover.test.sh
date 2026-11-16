@@ -11,6 +11,10 @@
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
 make_fake_herdr
+# ac-spawn.sh's own no-config default is herdr (src/spawn.ts), unlike
+# ac_backend's general ladder (bin/ac-backend.sh, now orca) - pin explicitly
+# so this section does not depend on that one entry's own default.
+printf 'herdr\n' >"$AC_HOME/config/backend"
 export AC_SPAWN_SETTLE=0
 : >"$FAKE_HERDR/.pane-idle-by-default"
 export AC_KICKOFF_READY_BUDGET=5
@@ -147,5 +151,45 @@ assert_contains "$cbuf" "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=85" "the resumed roomch
 assert_contains "$cbuf" "claude --permission-mode auto --resume $csid" "the roomchief's session is resumed"
 assert_contains "$cbuf" 'AC_WATCH_ONLY=$(bin/ac-ready.sh watch-set famr)' "the roomchief is told to re-arm its family watcher, which died with the tab"
 assert_contains "$(tail -n 1 "$AC_HOME/state/famr-chief.status")" "recovered:" "the roomchief status log gains a recovered: line"
+
+# --- the SAME three-state ladder on an orca-backend fleet --------------------
+# GUARDED RECOVERY reads the probe's three states (alive/unobservable/gone),
+# which backend_window_alive forks per backend entirely - genuinely per-
+# backend, not scaffolding, so it gets its own orca-pinned proof using
+# .terminal-api-down (tests/sh/helpers.sh, make_fake_orca) for UNOBSERVABLE.
+make_fake_orca
+printf '\342\234\263 fake\n' >"$FAKE_ORCA/.default-title"
+printf 'orca\n' >"$AC_HOME/config/backend"
+
+"$BIN/ac-brief.sh" or1 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" or1 "$repo" --harness claude --mode local-only >/dev/null 2>&1 \
+  || fail "orca: the claude crewmate must spawn"
+ometa="$AC_HOME/state/or1.meta"
+oold_handle="$(cat "$AC_HOME/state/.pane-or1")"
+oold_wt="$(meta_field "$ometa" worktree)"
+[ -d "$oold_wt" ] || fail "orca fixture: the recorded worktree must exist"
+
+# ALIVE (0): the duplicate-agent refusal stands.
+err="$("$BIN/ac-spawn.sh" or1 "$repo" --recover 2>&1)" && fail "orca: --recover must refuse while the terminal is ALIVE"
+assert_contains "$err" "LIVE" "orca: the alive refusal says why"
+assert_eq "$(cat "$AC_HOME/state/.pane-or1")" "$oold_handle" "orca: an alive refusal keeps the terminal handle"
+
+# UNOBSERVABLE (2): the backend cannot answer - never a verdict about the terminal.
+: >"$FAKE_ORCA/.terminal-api-down"
+err="$("$BIN/ac-spawn.sh" or1 "$repo" --recover 2>&1)" && rc=0 || rc=$?
+rm -f "$FAKE_ORCA/.terminal-api-down"
+[ "${rc:-0}" != 0 ] || fail "orca: --recover must refuse when the backend is UNOBSERVABLE"
+assert_contains "$err" "BACKEND could not be READ" "orca: the unobservable refusal blames the backend, not the terminal"
+assert_eq "$(cat "$AC_HOME/state/.pane-or1")" "$oold_handle" "orca: an unobservable refusal keeps the terminal handle"
+
+# GONE (1): recovered in place - close the terminal outright (the production
+# twin of killing a herdr pane's files).
+rm -f "$FAKE_ORCA/terminals/$(fake_pane or1)".*
+out="$("$BIN/ac-spawn.sh" or1 "$repo" --recover 2>/dev/null)" || fail "orca: --recover must accept a DEFINITELY gone terminal"
+assert_contains "$out" "recovered or1" "orca: the outcome line names the recovery"
+onew_handle="$(cat "$AC_HOME/state/.pane-or1")"
+[ "$onew_handle" != "$oold_handle" ] || fail "orca: recovery must open a FRESH terminal"
+assert_eq "$(meta_field "$ometa" worktree)" "$oold_wt" "orca: the recorded worktree is reused, never re-leased"
+"$BIN/ac-teardown.sh" or1 --force >/dev/null 2>&1
 
 pass

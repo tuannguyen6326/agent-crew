@@ -8,17 +8,20 @@
 # `case "$review" in yes|no)` into `ac_die "... must carry exactly one
 # Review: yes|no obligation"`.
 #
-# Spawns real briefs through the same fake-herdr harness as
-# tests/sh/ac-spawn-branch-collision.test.sh, covering all four annotated
-# branches, the surviving bare fallback, and the still-fail-closed invalid
-# value (the fix loosens the annotation, not the validation).
+# Spawns real briefs through the fake-orca harness, covering all four
+# annotated branches, the surviving bare fallback, and the still-fail-closed
+# invalid value (the fix loosens the annotation, not the validation). The
+# Review: line parse does not fork by backend, so the backend here is pure
+# scaffolding to get a spawn through.
 
 # Fail-closed sourcing: unsourced (suite run outside tests/sh/), errexit is never
 # armed and $AC_HOME is the operator's REAL fleet home - abort instead.
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
-make_fake_herdr
+make_fake_orca
+printf '\342\234\263 fake\n' >"$FAKE_ORCA/.default-title"
+printf 'orca\n' >"$AC_HOME/config/backend"
 make_home
 # The epic branches below need a real project clone at
 # projects/<name> - ac-epic-branch.sh's create verb only ever looks there
@@ -32,11 +35,11 @@ export AC_SPAWN_SETTLE=0
 # Every pane here clears the composer-ready observation immediately - this
 # suite is not testing that gate (tests/sh/ac-spawn-kickoff-ready.test.sh owns
 # it), it just needs its spawns to complete without a real harness's boot delay.
-: >"$FAKE_HERDR/.pane-idle-by-default"
+# The .default-title write above already seeds every terminal idle from birth.
 export AC_KICKOFF_READY_BUDGET=5
 
 # A claude stub so the spawns below pass ac-spawn's command -v check; the fake
-# herdr never executes the launch line.
+# backend never executes the launch line.
 mkdir -p "$TMP/stub"
 printf '#!/usr/bin/env bash\nsleep 300\n' >"$TMP/stub/claude"
 chmod +x "$TMP/stub/claude"

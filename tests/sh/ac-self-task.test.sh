@@ -19,6 +19,11 @@ make_fake_herdr
 make_home
 repo="$(make_repo proj)"
 state="$AC_HOME/state"
+# The worktree-pool lease (below, through the window-liveness ladder) is only
+# reachable on a herdr-backend fleet (src/self-task.ts routes an orca fleet to
+# the Orca CLI lease instead, proven further down) - pin it explicitly rather
+# than lean on the no-config default, which now resolves orca.
+printf 'herdr\n' >"$AC_HOME/config/backend"
 
 # --- start: worktree + pane + meta, all before the first edit ------------------
 out="$("$BIN/ac-self-task.sh" start s1 "$repo")"
@@ -359,6 +364,12 @@ assert_contains "$err" "pool is full" "the failure is the lease's own"
 assert_no_file "$state/sfull.status" "the trap removes the status file when the LEASE fails"
 assert_no_file "$state/sfull.meta" "...and leaves no meta"
 
+# Everything from here on exercises self-task/teardown bookkeeping that never
+# forks on which backend leased the worktree (no pool path, lease_ids or
+# .crew/worktrees assertion appears below) - run it on the orca fleet already
+# proven above, so this suite still covers it once fake herdr is gone.
+printf 'orca\n' >"$AC_HOME/config/backend"
+
 # --- the knowledge-loop gate at landing --------------------------------------
 # The solo contract owes three writes per slice and no chief asks whether
 # they happened: teardown of a landed kind=self task REFUSES while a lesson,
@@ -657,6 +668,9 @@ xworld() {  # xworld - a fresh world: the home $XW/$XHN, the repo $XW/proj (one 
     "$XW/tmp" "$XW/stub" "$XW/hh" "$XW/cwd" "$XW/herdr/panes" "$XW/herdr/tabs" "$XW/orca/terminals" "$XW/.claude"
   printf 'off\n' >"$XW/$XHN/config/wedge-alarm"
   printf 'off\n' >"$XW/$XHN/config/brain-auto-sync"
+  # Most rows below assert herdr's own text (window=herdr:..., "herdr ... failed");
+  # xorca overrides this for the rows that cut over to the Orca lease instead.
+  printf 'herdr\n' >"$XW/$XHN/config/backend"
   printf 'the container crewmate layer\n' >"$XW/.claude/CLAUDE.md"
   printf '\342\234\263 fake\n' >"$XW/orca/.default-title"
   git init -q "$XW/proj"

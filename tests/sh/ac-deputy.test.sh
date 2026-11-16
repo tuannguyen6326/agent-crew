@@ -41,6 +41,7 @@ assert_contains "$out" "$(printf 'DOWN\tstale')" "an unsupported backend degrade
 # read (rc=2, or 127 from a driver that failed to load) - that second
 # variable must render as its own state, never silently as DOWN.
 make_fake_herdr
+make_fake_orca
 
 h2="$AC_HOME/crewdeputies/unread"
 mkdir -p "$h2/state"
@@ -127,7 +128,7 @@ dat() {  # dat <cmd> <args...> - a seeding step; a literal @H in an argument is 
   local x a=(); for x in "$@"; do a+=("${x//@H/$H}"); done; "${a[@]}"
 }
 dseed() {
-  rm -rf "$H"; mkdir -p "$H/home/state" "$H/home/records" "$H/home/config" "$H/home/data" "$H/herdr/panes" "$H/herdr/tabs"
+  rm -rf "$H"; mkdir -p "$H/home/state" "$H/home/records" "$H/home/config" "$H/home/data" "$H/herdr/panes" "$H/herdr/tabs" "$H/orca/terminals"
   printf 'off\n' >"$H/home/config/wedge-alarm"
 }
 ddep() {  # ddep <id> [<dir under home>] - a seeded deputy home: the marker and the backlog skeleton home-seed writes
@@ -144,9 +145,14 @@ dlive() {  # dlive <id> <pane> - a meta and a pane the fake herdr answers for
   printf '%s t%s\n' "$2" "$2" >"$H/home/state/.pane-$1"
   printf '%s\n' "$2" >"$H/herdr/tabs/t$2"; : >"$H/herdr/panes/$2.buf"
 }
+dliveorca() {  # dliveorca <id> <handle> - a meta and a genuinely alive orca terminal
+  printf 'backend=orca\nkind=crewdeputy\n' >"$H/home/state/$1.meta"
+  printf '%s tab-%s\n' "$2" "$2" >"$H/home/state/.pane-$1"
+  : >"$H/orca/terminals/$2.buf"
+}
 DLC=C; DENV=(); DHOME=home; DHOMELESS=0; DPATH=""; DN_RC=0
 drun() {  # drun <args...> - one run of the entry; @H in an argument or a DENV value is the side root
-  local x v a=() e=("LC_ALL=$DLC" "PATH=${DPATH:-$DSTUBS:$TMP/stubbin:$PATH}" "STUB_DIR=$H" "FAKE_HERDR=$H/herdr")
+  local x v a=() e=("LC_ALL=$DLC" "PATH=${DPATH:-$DSTUBS:$TMP/stubbin:$PATH}" "STUB_DIR=$H" "FAKE_HERDR=$H/herdr" "FAKE_ORCA=$H/orca")
   [ "$DHOMELESS" = 1 ] || e+=("AC_HOME=$H/$DHOME")
   for x in ${DENV[@]+"${DENV[@]}"}; do v="${x#*=}"; e+=("${x%%=*}=${v//@H/$H}"); done
   for x in "$@"; do a+=("${x//@H/$H}"); done
@@ -222,8 +228,8 @@ registered: 1 (live 0, down 0, not-running 0, home-missing 0, invalid 1)" "3: a 
 rm -f "$H/home/records/crewdeputies.md"
 ddep dlive; ddep ddown; ddep dnohandle; ddep didle; ddep dmark; ddep dleg
 rm -f "$H/home/crewdeputies/dmark/.ac-crewdeputy-home"; mkdir "$H/home/crewdeputies/dmark/.ac-crewdeputy-home"
-dlive dlive pD1
-printf 'backend=herdr\nkind=crewdeputy\n' >"$H/home/state/ddown.meta"; printf 'pGONE tGONE\n' >"$H/home/state/.pane-ddown"
+dliveorca dlive termD1
+printf 'backend=orca\nkind=crewdeputy\n' >"$H/home/state/ddown.meta"; printf 'termGONE tabGONE\n' >"$H/home/state/.pane-ddown"
 printf 'backend=herdr\n' >"$H/home/state/dnohandle.meta"
 dreg '# Crewdeputies' '' \
   '- dlive - payments duty - home: @H/home/crewdeputies/dlive - scope: payments incidents - projects: alpha (added 2026-07-19T00:00:00Z)' \
@@ -236,7 +242,11 @@ dreg '# Crewdeputies' '' \
   '- dlive - again - home: @H/home/crewdeputies/dlive - scope: s - projects: none (added x)' \
   '- ops2 - home /abs - no projects (added 2026-07-19T00:00:00Z)' \
   'prose that is no entry'
-drun list
+# The shared fake orca (not $DSTUBS's single-sentinel ladder stub, built only
+# for row 4's one-deputy-at-a-time ladder) is what a simultaneous LIVE+DOWN
+# table needs: it keys each verdict off its OWN terminal's files, so dlive and
+# ddown can disagree in the same `list` run.
+DPATH="$TMP/stubbin:$PATH"; drun list; DPATH=""
 assert_eq "$DN_RC:$(dout)" "0:LIVE	dlive	home: @H/home/crewdeputies/dlive	projects: alpha
 	charter: payments duty
 	scope: payments incidents
@@ -265,7 +275,8 @@ NOT-RUNNING	dleg	home: @H/home/crewdeputies/dleg	projects: alpha,beta,gamma
 INVALID	- dlive - again - home: @H/home/crewdeputies/dlive - scope: s - projects: none (added x)	reason: duplicate id
 INVALID	- ops2 - home /abs - no projects (added 2026-07-19T00:00:00Z)	reason: missing \"home:\" field
 registered: 9 (live 1, down 2, not-running 2, home-missing 2, invalid 2)" "3: the full table"
-assert_contains "$(cat "$H/herdr/log")" "herdr pane get pD1" "3: the probe went to the fake herdr"
+assert_contains "$(cat "$H/orca/log")" "orca terminal show --terminal termD1" "3: the LIVE probe went to the fake orca"
+assert_contains "$(cat "$H/orca/log")" "orca terminal show --terminal termGONE" "3: ... and the DOWN probe too"
 rm -f "$H/home/records/crewdeputies.md"
 dreg $'- caf\303\251 - c - home: /h/caf\303\251 - scope: s - projects: none (added x)'
 drun list

@@ -16,6 +16,10 @@
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
 make_fake_herdr
+# ac-spawn.sh's own no-config default is herdr (src/spawn.ts), unlike
+# ac_backend's general ladder (bin/ac-backend.sh, now orca) - pin explicitly
+# so this section does not depend on that one entry's own default.
+printf 'herdr\n' >"$AC_HOME/config/backend"
 # Deliver the kickoff prompt immediately (default 8s) so the suite stays fast.
 export AC_SPAWN_SETTLE=0
 # Every pane here is a stand-in for a REAL harness that settles to idle almost
@@ -102,6 +106,53 @@ assert_contains "$err" "a non-shell foreground process held the pane" \
 assert_no_file "$AC_HOME/state/died1.meta" "a spawn refused after the kickoff leaves no task in flight"
 assert_contains "$(cat "$AC_HOME/state/died1.status")" "failed:" "the status log records the death"
 rm -f "$FAKE_HERDR/.die-on-text"
+
+# --- the SAME came-up gate, on an orca-backend fleet: alive / dead / unobservable -
+# backend_harness_up_pane_orca forks the probe entirely (a terminal TITLE, not
+# a process-info argv0/name read) - this is a genuinely per-backend mechanism,
+# not scaffolding, so the three verdicts get their own orca-pinned proof.
+make_fake_orca
+printf 'orca\n' >"$AC_HOME/config/backend"
+
+# alive: the idle glyph title, seeded before creation like herdr's
+# .pane-idle-by-default above.
+printf '\342\234\263 fake\n' >"$FAKE_ORCA/.default-title"
+"$BIN/ac-brief.sh" oup1 proj --mode local-only >/dev/null
+out="$("$BIN/ac-spawn.sh" oup1 "$repo" --harness fake --mode local-only 2>/dev/null)"
+assert_contains "$out" "spawned oup1" "orca: a live harness still spawns"
+assert_contains "$(cat "$(fake_orca_buf oup1)")" \
+  "kickoff order at" "orca: a live harness still gets its kickoff pointer"
+
+# dead: no idle title at all - make_fake_orca's own fallback title for a fresh
+# terminal is a bare shell name ("zsh"), the same shape a real fallen-back
+# pane reports, with no extra knob needed.
+rm -f "$FAKE_ORCA/.default-title"
+: >"$FAKE_ORCA/log"
+"$BIN/ac-brief.sh" odead1 proj --mode local-only >/dev/null
+rc=0
+err="$("$BIN/ac-spawn.sh" odead1 "$repo" --harness fake --mode local-only 2>&1)" || rc=$?
+[ "$rc" != 0 ] || fail "orca: a dead terminal must FAIL the spawn, not sit silent on it"
+assert_contains "$err" "did NOT come up" "orca: the failure names what went wrong"
+assert_contains "$err" "WITHHELD" "orca: the failure says the kickoff was withheld"
+assert_no_file "$AC_HOME/state/odead1.meta" "orca: a refused spawn leaves no task in flight"
+case "$(cat "$FAKE_ORCA/log")" in
+  *"kickoff order at"*) fail "orca: the kickoff pointer was typed into a dead terminal" ;;
+esac
+
+# unobservable: .terminal-api-down (tests/sh/helpers.sh, make_fake_orca) makes
+# show/list/status all fail while create stays healthy - the root knob a
+# window-collision guard and this came-up probe alike must read as UNKNOWN,
+# never as a verdict about the pane itself.
+: >"$FAKE_ORCA/.terminal-api-down"
+"$BIN/ac-brief.sh" oblind2 proj --mode local-only >/dev/null
+rc=0
+err="$("$BIN/ac-spawn.sh" oblind2 "$repo" --harness fake --mode local-only 2>&1 >/dev/null)" || rc=$?
+assert_eq "$rc" "0" "orca: an unreadable probe is not evidence of a dead harness - the spawn stands"
+assert_contains "$err" "could not read" "orca: the unverified probe warns"
+rm -f "$FAKE_ORCA/.terminal-api-down"
+assert_contains "$(cat "$(fake_orca_buf oblind2)")" \
+  "kickoff order at" "orca: an unreadable probe still delivers the kickoff pointer"
+printf 'herdr\n' >"$AC_HOME/config/backend"
 
 # --- codex: a bare Enter answers the startup trust dialog BEFORE the prompt ----
 # codex's dialog is a key-driven select, and an `n` or a `2` anywhere in typed

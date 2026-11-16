@@ -13,15 +13,18 @@
 #     records effort=ultracode in the meta, and types '/effort ultracode' into
 #     the built-in claude TUI before the kickoff prompt; codex and custom
 #     launch-claude templates get no slash line.
-# Launch-line checks read the fake herdr pane buffer (tests/sh/helpers.sh):
-# what ac-spawn typed sits there VERBATIM, nothing executes it.
+# Launch-line checks read the fake orca terminal buffer (tests/sh/helpers.sh):
+# what ac-spawn typed sits there VERBATIM, nothing executes it - the launch
+# line's TEXT does not fork by backend, so this suite runs on fake orca.
 
 # Fail-closed sourcing: unsourced (suite run outside tests/sh/), errexit is never
 # armed and $AC_HOME is the operator's REAL fleet home - abort instead.
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
-make_fake_herdr
+make_fake_orca
+printf '\342\234\263 fake\n' >"$FAKE_ORCA/.default-title"
+printf 'orca\n' >"$AC_HOME/config/backend"
 make_home
 repo="$(make_repo proj)"
 
@@ -48,12 +51,12 @@ export AC_ULTRACODE_SETTLE=0
 # Every pane here clears the composer-ready observation (bin/ac-spawn.sh
 # kickoff_wait_input_ready) immediately - this suite is not testing that gate
 # (tests/sh/ac-spawn-kickoff-ready.test.sh owns it), it just needs its spawns to
-# complete without a real harness's boot delay.
-: >"$FAKE_HERDR/.pane-idle-by-default"
+# complete without a real harness's boot delay. The .default-title write above
+# already seeds every terminal idle from birth, the orca twin of that seed.
 export AC_KICKOFF_READY_BUDGET=5
 
 # claude + codex + opencode stubs so the harness spawns below pass ac-spawn's
-# command -v check; the fake herdr never executes the launch line.
+# command -v check; the fake backend never executes the launch line.
 mkdir -p "$TMP/stub"
 printf '#!/usr/bin/env bash\nsleep 300\n' >"$TMP/stub/claude"
 printf '#!/usr/bin/env bash\nsleep 300\n' >"$TMP/stub/codex"
@@ -64,7 +67,7 @@ export PATH="$TMP/stub:$PATH"
 # A fake harness (custom template); its text sits unexecuted in the buffer.
 printf 'echo crew __ID__ reading __BRIEF__; sleep 300\n' >"$AC_HOME/config/launch-fake"
 
-launch_line() { cat "$(fake_pane_buf "$1")"; }
+launch_line() { cat "$(fake_orca_buf "$1")"; }
 
 # --- absent config + absent flag => the launch line carries NEITHER opt -------
 # (run before config/model + config/effort are written).
@@ -266,9 +269,18 @@ rm -f "$AC_HOME/config/launch-claude"
 
 # --- ultracode strand: an unacknowledged '/effort ultracode' line WITHHOLDS the
 # kickoff prompt (typing it would append to the stranded line and garble both -
-# the eaten-kickoff incident shape) and warns loudly. The drop knob targets
-# "/effort" (the launch line only carries "--effort", no slash). ---------------
-n="$(cat "$FAKE_HERDR/.n")"; upane="p$((n + 1))"
+# the eaten-kickoff incident shape) and warns loudly. STAYS ON FAKE HERDR:
+# make_fake_orca's own .drop-enters (tests/sh/helpers.sh) is a bare count
+# with no pattern field (unlike fake herdr's "<count> <pattern>"), so it
+# cannot target the slash line's Enter alone - a count armed from the start
+# also swallows the LAUNCH LINE's own Enter first, which strands the WRONG
+# text and fails this case with ac-backend's generic "submit not
+# acknowledged" instead of the kickoff-specific warning this case exists to
+# prove.
+make_fake_herdr
+: >"$FAKE_HERDR/.pane-idle-by-default"
+printf 'herdr\n' >"$AC_HOME/config/backend"
+n="$(cat "$FAKE_HERDR/.n" 2>/dev/null || printf 0)"; upane="p$((n + 1))"
 printf '99 /effort\n' >"$FAKE_HERDR/panes/$upane.drop-enters"
 "$BIN/ac-brief.sh" u2 proj --mode local-only >/dev/null
 out="$("$BIN/ac-spawn.sh" u2 "$repo" --harness claude --effort ultracode 2>&1)"
@@ -285,6 +297,7 @@ assert_contains "$(cat "$FAKE_HERDR/panes/$upane.in")" "/effort ultracode" "slas
 case "$(cat "$FAKE_HERDR/panes/$upane.in")" in *"kickoff order at"*) \
   fail "the kickoff prompt must be WITHHELD after a stranded slash line" ;; esac
 "$BIN/ac-teardown.sh" u2 --force >/dev/null 2>&1
+printf 'orca\n' >"$AC_HOME/config/backend"
 
 # --- AC_FLEET_HOME_CHECKED / AC_FLEET_PROJECT_CONFIG: ac-spawn.sh resolves the
 # project's pipeline config with its OWN real AC_HOME and hands the answer to

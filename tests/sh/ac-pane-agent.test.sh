@@ -20,6 +20,12 @@ stub="$TMP/stubbin"
 mkdir -p "$stub"
 export HDLOG="$TMP/hd.log" FAKEHOME="$TMP/fakehome"
 mkdir -p "$FAKEHOME"
+# This file's own local herdr stub (below) models only herdr; pin the backend
+# explicitly rather than lean on either resolver's bare default (orca since
+# the no-config flip). The modelled-backends section further down (xc/xbg)
+# inherits this same export into its subshells unless a row's own XENV names
+# AC_BACKEND=orca, which then overrides it - see xc's own comment.
+export AC_BACKEND=herdr
 # The helper resolves transcripts through ac_claude_transcript_root; the stub
 # claude writes them under the fake HOME every run below passes.
 export AC_CLAUDE_TRANSCRIPT_ROOT="$FAKEHOME/.claude/projects"
@@ -2369,13 +2375,18 @@ xs() { mkdir -p "$XW/stub"; printf '%b' "${2-}" >"$XW/stub/$1"; }   # xs <stub f
 XLC=C; XENV=(); XPATH=""; XHOME=""; XCWD=cwd; XIN=/dev/null
 xpath() { printf '%s' "${XPATH:-$XSTUBS:$XNOSLEEP:$PATH}"; }
 xc() {  # xc <args...> - one pane-agent call, its transcript appended
+  # AC_BACKEND is NOT in the -u list below: it rides the ambient default this
+  # file exports (herdr) unless a row's own XENV names AC_BACKEND=orca, which
+  # then overrides it in e[] below - every row stays explicit about which
+  # backend it is proving, never the no-config default ac_backend() itself
+  # resolves to.
   local rc=0 x v
   local e=("LC_ALL=$XLC" "PATH=$(xpath)" "HOME=$XW/hd" "TMPDIR=$XW/tmp" "XSTUB=$XW/stub"
     "AC_CLAUDE_TRANSCRIPT_ROOT=$XW/tr" "AC_FLEET_STATE=$XW/st")
   [ -z "$XHOME" ] || e+=("AC_HOME=$XW/home")
   for x in ${XENV[@]+"${XENV[@]}"}; do v="${x#*=}"; e+=("${x%%=*}=${v//@W/$XW}"); done
   local a=(); for x in "$@"; do a+=("${x//@W/$XW}"); done
-  (cd "$XW/$XCWD" && exec env -u AC_HOME -u AC_FLEET_STATE -u AC_SCOPE -u AC_SOLO -u AC_BACKEND -u AC_HERDR_SESSION \
+  (cd "$XW/$XCWD" && exec env -u AC_HOME -u AC_FLEET_STATE -u AC_SCOPE -u AC_SOLO -u AC_HERDR_SESSION \
     -u AC_HERDR_RPC_TIMEOUT -u AC_WINDOW_FAMILY -u AC_FLEET_NAME -u CLAUDE_CONFIG_DIR -u AC_PANE_STALL_MAX \
     -u AC_PANE_SETTLE_TRIES -u AC_PANE_SETTLE_SLEEP -u AC_PANE_SCROLLBACK_LINES -u AC_LOCK_STALE_GRACE -u CDPATH \
     -u EPOCHSECONDS "${e[@]}" /bin/sh -c 'printf "%s\n" "$$" >>"$0"; exec "$@"' "$TMP/xpids" \
@@ -2386,8 +2397,9 @@ xc() {  # xc <args...> - one pane-agent call, its transcript appended
 # background call restores both before it execs the entry, in a group of its
 # own.
 xbg() {  # xbg <signal> <wait-for text in a stub log> <args...> - one call in the background, signalled once the stubs logged <text>
+  # AC_BACKEND stays out of -u here too - see xc's comment above.
   local sig="$1" want="$2" rc=0 pid i=0; shift 2
-  (cd "$XW/$XCWD" && exec env -u AC_HOME -u AC_FLEET_STATE -u AC_SCOPE -u AC_SOLO -u AC_BACKEND -u AC_HERDR_SESSION \
+  (cd "$XW/$XCWD" && exec env -u AC_HOME -u AC_FLEET_STATE -u AC_SCOPE -u AC_SOLO -u AC_HERDR_SESSION \
     -u AC_WINDOW_FAMILY -u AC_FLEET_NAME -u CLAUDE_CONFIG_DIR -u AC_PANE_STALL_MAX -u CDPATH \
     "LC_ALL=$XLC" "PATH=$(xpath)" "HOME=$XW/hd" "TMPDIR=$XW/tmp" "XSTUB=$XW/stub" "AC_CLAUDE_TRANSCRIPT_ROOT=$XW/tr" \
     "AC_FLEET_STATE=$XW/st" ${XENV[@]+"${XENV[@]}"} perl -e '$SIG{INT} = $SIG{QUIT} = "DEFAULT"; setpgrp(0, 0); exec @ARGV' "$BIN/ac-pane-agent.sh" "$@") \
@@ -2528,6 +2540,11 @@ xrc 1; xhas "\"error\":\"prompt file missing: $XW/nope\""
 #    live pid holds, a ~/.claude.json that is no object, the exclude lines,
 #    placement and labels, ENVPIN, the session, --pane-file's directory, the
 #    idle fallback on a `done` pane, and the --timeout grammar.
+# Every case in this row places a SESSION pane on herdr; pinned explicitly
+# here (redundant with the file-wide export above, which XENV=() would
+# otherwise inherit) so this row stays correct on its own if that export
+# ever moves.
+XENV=(AC_BACKEND=herdr)
 xsettingsdir() { mkdir -p "$XW/cwd/.claude/settings.local.json"; }
 xone xsettingsdir 'xrun'
 xrc 1; xhas "{\"event\":\"done\",\"status\":\"error\",\"error\":\"could not install the Stop hook into $XW/cwd/.claude/settings.local.json\"}"; xwlacks '[pane] [run]'
@@ -2543,16 +2560,16 @@ xone xexcl 'xrun'
 assert_eq "$(grep -c '^\.claude/' "$XW/cwd/.git/info/exclude")" 2 "a line the exclude already holds is not appended again"
 xone 'rm -rf "$XW/cwd/.git/info"' 'xrun'
 assert_eq "$(cat "$XW/cwd/.git/info/exclude")" $'.claude/settings.local.json\n.claude/.ac-pane-agent.lock' "a missing info/ gets both exclude lines"
-XENV=(AC_WINDOW_FAMILY=fam1); xone 'git -C "$XW/cwd" checkout -qb crew/fam1-x' 'xrun --kind codereview'; XENV=()
+XENV=(AC_BACKEND=herdr AC_WINDOW_FAMILY=fam1); xone 'git -C "$XW/cwd" checkout -qb crew/fam1-x' 'xrun --kind codereview'; XENV=(AC_BACKEND=herdr)
 xwhas 'herdr [workspace] [create] [--label] [agent-crew · fam1] [--no-focus]'
 xwhas '[tab] [create] [--workspace] [wP] [--label] [ac-codereview-agent-fam1-crew-fam1-x]'
 xwhas '[pane] [rename] [pP1] [ac-codereview-agent:r1]'
 XHOME=1; xone xnone 'xrun'; XHOME=""
 xwhas 'herdr [workspace] [create] [--label] [home] [--no-focus]'
 xwhas "CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 AC_HOME=$XW/home claude --permission-mode auto"
-XENV=(AC_FLEET_NAME=fl CLAUDE_CONFIG_DIR=@W/cfg); xone xnone 'xrun'; XENV=()
+XENV=(AC_BACKEND=herdr AC_FLEET_NAME=fl CLAUDE_CONFIG_DIR=@W/cfg); xone xnone 'xrun'; XENV=(AC_BACKEND=herdr)
 xwhas "[cd '$XW/cwd' && CLAUDE_CONFIG_DIR=$XW/cfg CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 AC_FLEET_NAME=fl claude --permission-mode auto"
-XENV=(AC_HERDR_SESSION=s9); xone xnone 'xrun'; XENV=()
+XENV=(AC_BACKEND=herdr AC_HERDR_SESSION=s9); xone xnone 'xrun'; XENV=(AC_BACKEND=herdr)
 xrc 0; xwhas 'herdr [--session] [s9] [pane] [run] [pP1]'
 xone xnone 'xrun --pane-file @W/nodir/pane'
 xrc 1; xhas "{\"event\":\"done\",\"status\":\"error\",\"error\":\"pane-file directory does not exist: $XW/nodir\"}"
@@ -2566,6 +2583,7 @@ for t in abc 1+1 0x3 1.5 10m ' 5'; do
   xrc 1; xhas "\"error\":\"timeout must be a whole number of seconds: $t\""
   xwlacks '[pane] [run]'
 done
+XENV=()
 
 # 4. SESSION on orca: the worker placement, a terminal that disconnects,
 #    --replace-pane, a placement that fails, and the home arm.
@@ -2595,11 +2613,23 @@ XHOME=""; XCWD=cwd; XENV=()
 xrc 0; xhas '"event":"done","status":"ok"'
 xwhas "[--title] [crew:home/ac-learning] [--command] [cd '$XW/home' && CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 AC_HOME=$XW/home claude --permission-mode auto"
 
+# The idle fallback (herdr idle|done; orca idle) is the SAME exit on either
+# backend - prove it reaches orca too. `xs no-marker` suppresses the stub's
+# own turn-end marker, so the only way this run can still end `ok` is the
+# idle-fallback path itself; its own `idle-fallback used` note is what
+# distinguishes that from a run that never got there.
+XENV=(AC_BACKEND=orca)
+xone 'xs no-marker; xs backdate; xs transcript "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"final\"}]}}\n"' \
+  'xrun --timeout 400'
+xrc 0; xhas '{"event":"note","path":"idle-fallback used (agent_status=idle)"}'; xhas '"event":"done","status":"ok"'
+XENV=()
+
 # 5. CREWMATE on herdr and orca: each harness's TUI launch, a bare shell that
 #    never came up, an unreadable pane, a named startup dialog, the input-ready
 #    wait cut at the deadline, the stranded kickoff, an empty verdict, orca's
 #    turn and its never-ready surface.
 xcrew() { xs run.mode crew; }
+XENV=(AC_BACKEND=herdr)
 xone xcrew 'xrun --harness codex --kind codereview --model gpt-5.6-sol --effort xhigh'
 xrc 0; xhas '"source":"file"'
 xwhas "[cd '$XW/cwd' && CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 codex -c check_for_update_on_startup=false -m gpt-5.6-sol -c model_reasoning_effort=xhigh; printf %s \$? >"

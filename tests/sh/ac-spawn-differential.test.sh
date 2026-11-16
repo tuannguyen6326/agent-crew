@@ -55,6 +55,9 @@ xworld() {  # xworld - a fresh world: the home, the repo $XW/proj (one commit on
   printf 'off\n' >"$XW/home/config/wedge-alarm"
   printf 'echo crew __ID__ reading __BRIEF__\n' >"$XW/home/config/launch-fake"
   printf 'the container crewmate layer\n' >"$XW/.claude/CLAUDE.md"
+  # Most rows below assert herdr's own text (backend=herdr, window=herdr:...);
+  # xorca overrides this for the rows that cut the crew path to Orca instead.
+  printf 'herdr\n' >"$XW/home/config/backend"
   : >"$XW/herdr/.pane-idle-by-default"
   git init -q "$XW/proj"
   printf 'base\n' >"$XW/proj/f.txt"; git -C "$XW/proj" add f.txt; git -C "$XW/proj" commit -qm base

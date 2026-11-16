@@ -33,17 +33,16 @@ case "$out" in *--fork-session*) fail "talk must not fork" ;; esac
 # on an unknown pane is (contract: records/repo-knowledge/agent-crew.md:86,
 # reap_orphan_window - REFUSE must not proceed on unknown), so unobservable is
 # treated like busy, not like a silently-permitted unknown.
-make_fake_herdr
-printf 'worktree=/tmp/wt-t4\nharness=claude\nbackend=herdr\nsession_id=aaaabbbb-cccc-dddd-eeee-ffff00004444\n' \
+make_fake_orca
+printf 'worktree=/tmp/wt-t4\nharness=claude\nbackend=orca\nsession_id=aaaabbbb-cccc-dddd-eeee-ffff00004444\n' \
   >"$AC_HOME/state/t4.meta"
-printf 'pT4 tT4\n' >"$AC_HOME/state/.pane-t4"
-printf 'pT4\n' >"$FAKE_HERDR/tabs/tT4"
-: >"$FAKE_HERDR/panes/pT4.buf"
-touch "$FAKE_HERDR/.unreachable"
+printf 'term4 tab4\n' >"$AC_HOME/state/.pane-t4"
+: >"$FAKE_ORCA/terminals/term4.buf"
+touch "$FAKE_ORCA/.unreachable"
 err="$("$BIN/ac-session.sh" t4 --talk 2>&1)" && fail "talk must refuse an unobservable backend"
 assert_contains "$err" "backend" "the talk refusal blames the BACKEND, not the pane"
 assert_contains "$err" "UNKNOWN" "the talk refusal names liveness as unknown, not mid-turn"
-rm -f "$FAKE_HERDR/.unreachable"
+rm -f "$FAKE_ORCA/.unreachable"
 
 # Archived task still resolves.
 cat >"$AC_HOME/state/archive/old1/meta" <<'EOF'

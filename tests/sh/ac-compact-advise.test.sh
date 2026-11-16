@@ -168,16 +168,20 @@ assert_contains "$(jq -r .systemMessage <<<"$out")" "/compact" "a corrupt mark r
 # 10. config/compact-auto=on: a session that owns a meta (a roomchief) gets
 #     /compact typed into its own pane once the pane is idle - detached, so
 #     the Stop hook never waits on it. Everything else keeps the hint only.
+# Fake orca backs every case here except 10d below: 10d's pane must read
+# `blocked` from a captain-wait stamp, a real herdr behavior (pane
+# report-agent/`.reported` masking, src/compact-advise.ts) that orca's own
+# agentIdlePane never reads - so 10d keeps fake herdr.
+make_fake_orca
 make_fake_herdr
-mk_chief() { # mk_chief <id> <session_id> <pane> <tab>
-  printf 'backend=herdr\nkind=roomchief\nsession_id=%s\n' "$2" >"$AC_HOME/state/$1.meta"
+mk_chief() { # mk_chief <id> <session_id> <handle> <tab>
+  printf 'backend=orca\nkind=roomchief\nsession_id=%s\n' "$2" >"$AC_HOME/state/$1.meta"
   printf '%s %s\n' "$3" "$4" >"$AC_HOME/state/.pane-$1"
-  printf '%s\n' "$3" >"$FAKE_HERDR/tabs/$4"
-  : >"$FAKE_HERDR/panes/$3.buf"
+  : >"$FAKE_ORCA/terminals/$3.buf"
 }
 sendlog="$AC_HOME/state/.compact-advise/send.log"
-mk_chief rc-chief s-9 pC1 tC1
-printf 'idle\n' >"$FAKE_HERDR/panes/pC1.status"
+mk_chief rc-chief s-9 termC1 tabC1
+printf '\342\234\263 fake\n' >"$FAKE_ORCA/terminals/termC1.title"
 p9="$(jq -nc --arg p "$tx" '{session_id: "s-9", transcript_path: $p, stop_hook_active: false}')"
 
 out="$(hook "$AC_HOME" "$p9" AC_SOLO=)"
@@ -191,23 +195,25 @@ out="$(hook "$AC_HOME" "$p9" AC_SOLO=)"
 assert_contains "$(jq -r .systemMessage <<<"$out")" "rc-chief" "the message names the pane /compact is sent to"
 assert_contains "$(jq -r .systemMessage <<<"$out")" "otherwise run /compact" "the hint survives a send that gives up"
 for _ in 1 2 3 4 5 6 7 8 9 10; do grep -q 'rc-chief:' "$sendlog" 2>/dev/null && break; sleep 0.5; done
-assert_contains "$(cat "$FAKE_HERDR/panes/pC1.buf")" "/compact" "the idle roomchief pane receives /compact"
+assert_contains "$(cat "$FAKE_ORCA/terminals/termC1.buf")" "/compact" "the idle roomchief pane receives /compact"
 assert_contains "$(cat "$sendlog")" "rc-chief: sent" "the send is logged"
 
 out="$(hook "$AC_HOME" "$(jq -c '.session_id = "s-10"' <<<"$p9")" AC_SOLO=)"
 assert_contains "$(jq -r .systemMessage <<<"$out")" "Run /compact" "a session with no meta keeps the hint"
 
-# 10b. A pane that never goes idle inside the bound is left alone.
-mk_chief busy-chief s-11 pC2 tC2
-printf 'working\n' >"$FAKE_HERDR/panes/pC2.status"
+# 10b. A pane that never goes idle inside the bound is left alone. (mk_chief
+#      never runs `terminal create`, so no .title file exists; `show` reports
+#      an empty title, which is not the idle glyph either, so it never reads
+#      idle.)
+mk_chief busy-chief s-11 termC2 tabC2
 AC_COMPACT_SEND_WAIT=1 "$ADV" --send busy-chief >>"$sendlog" 2>&1 || fail "--send must exit 0"
-assert_eq "$(cat "$FAKE_HERDR/panes/pC2.buf")" "" "a busy pane is never typed into"
+assert_eq "$(cat "$FAKE_ORCA/terminals/termC2.buf")" "" "a busy pane is never typed into"
 assert_contains "$(tail -n 1 "$sendlog")" "busy-chief: not idle" "the give-up is logged"
 
 # 10c. Below config/compact-auto-min (default 50) percent usage the advice
 #      stays a hint: a finished roomchief at 30% is not compacted for it.
-mk_chief early-chief s-13 pC3 tC3
-printf 'idle\n' >"$FAKE_HERDR/panes/pC3.status"
+mk_chief early-chief s-13 termC3 tabC3
+printf '\342\234\263 fake\n' >"$FAKE_ORCA/terminals/termC3.title"
 mid="$TMP/mid.jsonl"; transcript "$mid" 60000
 p13="$(jq -nc --arg p "$mid" '{session_id: "s-13", transcript_path: $p, stop_hook_active: false}')"
 resp 0.96 0.1
@@ -224,8 +230,8 @@ rm -f "$AC_HOME/config/compact-auto-min"
 #       `$(( ))` would misread (`08`) falls back to its documented default
 #       (50, 200000) instead of losing the whole message - it never silences
 #       a session outright.
-mk_chief octal-chief s-14 pC5 tC5
-printf 'idle\n' >"$FAKE_HERDR/panes/pC5.status"
+mk_chief octal-chief s-14 termC5 tabC5
+printf '\342\234\263 fake\n' >"$FAKE_ORCA/terminals/termC5.title"
 oct="$TMP/oct.jsonl"; transcript "$oct" 150000
 p14="$(jq -nc --arg p "$oct" '{session_id: "s-14", transcript_path: $p, stop_hook_active: false}')"
 printf 'on\n' >"$AC_HOME/config/compact-auto"
@@ -243,8 +249,10 @@ rm -f "$AC_HOME/state/.compact-advise/s-14"
 #      ended: arm has already stamped the pane captain-wait, which herdr reads
 #      blocked for as long as the stamp stands. Anything short of that keeps
 #      the hint and sends nothing.
-mk_chief cm-ship s-20 pC4 tC4
 printf 'backend=herdr\nkind=ship\nsession_id=s-20\n' >"$AC_HOME/state/cm-ship.meta"
+printf 'pC4 tC4\n' >"$AC_HOME/state/.pane-cm-ship"
+printf 'pC4\n' >"$FAKE_HERDR/tabs/tC4"
+: >"$FAKE_HERDR/panes/pC4.buf"
 printf 'blocked\n' >"$FAKE_HERDR/panes/pC4.status"
 : >"$AC_HOME/state/.captain-wait-cm-ship"
 resp 0.96 0.9

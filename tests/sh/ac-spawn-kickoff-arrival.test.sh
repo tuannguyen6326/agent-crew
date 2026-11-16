@@ -11,16 +11,20 @@
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
-make_fake_herdr
+# The arrival check is transcript-only (AC_CLAUDE_TRANSCRIPT_ROOT, outside
+# both backend fixtures) - the pane backend is pure scaffolding to get a
+# spawn through the came-up/composer-ready gates, so it runs on fake orca.
+make_fake_orca
 export AC_SPAWN_SETTLE=0
 export AC_SEND_SETTLE=0
 export AC_KICKOFF_READY_BUDGET=5
-: >"$FAKE_HERDR/.pane-idle-by-default"
+printf '\342\234\263 fake\n' >"$FAKE_ORCA/.default-title"
+printf 'orca\n' >"$AC_HOME/config/backend"
 make_home
 repo="$(make_repo proj)"
 
-# A claude stub so `command -v` passes; the fake herdr never executes the
-# launch line - it lands verbatim, unexecuted, in the pane buffer.
+# A claude stub so `command -v` passes; the fake backend never executes the
+# launch line - it lands verbatim, unexecuted, in the terminal buffer.
 mkdir -p "$TMP/stub"
 printf '#!/usr/bin/env bash\nsleep 300\n' >"$TMP/stub/claude"
 chmod +x "$TMP/stub/claude"

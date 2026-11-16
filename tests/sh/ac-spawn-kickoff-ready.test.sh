@@ -12,6 +12,10 @@
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
 make_fake_herdr
+# ac-spawn.sh's own no-config default is herdr (src/spawn.ts), unlike
+# ac_backend's general ladder (bin/ac-backend.sh, now orca) - pin explicitly
+# so this section does not depend on that one entry's own default.
+printf 'herdr\n' >"$AC_HOME/config/backend"
 export AC_SPAWN_SETTLE=0
 make_home
 repo="$(make_repo proj)"
@@ -97,5 +101,34 @@ grep -rq 'kickoff-unverified' "$AC_HOME/state/.wake-spool" 2>/dev/null \
   || fail "an unverified delivery publishes a kickoff-unverified wake"
 assert_eq "$(grep -rl 'kickoff-unverified' "$AC_HOME/state/.wake-spool" 2>/dev/null | wc -l | tr -d ' ')" "1" \
   "exactly ONE wake per spawn, however many probes went unobservable"
+
+# --- orca: a composer that becomes ready after a short delay -------------------
+# kickoffWaitInputReady (src/spawn.ts) proves UP and IDLE off the orca
+# terminal's TITLE alone (harnessUp's spinner/✳ match, agentIdle's same two) -
+# make_fake_orca's .delay-ready-secs (tests/sh/helpers.sh) models exactly
+# that, with the send-drop half ported WHOLE from herdr's own knob: without
+# the drop, a send typed blind during the delay would still land, so this
+# would pass whether or not the production gate ever ran.
+make_fake_orca
+printf 'orca\n' >"$AC_HOME/config/backend"
+# A comfortable budget again - the first (herdr) scenario above ran at the
+# generous production default (60s) and only the later herdr scenarios
+# shrank it to 2, which this suite never widens back; a 2s delay needs more
+# than a 2s budget to also clear the three-tick stabilization afterward.
+export AC_KICKOFF_READY_BUDGET=10
+# The crew's own terminal is the SECOND one orca's worktree lease mints: the
+# lease's own startup terminal (closed right after) takes the first tick of
+# the shared $FAKE_ORCA/.n counter, so +1 here would silently arm the knob on
+# a terminal nothing ever reads.
+n="$(cat "$FAKE_ORCA/.n" 2>/dev/null || printf 0)"
+t="term$((n + 2))"
+printf '2\n' >"$FAKE_ORCA/terminals/$t.delay-ready-secs"
+"$BIN/ac-brief.sh" oready1 proj --mode local-only >/dev/null
+out="$("$BIN/ac-spawn.sh" oready1 "$repo" --harness claude --mode local-only 2>&1)"
+assert_contains "$out" "spawned oready1" "orca: a delayed-ready composer still spawns once ready"
+assert_contains "$(cat "$(fake_orca_buf oready1)")" \
+  "kickoff order at" \
+  "orca: the kickoff pointer reaches the transcript only once the terminal's title confirms ready"
+"$BIN/ac-teardown.sh" oready1 --force >/dev/null 2>&1
 
 pass

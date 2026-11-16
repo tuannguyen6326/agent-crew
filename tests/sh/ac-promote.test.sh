@@ -7,17 +7,17 @@
 # teardown rules apply; --force still discards; promote refuses non-scout,
 # unknown tasks, and bad --mode values; a live window gets the notice.
 # Pure git + meta except the final notice case, which drives the fake
-# herdr backend (tests/sh/helpers.sh).
+# orca backend (tests/sh/helpers.sh).
 
 # Fail-closed sourcing: unsourced (suite run outside tests/sh/), errexit is never
 # armed and $AC_HOME is the operator's REAL fleet home - abort instead.
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
-# The fake herdr CLI keeps every backend call hermetic (panes are files
-# under $FAKE_HERDR): backend_kill_window and the notice send below can
+# The fake orca CLI keeps every backend call hermetic (terminals are files
+# under $FAKE_ORCA): backend_kill_window and the notice send below can
 # never reach the operator's live server.
-make_fake_herdr
+make_fake_orca
 
 make_home
 
@@ -30,6 +30,7 @@ mk_meta() {
     printf 'worktree=%s\n' "$2/.crew/worktrees/1"
     printf 'kind=%s\n' "$3"
     printf 'mode=-\n'
+    printf 'backend=orca\n'
   } >"$m"
 }
 
@@ -50,10 +51,10 @@ printf -- '- p1 [local-only] - promote test repo (added 2026-07-16)\n' >"$AC_HOM
 mkdir -p "$AC_HOME/data/s1"
 printf 'findings\n' >"$AC_HOME/data/s1/report.md"
 mk_meta s1 "$repo" scout
-# A GONE window, faithfully: the pane handle a spawn records survives, but
-# the herdr pane behind it no longer exists (no fake pane files) - so
-# liveness probes fail while teardown's kill path can still resolve the tab.
-printf 'p10 t10\n' >"$AC_HOME/state/.pane-s1"
+# A GONE window, faithfully: the terminal handle a spawn records survives,
+# but the orca terminal behind it no longer exists (no fake terminal files) -
+# so liveness probes fail while teardown's kill path can still resolve it.
+printf 'term10 tab10\n' >"$AC_HOME/state/.pane-s1"
 add_crew "$repo" s1
 out="$("$BIN/ac-teardown.sh" s1 2>&1)" && fail "teardown must refuse a scout with an unlanded crew branch"
 assert_contains "$out" "unlanded work" "refusal names the unlanded work"
@@ -90,7 +91,7 @@ repo5="$(make_repo p5)"
 mkdir -p "$AC_HOME/data/s5"
 printf 'findings\n' >"$AC_HOME/data/s5/report.md"
 mk_meta s5 "$repo5" scout
-printf 'p50 t50\n' >"$AC_HOME/state/.pane-s5"
+printf 'term50 tab50\n' >"$AC_HOME/state/.pane-s5"
 add_crew "$repo5" s5
 git -C "$repo5" merge -q --ff-only crew/s5
 "$BIN/ac-teardown.sh" s5 >/dev/null
@@ -137,16 +138,15 @@ assert_contains "$(cat "$AC_HOME/state/s7.status")" "reason: financial surface" 
 rm -f "$AC_HOME/state/s7.meta" "$AC_HOME/state/s7.status"
 
 # ---- Case 8: a live window gets the ship-contract notice ---------------------
-# Simulate s8's live pane: the recorded pane handle + live fake pane files
-# (what a real spawn would have left behind).
+# Simulate s8's live terminal: the recorded terminal handle + a live fake
+# terminal buffer (what a real spawn would have left behind).
 repo8="$(make_repo p8)"
 mk_meta s8 "$repo8" scout
-printf 'p80 t80\n' >"$AC_HOME/state/.pane-s8"
-printf 'p80\n' >"$FAKE_HERDR/tabs/t80"
-: >"$FAKE_HERDR/panes/p80.buf"
+printf 'term80 tab80\n' >"$AC_HOME/state/.pane-s8"
+: >"$FAKE_ORCA/terminals/term80.buf"
 out="$("$BIN/ac-promote.sh" s8 --mode local-only)"
 assert_contains "$out" "notified crewmate s8" "live window gets the notice"
-assert_contains "$(cat "$(fake_pane_buf s8)")" "crew/s8" "notice names the crew branch"
+assert_contains "$(cat "$(fake_orca_buf s8)")" "crew/s8" "notice names the crew branch"
 
 # The promoted crewmate gets the SAME mode-specific delivery contract a
 # briefed worker gets, not just the mode name - a free-form notice left the
@@ -156,7 +156,7 @@ assert_file "$si" "promotion writes the full ship instructions"
 assert_contains "$(cat "$si")" "Mode local-only" "the contract names the mode"
 assert_contains "$(cat "$si")" "Never push" "local-only carries its never-push rule"
 assert_contains "$(cat "$si")" "crew/s8" "the contract names the crew branch"
-assert_contains "$(cat "$(fake_pane_buf s8)")" "ship-instructions.md" \
+assert_contains "$(cat "$(fake_orca_buf s8)")" "ship-instructions.md" \
   "the notice points the crewmate at the full contract"
 
 # ...and a direct-pr promotion renders that mode's PR contract (no pane needed:
@@ -168,9 +168,9 @@ assert_contains "$(cat "$AC_HOME/data/s9/ship-instructions.md")" "open a PR" \
   "direct-pr instructions carry the push-and-PR contract"
 
 # --- the CLI contract, row by row ---------------------------------------------
-# One fleet home ($H); each run starts at $TMP with LC_ALL=C, the fake herdr on
-# PATH (make_fake_herdr above; pane p80's buffer and composer emptied before
-# each run) and one PATH `date` stub freezing the stamp.
+# One fleet home ($H); each run starts at $TMP with LC_ALL=C, the fake orca on
+# PATH (make_fake_orca above; terminal term80's buffer and composer emptied
+# before each run) and one PATH `date` stub freezing the stamp.
 H="$TMP/nh"; STUBS="$TMP/pstubs"
 mkdir -p "$STUBS"
 cat >"$STUBS/date" <<'DATE'
@@ -179,17 +179,17 @@ case "$*" in "-u +%Y-%m-%dT%H:%M:%SZ") echo 2026-01-01T00:00:00Z ;; *) exec /bin
 DATE
 chmod +x "$STUBS/date"
 ISO=2026-01-01T00:00:00Z
-PANE=p80   # the live fake pane case 8 minted (tabs/t80, panes/p80.buf)
+PANE=term80   # the live fake terminal case 8 minted (terminals/term80.buf)
 
 LAST_RC=0
 run() {  # run <args...> - one promote from $TMP, as a chief runs it; sets LAST_RC, stdout and stderr in $TMP/n.out and n.err
-  : >"$FAKE_HERDR/panes/$PANE.buf"; : >"$FAKE_HERDR/panes/$PANE.in"
+  : >"$FAKE_ORCA/terminals/$PANE.buf"; : >"$FAKE_ORCA/terminals/$PANE.in"
   LAST_RC=0
   (cd "$TMP" && env AC_HOME="${AC_HOME_ROW:-$H}" LC_ALL=C PATH="${DATE_STUB:-$STUBS}:$PATH" "$BIN/ac-promote.sh" "$@") >"$TMP/n.out" 2>"$TMP/n.err" || LAST_RC=$?
 }
 shim_out() { cat "$TMP/n.out"; }
 shim_err() { cat "$TMP/n.err"; }
-shim_buf() { cat "$FAKE_HERDR/panes/$PANE.buf"; }
+shim_buf() { cat "$FAKE_ORCA/terminals/$PANE.buf"; }
 reset_homes() {  # reset_homes [bare] - an empty home, state/ and data/ minted unless bare
   rm -rf "$H"; mkdir -p "$H"
   [ "${1-}" = bare ] || mkdir -p "$H/state" "$H/data"
@@ -313,14 +313,14 @@ assert_eq "$LAST_RC" 0 "--mode repeated promotes"
 shim_meta_is 'project=p1\nproject_dir=/p1\nworktree=/p1/.crew/worktrees/1\nkind=ship\nmode=direct-pr\n'
 assert_contains "$(shim_out)" "mode=direct-pr" "the last --mode wins"
 
-# 5. the happy local-only path with a GONE pane (the handle survives, the fake pane does not)
-reset_homes; mk s1; seed state/.pane-s1 'p10 t10\n'
+# 5. the happy local-only path with a GONE terminal (the handle survives, the fake terminal does not)
+reset_homes; mk s1 'kind=scout\nmode=-\nbackend=orca\n'; seed state/.pane-s1 'term10 tab10\n'
 run s1 --mode local-only
 assert_eq "$LAST_RC" 0 "promoted"
 assert_eq "$(shim_out)" "promoted s1: kind scout -> ship, mode=local-only (ship teardown protection now applies)
 $GONE" "the two stdout lines"
 assert_eq "$(shim_err)" "" "silent on stderr"
-shim_meta_is 'project=p1\nproject_dir=/p1\nworktree=/p1/.crew/worktrees/1\nkind=ship\nmode=local-only\n'
+shim_meta_is 'project=p1\nproject_dir=/p1\nworktree=/p1/.crew/worktrees/1\nbackend=orca\nkind=ship\nmode=local-only\n'
 assert_eq "$(cat "$H/state/s1.status")" "$ISO promoted: scout -> ship (mode=local-only)" "the status line under the frozen clock"
 assert_eq "$(cat "$H/data/s1/timeline.log")" "$ISO promoted: scout -> ship (mode=local-only)" "the timeline mirror in the flat task dir"
 instructions_are s1 "${LOCAL_LINE//ID/s1}"
@@ -342,8 +342,8 @@ reset_homes; mk s1
 run s1 --mode crew-ship --captain-requested ' ' --reason r
 assert_eq "$(cat "$H/state/s1.status")" "$ISO promoted: scout -> ship (mode=crew-ship) captain-requested:   reason: r" "a ref of only spaces is non-empty and rides"
 
-# 7. a LIVE fake pane gets the notice: the second stdout line, the buffer holds the notice with the contract's absolute path
-reset_homes; mk s8; seed state/.pane-s8 'p80 t80\n'
+# 7. a LIVE fake terminal gets the notice: the second stdout line, the buffer holds the notice with the contract's absolute path
+reset_homes; mk s8 'kind=scout\nmode=-\nbackend=orca\n'; seed state/.pane-s8 'term80 tab80\n'
 run s8 --mode local-only
 assert_eq "$(shim_out)" "promoted s8: kind scout -> ship, mode=local-only (ship teardown protection now applies)
 notified crewmate s8 of the ship contract" "the notified line"
