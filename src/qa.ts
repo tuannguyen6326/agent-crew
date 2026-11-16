@@ -618,7 +618,7 @@
 // exactly as with --evidence.
 //
 // EVERY CALL, in order: the backend name is checked first (an AC_BACKEND or
-// config/backend that is neither herdr nor orca refuses, before usage and the
+// config/backend that is not orca refuses, before usage and the
 // repo, outside a repo too); git and jq must be on PATH; the repo is the
 // caller's cwd's `git rev-parse --show-toplevel` (else `ERROR: not inside a
 // git repo`, before the verb is read); no verb or an unknown one is
@@ -629,7 +629,7 @@
 // points: every jq and awk program verbatim (each document's and ledger's bytes
 // are theirs), the caller-locale `tr`/`sed` scrubs and sanitizers, git, find
 // and `LC_ALL=C sort`, mktemp beside each file it stages, mv, cp, ln -sfn,
-// mkdir -p, docker, curl, gh, herdr, the verifier and the dispatch selector;
+// mkdir -p, docker, curl, gh, the verifier and the dispatch selector;
 // date(1) for every stamp and name, `sleep` for lock waits and the health
 // poll, perl's alarm around each health probe. Every child that ran under
 // `env -i` runs through /usr/bin/env -i with the same NAME=VALUE arguments.
@@ -681,8 +681,6 @@
 //   notes, testplan-amend's authority and reason, harness-classify's columns,
 //   start's qa_when/qa_why) spawn the same tr and sed, so an invalid byte under
 //   UTF-8 refuses exit 1 as it did, tr's own line included.
-// - W13: a homeless `start` with herdr on PATH prints ac_home's ERROR beside
-//   `started qa run` where the board's family lookup needs the data dir.
 // - W16: the usage refusal lists thirty of the thirty-three verbs.
 // - W17: the yaml reader's unquote strips one trailing quote from an unquoted
 //   value.
@@ -690,8 +688,6 @@
 //   swallows a legacy-path refusal into an empty base.
 // - W20: curation dies through errexit holding `.curation.lock` when its awk
 //   or mv fails.
-// - W21: any `ac-qa-watch` pane in the herdr session suppresses this run's
-//   board, and the launch line single-quotes the bin and repo paths raw.
 //
 // ALSO:
 // - BUN: every verb needs bun (the shim's `ERROR: required tool not found:
@@ -776,8 +772,6 @@ import {
   exclusiveTemp,
   findingsNormalize,
   findingsSummary,
-  herdrResolveWorkspace,
-  herdrTabOpen,
   homeResolve,
   knowledgeFile,
   lockAcquire,
@@ -798,9 +792,7 @@ import {
   taskDir,
   testInt,
   warn,
-  windowFamily,
   writeAll,
-  wsFamilyLabel,
   yamlGet,
   yamlHas,
   yamlKeys,
@@ -1094,22 +1086,6 @@ const runDir = (): string => {
 };
 
 // --- run helpers ------------------------------------------------------------------
-
-function watchOpen(rd: string, task: string): void {
-  if ((process.env.AC_QA_WATCH || "auto") === "off") return;
-  if (backendName() !== "herdr") return;
-  if (!commandV("herdr")) return;
-  const ses = b8(process.env.AC_HERDR_SESSION || configReadSoft("herdr-session", "default"));
-  if (run(["herdr", "--session", ses, "pane", "list"], { stderr: "ignore" }).out.includes('"label":"ac-qa-watch"')) return;
-  const label = `ac-qa-watch-${sanitizeCompose(task)}`;
-  const ws = herdrResolveWorkspace(wsFamilyLabel(b8(windowFamily(u8(task)))), true) ?? "";
-  const opened = herdrTabOpen(ses, label, repo, ws);
-  if (opened === null) return;
-  const p = opened.split(" ")[0]!;
-  run(["herdr", "--session", ses, "pane", "rename", p, "ac-qa-watch"], { stdout: "ignore", stderr: "ignore" });
-  run(["herdr", "--session", ses, "pane", "run", p, `'${binDir}/ac-qa-watch.sh' --repo '${repo}' --self-pane ${p}`], { stdout: "ignore", stderr: "ignore" });
-  ee(put(`${rd}/watch.pane`, `${p}\n`));
-}
 
 // docker compose's project-name grammar through the original's two `tr`s, in
 // the caller's locale (W5).
@@ -1907,7 +1883,6 @@ function cmdStart(a: string[]): void {
   ee(put(`${rd}/visuals.tsv`, ""));
   ee(put(`${rd}/steps.tsv`, STEPS.split(" ").map((s) => `${s}\tpending\t0\t-\n`).join("")));
   ee(run(["ln", "-sfn", id, current], { stdout: "inherit" }).status);
-  watchOpen(rd, task);
   say(`started qa run ${id} target=${target}${task ? ` task=${task}` : ""}\n`);
 }
 
@@ -2019,7 +1994,6 @@ function cmdStep(a: string[]): void {
     metaPut(`${rd}/run.meta`, "testplan_path", testplan);
   }
   ee(append(`${rd}/logs/run.log`, `${iso()} step=${name} status=${status}${note !== "-" ? ` note=${note}` : ""}\n`));
-  if (status === "running" || status === "fixing") watchOpen(rd, sedFirst(`${rd}/run.meta`, "task"));
   say(`${name} -> ${status}\n`);
 }
 

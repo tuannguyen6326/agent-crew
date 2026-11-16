@@ -8,13 +8,14 @@
 //
 //   ac-ship-watch.sh [--repo DIR] [--self-pane ID] [--interval SECS] [--once]
 //
-// Auto-open/auto-close contract: ac-ship.sh start
-// opens this in a herdr tab (label ac-ship-watch) and records the pane in
-// <run>/watch.pane; the watch SELF-CLOSES its pane when the run finishes
-// (outcome != running, after a short linger) or when the run goes idle for
-// AC_SHIP_WATCH_IDLE secs (default 1800) - and ac-ship.sh finish also closes
-// it belt-and-suspenders. Without --self-pane it just exits instead of
-// closing anything (foreground use).
+// Auto-open/auto-close contract: ac-ship.sh start used to open this in a
+// herdr tab (label ac-ship-watch) and record the pane in <run>/watch.pane;
+// herdr is retired, so no run opens one now - operators run it in any
+// terminal. With a --self-pane the watch SELF-CLOSES its pane when the run
+// finishes (outcome != running, after a short linger) or when the run goes
+// idle for AC_SHIP_WATCH_IDLE secs (default 1800); without it, it just exits
+// instead of closing anything (foreground use). ac-ship.sh finish also
+// closes a pre-cutover fleet's stale <run>/watch.pane belt-and-suspenders.
 // Session: AC_HERDR_SESSION > config/herdr-session > default.
 //
 // ROLE: the run base <repo>/.crew/ship; the status column `%-18s`; a step
@@ -50,12 +51,11 @@
 // An override line holding a byte that is no UTF-8 is listed as bytes whatever
 // the locale, and an override that cannot be read prints nothing on stderr.
 //
-// CALLERS: src/ship.ts's watchOpen runs `'<its bin>/ac-ship-watch.sh' --repo
-// '<repo>' --self-pane <pane>` in a herdr pane (fail-soft; a pane is reused by
-// its label, never its cmdline, so the bun process needs no match), and its
-// finish closes <run>/watch.pane; operators run it in any terminal;
-// tests/sh/ac-ship.test.sh, ac-ship-watch.test.sh and ac-watch-dash.test.sh
-// read its --once frames as text.
+// CALLERS: src/ship.ts used to auto-launch this through watchOpen in a herdr
+// pane; herdr is retired, so no run opens one now - operators run it in any
+// terminal; src/ship.ts's finish closes a pre-cutover fleet's stale
+// <run>/watch.pane. tests/sh/ac-ship.test.sh, ac-ship-watch.test.sh and
+// ac-watch-dash.test.sh read its --once frames as text.
 import { commandV, enterCaller } from "./lib.ts";
 import { type Role, b8, baseName, C, isFile, meta, readBytes, run, subst, watchDashArgs, watchDashMain } from "./watch-dash.ts";
 

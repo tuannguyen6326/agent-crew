@@ -61,11 +61,13 @@
 //   ac-ship.sh status
 //   ac-ship.sh finish <checks-passed|passed|failed|cancelled>
 //
-// LIVE DASHBOARD: start auto-opens ac-ship-watch.sh in a herdr tab (label
-// ac-ship-watch, agents workspace; AC_SHIP_WATCH=off disables; an orca fleet
-// opens none) - it marks the
-// active step, shows fix rounds + findings, tails the run log, and SELF-CLOSES
-// when the run finishes or idles; finish also retires it via <run>/watch.pane.
+// LIVE DASHBOARD: start used to auto-open ac-ship-watch.sh in a herdr tab
+// (label ac-ship-watch, agents workspace; AC_SHIP_WATCH=off disabled it);
+// herdr is retired, so no run opens one now. A pre-cutover fleet may still
+// carry one open, which finish retires via <run>/watch.pane. The board
+// itself (bin/ac-ship-watch.sh) still runs standalone in any terminal - it
+// marks the active step, shows fix rounds + findings, tails the run log, and
+// SELF-CLOSES when the run finishes or idles.
 //
 // Steps (fixed order):
 //   intent rebase review test document lint push pr
@@ -432,20 +434,20 @@
 // is evidence to read, not a verdict.
 //
 // EVERY CALL, in order: the backend name is checked first (an AC_BACKEND or
-// config/backend that is neither herdr nor orca refuses, before usage and the
+// config/backend that is not orca refuses, before usage and the
 // repo); git and jq must be on PATH; the repo is the caller's cwd's
 // `git rev-parse --show-toplevel` (else `ERROR: not inside a git repo`, before
 // the verb is read); no verb, `-h` or an unknown verb print this header on
 // stdout, exit 2. Every verb but start, attest-test, attest-check, base and
 // config needs a run (`current` a symlink, checked before the verb's own
 // arguments). Every refusal is `ERROR: <text>` on stderr, exit 1; warnings are
-// `WARN: <text>`. stdin is read only by findings and meta (the suite, the
-// verifier, git and herdr inherit it).
+// `WARN: <text>`. stdin is read only by findings and meta (the suite and the
+// verifier inherit it).
 // The mechanics stay the original's by spawning what it ran at the same points:
 // every jq program verbatim (each document's bytes are jq's), git, mktemp beside
 // each file it stages, mv, cp, ln -sfn, mkdir -p, sed and awk over the run's own
 // files, `sleep` for the ledger lock's waits, date(1) for every stamp and the run
-// id, herdr. A suite runs as the original's own pipeline -
+// id. A suite runs as the original's own pipeline -
 // `( cd <repo> && sh -c <cmd> ) 2>&1 | tee <log>` - inside /bin/bash --posix,
 // its exit the left side's (128+n for a signal); the base attribution runs
 // `sh -c <cmd>` in the base tree into its log. A --skip word holding a pattern
@@ -473,8 +475,6 @@
 //   and start freezes an EMPTY config (attest-test, config and cmd read none).
 // - W5: the F9 drop guard compares fix ids with `.id // "?"`, so two id-less
 //   fix findings re-posted as one pass.
-// - W6: any pane labelled ac-ship-watch anywhere in the herdr session
-//   suppresses this run's board.
 // - W7: push's ls-remote, fetch and push carry no time bound.
 // - W8: the normalizer reads AC_FINDINGS_ROUND/DELTA/PRIOR_OPEN from the
 //   environment, so inherited values floor a plain post.
@@ -565,8 +565,6 @@ import {
   exclusiveTemp,
   findingsNormalize,
   findingsSummary,
-  herdrResolveWorkspace,
-  herdrTabOpen,
   lockAcquire,
   lockRelease,
   projectConfigFile,
@@ -575,9 +573,7 @@ import {
   spawnShellSync,
   testInt,
   warn,
-  windowFamily,
   writeAll,
-  wsFamilyLabel,
   yamlGet,
 } from "./lib.ts";
 
@@ -994,34 +990,11 @@ function cmdStart(a: string[]): void {
   }
   ee(put(`${rd}/steps.tsv`, tsv));
   ee(run(["ln", "-sfn", id, current], { stdout: "inherit" }).status);
-  watchOpen(rd, branch);
   const startline = cap(
     `started run ${id} branch=${branch} base=${base.slice(0, 12)}${tref ? ` target=${tref}` : ""}${wantLint ? "" : " (lint skip-by-default: pass --lint to run it)"}${tdd ? " (test skipped: --tdd declares the implement covered it)" : ""}`,
   );
   if (tdd) overrideNote(rd, "tdd-declared", startline, "test step declared by --tdd, suite not run by this pipeline");
   say(`${startline}\n`);
-}
-
-// The live board, a herdr tab: never fails the caller.
-function watchOpen(rd: string, branch: string): void {
-  if ((process.env.AC_SHIP_WATCH || "auto") === "off") return;
-  if (backendName() !== "herdr") return;
-  if (!commandV("herdr")) return;
-  const ses = b8(process.env.AC_HERDR_SESSION || configReadSoft("herdr-session", "default"));
-  if (run(["herdr", "--session", ses, "pane", "list"], { stderr: "ignore" }).out.includes('"label":"ac-ship-watch"')) return;
-  const label = `ac-ship-watch-${branch.replaceAll("/", "-")}`;
-  const ws = herdrResolveWorkspace(wsFamilyLabel(b8(windowFamily(u8(branch.startsWith("crew/") ? branch.slice(5) : branch)))), true) ?? "";
-  const opened = herdrTabOpen(ses, label, repo, ws);
-  if (opened === null) return;
-  const p = opened.split(" ")[0]!;
-  run(["herdr", "--session", ses, "pane", "rename", p, "ac-ship-watch"], { stdout: "ignore", stderr: "ignore" });
-  run(["herdr", "--session", ses, "pane", "run", p, `'${binDir}/ac-ship-watch.sh' --repo '${repo}' --self-pane ${p}`], { stdout: "ignore", stderr: "ignore" });
-  ee(put(`${rd}/watch.pane`, `${p}\n`));
-  if (ws === "") return;
-  const tabs = run(["herdr", "--session", ses, "tab", "list"], { stderr: "ignore" });
-  const ids = run(["jq", "-r", "--arg", "ws", ws, '.result.tabs[]? | select(.workspace_id == $ws and .label == "1") | .tab_id'], { stdin: B(tabs.out), stderr: "ignore" });
-  for (const l of ids.out.split("\n").slice(0, -1))
-    run(["herdr", "--session", ses, "tab", "close", l.replace(/^[ \t\n]+|[ \t\n]+$/g, "")], { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
 }
 
 // --- step / skip-remaining ----------------------------------------------------
@@ -1087,7 +1060,6 @@ function cmdStep(a: string[], print = true): void {
   ledgerRewrite(rd, ["-v", `s=${name}`, "-v", `st=${status}`, STEP_AWK], "step");
   if (name === "test" && status === "completed") overrideClear(rd, "tdd-declared");
   ee(append(`${rd}/logs/run.log`, `${iso()} step=${name} status=${status}${note ? ` note=${note}` : ""}\n`));
-  if (status === "running" || status === "fixing" || status === "awaiting_approval") watchOpen(rd, sedFirst(`${rd}/run.meta`, "s/^branch=//p").out);
   const r = run(["awk", "-F\\t", "-v", `s=${name}`, "$1 == s { print $3 }", `${rd}/steps.tsv`]);
   ee(r.status);
   if (!print) return;

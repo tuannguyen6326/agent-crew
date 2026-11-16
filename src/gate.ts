@@ -223,14 +223,10 @@
 // plus the pane-agent's own transient stdout/stderr paths) so ac-gate-watch can
 // tail the ACTIVE run; only the DESCRIPTOR is deleted on exit, never the prompt
 // file it names, so --tail can still point back to it once the gate settles.
-// ac-gate.sh opens the board PER RUN on a herdr fleet, ac-ship-watch style:
-// labelled ac-gate-watch:<family>, in the family's workspace, family-pinned
-// --tail, closed by the exit of the family's last live run (watchOpen owns the
-// contract; AC_GATE_WATCH=off disables; an orca fleet opens none). A labelled
-// board is reused while its pane's foreground cmdline names
-// `ac-gate-watch.sh` or `/src/gate-watch.ts`; a pane herdr answered for with
-// neither is dead, closed and replaced; an unreadable or empty answer is not
-// death and the board is reused.
+// ac-gate.sh used to auto-open a board labelled ac-gate-watch:<family> on a
+// herdr fleet; herdr is retired, so no run opens one now. A pre-cutover fleet
+// may still carry one open, which watchRetire closes by label at the
+// family's last live run's exit.
 //
 // BUSY DECLARATION: a positional-mode gate blocks its CALLER - typically the
 // family's roomchief - inside ONE synchronous tool call for up to
@@ -362,9 +358,6 @@ import {
   envHome,
   exclusiveTemp,
   harnessKnown,
-  herdrCli,
-  herdrResolveWorkspace,
-  herdrTabOpen,
   iso,
   lockAcquire,
   lockRelease,
@@ -376,7 +369,6 @@ import {
   recordsDir,
   require,
   sha256File,
-  shellQuote,
   shellSpaceClass,
   shellStatus,
   spawnShellSync,
@@ -387,7 +379,6 @@ import {
   transcriptFinal,
   windowFamily,
   writeAll,
-  wsFamilyLabel,
 } from "./lib.ts";
 import { readEvidence } from "./maintenance-receipt.ts";
 import { NORMALIZE_IDS, PARTITION, R1_IDS, REVIEW_BODY } from "./room.ts";
@@ -881,7 +872,6 @@ const S = {
   tmpOut: "",
   tmpCanonical: "",
   tmpContext: "",
-  watchPane: "",
   familyLocked: false,
 };
 
@@ -920,13 +910,9 @@ const quietPid = (m: string): string => {
   }
 };
 
-// The board this run opened, or - a family run that reused another's board -
-// the family's board by its label. Never fails the exit.
+// The family's board by its label, from a pre-cutover fleet that still has
+// one open under herdr - a current run never opens one. Never fails the exit.
 function watchRetire(): void {
-  if (S.watchPane !== "") {
-    herdrCli(["pane", "close", u8(S.watchPane)], "inherit", "ignore", "ignore");
-    return;
-  }
   if (S.busyDecl === "") return;
   if (!watchOn() || !commandV("herdr")) return;
   const ses = b8(process.env.AC_HERDR_SESSION || configReadSoft("herdr-session", "default", "ignore"));
@@ -978,71 +964,6 @@ function cleanup(): void {
 // Where a signal that reached the run is acted on: the handler runs at the
 // next turn of the event loop, never inside a synchronous spawn.
 const checkpoint = (): Promise<void> => Bun.sleep(0);
-
-// --- the board -------------------------------------------------------------
-
-// The labelled board's pane id ONLY when herdr ANSWERED and the board process
-// is provably gone; "" when it is alive OR the answer could not be read. A
-// herdr pane outlives the process `pane run` started in it, so a label is
-// evidence a board was once opened, never that one runs now; identity is the
-// CMDLINE - the bash board runs as `bash <path>/ac-gate-watch.sh` and the bun
-// one as `bun --no-env-file <root>/src/gate-watch.ts`, so an argv0 verdict
-// would read a live board dead whenever it is sampled between its sleeps.
-function watchStalePane(ses: string, label: string): string {
-  const r = pipeline(
-    [
-      ["herdr", "--session", ses, "pane", "list"],
-      ["jq", "-r", "--arg", "l", label, PANE_IDS_JQ],
-      ["head", "-1"],
-    ],
-    null,
-    "ignore",
-  );
-  const pane = subst(r.out);
-  if (r.status !== 0 || pane === "") return "";
-  const info = run(["herdr", "--session", ses, "pane", "process-info", "--pane", pane], { stdout: "pipe", stderr: "ignore" });
-  if (info.status !== 0) return "";
-  const text = subst(info.out);
-  if (run(["jq", "-e", "(.result.process_info.foreground_processes // []) | length > 0"], { stdin: { data: text }, stdout: "ignore", stderr: "ignore" }).status !== 0) return "";
-  if (
-    run(["jq", "-e", '[.result.process_info.foreground_processes[].cmdline // ""]\n             | any(test("ac-gate-watch\\\\.sh|/src/gate-watch\\\\.ts"))'], { stdin: { data: text }, stdout: "ignore", stderr: "ignore" })
-      .status === 0
-  )
-    return "";
-  return pane;
-}
-
-// Auto-open THIS run's board in a herdr tab, labelled ac-gate-watch:<family>,
-// in the FAMILY's workspace beside its crew tabs (ac-backend.sh FAMILY
-// WORKSPACE GROUPING), tailing THIS family's gates only, and RETIRED with the
-// family's last live run (leaveFamily). Idempotent per family: a LIVE board is
-// reused and stays out of watchPane; a dead one is closed and replaced. Never
-// fails the run. An orca fleet opens none even with herdr on PATH.
-function watchOpen(binDir: string): void {
-  if (!watchOn()) return;
-  if (backendName() !== "herdr") return;
-  if (!commandV("herdr")) return;
-  const home = b8(envHome());
-  const label = `ac-gate-watch:${S.family}`;
-  const ses = b8(process.env.AC_HERDR_SESSION || configReadSoft("herdr-session", "default"));
-  const list = run(["herdr", "--session", ses, "pane", "list"], { stdout: "pipe", stderr: "ignore" });
-  if (list.out.toString("latin1").includes(`"label":"${label}"`)) {
-    const stale = watchStalePane(ses, label);
-    if (stale === "") return;
-    run(["herdr", "--session", ses, "pane", "close", stale], { stdout: "ignore", stderr: "ignore" });
-  }
-  const ws = herdrResolveWorkspace(wsFamilyLabel(b8(windowFamily(u8(S.family)))), true) ?? "";
-  const opened = herdrTabOpen(ses, label, home, ws);
-  if (opened === null) return;
-  const p = head(opened);
-  run(["herdr", "--session", ses, "pane", "rename", p, label], { stdout: "ignore", stderr: "ignore" });
-  // --tail: the board an operator wants open is the live one - the exact
-  // prompt plus the bytes the engine emits; --family pins it so a concurrent
-  // other-family gate never steals the tail; no --self-pane, the close belongs
-  // to the family's last run's exit.
-  run(["herdr", "--session", ses, "pane", "run", p, `AC_HOME=${shellQuote(home)} '${binDir}/ac-gate-watch.sh' --tail --family ${shellQuote(S.family)}`], { stdout: "ignore", stderr: "ignore" });
-  S.watchPane = p;
-}
 
 // --- the run ---------------------------------------------------------------
 
@@ -1396,7 +1317,6 @@ async function main(): Promise<void> {
     }
   }
   unlockFamily();
-  watchOpen(binDir);
   await checkpoint();
 
   // ONE fresh non-resumed one-shot turn on the selected engine; --observe hands

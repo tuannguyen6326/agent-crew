@@ -1323,143 +1323,10 @@ assert_contains "$(cat "$GLOG.prompt")" "data/noroom/room.md" "the created room 
 assert_contains "$(cat "$AC_HOME/data/noroom/room.md")" "GATE-VERIFY:" "gate-verify records the chief pass in the created room"
 
 # ============================================================================
-# 13. the auto-opened gate board embeds ac-gate-watch as an ABSOLUTE path
+# 13. (retired) the gate board used to auto-open through watchOpen on a herdr
+# fleet; herdr is retired, so no run ever opens one now - see the family's
+# last-live-run retire coverage below for watchRetire's surviving cleanup.
 # ============================================================================
-# The board pane runs with --cwd "$AC_HOME" - a DIFFERENT directory than the
-# caller's - so a caller-relative "$(dirname "$0")" would not resolve there.
-# This invokes ac-gate.sh the way AGENTS.md tells every chief to (a RELATIVE
-# path, from a cwd that is not the bin dir).
-# The auto-opened board is a herdr-only feature (src/gate.ts:1023 returns
-# before opening one on any other backend), so this section pins herdr
-# explicitly rather than lean on the no-config default.
-printf 'herdr\n' >"$AC_HOME/config/backend"
-export HDLOG="$TMP/hd.log"
-cat >"$stub/herdr" <<'EOF'
-#!/usr/bin/env bash
-echo "herdr $*" >>"$HDLOG"
-[ "${1:-}" = --session ] && shift 2
-case "${1:-} ${2:-}" in
-  "pane list") printf '%s\n' "${HD_PANE_LIST:-}" ;;
-  "workspace list") echo '{"result":{"workspaces":[]}}' ;;
-  "tab create") echo '{"result":{"tab":{"tab_id":"tG"},"root_pane":{"pane_id":"pG1"}}}' ;;
-  "pane run") printf '%s\n' "$4" >>"$HDLOG.cmd" ;;
-  # An UNSET HD_PROC_INFO is herdr failing to answer, not an empty answer: the
-  # process-info read must be able to FAIL so the unobservable direction is
-  # reachable from a test.
-  "pane process-info") [ -n "${HD_PROC_INFO:-}" ] || exit 1; printf '%s\n' "$HD_PROC_INFO" ;;
-  "pane close") printf '%s\n' "$3" >>"$HDLOG.closed" ;;
-esac
-exit 0
-EOF
-chmod +x "$stub/herdr"
-: >"$HDLOG.cmd"
-: >"$HDLOG.closed"
-clear_gate_artifacts widget spec
-( cd "$ROOT" && PATH="$stub:$PATH" AC_PANE_AGENT="$stub/pane-agent" AC_GATE_WATCH=auto \
-    bin/ac-gate.sh widget spec >/dev/null 2>&1 ) || true
-wcmd="$(grep 'ac-gate-watch\.sh' "$HDLOG.cmd" | head -1)"
-[ -n "$wcmd" ] || fail "AC_GATE_WATCH=auto must compose a gate-board pane-run line"
-wpath="$(printf '%s\n' "$wcmd" | sed -n "s/.*'\([^']*ac-gate-watch\.sh\)'.*/\1/p")"
-case "$wpath" in /*) ;; *) fail "gate board must be absolute in the pane command, got '$wpath'" ;; esac
-# The auto-opened board opens in --tail mode (captain product decision): the
-# operator wants the exact prompt + live emitted output, not the row dashboard.
-case "$wcmd" in *--tail*) ;; *) fail "the auto-opened board must launch --tail, got: $wcmd" ;; esac
-# ...and it is never handed --self-pane: the close belongs to the gate run's
-# EXIT trap (ac-ship-watch style), not to a promise the tail loop cannot perform.
-case "$wcmd" in *--self-pane*) fail "the tail board must not be handed --self-pane: $wcmd" ;; esac
-# The board is family-pinned: a concurrent other-family gate must not steal it.
-case "$wcmd" in *"--family widget"*) ;; *) fail "the board must tail its own family only, got: $wcmd" ;; esac
-# The board identity is family-specific (captain ruling, ac-ship-watch
-# style). Another family's board in the same session must not be reused.
-assert_contains "$(cat "$HDLOG")" "--label ac-gate-watch:widget" \
-  "the auto-opened gate board label includes the family"
-# The family's last live run retires the board it opened on exit.
-assert_contains "$(cat "$HDLOG.closed")" "pG1" \
-  "the run's exit closes the board pane it opened"
-before="$(grep -c 'tab create' "$HDLOG")"
-clear_gate_artifacts widget spec
-( cd "$ROOT" && PATH="$stub:$PATH" AC_PANE_AGENT="$stub/pane-agent" AC_GATE_WATCH=auto \
-    HD_PANE_LIST='{"label":"ac-gate-watch:other"}' \
-    bin/ac-gate.sh widget spec >/dev/null 2>&1 ) || true
-after="$(grep -c 'tab create' "$HDLOG")"
-assert_eq "$after" "$((before + 1))" \
-  "another family's watcher does not suppress this family's watcher"
-before="$after"
-clear_gate_artifacts widget spec
-( cd "$ROOT" && PATH="$stub:$PATH" AC_PANE_AGENT="$stub/pane-agent" AC_GATE_WATCH=auto \
-    HD_PANE_LIST='{"label":"ac-gate-watch:widget"}' \
-    bin/ac-gate.sh widget spec >/dev/null 2>&1 ) || true
-after="$(grep -c 'tab create' "$HDLOG")"
-assert_eq "$after" "$before" "this family reuses its existing LIVE watcher"
-# An orca fleet opens no board, herdr on PATH or not: the board is a herdr tab,
-# and closing it went through herdr_cli, which refuses under orca - an exit 1
-# inside the EXIT trap that reported a settled gate as failed and left its lock
-# and busy declaration behind (the lab, 2026-09-23).
-: >"$HDLOG.closed"
-clear_gate_artifacts widget spec
-printf 'orca\n' >"$AC_HOME/config/backend"
-rc=0
-( cd "$ROOT" && PATH="$stub:$PATH" AC_PANE_AGENT="$stub/pane-agent" AC_GATE_WATCH=auto \
-    bin/ac-gate.sh widget spec >"$TMP/orcagate.out" 2>"$TMP/orcagate.err" ) || rc=$?
-printf 'herdr\n' >"$AC_HOME/config/backend"   # 13b below still needs the board open
-assert_eq "$rc:$(cat "$TMP/orcagate.err")" "0:" "an orca fleet's gate settles with exit 0"
-assert_contains "$(cat "$TMP/orcagate.out")" "widget/spec r1:" "...and prints its result"
-assert_eq "$(grep -c 'tab create' "$HDLOG")" "$after" "an orca fleet opens no herdr board"
-assert_eq "$(cat "$HDLOG.closed")" "" "...so there is none to close"
-assert_no_file "$AC_HOME/data/widget/.gate-lock" "an orca fleet's gate leaves the family lock free"
-assert_no_file "$AC_HOME/state/.chief-busy-until.widget" "...and clears its busy declaration"
-
-# --- 13b. the reuse is keyed on a LIVE board, not merely on the label ----------
-# A herdr pane OUTLIVES the process `pane run` started in it (measured on herdr
-# 0.7.5), so a board that died - a tail board quit with the C-c its own header
-# invites, or a hand-run dashboard board self-closing - leaves its label behind.
-# Keyed on the label alone, that dead pane suppressed the launch for every later
-# gate in the fleet+session, and a live gate then ran with no board at all while
-# the tab still looked present. Keyed on liveness, the stale pane is closed and
-# the existing create path runs.
-watch_pane_list() { printf '{"result":{"panes":[{"pane_id":"pDEAD","label":"%s","tab_id":"tG"}]}}' "$1"; }
-run_watch_case() {  # $1=proc-info json ('' = herdr cannot answer)
-  clear_gate_artifacts widget spec
-  ( cd "$ROOT" && PATH="$stub:$PATH" AC_PANE_AGENT="$stub/pane-agent" AC_GATE_WATCH=auto \
-      HD_PANE_LIST="$(watch_pane_list ac-gate-watch:widget)" HD_PROC_INFO="$1" \
-      bin/ac-gate.sh widget spec >/dev/null 2>&1 ) || true
-}
-
-# A DEAD board: its pane is back at a bare shell prompt. Close it and relaunch.
-before="$after"; : >"$HDLOG.closed"
-run_watch_case '{"result":{"process_info":{"foreground_processes":[{"argv0":"zsh","cmdline":"-zsh"}]}}}'
-assert_eq "$(grep -c 'tab create' "$HDLOG")" "$((before + 1))" \
-  "a labelled pane whose board process is GONE must not suppress the relaunch"
-assert_contains "$(cat "$HDLOG.closed")" "pDEAD" \
-  "the stale board pane must be closed, not left to suppress the next gate too"
-
-# A LIVE board, sampled while only the script itself holds the foreground. This
-# is the case that pins the PRIMITIVE: the board's own argv0 is `bash`, so an
-# argv0-against-a-shell-list verdict (backend_harness_up_pane) would read SHELL
-# here and kill a healthy board. The cmdline is what identifies it.
-before="$(grep -c 'tab create' "$HDLOG")"; : >"$HDLOG.closed"
-run_watch_case '{"result":{"process_info":{"foreground_processes":[{"argv0":"bash","cmdline":"bash /x/bin/ac-gate-watch.sh --tail"}]}}}'
-assert_eq "$(grep -c 'tab create' "$HDLOG")" "$before" \
-  "a LIVE board whose argv0 is bash must still be recognised and reused"
-assert_eq "$(cat "$HDLOG.closed")" "pDEAD" \
-  "a live board is reused, never closed at open - the family's last run retires it at exit"
-
-# UNOBSERVABLE, both shapes: herdr could not answer, and herdr answered with an
-# empty foreground list. Neither is evidence the board died, so both keep TODAY's
-# behaviour exactly - reuse, no close, gate unaffected.
-before="$(grep -c 'tab create' "$HDLOG")"; : >"$HDLOG.closed"
-run_watch_case ''
-assert_eq "$(grep -c 'tab create' "$HDLOG")" "$before" \
-  "an unreadable process-info must not be read as a dead board"
-assert_eq "$(cat "$HDLOG.closed")" "pDEAD" \
-  "an unreadable process-info closes nothing at open - only the last run's exit retires the board"
-before="$(grep -c 'tab create' "$HDLOG")"; : >"$HDLOG.closed"
-run_watch_case '{"result":{"process_info":{"foreground_processes":[]}}}'
-assert_eq "$(grep -c 'tab create' "$HDLOG")" "$before" \
-  "an empty foreground list must not be read as a dead board"
-assert_eq "$(cat "$HDLOG.closed")" "pDEAD" \
-  "an empty foreground list closes nothing at open - only the last run's exit retires the board"
-rm -f "$AC_HOME/config/backend"
 
 # ============================================================================
 # 14. a LARGE captain.md never aborts the gate (fed as a PATH, no cap, no truncation)
@@ -2343,10 +2210,23 @@ assert_eq "$(cat "$hold/bsi.rc")" "0" "the gate run settles after the verifier l
 assert_no_file "$busy4" "the last holder's exit clears the declaration"
 
 # --- the gate board is the FAMILY's: only its last live run retires it ----------
-# The run that opened the board may exit first; a same-family run still live
-# keeps it open, and the family's last run closes it by its label. The board
-# is herdr-only (src/gate.ts:1023), so this section pins the backend too.
-printf 'herdr\n' >"$AC_HOME/config/backend"
+# No run opens a board anymore (herdr is retired), but a pre-cutover fleet may
+# still carry one open under the family's label; watchRetire keeps closing it
+# by label at the family's last live run's exit, regardless of config/backend
+# (it gates only on the herdr binary being on PATH) - HD_PANE_LIST below seeds
+# that pre-existing board. The stub below models only watchRetire's two calls.
+export HDLOG="$TMP/hd.log"
+cat >"$stub/herdr" <<'EOF'
+#!/usr/bin/env bash
+echo "herdr $*" >>"$HDLOG"
+[ "${1:-}" = --session ] && shift 2
+case "${1:-} ${2:-}" in
+  "pane list") printf '%s\n' "${HD_PANE_LIST:-}" ;;
+  "pane close") printf '%s\n' "$3" >>"$HDLOG.closed" ;;
+esac
+exit 0
+EOF
+chmod +x "$stub/herdr"
 fam5=boardshare
 for s in spec arch; do
   mkdir -p "$AC_HOME/data/$fam5/$s"
@@ -2379,7 +2259,6 @@ assert_eq "$(cat "$HDLOG.closed")" "" "the board stays open while a same-family 
 release_held bdB
 assert_eq "$(cat "$hold/bdB.rc")" "0" "the family's last run settles"
 assert_eq "$(cat "$HDLOG.closed")" "pG1" "the family's last run retires the board by its label"
-rm -f "$AC_HOME/config/backend"
 
 # --- a run starting while another of its family exits keeps its declaration ------
 # X is held inside its exit, after it found no other live run and before it clears
@@ -2428,18 +2307,17 @@ assert_no_file "$busy3" "the family's last run clears the busy declaration"
 # file), a clone at home/projects/proj built with fixed author/committer dates
 # and one git config (GIT_CONFIG_GLOBAL, no system config), a row's own seeding
 # on top; AC_HOME, TMPDIR=$XW/tmp, AC_PANE_AGENT = the leg's stub agent,
-# AC_GATE_WATCH off unless a board row turns it auto, every AC_GATE_* knob,
-# AC_BACKEND, AC_HERDR_SESSION, AC_SCOPE and EPOCHSECONDS unset unless a row
-# sets one; cwd $XW/cwd, an empty dir, unless a row names another; stdin
-# /dev/null; LC_ALL=C unless a row names en_US.UTF-8; PATH stubs - date
-# answering one instant per format, sleep logging each call and returning at
-# once, the stub agent (logging its argv, the live marker, the busy
-# declaration and AC_WINDOW_FAMILY, and answering the row's body in a
-# transcript at a fixed path) and, for board rows, a fake herdr logging its
-# argv. A row reads the run's exit status, stdout and stderr (the bin root
-# spelled ROOT, the entry's pid PID) and what it left under $XW.
+# AC_GATE_WATCH off, every AC_GATE_* knob, AC_BACKEND, AC_HERDR_SESSION,
+# AC_SCOPE and EPOCHSECONDS unset unless a row sets one; cwd $XW/cwd, an
+# empty dir, unless a row names another; stdin /dev/null; LC_ALL=C unless a
+# row names en_US.UTF-8; PATH stubs - date answering one instant per format,
+# sleep logging each call and returning at once, the stub agent (logging its
+# argv, the live marker, the busy declaration and AC_WINDOW_FAMILY, and
+# answering the row's body in a transcript at a fixed path). A row reads the
+# run's exit status, stdout and stderr (the bin root spelled ROOT, the
+# entry's pid PID) and what it left under $XW.
 XW="$TMP/xw"; XS="$TMP/xstubs"; XB="$TMP/xbodies"
-mkdir -p "$XS/hd" "$XB"
+mkdir -p "$XS" "$XB"
 printf '[user]\n\tname = t\n\temail = t@t\n[init]\n\tdefaultBranch = main\n' >"$TMP/xgitconfig"
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$TMP/xgitconfig"
 export GIT_AUTHOR_DATE='2026-01-01T00:00:00Z' GIT_COMMITTER_DATE='2026-01-01T00:00:00Z'
@@ -2493,19 +2371,7 @@ fi
 [ -z "${XAG_POST:-}" ] || printf '%s\n' "$XAG_POST"
 exit "${XAG_RC:-0}"
 STUB
-cat >"$XS/hd/herdr" <<'STUB'
-#!/bin/sh
-printf 'herdr %s\n' "$*" >>"$XW/log/herdr.log"
-[ "$1" = --session ] && shift 2
-case "$1 $2" in
-  "pane list") cat "$XW/hd/pane-list" 2>/dev/null ;;
-  "workspace list") echo '{"result":{"workspaces":[]}}' ;;
-  "tab create") echo '{"result":{"tab":{"tab_id":"tG"},"root_pane":{"pane_id":"pG1"}}}' ;;
-  "pane process-info") [ -f "$XW/hd/proc-info" ] || exit 1; cat "$XW/hd/proc-info" ;;
-esac
-exit 0
-STUB
-chmod +x "$XS/date" "$XS/sleep" "$XS/xagent" "$XS/hd/herdr"
+chmod +x "$XS/date" "$XS/sleep" "$XS/xagent"
 # The bodies the stub answers: one per decision, valid for the staged round
 # contract (revise numbers two items), and the maintenance ones over the
 # fixed run below.
@@ -2596,10 +2462,8 @@ xstd_m() {  # a maintenance run: manifest, staged skill, plan, run report
 }
 XMARGS=(maintenance --mode learning --run "$XMR" --subject example --manifest "$XMR/input-manifest.md" --plan "$XMR/plan.json")
 # A row's world: XBASE (xstd unless named) then XPLUS, a shell snippet over it.
-xplus() {  # the auto-opened board is herdr-only (src/gate.ts:1023), so a
-  # row proving it pins the backend rather than lean on the no-config default.
+xplus() {
   "${XBASE:-xstd}"
-  [ "$XWATCH" != auto ] || printf 'herdr\n' >"$XW/home/config/backend"
   [ -z "${XPLUS:-}" ] || eval "$XPLUS"
 }
 XLC=C; XCWD=cwd; XPRE=""; XPATH=""; XHOMELESS=0; XWATCH=off; XE=""
@@ -2683,7 +2547,7 @@ XROUTED='{"panes":{"gate":{"rules":[{"when":"risk","use":{"harness":"codex","mod
 # 1. order and arguments: the home, the backend, usage before any input,
 #    every flag arm.
 XHOMELESS=1 xrefuse "$XNOHOME" widget spec
-XE=AC_BACKEND=tmux xrefuse "unsupported backend 'tmux' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)" widget spec
+XE=AC_BACKEND=tmux xrefuse "unsupported backend 'tmux' (valid backend: orca)" widget spec
 XE="AC_HOME=$XW/nope" xrefuse "AC_HOME is not a readable directory: $XW/nope" widget spec
 XBASE=xseed xrefuse "$XUSAGE"
 xrefuse "$XUSAGE" widget
@@ -2956,32 +2820,10 @@ fi
 rc=0; xrun_side widget spec || rc=$?
 assert_eq "$rc:$(cat "$TMP/xn.err")" "0:" "the next run settles the round the terminated one left"
 
-# 9. the board (AC_GATE_WATCH=auto, the fake herdr first on PATH): the launch
-#    line, a live board reused, a dead one replaced, an unobservable one
-#    kept, maintenance, the widened board match.
-XBOARD='{"result":{"panes":[{"pane_id":"pX","label":"ac-gate-watch:widget","tab_id":"tG"}]}}'
-xboard() {  # xboard <proc-info json|-|none> - the labelled pane listed, its foreground answer (none: herdr fails)
-  mkdir -p "$XW/hd"
-  printf '%s\n' "$XBOARD" >"$XW/hd/pane-list"
-  case "$1" in none) ;; -) : >"$XW/hd/proc-info" ;; *) printf '%s\n' "$1" >"$XW/hd/proc-info" ;; esac
-}
-XWATCH=auto XPRE="$XS/hd" xok widget spec
-assert_contains "$(xfile log/herdr.log)" "pane run pG1 AC_HOME=$XW/home 'ROOT/bin/ac-gate-watch.sh' --tail --family widget" "the board's launch line"
-assert_contains "$(xfile log/herdr.log)" "herdr pane close pG1" "the run's exit closes the board it opened"
-# An empty answer is not death: the labelled board is reused.
-for info in '{"result":{"process_info":{"foreground_processes":[]}}}' -; do
-  XWATCH=auto XPRE="$XS/hd" XPLUS="xboard '$info'" xok widget spec
-  case "$(cat "$XW/log/herdr.log")" in *"tab create"*) fail "an empty answer ('$info') reuses the board" ;; esac
-done
-XWATCH=auto XPRE="$XS/hd" XE=AC_HERDR_SESSION=s7 xok widget spec
-assert_contains "$(cat "$XW/log/herdr.log")" "herdr --session s7 tab create --label ac-gate-watch:widget" "AC_HERDR_SESSION names the board's session"
-XWATCH=auto XPRE="$XS/hd" XPLUS='printf "cfg\n" >"$XW/home/config/herdr-session"' xok widget spec
-assert_contains "$(cat "$XW/log/herdr.log")" "herdr --session cfg tab create --label ac-gate-watch:widget" "config/herdr-session names it otherwise"
-XWATCH=auto XPRE="$XS/hd" XBASE=xstd_m XAG_BODY="$XB/m-continue.md" xok "${XMARGS[@]}"
-assert_contains "$(cat "$XW/log/herdr.log")" "tab create --label ac-gate-watch:learning-42" "a maintenance run's board is labelled by its run"
-# THE WIDENED BOARD MATCH: a board running the bun module is live and reused.
-XWATCH=auto XPRE="$XS/hd" XPLUS="xboard '{\"result\":{\"process_info\":{\"foreground_processes\":[{\"argv0\":\"bun\",\"cmdline\":\"bun --no-env-file /x/src/gate-watch.ts /x --tail --family widget\"}]}}}'" xok widget spec
-case "$(cat "$XW/log/herdr.log")" in *"tab create"*) fail "a bun-cmdline board is reused" ;; esac
+# 9. (retired) the board used to auto-open on a herdr fleet, launch line,
+# live/dead/unobservable reuse and all; herdr is retired, so no run opens one
+# now (the family's last-live-run retire coverage above is what remains of
+# the board mechanism, for a pre-cutover fleet's leftover pane).
 
 # 10. signals: HUP, INT and TERM to the gate alone mid-turn - the turn is
 #     waited out, the run ends 128+n through its exit, nothing published.

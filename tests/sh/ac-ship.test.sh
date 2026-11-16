@@ -675,42 +675,32 @@ assert_eq "$(git -C "$cb_origin" rev-parse refs/heads/crew/p2)" "$cb_diverged" \
   "the diverged remote is untouched by the refusal"
 ( cd "$cbwork" && "$BIN/ac-ship.sh" finish cancelled >/dev/null )
 
-# Live dashboard: --once renders the run frame; start auto-opens the watch
-# tab (stubbed herdr) and finish retires it; AC_SHIP_WATCH=off suppresses.
+# Live dashboard: --once renders the run frame. herdr is retired, so no run
+# opens a watch tab anymore, whatever AC_SHIP_WATCH says; finish still
+# retires a PRE-EXISTING watch.pane handle (best-effort, via herdr if it
+# happens to be on PATH) left by a pre-cutover fleet.
 frame="$("$BIN/ac-ship-watch.sh" --repo "$repo" --once)"
 assert_contains "$frame" "ac-ship" "watch renders header"
 assert_contains "$frame" "intent: ship the widget" "watch shows intent"
 assert_contains "$frame" "findings lint" "watch shows findings summary"
-# The watch-tab open is gated on backendName() === "herdr" (src/ship.ts:1008);
-# pin it explicitly through this whole battery.
-printf 'herdr\n' >"$AC_HOME/config/backend"
 wrepo="$(make_repo watchrepo)"
 export WHLOG="$TMP/wh.log"
 cat >"$stub/herdr" <<'EOF'
 #!/usr/bin/env bash
 echo "herdr $*" >>"$WHLOG"
-[ "${1:-}" = --session ] && shift 2
-case "${1:-} ${2:-}" in
-  "pane list") echo '{"result":{"panes":[]}}' ;;
-  "workspace get") exit 1 ;;
-  "workspace list") echo '{"result":{"workspaces":[]}}' ;;
-  "workspace create") echo '{"result":{"workspace":{"workspace_id":"wW"}}}' ;;
-  "tab create") echo '{"result":{"tab":{"tab_id":"tW"},"root_pane":{"pane_id":"pW1"}}}' ;;
-esac
 exit 0
 EOF
 chmod +x "$stub/herdr"
 cd "$wrepo" || fail "cd wrepo"
+: >"$WHLOG"
 out="$(PATH="$stub:$PATH" AC_SHIP_WATCH=auto "$BIN/ac-ship.sh" start --intent "watch me")"
-assert_contains "$out" "started run" "start with watch"
-wlog="$(cat "$WHLOG")"
-assert_contains "$wlog" "tab create --workspace wW" "watch tab opened in the agents group"
-assert_contains "$wlog" "pane rename pW1 ac-ship-watch" "watch pane labeled"
-assert_contains "$wlog" "ac-ship-watch.sh" "watch script launched"
+assert_contains "$out" "started run" "start with the watch knob set"
+case "$(cat "$WHLOG")" in ?*) fail "start must never open a watch tab (herdr is retired): $(cat "$WHLOG")" ;; esac
 wrun="$wrepo/.crew/ship/$(readlink "$wrepo/.crew/ship/current")"
-assert_eq "$(cat "$wrun/watch.pane")" "pW1" "watch pane recorded"
+assert_no_file "$wrun/watch.pane" "no run records a watch.pane handle"
+printf 'pW1\n' >"$wrun/watch.pane"
 PATH="$stub:$PATH" "$BIN/ac-ship.sh" finish cancelled >/dev/null
-assert_contains "$(cat "$WHLOG")" "pane close pW1" "finish retires the watch pane"
+assert_contains "$(cat "$WHLOG")" "pane close pW1" "finish retires a pre-existing watch pane"
 assert_no_file "$wrun/watch.pane" "watch pane handle cleaned"
 
 # An ALREADY-GONE watch pane must not abort finish either: a herdr stub
@@ -718,103 +708,28 @@ assert_no_file "$wrun/watch.pane" "watch pane handle cleaned"
 cat >"$stub/herdr" <<'EOF'
 #!/usr/bin/env bash
 echo "herdr $*" >>"$WHLOG"
-[ "${1:-}" = --session ] && shift 2
-case "${1:-} ${2:-}" in
-  "pane list") echo '{"result":{"panes":[]}}' ;;
-  "workspace get") exit 1 ;;
-  "workspace list") echo '{"result":{"workspaces":[]}}' ;;
-  "workspace create") echo '{"result":{"workspace":{"workspace_id":"wW"}}}' ;;
-  "tab create") echo '{"result":{"tab":{"tab_id":"tW"},"root_pane":{"pane_id":"pW1"}}}' ;;
-  "pane close") exit 1 ;;
-esac
-exit 0
+exit 1
 EOF
 chmod +x "$stub/herdr"
 : >"$WHLOG"
-out="$(PATH="$stub:$PATH" AC_SHIP_WATCH=auto "$BIN/ac-ship.sh" start --intent "watch gone")"
+out="$(PATH="$stub:$PATH" "$BIN/ac-ship.sh" start --intent "watch gone")"
 assert_contains "$out" "started run" "second watch run starts"
 wrun2="$wrepo/.crew/ship/$(readlink "$wrepo/.crew/ship/current")"
-assert_eq "$(cat "$wrun2/watch.pane")" "pW1" "watch pane recorded again"
+printf 'pW1\n' >"$wrun2/watch.pane"
 rc=0
 finish_out2="$(PATH="$stub:$PATH" "$BIN/ac-ship.sh" finish cancelled 2>&1)" || rc=$?
 [ "$rc" -eq 0 ] || fail "finish must survive a watch-pane close failure, got rc=$rc: $finish_out2"
 assert_contains "$(cat "$wrun2/run.meta")" "outcome=cancelled" "outcome recorded despite gone watch pane"
 assert_contains "$(cat "$wrun2/run.meta")" "finished_at=" "finished_at recorded despite gone watch pane"
 assert_no_file "$wrun2/watch.pane" "watch pane handle cleaned even when close fails"
-: >"$WHLOG"
-PATH="$stub:$PATH" AC_SHIP_WATCH=off "$BIN/ac-ship.sh" start --intent "quiet" >/dev/null
-case "$(cat "$WHLOG")" in *"tab create"*) fail "AC_SHIP_WATCH=off must not open a tab" ;; esac
-# An ACTIVE step transition re-ensures the dashboard (reopened runs / lost panes).
-: >"$WHLOG"
-PATH="$stub:$PATH" AC_SHIP_WATCH=auto "$BIN/ac-ship.sh" step intent running >/dev/null
-assert_contains "$(cat "$WHLOG")" "tab create --workspace wW" "active step re-opens the watch"
+
 # A reopened run (finished outcome but an active step) is not "finished".
-PATH="$stub:$PATH" "$BIN/ac-ship.sh" step review fixing >/dev/null
+"$BIN/ac-ship.sh" step intent running >/dev/null
+"$BIN/ac-ship.sh" step review fixing >/dev/null
 frame="$("$BIN/ac-ship-watch.sh" --repo "$wrepo" --once)"
 case "$frame" in *"run finished"*) fail "reopened run must not read as finished" ;; esac
 assert_contains "$frame" "▶ review" "active step marked in reopened run"
-# The board is embedded in the pane-run line as an ABSOLUTE path: the pane is
-# created with --cwd "$repo", a DIFFERENT directory than the caller's, so a
-# caller-relative "$(dirname "$0")" reaches it as a path that does not resolve
-# there. `binlink` reproduces a chief's relative `bin/ac-ship.sh` invocation.
-ln -s "$BIN" "$wrepo/binlink"
-: >"$WHLOG"
-PATH="$stub:$PATH" AC_SHIP_WATCH=auto binlink/ac-ship.sh start --intent "relative call" >/dev/null
-wsp="$(sed -n "s/.*'\([^']*ac-ship-watch\.sh\)'.*/\1/p" "$WHLOG" | head -1)"
-case "$wsp" in /*) ;; *) fail "watch board must be absolute in the pane command, got '$wsp'" ;; esac
-# An orca fleet opens no board even with herdr on PATH: the board is a herdr
-# tab, and an orca fleet's panes are not herdr's.
-printf 'orca\n' >"$AC_HOME/config/backend"
-: >"$WHLOG"
-out="$(PATH="$stub:$PATH" AC_SHIP_WATCH=auto "$BIN/ac-ship.sh" start --intent "orca fleet")"
-assert_contains "$out" "started run" "an orca fleet's ship run starts"
-case "$(cat "$WHLOG")" in *"tab create"*) fail "an orca fleet must open no ship board: $(cat "$WHLOG")" ;; esac
-assert_no_file "$wrepo/.crew/ship/$(readlink "$wrepo/.crew/ship/current")/watch.pane" "an orca fleet records no board pane"
-printf 'herdr\n' >"$AC_HOME/config/backend"
-cd "$repo" || fail "cd back"
-
-# The watch start also closes herdr's default "1" tabs of its OWN workspace,
-# read from the session-wide tab list. Here the workspace-scoped list the tab
-# opener sweeps is empty, so every close below is this sweep's.
-sstub="$TMP/sweepstub"; mkdir -p "$sstub"
-cat >"$sstub/herdr" <<'EOF'
-#!/usr/bin/env bash
-echo "herdr $*" >>"$WHLOG"
-[ "${1:-}" = --session ] && shift 2
-[ "$*" = "tab list" ] && { [ -z "${SWEEP_FAIL:-}" ] || exit 3; cat "$SWEEP_TABS"; exit 0; }
-case "${1:-} ${2:-}" in
-  "pane list") echo '{"result":{"panes":[]}}' ;;
-  "workspace get") exit 1 ;;
-  "workspace list") echo '{"result":{"workspaces":[]}}' ;;
-  "workspace create") echo '{"result":{"workspace":{"workspace_id":"wW"}}}' ;;
-  "tab create") echo '{"result":{"tab":{"tab_id":"tW"},"root_pane":{"pane_id":"pW1"}}}' ;;
-esac
-exit 0
-EOF
-chmod +x "$sstub/herdr"
-export SWEEP_TABS="$TMP/sweep-tabs.json"
-srepo="$(make_repo sweeprepo)"
-cd "$srepo" || fail "cd sweeprepo"
-printf '%s' '{"result":{"tabs":[{"tab_id":"tJ","workspace_id":"wW","label":"1"},{"tab_id":"tO","workspace_id":"wO","label":"1"},{"tab_id":"tK","workspace_id":"wW","label":"keep"},{"tab_id":"tJ2","workspace_id":"wW","label":"1"}]}}' >"$SWEEP_TABS"
-: >"$WHLOG"
-PATH="$sstub:$PATH" AC_SHIP_WATCH=auto "$BIN/ac-ship.sh" start --intent "sweep" >/dev/null
-assert_eq "$(sed -n 's/.* tab close //p' "$WHLOG" | paste -sd, -)" "tJ,tJ2" \
-  "only this workspace's \"1\" tabs are closed, in list order"
-PATH="$sstub:$PATH" "$BIN/ac-ship.sh" finish cancelled >/dev/null
-printf 'not json' >"$SWEEP_TABS"
-: >"$WHLOG"
-rc=0
-out="$(PATH="$sstub:$PATH" AC_SHIP_WATCH=auto "$BIN/ac-ship.sh" start --intent "sweep garbage" 2>&1)" || rc=$?
-assert_eq "$rc" "0" "an unreadable tab list never fails the start"
-assert_contains "$out" "started run" "the start still reports its run"
-case "$out" in *$'\n'*) fail "an unreadable tab list must be swallowed without a word: $out" ;; esac
-case "$(cat "$WHLOG")" in *"tab close"*) fail "an unreadable tab list closes nothing" ;; esac
-PATH="$sstub:$PATH" "$BIN/ac-ship.sh" finish cancelled >/dev/null
-rc=0
-PATH="$sstub:$PATH" SWEEP_FAIL=1 AC_SHIP_WATCH=auto "$BIN/ac-ship.sh" start --intent "sweep down" >/dev/null 2>&1 || rc=$?
-assert_eq "$rc" "0" "a failed tab list never fails the start"
-PATH="$sstub:$PATH" "$BIN/ac-ship.sh" finish cancelled >/dev/null
-rm -f "$AC_HOME/config/backend"
+"$BIN/ac-ship.sh" finish cancelled >/dev/null
 cd "$repo" || fail "cd back"
 
 # --- TDD attestation: attestation by execution, honored by the test step ---
@@ -1646,57 +1561,9 @@ rc=0
 assert_eq "$rc" "1" "before any run, a vanished threaded config reads as no config"
 
 # --- best-effort external calls DEGRADE; load-bearing ones stay fail-closed ---
-# ship-finish-pane-gone (@a4bc17d) guarded the finish pane-close PAIR and left
-# the rest of the file unaudited. Under set -e any external tool exiting
-# non-zero aborts the step mid-way - correct for a push or a validation gate,
-# wrong for a call whose only product is decoration or housekeeping.
-
-# The watch dashboard's pane ops: the tab is already open when rename/run/close
-# run, and its pane may be gone (or herdr wedged) by then. Every one of them
-# aborted `start` SILENTLY - the run dir and `current` symlink already existed,
-# so the caller saw rc=1 with no output and a half-started run.
-# The watch open (src/ship.ts:1008) only runs on backendName() === "herdr".
-printf 'herdr\n' >"$AC_HOME/config/backend"
-gstub="$TMP/paneopstub"; mkdir -p "$gstub"
-cat >"$gstub/herdr" <<'EOF'
-#!/usr/bin/env bash
-echo "herdr $*" >>"$WHLOG"
-[ "${1:-}" = --session ] && shift 2
-case "${1:-} ${2:-}" in
-  "pane list") echo '{"result":{"panes":[]}}' ;;
-  "workspace get") exit 1 ;;
-  "workspace list") echo '{"result":{"workspaces":[]}}' ;;
-  "workspace create") echo '{"result":{"workspace":{"workspace_id":"wW"}}}' ;;
-  "tab create") echo '{"result":{"tab":{"tab_id":"tW"},"root_pane":{"pane_id":"pW1"}}}' ;;
-  "tab list") echo '{"result":{"tabs":[{"tab_id":"tJ","workspace_id":"wW","label":"1"}]}}' ;;
-  "pane rename"|"pane run"|"tab close") exit 1 ;;
-esac
-exit 0
-EOF
-chmod +x "$gstub/herdr"
-prepo="$(make_repo paneopsrepo)"
-cd "$prepo" || fail "cd paneopsrepo"
-: >"$WHLOG"
-rc=0
-out="$(PATH="$gstub:$PATH" AC_SHIP_WATCH=auto "$BIN/ac-ship.sh" start --intent "pane ops fail" 2>&1)" || rc=$?
-[ "$rc" -eq 0 ] || fail "start must survive failing watch pane ops, got rc=$rc: $out"
-assert_contains "$out" "started run" "start still reports the run when every pane op fails"
-prun="$prepo/.crew/ship/$(readlink "$prepo/.crew/ship/current")"
-# Recorded, not abandoned: a `return 0` on the failed rename would LEAK the tab
-# that was already created - finish retires it through this handle.
-assert_eq "$(cat "$prun/watch.pane")" "pW1" "the opened pane is still recorded so finish can retire it"
-assert_contains "$(cat "$WHLOG")" "pane run pW1" "the dashboard launch was still attempted after the failed rename"
-: >"$WHLOG"
-rc=0
-PATH="$gstub:$PATH" AC_SHIP_WATCH=auto "$BIN/ac-ship.sh" step intent running >/dev/null 2>&1 || rc=$?
-assert_eq "$rc" "0" "an active step transition re-ensures the dashboard without aborting on it"
-# Guarded PER CASE, never blanket: the fail-closed finish gate right next to
-# the guards is untouched - a fresh run still cannot mint a validated outcome.
-rc=0
-out="$(PATH="$gstub:$PATH" "$BIN/ac-ship.sh" finish checks-passed 2>&1)" || rc=$?
-assert_eq "$rc" "1" "the pane-op guards must not leak into the finish gate"
-assert_contains "$out" "fail-closed" "a fresh run still cannot mint checks-passed"
-rm -f "$AC_HOME/config/backend"
+# Under set -e any external tool exiting non-zero aborts the step mid-way -
+# correct for a push or a validation gate, wrong for a call whose only
+# product is decoration or housekeeping.
 
 # The .crew/ exclude write is cosmetic housekeeping (it keeps .crew/ out of
 # `git status`; the pool manager normally wrote it already). An info/ that
@@ -2961,7 +2828,7 @@ xrun xworld x1b
 xhas $'rc=1\n-- out\n-- err\nERROR: not inside a git repo'
 x1c() { XENV=(AC_BACKEND=tmux); xc; xc status; XENV=(); }
 xrun xworld x1c
-xhas "ERROR: unsupported backend 'tmux' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)"
+xhas "ERROR: unsupported backend 'tmux' (valid backend: orca)"
 # BUN: without bun the shim refuses every verb before anything.
 x1d() { XPATH="$(xwithout bun)"; xc status; xc start --intent nobun; XPATH=""; }
 xrun xworld x1d
@@ -3773,41 +3640,17 @@ xhas 'run RUN2: checks-passed (passed-with-override: tdd-declared,review-residua
 xhas 'checks-passed: RUN2 PR raised, awaiting the captain'"'"'s merge - passed-with-override: tdd-declared,review-residual'
 
 # -- leg 12: the live board -------------------------------------------------------------
-xtabs() { printf '%s' '{"result":{"tabs":[{"tab_id":"tJ","workspace_id":"wW","label":"1"},{"tab_id":"tO","workspace_id":"wO","label":"1"},{"tab_id":"tK","workspace_id":"wW","label":"keep"},{"tab_id":"tJ2","workspace_id":"wW","label":"1"}]}}' >"$XW/stub/tabs.json"; }
+# herdr is retired: a run never opens a watch tab anymore, whatever
+# AC_SHIP_WATCH or the configured backend says.
 x12a() {
-  # The watch open (src/ship.ts:1008) only runs on backendName() === "herdr".
-  xtabs; XWATCH=auto; printf 'herdr\n' >"$XW/home/config/backend"
-  xc start --intent board; xc step intent running; xc step review fixing; xc step intent completed; xc finish cancelled
-  XENV=(AC_FLEET_SCOPE=fam9 'AC_SCOPE=a b'); xc start --intent scoped
-  XENV=(AC_HERDR_SESSION=s1); xc start --intent s1
-  printf 's2\n' >"$XW/home/config/herdr-session"; XENV=(); xc start --intent s2
+  XWATCH=auto; xc start --intent board; xc step intent running; xc step review fixing; xc step intent completed; xc finish cancelled
+  XWATCH=off; xc start --intent off; xc finish cancelled
+  XWATCH=auto; printf 'orca\n' >"$XW/home/config/backend"; xc start --intent orca; xc finish cancelled
+  rm -f "$XW/home/config/backend"; xc start --intent noconfig; xc finish cancelled
   XWATCH=off
 }
 xrun xrevworld x12a
-xwhas 'herdr --session default tab create --workspace wW --label ac-ship-watch-crew-fam1-implement --cwd '"$XW"'/repo --no-focus'
-xwhas 'herdr --session default pane rename pW1 ac-ship-watch'
-xwhas "herdr --session default pane run pW1 'ROOT/bin/ac-ship-watch.sh' --repo '$XW/repo' --self-pane pW1"
-xwhas $'herdr --session default tab close tJ\nherdr --session default tab close tJ2\n'
-xwhas 'herdr --session default pane close pW1'
-xwhas 'herdr workspace create --label home · fam9 --no-focus'
-xwhas 'herdr --session s1 pane list'
-xwhas 'herdr workspace list --session s2'
-# Nothing opens: AC_SHIP_WATCH=off, an orca fleet, no herdr on PATH, a tab
-# create that fails; a failing rename, run, list or close never fails the start.
-x12b() {
-  xtabs; XWATCH=auto; printf 'herdr\n' >"$XW/home/config/backend"
-  XWATCH=off; xc start --intent off; XWATCH=auto
-  printf 'orca\n' >"$XW/home/config/backend"; xc start --intent orca; printf 'herdr\n' >"$XW/home/config/backend"
-  XPATH="$(xwithout herdr)"; xc start --intent noherdr; XPATH=""
-  XENV=(HERDR_FAIL=tabcreate); xc start --intent nocreate
-  XENV=('HERDR_FAIL=rename run tabclose'); xc start --intent opsfail
-  XENV=('HERDR_FAIL=tablist panelist'); xc start --intent listfail
-  printf 'not json' >"$XW/stub/tabs.json"; XENV=(); xc start --intent garbage
-  XWATCH=off; xc status
-}
-xrun xrevworld x12b
-xhas $'== start --intent garbage\nrc=0\n-- out\nstarted run RUN7 '
-[ "$(grep -c 'tab create' "$XW/stub/herdr.log")" = 4 ] || fail "only the nocreate, opsfail, listfail and garbage starts reached a tab create"
+[ -s "$XW/stub/herdr.log" ] && fail "no run ever opens a watch tab (herdr is retired): $(cat "$XW/stub/herdr.log")"
 
 # -- leg 13: signals and continuation ------------------------------------------------
 xsig() {  # xsig <signal> <marker> <args...> - one ship call in the background; once the world holds <marker>, <signal> to its pid alone

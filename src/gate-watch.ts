@@ -209,18 +209,14 @@
 //   U+FFFD; a marker value naming a path with such a byte reaches jq, tail and
 //   cat decoded.
 // - BUN IN THE PANE: the board's pane runs bun; without it on the pane's PATH
-//   the shim's `ERROR: required tool not found: bun` is all the pane shows,
-//   and ac-gate reads that pane dead and replaces it at every run.
+//   the shim's `ERROR: required tool not found: bun` is all the pane shows.
 // - A caller whose cwd has no name reads relative descriptor paths (and `-`)
 //   from the distro root.
 //
-// CALLERS: src/gate.ts's watchOpen runs `AC_HOME=<home> '<its bin>/
-// ac-gate-watch.sh' --tail --family <family>` in a herdr pane (fail-soft) and
-// its watchStalePane reads that board live while the pane's foreground
-// cmdline matches `ac-gate-watch\.sh|/src/gate-watch\.ts` - the shim execs bun,
-// so the cmdline names this file; operators run it by hand. Nothing parses
-// what it prints: tests/sh/ac-gate-watch.test.sh and tests/sh/ac-gate.test.sh's
-// board rows read it as text.
+// CALLERS: src/gate.ts used to auto-launch this through watchOpen in a herdr
+// pane; herdr is retired, so no run opens one now - operators run it by hand.
+// Nothing parses what it prints: tests/sh/ac-gate-watch.test.sh reads it as
+// text.
 import { closeSync, fstatSync, openSync, readSync, readdirSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { isatty } from "node:tty";
 import {

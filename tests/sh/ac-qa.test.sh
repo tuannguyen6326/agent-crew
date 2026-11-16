@@ -2758,66 +2758,32 @@ assert_contains "$("$QA" finish passed)" "QA_VERDICT=passed" \
   "a decided ask-user finding no longer blocks a complete run"
 cd "$repo" || fail "cd back from qahard"
 
-# --- watch pane: the dashboard is embedded as an ABSOLUTE path ------------------
-# The pane is created with --cwd "$repo", a DIFFERENT directory than the
-# caller's, so a caller-relative "$(dirname "$0")" reaches the pane as a path
-# that does not resolve there. `binlink` reproduces a chief's relative
-# `bin/ac-qa.sh` invocation; the composed line must still name the board
-# absolutely. The stub LOGS the pane-run line instead of executing it - the
-# dashboard is an endless refresh loop.
+# --- watch pane: start never opens one, under any backend --------------------
+# The herdr board auto-open (the old watchOpen) is retired with herdr: start
+# invokes no herdr and records no watch.pane handle, whatever config/backend
+# reads.
 export QHLOG="$TMP/qa-herdr.log"
 cat >"$TMP/stub/herdr" <<'EOF'
 #!/usr/bin/env bash
 echo "herdr $*" >>"$QHLOG"
-[ "${1:-}" = --session ] && shift 2
-case "${1:-} ${2:-}" in
-  "pane list") echo '{"result":{"panes":[]}}' ;;
-  "workspace list") echo '{"result":{"workspaces":[]}}' ;;
-  "workspace create") echo '{"result":{"workspace":{"workspace_id":"wQ"}}}' ;;
-  "tab create") echo '{"result":{"tab":{"tab_id":"tQ"},"root_pane":{"pane_id":"pQ1"}}}' ;;
-esac
 exit 0
 EOF
 chmod +x "$TMP/stub/herdr"
 wqrepo="$(make_repo qawatchrepo)"
-ln -s "$BIN" "$wqrepo/binlink"
 cd "$wqrepo" || fail "cd qawatchrepo"
-# The board opens only on a herdr fleet (src/qa.ts:1100, backendName() ===
-# "herdr"); pin it explicitly rather than lean on the no-config default.
-printf 'herdr\n' >"$AC_HOME/config/backend"
-AC_QA_WATCH=auto binlink/ac-qa.sh start --target HEAD --task watchpath >/dev/null 2>&1
-assert_contains "$(cat "$QHLOG")" "ac-qa-watch.sh" "watch board launched"
-qsp="$(sed -n "s/.*'\([^']*ac-qa-watch\.sh\)'.*/\1/p" "$QHLOG" | head -1)"
-case "$qsp" in /*) ;; *) fail "watch board must be absolute in the pane command, got '$qsp'" ;; esac
-# An orca fleet opens no board even with herdr on PATH: the board is a herdr
-# tab, and an orca fleet's panes are not herdr's.
-printf 'orca\n' >"$AC_HOME/config/backend"
-: >"$QHLOG"
-AC_QA_WATCH=auto binlink/ac-qa.sh start --target HEAD --task orcafleet >/dev/null 2>&1 || fail "an orca fleet's qa run starts"
-case "$(cat "$QHLOG")" in *"tab create"*) fail "an orca fleet must open no qa board: $(cat "$QHLOG")" ;; esac
-assert_no_file "$wqrepo/.crew/qa/$(readlink "$wqrepo/.crew/qa/current")/watch.pane" "an orca fleet records no board pane"
-rm -f "$AC_HOME/config/backend"
+"$QA" start --target HEAD --task watchpath >/dev/null 2>&1
+assert_eq "$(cat "$QHLOG" 2>/dev/null)" "" "qa start invokes no herdr"
+assert_no_file "$wqrepo/.crew/qa/$(readlink "$wqrepo/.crew/qa/current")/watch.pane" "qa start records no board pane"
 cd "$repo" || fail "cd back from qawatchrepo"
 
-# --- watch pane ops DEGRADE, never abort `start` (F26) ------------------------
-# ac-ship.sh's watch_open already guards its rename/run with `|| true` (the
-# tab is already open by then, so a failure there must cost the DASHBOARD,
-# never the run) - this same idiom in ac-qa.sh ran those two calls unguarded
-# under the script's own `set -euo pipefail`, a live start-abort hazard once
-# the two copies drifted apart.
+# --- finish retires a pre-cutover fleet's stale watch.pane --------------------
+# Nothing writes watch.pane anymore, but finish still closes one left over
+# from before the cutover, best-effort, through herdr when it is on PATH,
+# then removes the file.
 gstub="$TMP/qapaneopstub"; mkdir -p "$gstub"
 cat >"$gstub/herdr" <<'EOF'
 #!/usr/bin/env bash
 echo "herdr $*" >>"$WHLOG"
-[ "${1:-}" = --session ] && shift 2
-case "${1:-} ${2:-}" in
-  "pane list") echo '{"result":{"panes":[]}}' ;;
-  "workspace get") exit 1 ;;
-  "workspace list") echo '{"result":{"workspaces":[]}}' ;;
-  "workspace create") echo '{"result":{"workspace":{"workspace_id":"wW"}}}' ;;
-  "tab create") echo '{"result":{"tab":{"tab_id":"tW"},"root_pane":{"pane_id":"pW1"}}}' ;;
-  "pane rename"|"pane run") exit 1 ;;
-esac
 exit 0
 EOF
 chmod +x "$gstub/herdr"
@@ -2825,14 +2791,12 @@ qprepo="$(make_repo qapaneopsrepo)"
 cd "$qprepo" || fail "cd qapaneopsrepo"
 export WHLOG="$TMP/qa-paneops.log"
 : >"$WHLOG"
-# Same herdr-only board-open gate as the section above.
-printf 'herdr\n' >"$AC_HOME/config/backend"
-rc=0
-out="$(PATH="$gstub:$PATH" AC_QA_WATCH=auto "$QA" start --target HEAD --task paneopsfail 2>&1)" || rc=$?
-[ "$rc" -eq 0 ] || fail "qa start must survive failing watch pane ops, got rc=$rc: $out"
+"$QA" start --target HEAD --task paneopsfail >/dev/null
 qprun="$qprepo/.crew/qa/$(readlink "$qprepo/.crew/qa/current")"
-assert_eq "$(cat "$qprun/watch.pane")" "pW1" "the opened pane is still recorded so finish can retire it"
-rm -f "$AC_HOME/config/backend"
+printf 'pW1\n' >"$qprun/watch.pane"
+PATH="$gstub:$PATH" "$QA" finish failed >/dev/null
+assert_contains "$(cat "$WHLOG")" "pane close pW1" "finish closes a stale watch.pane through herdr"
+assert_no_file "$qprun/watch.pane" "finish removes the stale watch.pane handle"
 cd "$repo" || fail "cd back from qapaneopsrepo"
 
 # --- completion gate negatives: grade / evidence root / web visual ----------------
@@ -3547,7 +3511,7 @@ xexits "1 1 1 1"
 xhas $'== \nrc=1\n-- out\n-- err\nERROR: usage: ac-qa.sh <start|step|case|'
 xhas $'== bogus\nrc=1\n-- out\n-- err\nERROR: usage: ac-qa.sh <start|'
 xhas $'-- err\nERROR: not inside a git repo\n'
-xhas "ERROR: unsupported backend 'tmux' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)"
+xhas "ERROR: unsupported backend 'tmux' (valid backend: orca)"
 
 # -- leg 2: start --------------------------------------------------------------------
 x_start() { xstart; xc status; xc start --target HEAD --task fam-qa --scope s; xc evidence-dir; }
