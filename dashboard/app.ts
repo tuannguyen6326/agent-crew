@@ -2321,41 +2321,6 @@ export async function readRoomEntries(homePath: string, family: string): Promise
   return out.split("\n").filter((l) => l.startsWith("- ["));
 }
 
-/** The chief pane + tab for a family: the .pane-<id> handle file's two tokens
- * (what the backend itself reads - survives pane re-creation), falling back to
- * the meta's window= echo for the pane with no tab (focus becomes best-effort
- * a no-op). Gated on the SAME kind=roomchief meta check as chiefPaneOf. */
-function chiefHandleOf(homePath: string, family: string): { pane: string; tab: string | null } | null {
-  let metaText = "";
-  try {
-    metaText = readFileSync(`${homePath}/state/${family}-chief.meta`, "utf8");
-  } catch {
-    return null;
-  }
-  const metaPane = chiefPaneOf(metaText);
-  if (!metaPane) return null;
-  try {
-    const toks = readFileSync(`${homePath}/state/.pane-${family}-chief`, "utf8").trim().split(/\s+/);
-    if (toks[0] && /^[A-Za-z0-9]+:[A-Za-z0-9]+$/.test(toks[0]))
-      return { pane: toks[0], tab: toks[1] && /^[A-Za-z0-9]+:[A-Za-z0-9]+$/.test(toks[1]) ? toks[1] : null };
-  } catch { /* no handle file */ }
-  return { pane: metaPane, tab: null };
-}
-
-/** Handle for ANY task pane by id (linked terminals): the .pane-<id> handle
- * file's tokens first (what the backend itself reads), else the meta's
- * window= echo. READ-ONLY consumers only - input stays chief-gated. */
-function paneHandleByMeta(homePath: string, id: string, metaText: string): { pane: string; tab: string | null } | null {
-  const m = /^window=herdr:pane-([^:\n]+):([^\s:]+)$/m.exec(metaText);
-  const metaPane = m ? `${m[1]}:${m[2]}` : null;
-  try {
-    const toks = readFileSync(`${homePath}/state/.pane-${id}`, "utf8").trim().split(/\s+/);
-    if (toks[0] && /^[A-Za-z0-9]+:[A-Za-z0-9]+$/.test(toks[0]))
-      return { pane: toks[0], tab: toks[1] && /^[A-Za-z0-9]+:[A-Za-z0-9]+$/.test(toks[1]) ? toks[1] : null };
-  } catch { /* no handle file */ }
-  return metaPane ? { pane: metaPane, tab: null } : null;
-}
-
 /** Every pane BELONGING to a family, for the linked-terminal chips: the
  * family's own tasks (id == family or family-<stage>) plus verify panes whose
  * meta names the family. Membership is derived HERE from state/ metas - the
@@ -2391,10 +2356,10 @@ async function roomPanes(homePath: string, family: string): Promise<Response> {
   return json({ panes: familyPaneIds(metas, family) });
 }
 
-/** Herdr is refused fleet-wide (orca-cutover): every live pane is orca-backed,
- * so there is no native terminal left to embed - the dock always offers the
- * open-Orca affordance (/api/orca/focus) in its place. No home-specific
- * branch is left to test: this is the one shape, unconditionally. */
+/** Every live pane runs in the Orca app, so there is no in-dashboard
+ * terminal to embed - the dock always offers the open-Orca affordance
+ * (/api/orca/focus) instead. One shape, unconditionally: no home-specific
+ * branch is left to test. */
 export function termStatusBody(): { enabled: false; running: false; why: string; orca: true } {
   return { enabled: false, running: false, why: "this fleet runs on the Orca app", orca: true };
 }
@@ -2404,93 +2369,12 @@ async function termStatus(homePath: string): Promise<Response> {
   return json(termStatusBody());
 }
 
-/** The CREWCHIEF pane for a home (chief panel, slice C): the fleet session is
- * not a spawned task (no meta), so it is found the way the fleet's own tooling
- * proves liveness - state/.session-lock names the harness pid, and the pane
- * whose foreground process group IS that pid is the chief's. The scan is one
- * pane-list plus at most a handful of process-info calls, memoized 30s. */
-const fleetChiefCache = new Map<string, { at: number; h: { pane: string; tab: string | null } | null }>();
-async function fleetChiefHandle(homePath: string): Promise<{ pane: string; tab: string | null } | null> {
-  const hit = fleetChiefCache.get(homePath);
-  if (hit && Date.now() - hit.at < 30_000) return hit.h;
-  let pid = 0;
-  try {
-    const m = /^pid=(\d+)$/m.exec(readFileSync(`${homePath}/state/.session-lock`, "utf8"));
-    pid = m ? Number(m[1]) : 0;
-  } catch { /* no lock - no chief session */ }
-  let h: { pane: string; tab: string | null } | null = null;
-  if (pid) {
-    const ls = await run(["herdr", "pane", "list"], { AC_HOME: homePath });
-    if (ls.code === 0) {
-      try {
-        const panes: { pane_id: string; tab_id: string; agent?: string }[] =
-          JSON.parse(ls.out).result?.panes ?? [];
-        for (const p of panes) {
-          if (!p.agent) continue; // a bare shell can never be the chief harness
-          const pi = await run(["herdr", "pane", "process-info", "--pane", p.pane_id], { AC_HOME: homePath });
-          if (pi.code !== 0) continue;
-          try {
-            if (JSON.parse(pi.out).result?.process_info?.foreground_process_group_id === pid) {
-              h = { pane: p.pane_id, tab: p.tab_id ?? null };
-              break;
-            }
-          } catch { /* unparseable - skip */ }
-        }
-      } catch { /* unparseable list */ }
-    }
-  }
-  fleetChiefCache.set(homePath, { at: Date.now(), h });
-  return h;
-}
-
-/**
- * The queried pane's real column count out of `herdr pane layout --pane
- * <id>`'s JSON stdout. The client used to INFER columns from the pane's own
- * box-drawing separator runs, but a TUI that draws a separator wider than its
- * own pty (or "recent-unwrapped" rejoining several stacked separator lines
- * into one) inflates that guess past the true width - this reads the pty's
- * actual size instead. `undefined` on anything unparseable, so the caller can
- * fall back to the old heuristic rather than fail the frame.
- */
-export function paneLayoutCols(out: string, pane: string): number | undefined {
-  try {
-    const j = JSON.parse(out) as { result?: { layout?: { panes?: { pane_id?: string; rect?: { width?: number } }[] } } };
-    const p = (j.result?.layout?.panes || []).find((x) => x.pane_id === pane);
-    const w = p?.rect?.width;
-    return typeof w === "number" && w > 0 ? w : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-// True column count per pane, cached: the pane stream ticks every 250ms, and
-// a pane's width only changes when someone resizes the herdr workspace, so
-// re-shelling `herdr pane layout` on every tick would double this hot path's
-// subprocess cost for a value that is almost always unchanged.
-const paneColsCache = new Map<string, { cols: number; at: number }>();
-const PANE_COLS_TTL_MS = 5000;
-async function paneCols(homePath: string, pane: string): Promise<number | undefined> {
-  const cached = paneColsCache.get(pane);
-  const now = Date.now();
-  if (cached && now - cached.at < PANE_COLS_TTL_MS) return cached.cols;
-  const { code, out } = await run(["herdr", "pane", "layout", "--pane", pane], { AC_HOME: homePath });
-  if (code !== 0) return cached?.cols;
-  const cols = paneLayoutCols(out, pane);
-  if (cols === undefined) return cached?.cols;
-  // Panes churn (worktree pool leases, task teardown) - drop entries nobody
-  // has refreshed in a while so the cache does not grow for the process's
-  // whole lifetime.
-  for (const [id, e] of paneColsCache) if (now - e.at > PANE_COLS_TTL_MS * 4) paneColsCache.delete(id);
-  paneColsCache.set(pane, { cols, at: now });
-  return cols;
-}
-
-/** Resolve the pane the chief panel points at - the family's roomchief, the
- * fleet crewchief (family ""), or a watched member pane. ONE resolver shared
- * by the snapshot read (roomPane) and the native attach ws, so both surfaces
- * hold the same membership gate: a watch id only counts when the family
- * really owns it, and a crewmate id can never be read as a chief. */
-async function panelPaneOf(homePath: string, family: string, watchId: string): Promise<{ pane: string; readonly: boolean } | { why: string } | { orcaId: string }> {
+/** Resolve what the chief panel points at - the family's roomchief, the
+ * fleet crewchief (family ""), or a watched member pane - down to the one
+ * live answer left: the Orca focus handle, or a "why" the client renders as
+ * a plain message. A watch id only counts when the family really owns it,
+ * and a crewmate id can never be read as a chief. */
+async function panelPaneOf(homePath: string, family: string, watchId: string): Promise<{ why: string } | { orcaId: string }> {
   if (watchId) {
     let metas: { id: string; text: string }[] = [];
     try {
@@ -2502,15 +2386,12 @@ async function panelPaneOf(homePath: string, family: string, watchId: string): P
     if (!member) return { why: "not a pane of this family" };
     const meta = metas.find((x) => x.id === watchId);
     if (meta && orcaWindowOf(meta.text)) return { orcaId: watchId };
-    const h = paneHandleByMeta(homePath, watchId, meta ? meta.text : "");
-    if (!h) return { why: "pane handle unresolvable" };
-    return { pane: h.pane, readonly: true };
+    return { why: "pane handle unresolvable" };
   }
   if (family === "") {
-    // Crewchief target (slice C): resolved via the session lock, not a meta.
-    const h = await fleetChiefHandle(homePath);
-    if (!h) return { why: "no live crewchief session" };
-    return { pane: h.pane, readonly: false };
+    // Crewchief target (slice C): the fleet session has no meta to carry an
+    // Orca window= echo, so it is never live through this resolver.
+    return { why: "no live crewchief session" };
   }
   let metaText = "";
   try {
@@ -2519,24 +2400,14 @@ async function panelPaneOf(homePath: string, family: string, watchId: string): P
     return { why: "no roomchief for this family" };
   }
   if (orcaWindowOf(metaText)) return { orcaId: `${family}-chief` };
-  let pane = chiefPaneOf(metaText);
-  if (!pane) return { why: "chief meta carries no readable pane" };
-  // The handle FILE is what the backend itself reads (backend_capture): panes
-  // can be re-created after spawn, so its first token outranks the meta echo.
-  try {
-    const tok = readFileSync(`${homePath}/state/.pane-${family}-chief`, "utf8").trim().split(/\s+/)[0];
-    if (tok && /^[A-Za-z0-9]+:[A-Za-z0-9]+$/.test(tok)) pane = tok;
-  } catch { /* no handle file - keep the meta-derived pane */ }
-  return { pane, readonly: false };
+  return { why: "chief meta carries no readable pane" };
 }
 
-/** Live capture of a family's ROOMCHIEF pane (chief panel, slice A): resolves
- * the pane strictly from state/<family>-chief.meta via chiefPaneOf (kind gate
- * included - a crewmate id can never be read through here), fetches an ANSI
- * frame from herdr (>=200 lines - the read returns EMPTY below the viewport
- * height, ac-backend.sh's documented quirk - then trims), and returns it
- * pre-rendered by ansiToHtml so the client only ever innerHTMLs escaped spans. */
-async function roomPane(homePath: string, family: string, watchId = "", lines = 400): Promise<Response> {
+/** Live-capture answer for a family's ROOMCHIEF pane (chief panel, slice A):
+ * resolves via panelPaneOf and reports the Orca focus handle - every pane
+ * runs in the Orca app now, so there is no in-dashboard render left, only
+ * the jump (or a plain why-message when there is no live target at all). */
+async function roomPane(homePath: string, family: string, watchId = ""): Promise<Response> {
   if (!(await allowedHomePaths()).has(homePath))
     return json({ error: "unknown home" }, 404);
   if (family !== "" && !/^[a-zA-Z0-9_-]+$/.test(family))
@@ -2544,16 +2415,9 @@ async function roomPane(homePath: string, family: string, watchId = "", lines = 
   if (watchId && (family === "" || !/^[a-zA-Z0-9_.-]+$/.test(watchId)))
     return json({ error: "bad watch id" }, 400);
   const t = await panelPaneOf(homePath, family, watchId);
-  if ("orcaId" in t) return json({ live: false, why: "runs on the Orca app", orca: t.orcaId });
-  if ("why" in t) return json({ live: false, why: t.why });
-  const r = await run(
-    ["herdr", "pane", "read", t.pane, "--source", "recent-unwrapped", "--format", "ansi", "--lines", String(Math.max(lines, 200))],
-    { AC_HOME: homePath },
-  );
-  if (r.code !== 0) return json({ live: false, why: "pane unreadable (backend down or pane gone)" });
-  const body: Record<string, unknown> = { live: true, pane: t.pane, cols: await paneCols(homePath, t.pane), html: ansiToHtml(r.out.split("\n").slice(-lines).join("\n")) };
-  if (t.readonly) body.readonly = true;
-  return json(body);
+  return "orcaId" in t
+    ? json({ live: false, why: "runs on the Orca app", orca: t.orcaId })
+    : json({ live: false, why: t.why });
 }
 
 /** Full room narrative for one family (§2.3). */
@@ -2805,7 +2669,7 @@ async function familyDetail(homePath: string, family: string): Promise<Response>
   // only; the pane itself is resolved per-read by /api/room/pane.
   let chiefLive = false;
   try {
-    chiefLive = chiefPaneOf(readFileSync(`${homePath}/state/${family}-chief.meta`, "utf8")) !== null;
+    chiefLive = /^kind=roomchief$/m.test(readFileSync(`${homePath}/state/${family}-chief.meta`, "utf8"));
   } catch { /* no chief meta - unpromoted or demoted family */ }
 
   // Epic-branch record + recorded ship PRs (epic-branch-mech), live else
@@ -3247,24 +3111,12 @@ export function whiteboardWrite(homePath: string, scene: string, body: string, i
 }
 
 // ---------------------------------------------------------------------------
-// Chief panel (room-chat slice A): watch a chief's live pane from the family
-// detail. Read-only in this slice - the pane is CAPTURED (herdr pane read
-// --format ansi), never driven. Only chief panes are ever resolved: the
-// crewchief and each family's roomchief; crewmate panes are deliberately not
-// reachable from the browser.
+// Chief panel (room-chat slice A): watch a chief's target from the family
+// detail. Read-only in this slice - the panel can only ever resolve to the
+// Orca focus jump, never drive a pane. Only chief metas are ever resolved:
+// the crewchief and each family's roomchief; crewmate panes are deliberately
+// not reachable from the browser.
 // ---------------------------------------------------------------------------
-
-/** The roomchief pane id for a family, from state/<family>-chief.meta text:
- * requires kind=roomchief (never a crewmate/verify pane) and parses
- * `window=herdr:<tab>:<pane>`. Null on anything else - the caller renders
- * "no live chief" instead of a stale terminal. */
-export function chiefPaneOf(metaText: string): string | null {
-  if (!/^kind=roomchief$/m.test(metaText)) return null;
-  // window=herdr:pane-<workspace>:<pane> - herdr's CLI wants "<workspace>:<pane>"
-  // (verified live: `pane read w1W:pH` reads, `pane read pH` is pane_not_found).
-  const m = /^window=herdr:pane-([^:\n]+):([^\s:]+)$/m.exec(metaText);
-  return m ? `${m[1]}:${m[2]}` : null;
-}
 
 /** Orca-backed task handle from its meta: `backend=orca` + `window=orca:<h>`.
  * The dashboard cannot render these panes (they live in the Orca app), so the
@@ -6142,17 +5994,17 @@ export function dashboardMain(argv: string[] = process.argv) {
     // quiet poll cycle cost the shim a spurious reconnect.
     idleTimeout: 40,
     websocket: {
-      // /api/room/stream (chat-panel pane stream): the only socket kind left
-      // once the native terminal/attach mirrors are gone. A periodic ANSI-HTML
-      // snapshot push (dedup'd on change), plus a {lines} control message to
-      // change the read depth - everything else on the wire is ignored.
+      // /api/room/stream (chat-panel pane stream): every live pane runs in
+      // the Orca app, so the only answer that can ever change is which
+      // target resolves to a focus-jump handle vs. a plain why-message - a
+      // periodic re-resolve, pushed only when that answer changes.
       open(ws) {
-        const d = ws.data as { home: string; fam: string; watch: string; lines: number; last?: string; timer?: ReturnType<typeof setInterval> };
+        const d = ws.data as { home: string; fam: string; watch: string; last?: string; timer?: ReturnType<typeof setInterval> };
         const tick = async () => {
           try {
-            const res = await roomPane(d.home, d.fam, d.watch, d.lines);
-            const j = await res.json() as { live?: boolean; html?: string; cols?: number };
-            const key = (j.live ? "1" : "0") + (j.html ?? "") + String(d.lines) + "|" + String(j.cols ?? "");
+            const res = await roomPane(d.home, d.fam, d.watch);
+            const j = await res.json() as { why?: string; orca?: string };
+            const key = (j.orca ?? "") + "|" + (j.why ?? "");
             if (d.last === key) return;
             d.last = key;
             ws.send(JSON.stringify(j));
@@ -6161,14 +6013,7 @@ export function dashboardMain(argv: string[] = process.argv) {
         d.timer = setInterval(tick, 250);
         void tick();
       },
-      message(ws, data) {
-        const d = ws.data as { lines: number; last?: string };
-        let body: { lines?: number } = {};
-        try { body = JSON.parse(typeof data === "string" ? data : new TextDecoder().decode(data as ArrayBuffer)); } catch { return; }
-        if (body.lines === undefined) return;
-        d.lines = Math.min(3000, Math.max(100, Math.floor(Number(body.lines)) || 400));
-        d.last = undefined; // force a fresh frame at the new depth
-      },
+      message() { /* nothing left for the client to control - the target is server-resolved */ },
       close(ws) {
         const d = ws.data as { timer?: ReturnType<typeof setInterval> };
         if (d.timer) clearInterval(d.timer);
@@ -6179,11 +6024,10 @@ export function dashboardMain(argv: string[] = process.argv) {
         return new Response("forbidden - local origin required", { status: 403 });
       const url = new URL(req.url);
       if (url.pathname === "/api/room/stream") {
-        // Chat-panel pane stream (native, ONE task pane, never a full herdr
-        // client): the server reads the pane every 250ms and pushes a frame
-        // only when it changed. View-only - typing retired along with the
-        // herdr steer endpoints it depended on; the open-Orca focus jump is
-        // the replacement.
+        // Chat-panel pane stream: the server resolves the target every 250ms
+        // and pushes a frame only when the answer changed. Every pane runs
+        // in the Orca app, so the only live answer is the focus-jump handle;
+        // anything else is a plain why-message. View-only.
         const p2 = url.searchParams.get("path") ?? "";
         if (!(await allowedHomePaths()).has(p2)) return json({ error: "unknown home" }, 404);
         const fam2 = url.searchParams.get("fleet") === "1" ? "" : (url.searchParams.get("family") ?? "");
@@ -6308,9 +6152,8 @@ export function dashboardMain(argv: string[] = process.argv) {
       if (url.pathname === "/api/room/pane") {
         const p = url.searchParams.get("path");
         const fam = url.searchParams.get("fleet") === "1" ? "" : url.searchParams.get("family");
-        const ln = Math.min(3000, Math.max(100, Number(url.searchParams.get("lines")) || 400));
         return p && fam !== null
-          ? roomPane(p, fam, url.searchParams.get("watch") ?? "", ln)
+          ? roomPane(p, fam, url.searchParams.get("watch") ?? "")
           : json({ error: "path and family (or fleet=1) required" }, 400);
       }
       if (url.pathname === "/api/family") {

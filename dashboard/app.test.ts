@@ -11,7 +11,7 @@
 import { test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync, statSync, chmodSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { reviewWakeParts, reviewWakeText, reviewWakeFamily, reviewWakeTask, chiefPaneOf, orcaWindowOf, ansiToHtml, familyPaneIds, localHostOk, originOk, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, reviewBound, reviewLoad, reviewSave, REVIEW_SESSION_MAX_BYTES, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, paneLayoutCols, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, warmMemo, homePathsIn, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, domainTallies, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted, pastedPngFile, composerEscapeCloses, imeOwnsKey, unreachableNotice, noteReceipt, annotatePassThrough, reviewPage, reviewFrameHeaders, roomList, termStatusBody } from "./app.ts";
+import { reviewWakeParts, reviewWakeText, reviewWakeFamily, reviewWakeTask, orcaWindowOf, ansiToHtml, familyPaneIds, localHostOk, originOk, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, reviewBound, reviewLoad, reviewSave, REVIEW_SESSION_MAX_BYTES, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, warmMemo, homePathsIn, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, domainTallies, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted, pastedPngFile, composerEscapeCloses, imeOwnsKey, unreachableNotice, noteReceipt, annotatePassThrough, reviewPage, reviewFrameHeaders, roomList, termStatusBody } from "./app.ts";
 
 test("review chrome is framable only by its own origin", () => {
   // The SPA embeds /review in its own #toolview iframe (same origin), so the
@@ -634,32 +634,11 @@ test("chiefFitPx never drops below the 9.5px floor", () => {
 });
 
 test("chiefFitPx: the true column count yields a LARGER font than the old inflated heuristic (the bug this fixes)", () => {
-  // Real pane measured at 232 cols (`herdr pane layout`); the old client
-  // heuristic inferred 240 (its hard cap) from a box-drawing run "recent-unwrapped"
-  // rejoined across several stacked separator lines - see report.md MEASUREMENT.
-  // A bigger cols-than-real means the font is shrunk more than the pane needs,
-  // leaving the "half-empty" gap the captain reported.
+  // A bigger cols-than-real means the font is shrunk more than the pane
+  // needs, leaving a "half-empty" gap: 232 is a real measured width, 240 an
+  // inflated one.
   const w = 1600; // a realistic chief-panel pixel width
   expect(chiefFitPx(232, w)).toBeGreaterThan(chiefFitPx(240, w));
-});
-
-test("paneLayoutCols reads the queried pane's real column count from herdr pane layout JSON", () => {
-  const out = JSON.stringify({ result: { layout: { panes: [{ pane_id: "w7X:p3", rect: { width: 232, height: 63 } }] } } });
-  expect(paneLayoutCols(out, "w7X:p3")).toBe(232);
-});
-
-test("paneLayoutCols picks the QUERIED pane out of a multi-pane layout, never panes[0]", () => {
-  const out = JSON.stringify({
-    result: { layout: { panes: [{ pane_id: "w7T:p2", rect: { width: 100 } }, { pane_id: "w7T:pB", rect: { width: 232 } }] } },
-  });
-  expect(paneLayoutCols(out, "w7T:pB")).toBe(232);
-});
-
-test("paneLayoutCols returns undefined on malformed JSON, a missing pane, or no width", () => {
-  expect(paneLayoutCols("not json", "w7X:p3")).toBeUndefined();
-  expect(paneLayoutCols(JSON.stringify({ result: {} }), "w7X:p3")).toBeUndefined();
-  expect(paneLayoutCols(JSON.stringify({ result: { layout: { panes: [{ pane_id: "other", rect: { width: 5 } }] } } }), "w7X:p3")).toBeUndefined();
-  expect(paneLayoutCols(JSON.stringify({ result: { layout: { panes: [{ pane_id: "w7X:p3", rect: {} }] } } }), "w7X:p3")).toBeUndefined();
 });
 
 // --- Slice 3a: markdown -> readable HTML renderer ------------------------
@@ -3211,14 +3190,6 @@ test("reviewWakeText names the legal poll channel and never the session file (ca
   expect(full).toContain("captain left a note");
 });
 
-test("chiefPaneOf: only a roomchief meta with a herdr window yields a pane id", () => {
-  expect(chiefPaneOf("backend=herdr\nwindow=herdr:pane-w1D:p3F\nkind=roomchief\n")).toBe("w1D:p3F");
-  // a crewmate/ship meta is never readable through the chief panel
-  expect(chiefPaneOf("window=herdr:tab:p1\nkind=ship\n")).toBeNull();
-  expect(chiefPaneOf("kind=roomchief\n")).toBeNull(); // no window recorded
-  expect(chiefPaneOf("kind=roomchief\nwindow=tmux:0:1\n")).toBeNull(); // not herdr
-});
-
 test("orcaWindowOf: backend=orca meta yields the terminal handle, anything else null", () => {
   expect(orcaWindowOf("backend=orca\nwindow=orca:term_ab12-cd\nkind=crewdeputy\n")).toBe("term_ab12-cd");
   // a herdr task never routes to the Orca focus jump
@@ -3249,12 +3220,12 @@ test("localHostOk/originOk: only this server's own local names pass", () => {
 
 test("familyPaneIds: own tasks + verify panes in, chief/self/other families out", () => {
   const metas = [
-    { id: "greet2-chief", text: "kind=roomchief\nwindow=herdr:pane-w1:p1\n" },
-    { id: "greet2", text: "kind=ship\nwindow=herdr:pane-w1:p2\n" },
-    { id: "greet2-design", text: "kind=scout\nwindow=herdr:pane-w1:p3\n" },
+    { id: "greet2-chief", text: "kind=roomchief\nwindow=orca:term_w1-p1\n" },
+    { id: "greet2", text: "kind=ship\nwindow=orca:term_w1-p2\n" },
+    { id: "greet2-design", text: "kind=scout\nwindow=orca:term_w1-p3\n" },
     // intra-family fan-out sub-deliverable (rooms-threads skill): a
     // <family>-<slug> id whose slug is not a reserved stage suffix.
-    { id: "greet2-frontend", text: "kind=ship\nwindow=herdr:pane-w1:p4\n" },
+    { id: "greet2-frontend", text: "kind=ship\nwindow=orca:term_w1-p4\n" },
     { id: "greet2-verify-codereview", text: "kind=verify-codereview\nfamily=greet2\n" },
     { id: "verify-qa-x", text: "kind=verify-qa\nfamily=greet2\n" },      // family field wins
     { id: "greet2-note", text: "kind=self\n" },                            // self pane: no agent

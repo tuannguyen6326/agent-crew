@@ -887,9 +887,8 @@ ${UX_BASE}
   </main>
 </div>
 <!-- Dock (every route). Lives OUTSIDE #page so route morphs never remount
-     it. Herdr is refused fleet-wide, so there is no native terminal left to
-     embed here: the body always resolves to the open-Orca affordance
-     (/api/orca/focus). -->
+     it. Every pane runs in the Orca app, so the body always resolves to
+     the open-Orca affordance (/api/orca/focus). -->
 <div id="term-dock" class="termdock" hidden>
   <div class="tdgrip" id="td-grip" title="Drag to resize (min 320px, max 72% of the window)"></div>
   <div class="tdcol">
@@ -1280,8 +1279,7 @@ function applyRoute(isPop){
     if(typeof tdOpen==='function' && tdMode==='closed') tdOpen('split');
     return;
   }
-  // The Terminal tab is retired too (its native client was herdr-only) - old
-  // links land on the board with the dock up, same as chat.
+  // Old /terminal links land on the board with the dock up, same as chat.
   if(r.name==='term'){
     var tf=r.fleet || currentFleet();
     navigate(tf ? '/fleets/'+enc(tf)+'/board' : '/fleets', {replace:true});
@@ -2492,8 +2490,7 @@ function familyDetailHtml(d){
 // ---- Chief panel view (room-chat slice B/C) -------------------------------
 // ONE live target at a time: a family overlay's roomchief, or the fleet
 // crewchief drawer - opening either closes the other, so the shared ids
-// (chief-term/chief-tabs/...) never exist twice. View-only: typing retired
-// along with the herdr steer endpoints it depended on.
+// (chief-term/chief-tabs/...) never exist twice. View-only.
 var chiefWatch='';   // ''=the chief itself; else a family pane id (read-only)
 var chiefNoChief=false;             // task-terminal-mount: panel mounted for crew panes only (no roomchief tab, auto-watch)
 function chatRoute(){ return S.route&&S.route.name==='chat'?S.route:null; }
@@ -2538,17 +2535,16 @@ function chiefPanelHtml(title, backHref){
     +'<div class="ctabs" id="chief-tabs"></div>'
     +'<pre class="cterm" id="chief-term" aria-label="Live chief terminal"></pre></div>';
 }
-// ---- Dock (every route). Herdr is refused fleet-wide, so the dock has no
-// native terminal left to embed - its body always resolves to the open-Orca
-// affordance (tdMount below).
+// ---- Dock (every route). Every pane runs in the Orca app, so its body
+// always resolves to the open-Orca affordance (tdMount below).
 var tdMode='closed', tdW=480, tdIntent='';
 // tdIntent is the CAPTAIN'S standing choice (open as split/full, or ''), kept
 // apart from tdMode so a reload or a future route exclusion can reopen the
 // dock without the captain asking again.
 try{ var tds=JSON.parse(localStorage.getItem('ac_term_dock')||'{}'); if(tds.w) tdW=tds.w; if(tds.mode==='split'||tds.mode==='full') tdIntent=tds.mode; }catch(e){}
 function tdPersist(){ try{ localStorage.setItem('ac_term_dock', JSON.stringify({w:tdW, mode:tdIntent})); }catch(e){} }
-// Every route carries the dock - there is no longer a competing full-page
-// terminal client to exclude it from (the native terminal was herdr-only).
+// Every route carries the dock - no page has a competing full-page client
+// to exclude it from.
 function tdRouteOk(){ return true; }
 function tdApply(){
   var d=el('term-dock'); if(!d) return;
@@ -2658,7 +2654,7 @@ addEventListener('mouseup', function(){
   var w=fb?fb.style.getPropertyValue('--chiefw'):'';
   try{ if(w) localStorage.setItem('ac_dash_chiefw', parseInt(w,10)); }catch(e){}
 });
-var chiefTimer=null, chiefCur=null, chiefTickFn=null, chiefLines=400, chiefMore=false, chiefPokeT=null;
+var chiefTimer=null, chiefCur=null, chiefTickFn=null;
 var chiefSock=null, chiefSockGen=0;
 function acOrcaOpen(id){
   fetch('/api/orca/focus?path='+enc(hp)+(id?'&id='+enc(id):''), {method:'POST'}).catch(function(){});
@@ -2666,45 +2662,10 @@ function acOrcaOpen(id){
 }
 function chiefFrame(j){
   var t=el('chief-term'), st=el('chief-state'); if(!t||!st) return;
-  if(j.inputError){ chiefNote('refused: '+j.inputError, true); return; }
-  if(!j.live){
-    if(j.orca){ st.innerHTML=esc(j.why||'runs on the Orca app')+' · <a href="#" data-orca="'+esc(j.orca)+'" onclick="return acOrcaOpen(this.dataset.orca)">open in Orca</a>'; return; }
-    st.textContent=j.why||'not live'; return; }
-  st.textContent=(j.readonly?'live · watching '+chiefWatch:'live · type here')+' · stream';
-  var htmlChanged = t._h!==j.html;
-  // A pure resize (server's true cols moved, pane text did not) still needs a
-  // refit - html-only dedupe would leave the OLD font stuck until the pane's
-  // text next changes.
-  if(!htmlChanged && t._trueCols===j.cols) return;
-  var pinned = t.scrollTop + t.clientHeight >= t.scrollHeight - 8;
-  var fromBottom = t.scrollHeight - t.scrollTop;
-  if(htmlChanged){
-    t._h=j.html;
-    // Box-drawing separator rows are drawn at the pane's own column width;
-    // wider than the panel they would soft-wrap and leave a stub line under
-    // each rule - keep every run on one line, clipped at the panel edge.
-    t.innerHTML=(j.html||'').replace(/─{20,}/g, '<span class="csep">$&</span>');
-  }
-  t._trueCols=j.cols;
-  // Auto-fit (no horizontal scroll): prefer the pane's REAL column count
-  // (herdr pane layout, resolved server-side) over inferring it from
-  // box-drawing separator runs - a TUI that draws a rule wider than its own
-  // pty (or "recent-unwrapped" rejoining several stacked separator lines
-  // into one) inflates that guess past the true width. Fall back to the old
-  // text heuristic only when the server could not resolve one.
-  var cols=j.cols>0?j.cols:0;
-  if(!cols){
-    var runs=(t.textContent||'').match(/─{20,}/g)||[];
-    for(var li2=0;li2<runs.length;li2++){ if(runs[li2].length>cols) cols=runs[li2].length; }
-    cols=Math.min(cols, 240);
-    if(!cols) cols=t._cols||100;
-  }
-  if(cols!==t._cols || Math.abs((t._w||0)-t.clientWidth)>4){
-    t._cols=cols; t._w=t.clientWidth;
-    t.style.fontSize=chiefFitPx(cols, t.clientWidth).toFixed(2)+'px';
-  }
-  if(pinned) t.scrollTop=t.scrollHeight;
-  else t.scrollTop=Math.max(0, t.scrollHeight - fromBottom);
+  // Every live pane runs in the Orca app: the only answers left are the
+  // focus-jump handle, or a plain why-message when there is no live target.
+  if(j.orca){ st.innerHTML=esc(j.why||'runs on the Orca app')+' · <a href="#" data-orca="'+esc(j.orca)+'" onclick="return acOrcaOpen(this.dataset.orca)">open in Orca</a>'; return; }
+  st.textContent=j.why||'not live';
 }
 function chiefStreamStart(target){
   var hp=S.route.home?S.route.home.path:''; if(!hp) return false;
@@ -2720,9 +2681,6 @@ function chiefStreamStart(target){
   return true;
 }
 function chiefStreamStop(){ chiefSockGen++; if(chiefSock){ try{ chiefSock.close(); }catch(e){} chiefSock=null; } }
-// One immediate (debounced) refresh right after an input lands: the echo
-// arrives in ~150ms instead of at the next tick.
-function chiefPoke(){ if(!chiefTickFn) return; clearTimeout(chiefPokeT); chiefPokeT=setTimeout(function(){ if(chiefTickFn) chiefTickFn(); },150); }
 function chiefPollStop(){ chiefStreamStop(); if(chiefTimer){ clearInterval(chiefTimer); chiefTimer=null; } chiefCur=null; chiefTickFn=null; }
 // The picked watch tab survives reloads and route round-trips per family
 // (watch-tab-persist): a browser refresh used to snap 'ship' back to 'chief'.
@@ -2740,7 +2698,7 @@ function chiefPollStart(target, keepWatch){
     if(target!==true && tb && !tb.firstChild) chiefLoadTabs();
     return;
   }
-  chiefPollStop(); chiefCur=target; chiefLines=400;
+  chiefPollStop(); chiefCur=target;
   if(!keepWatch){ try{ chiefWatch=localStorage.getItem(chiefWatchKey(target))||''; }catch(e){ chiefWatch=''; } }   // a NEW target restores its remembered pick
   if(target!==true) setTimeout(chiefLoadTabs, 0);   // family targets get the linked-pane chips; deferred past the morph that mounts the panel
   if(chiefStreamStart(target)) return;   // ws push (250ms server-side); the loop below is the fallback
@@ -2756,7 +2714,7 @@ function chiefPollStartPoll(target){
   };
   var tick=function(){
     if(!alive()){ chiefPollStop(); return; }
-    fetch('/api/room/pane?path='+enc(hp)+q()+'&lines='+chiefLines).then(function(r){ return r.json(); }).then(function(j){
+    fetch('/api/room/pane?path='+enc(hp)+q()).then(function(r){ return r.json(); }).then(function(j){
       if(!alive()) return;
       chiefFrame(j);
     }).catch(function(){ var st=el('chief-state'); if(st) st.textContent='unreachable'; });
@@ -2765,16 +2723,6 @@ function chiefPollStartPoll(target){
   tick();
   chiefTimer=setInterval(tick, 2000);
 }
-// Reaching the top of the terminal loads older scrollback (up to 3000 lines).
-addEventListener('scroll', function(e){
-  var t=e.target; if(!t||t.id!=='chief-term') return;
-  if(t.scrollTop<40 && !chiefMore && chiefLines<3000){
-    chiefMore=true; chiefLines=Math.min(3000, chiefLines+600);
-    if(chiefSock && chiefSock.readyState===1) chiefSock.send(JSON.stringify({lines:chiefLines}));
-    else chiefPoke();
-    setTimeout(function(){ chiefMore=false; }, 800);
-  }
-}, true);
 function fmtDur(ms){
   if(!ms || ms<0) return '';
   var s=Math.round(ms/1000);
