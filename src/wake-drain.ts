@@ -26,9 +26,9 @@
 // BEFORE ANY ARGUMENT, in this order, every refusal `ERROR: <text>` on stderr,
 // exit 1:
 // 1. the fleet backend (backendName, src/lib.ts): AC_BACKEND, config/backend,
-//    <AC_FLEET_STATE>/../config/backend, orca - any other name (herdr
-//    included) is `unsupported backend '<b>' (valid backend: orca)`, solo
-//    and ack included.
+//    <AC_FLEET_STATE>/../config/backend, orca - any other name is
+//    `unsupported backend '<b>' (valid backend: orca)`, solo and ack
+//    included.
 // 2. the home: no AC_HOME is ac_home's refusal (`AC_HOME is not set - ...`);
 //    one cd cannot enter, or a relative one from a caller cwd bun could not
 //    name, is `AC_HOME is not a readable directory: <h>`. <state> is
@@ -143,7 +143,7 @@
 //    live member (chiefChildLive with this run's stdin and stdout) is
 //    skipped - the watcher declined that wake, and acking it would settle
 //    nothing (bin/ac-wake-lib.sh's CHIEF-QUIET block owns why); AC_BACKEND becomes the task's backend (taskBackend cut at a
-//    NUL, herdr - an unreadable meta warns once - W20) and STAYS EXPORTED for
+//    NUL, orca when absent - an unreadable meta warns once - W20) and STAYS EXPORTED for
 //    every later child, the ride-alongs included (W19); the pane through
 //    backendCall (below) `backend_capture <id> 40` - any failure skips it; its
 //    text through spawned `sed '/^$/d' | tail -n 25` - a failing sed or tail
@@ -199,8 +199,8 @@
 // SPAWNED, with the original's argv (stdin the caller's): mkdir, mv, rmdir,
 // rm -rf, awk, ps, touch, sed, tail, grep, jq, date and /bin/bash (the
 // clock), the four siblings above. THE BACKEND VERBS go through backendCall
-// (src/lib.ts, the twin of bin/ac-backend.sh's herdr and orca drivers: awk,
-// herdr or orca, jq and tail spawned), stderr dropped every time:
+// (src/lib.ts, the twin of bin/ac-backend.sh's orca driver: awk, orca, jq
+// and tail spawned), stderr dropped every time:
 //   backend_window_alive <fam>-chief  - step 3, stdin and stdout dropped
 //                                       (roomchiefLive's default); step 7's
 //                                       scope, stdin and stdout this run's
@@ -208,9 +208,10 @@
 //                                       stdout this run's
 //   backend_capture <id> 40           - step 7, stdout captured
 // each window probe under AC_BACKEND = the probed meta's backend= (orca when
-// none) for that call alone, as the original's `( )` - herdr reading
-// /dev/null, orca the stdin passed; only status 0 is live, so a refused
-// backend name reads gone and that family's spool drains.
+// none) for that call alone, as the original's `( )` - orca always reads the
+// caller's stdin, regardless of what the call site passes it (backendCall's
+// comment, src/lib.ts); only status 0 is live, so a refused backend name
+// reads gone and that family's spool drains.
 //
 // ALSO:
 // - W8, THE CLAIM MATCH: the sweep keeps a live claimer whose command names
