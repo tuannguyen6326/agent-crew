@@ -84,7 +84,7 @@ if (talk && live) {
   // unknown - there is no write here to withhold, so refusing IS this
   // guard's "do nothing").
   if (state.startsWith("unobservable"))
-    die(b(`REFUSED: the backend for ${idB} could not be read (${state}) - liveness is UNKNOWN, and two writers corrupt one session if it is still mid-turn. Check the backend (herdr status server), then talk again once it is readable.`));
+    die(b(`REFUSED: the backend for ${idB} could not be read (${state}) - liveness is UNKNOWN, and two writers corrupt one session if it is still mid-turn. Check the backend, then talk again once it is readable.`));
 }
 
 if (!isDir(native(worktree))) warn(b(`worktree ${worktree} is gone; mkdir -p it to let --resume load the transcript`));

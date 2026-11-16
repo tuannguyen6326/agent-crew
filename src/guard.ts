@@ -18,8 +18,8 @@
 // IN ORDER, each step only reading (the stamp is the one write):
 // 0. The backend name, as sourcing ac-backend.sh checked it (backendName's
 //    soft rung, src/lib.ts): AC_BACKEND, config/backend, the first word of
-//    <AC_FLEET_STATE less one trailing slash>/../config/backend, herdr; an
-//    unreadable rung reads as none. Any name but herdr or orca exits 1 with
+//    <AC_FLEET_STATE less one trailing slash>/../config/backend, orca; an
+//    unreadable rung reads as none. Any name but orca exits 1 with
 //    NOTHING printed and nothing minted (W1, a wart of the original kept: its
 //    header promised 0).
 // 1. The home: AC_HOME through physicalDir (`cd && pwd -P`, a relative one
@@ -116,7 +116,7 @@
 // Per orphan candidate WITH a chief meta, roomchiefLive
 // probes backend_window_alive <fam>-chief through backendCall (src/lib.ts,
 // the twin of bin/ac-backend.sh's drivers) with AC_BACKEND set to the meta's
-// backend= (herdr when none) for that call alone, stdin, stdout and stderr
+// backend= (orca when none) for that call alone, stdin, stdout and stderr
 // dropped; only status 0 is live (1 gone, 2 unreadable, a refused name such
 // as `backend=tmux` - every other answer is an orphan). It spawns awk for the
 // pane handle, then `herdr pane get|pane list|status server --json` (with

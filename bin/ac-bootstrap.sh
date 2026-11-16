@@ -19,8 +19,8 @@
 #                                   ANY tool this doctor names (required or
 #                                   optional tier alike) - DIAGNOSTIC ONLY,
 #                                   never sets rc (some inert states, like
-#                                   an nvm pin, are deliberate; the herdr
-#                                   compat check below is the real gate).
+#                                   an nvm pin, are deliberate; the backend
+#                                   reachability check below is the real gate).
 #                                   The hint is a directory-level PATH move,
 #                                   not a guaranteed per-tool fix: PATH
 #                                   orders directories, so prepending one
@@ -45,16 +45,15 @@
 #
 # --quiet suppresses OK lines (problems only). Exit 1 ONLY when a REQUIRED
 # tool is missing, below its floor or lacking its capability, the backend
-# protocol-compat check below fails, or that check's status probe does not
+# reachability check below fails, or that check's status probe does not
 # answer within its ceiling; auth gaps, INERT and CHECK-FAILED are advisory
 # and never affect the exit code, and so is a floor/capability line on an
 # OPTIONAL tool (the same tier rule as OPTIONAL: itself). A wrong REQUIRED
 # build blocks exactly like an absent one, because it fails in a KNOWN
 # shape rather than a diagnosable one: the fleet's code calls the missing
 # verb unconditionally and reads the failure as something else (an old git
-# makes the commit-msg guard fail OPEN, an old herdr makes every stopped
-# server read as unobservable) - the one class of outage a doctor line
-# exists to pre-empt.
+# makes the commit-msg guard fail OPEN) - the one class of outage a doctor
+# line exists to pre-empt.
 #
 # Knobs: AC_BOOTSTRAP_PROBE_TIMEOUT (seconds, default 10) bounds the backend
 # status probe (probe_bounded below); 0 runs it unbounded, the pre-ceiling
@@ -149,10 +148,9 @@ ac_tool_version() {
 # untouched, deliberately - some inert states are chosen (this host's nvm
 # pin on node, homebrew jq pinned ahead of the OS copy), and a line that
 # blocks every session over a deliberate config teaches chiefs to ignore
-# it. The one case that must actually stop the fleet - herdr client/server
-# incompatibility - already has its own MISSING/rc=1 gate below (the
-# `compat` check); this function only explains a shadow, it does not
-# duplicate that gate.
+# it. The one case that must actually stop the fleet - the orca runtime
+# unreachable or not ready - already has its own MISSING/rc=1 gate below;
+# this function only explains a shadow, it does not duplicate that gate.
 shadow_check() {
   local tool="$1"
   local copies active_path active_real active_ver
@@ -214,10 +212,6 @@ shadow_check() {
 # wrong build has a KNOWN failure shape in this fleet's code, each naming
 # the floor (the oldest release carrying what the fleet calls) and the ONE
 # cheap capability probe that proves the call answers:
-#   herdr  0.8.0  - the fleet targets 0.8.0 outright; `status server --json`
-#                   reporting `.running` is what bin/ac-backend.sh reads to
-#                   tell a STOPPED server (positive absence, GONE) from an
-#                   unreadable one (unobservable). No higher floor is asked.
 #   git    2.15.0 - the commit-msg guard bin/ac-tree.sh installs runs
 #                   `git interpret-trailers --parse` (taught in 2.15.0, its
 #                   RelNotes) and fails OPEN when that call errors, so on an
@@ -236,7 +230,6 @@ shadow_check() {
 # them, so adding a row touches no caller.
 floor_of() {
   case "$1" in
-    herdr) printf '0.8.0' ;;
     git) printf '2.15.0' ;;
     jq) printf '1.6' ;;
     bun) printf '1.4.4' ;;
@@ -245,24 +238,14 @@ floor_of() {
 cap_of() {
   # cap_of <tool> - the capability's name and probe, as the line prints them.
   case "$1" in
-    herdr) printf '.running in status server --json (probe: herdr status server --json)' ;;
     git) printf 'interpret-trailers --parse (probe: git interpret-trailers --parse </dev/null)' ;;
     jq) printf -- '--args / $ARGS (probe: jq -rn --args %s x)' "'\$ARGS.positional[0]'" ;;
     bun) printf 'bun:sqlite + Bun.Terminal (probe: bun -e import("bun:sqlite") / typeof Bun.Terminal)' ;;
   esac
 }
 cap_probe() {
-  # cap_probe <tool> - 0 when the capability answers. herdr's arm reads the
-  # bounded status probe the compat gate below already ran (compat_json,
-  # probe_rc): the server is asked once per run, and a TIMEOUT there is that
-  # gate's own MISSING verdict, never a second one here.
+  # cap_probe <tool> - 0 when the capability answers.
   case "$1" in
-    herdr)
-      [ "$probe_rc" != 124 ] || return 0
-      case "$(printf '%s' "$compat_json" | jq -r '.running' 2>/dev/null || true)" in
-        true|false) return 0 ;;
-        *) return 1 ;;
-      esac ;;
     git) git interpret-trailers --parse </dev/null >/dev/null 2>&1 ;;
     jq) [ "$(jq -rn --args '$ARGS.positional[0]' x 2>/dev/null)" = x ] ;;
     bun)
@@ -278,7 +261,6 @@ cap_probe() {
     *) return 0 ;;
   esac
 }
-compat_json=""
 probe_rc=0
 
 build_check() {
@@ -330,43 +312,30 @@ opt() {
 }
 
 need git "brew install git"
-need jq "brew install jq (worktree pool state, herdr backend)"
+need jq "brew install jq (worktree pool state, orca backend)"
 need bun "curl -fsSL https://bun.sh/install | bash (the TypeScript under src/ that bin/ runs, the dashboard, the brain engine)"
 
-# Session backend: the configured one is required, the others stay optional.
+# Session backend: the configured one is required.
 backend="$(ac_config_read backend orca)"
 case "$backend" in
-  herdr|orca) : ;;
+  orca) : ;;
   *)
-    printf 'MISSING: config/backend names unsupported backend %s (valid backends: herdr, orca)\n' "$backend"
+    printf 'MISSING: config/backend names unsupported backend %s (valid backend: orca)\n' "$backend"
     rc=1
     backend=
     ;;
 esac
 # The hint names the binary outright rather than "$backend": the case above
-# already confines the backend blocks below to a known name, so the name is
-# fixed per branch - and "MISSING: <backend> - configured session backend"
-# told an operator the one thing they already knew, while withholding the
-# one thing they needed. An unsupported name clears $backend instead of
-# forcing a fallback driver, so neither block below silently probes a tool
-# the operator never asked for. Nothing spawns without the configured
-# backend's CLI. The `need` lines themselves sit inside the backend blocks
-# below: herdr's capability arm reads the bounded status probe, which must
-# run first.
+# already confines the backend block below to a known name, so the name is
+# fixed - and "MISSING: <backend> - configured session backend" told an
+# operator the one thing they already knew, while withholding the one thing
+# they needed. An unsupported name clears $backend instead of forcing a
+# fallback driver, so the block below never silently probes a tool the
+# operator never asked for. Nothing spawns without the configured backend's
+# CLI. The `need` line itself sits inside the backend block below: its
+# capability arm reads the bounded status probe, which must run first.
 
-# Present is not enough: a client/server PROTOCOL mismatch (brew upgrades the CLI
-# while the old server keeps running - herdr's README: a running server keeps its
-# process until stopped) fails EVERY socket call, so nothing can be spawned, seen
-# or steered. Lived 2026-07-25, and it cost a diagnosis instead of one digest
-# line. herdr reports the condition itself, so ask it - and flag ONLY an explicit
-# `false`: an absent binary, an old herdr with no --json, or any unparseable reply
-# says NOTHING about compatibility, and a doctor that grounds the fleet on silence
-# is worse than the outage. Neither jq shorthand can express that: `jq -e` exits 0
-# on EMPTY input (silence would read as a mismatch), and `// empty` swallows the
-# very value being looked for (jq's alternative operator fires on false as well as
-# null). So the field is printed raw and compared here - "" or "null" is silence.
-#
-# AND IT IS BOUNDED. This is the one herdr call left on a chief's OWN
+# AND IT IS BOUNDED. This is the one backend call left on a chief's OWN
 # session-start path, and a hang here does not degrade a sweep the way a wedged
 # pane pass does - it stops the chief from starting, which is the fleet losing
 # its supervisor before it has one. A TIMEOUT is not the silence above: an
@@ -411,27 +380,11 @@ if [ "$probe_secs" = 0 ]; then
   probe_bounded() { shift; "$@"; }
 fi
 
-if [ "$backend" = herdr ]; then
-  if command -v herdr >/dev/null 2>&1; then
-    compat_json="$(probe_bounded "$probe_secs" herdr status server --json)" || probe_rc=$?
-  fi
-  need herdr "brew install herdr (the fleet's session backend; nothing spawns without it)"
-  if [ "$probe_rc" = 124 ]; then
-    printf 'MISSING: herdr status server did not answer within %ss - the backend is wedged or unreachable, so every socket call this fleet makes will block the same way; restart the herdr server (it exits every pane, the captain owns that call)\n' "$probe_secs"
-    rc=1
-  fi
-  compat="$(printf '%s' "$compat_json" | jq -r '.compatible' 2>/dev/null || true)"
-  if [ "$compat" = false ]; then
-    printf 'MISSING: herdr protocol compat - the running server disagrees with the client (herdr status server: compatible false), so EVERY socket call fails and no pane can be spawned, read or steered; restart the herdr server (it exits every pane, the captain owns that call)\n'
-    rc=1
-  fi
-elif [ "$backend" = orca ]; then
-  # Same flag-only-explicit-false philosophy for the orca runtime: silence
-  # (no binary, no --json, unparseable) says nothing about reachability -
-  # and a REACHABLE runtime still starting (or errored) cannot spawn either,
-  # so an explicit non-ready state flags the same way.
-  # Bounded for the same reason and on the same path as the herdr branch above:
-  # an orca fleet's chief starts through this line too.
+if [ "$backend" = orca ]; then
+  # Flag-only-explicit-false: silence (no binary, no --json, unparseable)
+  # says nothing about reachability - and a REACHABLE runtime still starting
+  # (or errored) cannot spawn either, so an explicit non-ready state flags
+  # the same way. Bounded: an orca fleet's chief starts through this line too.
   need orca "install the Orca app - its CLI ships with it (the fleet's session backend; nothing spawns without it)"
   orca_status_json="$(probe_bounded "$probe_secs" orca status --json)" || probe_rc=$?
   if [ "$probe_rc" = 124 ]; then

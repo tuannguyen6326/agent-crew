@@ -15,7 +15,7 @@ repo="$(make_repo alpha)"
 git -C "$repo" remote add origin https://example.test/alpha.git
 git clone --quiet "$repo" "$AC_HOME/projects/alpha"
 git -C "$AC_HOME/projects/alpha" remote set-url origin https://example.test/alpha.git
-printf 'herdr\n' >"$AC_HOME/config/backend"
+printf 'orca\n' >"$AC_HOME/config/backend"
 printf 'codex\n' >"$AC_HOME/config/crew-harness"
 printf 'lab\n' >"$AC_HOME/config/herdr-session"
 printf 'wPARENT\n' >"$AC_HOME/config/herdr-workspace"
@@ -27,7 +27,7 @@ assert_eq "$home" "$AC_HOME/crewdeputies/mate1" "prints the home path"
 for d in state data config projects; do
   [ -d "$home/$d" ] || fail "missing $d/ in seeded home"
 done
-assert_eq "$(cat "$home/config/backend")" "herdr" "backend inherited"
+assert_eq "$(cat "$home/config/backend")" "orca" "backend inherited"
 assert_eq "$(cat "$home/config/crew-harness")" "codex" "crew-harness inherited"
 assert_eq "$(cat "$home/config/herdr-session")" "lab" "herdr-session inherited (the herdr server session is shared)"
 assert_no_file "$home/config/herdr-workspace" "herdr-workspace NOT inherited - a workspace id is fleet-specific, the crewdeputy owns its own group"

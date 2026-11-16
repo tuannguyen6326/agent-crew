@@ -13,9 +13,8 @@
 // IN ORDER:
 // 1. The fleet backend, as sourcing ac-backend.sh checked it (backendName,
 //    src/lib.ts), BEFORE usage (W14): AC_BACKEND, config/backend, the first
-//    word of <AC_FLEET_STATE>/../config/backend, herdr; any other name is
-//    `ERROR: unsupported backend '<b>' (valid backends: herdr, orca;
-//    tmux/wezterm were removed 2026-07-17)`.
+//    word of <AC_FLEET_STATE>/../config/backend, orca; any other name is
+//    `ERROR: unsupported backend '<b>' (valid backend: orca)`.
 // 2. ac-guard.sh beside the shim bun was started from (STARTED_BIN,
 //    src/lib.ts), when it can be started: stdio inherited, status ignored.
 //    Its warnings precede every line of the peek on stderr and it stamps
@@ -27,8 +26,8 @@
 //    `ERROR: no crewmate meta for <id>`. Homeless, the AC_HOME refusal
 //    precedes that line (W7).
 // 5. AC_BACKEND is set, and so exported to every child, to taskBackend(<id>):
-//    the meta's last backend=, herdr when none; an unreadable meta prints
-//    `WARN: cannot read meta file <m>` and reads herdr (W1, fail-open, kept).
+//    the meta's last backend=, orca when none; an unreadable meta prints
+//    `WARN: cannot read meta file <m>` and reads orca (W1, fail-open, kept).
 // 6. Liveness: backendCall("window_alive", [<id>]) (src/lib.ts, the twin of
 //    bin/ac-backend.sh's drivers) as the original's top level ran it. A name
 //    the route refuses (a meta's backend=tmux) is its ERROR line above. 0
@@ -36,7 +35,7 @@
 //    pane list lacks, a stopped herdr server, a disconnected orca terminal -
 //    kind=self has no detached arm here); any other status is `ERROR: the
 //    BACKEND could not be read for <id> - the pane's liveness is UNKNOWN and
-//    no work is lost; check the backend itself (herdr status server), then
+//    no work is lost; check the backend itself, then
 //    peek again`. Contract: bin/ac-backend.sh's WINDOW LIVENESS - a pane that
 //    is gone stays gone, while a backend nobody can read is no evidence the
 //    crewmate died.
@@ -121,7 +120,7 @@ const alive = backendCall("window_alive", [id], { stdin: "inherit", stdout: "inh
 if (alive.exited) process.exit(alive.status);
 if (alive.status === 1) die(`window gone for ${id}`);
 if (alive.status !== 0)
-  die(`the BACKEND could not be read for ${id} - the pane's liveness is UNKNOWN and no work is lost; check the backend itself (herdr status server), then peek again`);
+  die(`the BACKEND could not be read for ${id} - the pane's liveness is UNKNOWN and no work is lost; check the backend itself, then peek again`);
 
 // One after another, where the original's ran at once: each filter reads to
 // EOF or stops for good, so the bytes and the rightmost failure are the

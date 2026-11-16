@@ -1,5 +1,5 @@
-// spawn.ts - spawn a crewmate: lease an in-repo worktree, open a window on
-// the session backend (a herdr tab), and launch
+// spawn.ts - spawn a crewmate: lease an Orca-managed worktree, open a
+// terminal on the Orca backend, and launch
 // the harness with the brief. Also spawns crewdeputies: persistent supervisors
 // that run in their own seeded home instead of a project worktree. Refused in
 // a solo session (AC_SOLO=1), whose one write path is ac-self-task.sh.
@@ -10,7 +10,7 @@
 // Usage: ac-spawn.sh <id> <project-name-or-dir> [--scout] [--mode <m>]
 //                    [--harness <claude|codex|opencode|pi|cursor|custom>] [--model <name>]
 //                    [--effort <low|medium|high|xhigh|max|ultracode>]
-//                    [--backend <herdr|orca>]
+//                    [--backend <orca>]
 //                    [--resume-from <old-task-id>]
 //                    [--base-branch <b>]
 //        ac-spawn.sh <id> <project> --recover        (reopen a destroyed pane)
@@ -145,12 +145,11 @@
 // in the meta). --resume-from <old-id> reopens that recorded claude session
 // (`claude --resume`) - for same-stage revisions where the old context is
 // worth keeping. Role changes and code-review never resume.
-// claude keys sessions by their cwd, so a resume asks the pool for the old
-// task's exact worktree slot back (worktree= from its meta, passed as
-// ac-tree.sh get --prefer); when that slot cannot be honored the spawn still
-// proceeds but warns loudly:
+// claude keys sessions by their cwd, so a resume that lands anywhere but the
+// old task's exact worktree (worktree= from its meta) may not find the old
+// session; every lease is a fresh orca worktree now, never the same path
+// twice, so the spawn still proceeds but warns loudly on every resume:
 //   resume may not find the old session (cwd changed: <old> -> <new>)
-// Non-resume spawns lease exactly as before (no --prefer).
 //
 // LEASES (the authoritative grammar): the crew meta records
 //   leases=<path>[:<path>...]
@@ -178,7 +177,7 @@
 //
 // THE LEASE INSTALL (the authoritative contract; the runner is leaseInstall,
 // src/lib.ts): when the project's home yaml declares commands.install, a crew
-// spawn runs it in the fresh lease (herdr or orca) right after the lease and
+// spawn runs it in the fresh lease right after the lease and
 // before the seed and the window - a scout, which never builds, skips it. It
 // is a synchronous child bounded by AC_LEASE_INSTALL_TIMEOUT (default 300 s),
 // so a signal held through it acts once it returns. It never refuses the
@@ -194,7 +193,7 @@
 // On success prints:
 //   spawned <id> harness=<h> kind=<ship|scout|crewdeputy> mode=<mode> yolo=<on|off> backend=<b> window=<target> worktree=<path>
 //
-// The backend comes from --backend, else config/backend, else herdr, and is
+// The backend comes from --backend, else config/backend, else orca, and is
 // recorded in the task meta so every later script drives the same backend.
 // An explicit --base-branch is recorded too (lease_base=), absent otherwise,
 // so ac-teardown.sh can prove a 0-commit crew/<family> branch merged into
@@ -254,12 +253,13 @@
 // nothing more - handing over AC_HOME instead would give every crewmate the whole
 // fleet home, which ac-qa.sh's "the path travels in the brief, not the environment"
 // block and ac-pane-agent.sh's refusal to fabricate a home both exist to prevent.
-// On the same rung and for the same reason: AC_FLEET_NAME, the fleet token every
-// herdr workspace label is built from (ac-lib.sh ac_fleet_name). Homeless, that
-// helper can only answer its fixed fallback, so every observation tab a crewmate
-// opens - ship watch, qa watch, the pane agents - landed in the ONE group shared
-// by every fleet on the box instead of its own. Resolved HERE where AC_HOME is
-// valid and threaded as the NAME alone.
+// On the same rung and for the same reason: AC_FLEET_NAME, the fleet token
+// every orca terminal title and workspace grouping is built from (ac-lib.sh
+// fleetName). Homeless, that helper can only answer its fixed fallback, so
+// every observation tab a crewmate opens - ship watch, qa watch, the pane
+// agents - landed in the ONE group shared by every fleet on the box instead
+// of its own. Resolved HERE where AC_HOME is valid and threaded as the NAME
+// alone.
 // Prefixed OUTSIDE spawnLaunch so a verbatim custom launch-<h> template passes
 // them on too. SHARP EDGE: config/model is harness-specific in VALUE, so a fleet
 // pinned to a codex model hands that name to a claude pane agent - the same
@@ -319,7 +319,7 @@
 //
 // GUARDED CREWMATE/ROOMCHIEF RECOVERY (--recover on <id> <project>, or on
 // --roomchief <family>). AUTHORITATIVE for how a task whose pane or tab was
-// DESTROYED gets its pane back without losing anything: a herdr server exit,
+// DESTROYED gets its pane back without losing anything: a backend outage,
 // a tab closed by hand, a stranded tab reaped as an orphan. It widens the
 // crewdeputy guard above rather than adding a verb, because the refusal it
 // relaxes (the duplicate-meta die) lives here and the window is opened the
@@ -367,8 +367,8 @@
 // half-spawned task, and the refusal is appended to state/<id>.status. The
 // chief sees it AT SPAWN TIME and
 // recovers now. An UNOBSERVABLE probe (2) is NOT a dead pane: it warns and
-// delivers exactly as before - refusing there would ground the fleet on a herdr
-// hiccup. Auto-recovery is deliberately not attempted; the required property is
+// delivers exactly as before - refusing there would ground the fleet on a
+// backend hiccup. Auto-recovery is deliberately not attempted; the required property is
 // only "never type a kickoff into a shell, never sit silent on a dead pane".
 // The gate runs TWICE, because it answers "was the harness up BEFORE I typed"
 // and a harness can die ON the kickoff itself. The POST-KICKOFF RE-CHECK is the
@@ -577,8 +577,8 @@
 // EXIT: 0 spawned, promoted or recovered (strands and unobservable probes
 // included); 1 every ERROR, a value flag missing its value (W14) and a
 // redirection the run could not open; a child's own status where the run
-// adopts it - the herdr lease (bin/ac-tree.sh get), jq's in window_new
-// (W5 and the legacy-group sweep's pipeline), sleep's (W6), the unguarded status
+// adopts it - the lease, jq's in window_new
+// (W5), sleep's (W6), the unguarded status
 // append (W1a), a stdout closed under the crew or crewdeputy outcome line (W1b),
 // sed's or cut's in the roomchief announce (W9), the skills seed's mkdir, ln or
 // exclude append, a usage count bash's arithmetic refused; 143, 129 and 130 when
@@ -591,7 +591,7 @@
 // complete. SIGNALS: TERM, HUP and INT are handled; each runs the armed cleanup
 // and exits 128+n. The long waits (the settles, the claim's and the ready
 // loop's ticks, the ultracode pause) are awaited, so a signal acts at once
-// there; inside the herdr lease or the orca lease the signal waits for the
+// there; inside the lease the signal waits for the
 // child to return (W2). Every other child is synchronous, so the run also turns
 // the loop once at each phase's edge - before the lease, before the crew
 // path's status line, before each path's disarm, and before a recovery
@@ -608,14 +608,13 @@
 //   cannot write ends the spawn 1 with the cleanup still armed (the meta
 //   removed, the lease returned, the live tab closed), and a closed stdout ends
 //   it 1 after the meta is durable; the crewdeputy outcome line the same.
-// - W2: the herdr lease is taken before its cleanup is armed - a signal inside
-//   the lease leaves the slot leased with no meta, the claim released (one
+// - W2: the lease is taken before its cleanup is armed - a signal inside
+//   the lease leaves the worktree leased with no meta, the claim released (one
 //   before the lease ends the run with nothing leased).
 // - W3: an untrappable death strands the claim, the lease, the tab and the
-//   handle; a re-spawn of the id leases another slot and refuses on the window.
+//   handle; a re-spawn of the id leases another worktree and refuses on the window.
 // - W5: window_new ends the run with jq's status after the tab exists and
-//   before its handle; the legacy-group sweep's pipeline ends it with herdr's
-//   list status or jq's before any tab.
+//   before its handle.
 // - W6: AC_SPAWN_SETTLE=. passes the grammar and sleep refuses it after the
 //   window and the launch line.
 // - W7: an unreadable chief meta is warned and not counted toward the cap.
@@ -640,8 +639,8 @@
 // - BUN: every path needs bun (the shim's `ERROR: required tool not found:
 //   bun`, exit 1, before anything).
 // - SIGNALS: INT to the pid alone runs the cleanup and exits 130 (W4); a
-//   TERM or HUP during a synchronous child other than the leases (a herdr RPC,
-//   a room post, a dispatch-select) acts at the run's next wait - a settle, a
+//   TERM or HUP during a synchronous child other than the leases (a backend
+//   call, a room post, a dispatch-select) acts at the run's next wait - a settle, a
 //   tick, a phase-edge turn (SIGNALS above) - so the run may go on past that
 //   child to the end of its phase (a whole recovery notice, the kickoff file
 //   and pointer, the crew status line and START post) and run that phase's
@@ -728,6 +727,7 @@ import {
   projectConfigFile,
   projectDir,
   recordsDir,
+  repoRoot,
   shellQuote,
   shellStatus,
   spawnShell,
@@ -851,6 +851,10 @@ const S = {
   window: "",
   backend: "",
   worktree: "",
+  // true only when crew/<id> did not exist before THIS spawn's lease - the
+  // branch-collision refusal above already proved that (an existing branch
+  // means a live family sibling owns it, never this spawn's to delete).
+  branchFresh: false,
   trap: null as null | (() => void),
 };
 let binDir = "";
@@ -1249,7 +1253,7 @@ const turn = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 function reapOrphanWindow(): void {
   const rc = alive(S.id);
   if (rc === 1) return;
-  if (rc !== 0) die(`the BACKEND could not be READ for ${S.id} - whether ${target(S.id)} still exists is UNKNOWN, so this is REFUSED rather than open a second window beside a possibly LIVE one; check the backend itself (herdr status server), then try again`);
+  if (rc !== 0) die(`the BACKEND could not be READ for ${S.id} - whether ${target(S.id)} still exists is UNKNOWN, so this is REFUSED rather than open a second window beside a possibly LIVE one; check the backend itself, then try again`);
   warn(`reaping the orphan window of ${S.id} (${target(S.id)}): it carries no meta, so no fleet script could address it - an earlier spawn died before writing one`);
   killWindow(S.id);
 }
@@ -1262,9 +1266,17 @@ function spawnOrphanCleanup(): void {
 }
 
 // The cleanup on the crew path, from the lease until a COMPLETE meta.
+// orcaWorktreeRelease only removes the worktree, never the crew/<id> branch
+// the lease itself created (git switch -c) - dropping it here too, but only
+// when THIS spawn is the one that created it fresh (S.branchFresh), never a
+// live family sibling's pre-existing branch the collision refusal already
+// let this spawn continue onto.
 function spawnFailedCleanup(): void {
-  if (S.backend === "orca") orcaWorktreeRelease(S.worktree);
-  else run([`${binDir}/ac-tree.sh`, "return", S.worktree, "--force"], { stdout: "ignore", stderr: "ignore" });
+  // repoRoot reads the worktree's git-common-dir, so it must run BEFORE the
+  // release below removes the worktree out from under it.
+  const repo = S.branchFresh ? repoRoot(S.worktree) : null;
+  orcaWorktreeRelease(S.worktree);
+  if (repo !== null) run(["git", "-C", repo, "branch", "-D", crewBranch(S.id)], { stdout: "ignore", stderr: "ignore" });
   rmF(S.meta);
   if (S.window !== "") killWindow(S.id);
   claimRelease();
@@ -1502,10 +1514,9 @@ async function main(argv: string[]): Promise<void> {
 
   // Pin the backend for this task; every backend call below, and every later
   // script through the meta, honors it.
-  process.env.AC_BACKEND = backend !== "" ? backend : configReadSoft("backend", "herdr");
+  process.env.AC_BACKEND = backend !== "" ? backend : configReadSoft("backend", "orca");
   backend = backendName();
   S.backend = backend;
-  if (baseBranchSet && backend !== "orca") die(`--base-branch requires an orca-backend fleet (config/backend=${backend} here) - a herdr fleet leases from its own worktree pool, which has no base-branch concept`);
 
   // Validated before any window or lease, so a bad value fails fast.
   const badNumber = (s: string): boolean => s === "" || /[^0-9.]/.test(s) || /\..*\./.test(s);
@@ -1528,7 +1539,7 @@ async function main(argv: string[]): Promise<void> {
     S.trap = claimRelease;
     const rc = alive(id);
     if (rc === 0) die(`--recover: ${id} is LIVE (${target(id)}) - a live pane is never double-spawned`);
-    if (rc !== 1) die(`--recover: the BACKEND could not be READ for ${id} - whether ${target(id)} still exists is UNKNOWN, so this recovery is REFUSED rather than open a second pane beside a possibly LIVE one; check the backend itself (herdr status server), then recover again`);
+    if (rc !== 1) die(`--recover: the BACKEND could not be READ for ${id} - whether ${target(id)} still exists is UNKNOWN, so this recovery is REFUSED rather than open a second pane beside a possibly LIVE one; check the backend itself, then recover again`);
     const recKind = metaGetHard(S.meta, "kind");
     const recDir = metaGetHard(S.meta, "worktree");
     const recSid = metaGetHard(S.meta, "session_id");
@@ -1858,7 +1869,7 @@ HANDS, NOT SUBAGENTS: the delegation guard still fences harness subagents from t
     if (recover) {
       const rc = alive(id);
       if (rc === 0) die(`window ${target(id)} already exists`);
-      if (rc !== 1) die(`the BACKEND could not be READ for ${id} - whether ${target(id)} still exists is UNKNOWN, so this recovery is REFUSED rather than risk a second window on a LIVE deputy's home; check the backend itself (herdr status server), then recover again`);
+      if (rc !== 1) die(`the BACKEND could not be READ for ${id} - whether ${target(id)} still exists is UNKNOWN, so this recovery is REFUSED rather than risk a second window on a LIVE deputy's home; check the backend itself, then recover again`);
     } else reapOrphanWindow();
     // A crewdeputy's tab lives in the fleet ROOT workspace, its cwd the
     // deputy home.
@@ -1908,6 +1919,12 @@ HANDS, NOT SUBAGENTS: the delegation guard still fences harness subagents from t
   // THE BRANCH COLLISION REFUSAL (above).
   const branch = crewBranch(id);
   const branchSha = cap(run(["git", "-C", projectDirC, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]).out);
+  // The orca lease below creates crew/<id> itself (git switch -c) only when
+  // it does not already exist - this is the one place that already knows
+  // which, before the lease runs, so a failed-spawn cleanup can tell "this
+  // spawn's own fresh branch" from "a live family sibling's", never deleting
+  // the latter.
+  S.branchFresh = branchSha === "";
   if (branchSha !== "" && !(await familyOwned(id, sd)))
     die(`${branch} already exists in ${projectDirC} (${branchSha.slice(0, 12)}) and NO task is in flight to own it - it outlived a dead or torn-down task (teardown deletes a crew branch only when it is MERGED), so spawning ${id} would commit onto that foreign history and make its landing diff nonsense. Rename it or delete it - that is YOUR call, this spawn touches no ref:
   keep it:   git -C ${projectDirC} branch -m ${branch} ${branch}-old
@@ -1946,24 +1963,16 @@ then spawn again`);
   const first = launch.split(" ")[0]!;
   if (!launchable(first)) die(`harness binary not found: ${first}`);
 
-  // The lease: an Orca-managed worktree on an orca fleet, the in-repo pool
-  // otherwise (a resume asks for its old slot back).
+  // The lease: an Orca-managed worktree (a resume asks for its old session
+  // back, but the worktree itself is this spawn's own fresh lease).
   let worktree: string;
   await turn();
-  if (backend === "orca") {
-    const ls = orcaWorktreeLease(id, projectDirC, baseBranch);
-    await turn();
-    if (ls.status === 2) die(`the epic-branch fence refused the orca lease for ${id} (reason above)`);
-    if (ls.status !== 0) die(`orca worktree create failed for ${id} (is the Orca runtime running, and the repo registered? orca repo add --path ${projectDirC})`);
-    worktree = ls.out;
-    if (resumeWt !== "" && worktree !== resumeWt) warn(`resume may not find the old session (cwd changed: ${resumeWt} -> ${worktree})`);
-  } else {
-    const get = run([`${binDir}/ac-tree.sh`, "get", "--repo", projectDirC, "--id", id, "--holder", `crew:${id}`, ...(mode !== "" ? ["--mode", mode] : []), ...(resumeWt !== "" ? ["--prefer", resumeWt] : [])]);
-    await turn();
-    ee(get.status);
-    worktree = cap(get.out);
-    if (resumeWt !== "" && worktree !== resumeWt) warn(`resume may not find the old session (cwd changed: ${resumeWt} -> ${worktree})`);
-  }
+  const ls = orcaWorktreeLease(id, projectDirC, baseBranch);
+  await turn();
+  if (ls.status === 2) die(`the epic-branch fence refused the orca lease for ${id} (reason above)`);
+  if (ls.status !== 0) die(`orca worktree create failed for ${id} (is the Orca runtime running, and the repo registered? orca repo add --path ${projectDirC})`);
+  worktree = ls.out;
+  if (resumeWt !== "" && worktree !== resumeWt) warn(`resume may not find the old session (cwd changed: ${resumeWt} -> ${worktree})`);
   S.worktree = worktree;
   codegraphWorktree(projectDirC, worktree);
   S.trap = spawnFailedCleanup;
@@ -1979,7 +1988,7 @@ then spawn again`);
 
   const rc = alive(id);
   if (rc === 0) die(`window ${target(id)} already exists`);
-  if (rc !== 1) die(`the BACKEND could not be READ for ${id} - whether ${target(id)} still exists is UNKNOWN, so this spawn is REFUSED rather than open a second window beside a possibly LIVE one; check the backend itself (herdr status server), then spawn again`);
+  if (rc !== 1) die(`the BACKEND could not be READ for ${id} - whether ${target(id)} still exists is UNKNOWN, so this spawn is REFUSED rather than open a second window beside a possibly LIVE one; check the backend itself, then spawn again`);
   ended(backendWindowNew(id, worktree));
   S.window = target(id);
 

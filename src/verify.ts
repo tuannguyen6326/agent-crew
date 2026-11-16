@@ -46,8 +46,8 @@
 // the exact stub bytes are also recorded at <lease>/.crew/qa/neutralized-* so
 // ac-qa's own dirty-tree check, running inside this same lease mid-round, can
 // exempt exactly its own pending stubs) and restores their pre-round bytes
-// before the lease is released, on every exit path, so no stub rides a pooled
-// slot into its next lessee, and runs one ac-pane-agent turn synchronously. A valid
+// before the lease is released, on every exit path, so no stub survives past
+// the round, and runs one ac-pane-agent turn synchronously. A valid
 // result is durably captured before pane/meta/tree cleanup. A REJECTED verdict
 // (the pane completed and its round evidence is durable, only the output
 // failed the schema) releases those same runtime resources - the pane, the
@@ -57,7 +57,7 @@
 // failing, a non-ok terminal status - pane_closed/timeout/error alike -, no
 // terminal result, no readable transcript, no final message) is reaped the same
 // way by the exit cleanup (exitTrap): nothing here is worth holding a live
-// herdr pane or a leased pool slot for. Only an incomplete QA export -
+// pane or an Orca-managed worktree for. Only an incomplete QA export -
 // reconciliation, evidence-export, or report failing AFTER a valid pane
 // verdict, where QA's own durable run state or in-tree infra may still be
 // active - still retains its pane/meta/lease for chief recovery or task
@@ -294,8 +294,7 @@
 // relay-report.md), src/teardown.ts (the verifier meta, .pane-<id>, the lock
 // dir, the evidence of an incomplete qa export), bin/ac-watch.sh (the rounds'
 // findings.json mtimes and the busy declaration), the fleet views' kind=verify-*
-// classifiers, src/pool-health.ts (holder=verify slots) and the id-keyed
-// readers (ac-peek, ac-crew-state, ac-send).
+// classifiers and the id-keyed readers (ac-peek, ac-crew-state, ac-send).
 
 import { closeSync, lstatSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import {
@@ -565,7 +564,6 @@ const S = {
   trapRan: false,
 };
 
-const treeBin = (): string => b8(process.env.AC_VERIFY_TREE_BIN || "") || `${BIN_DIR}/ac-tree.sh`;
 const paneBin = (): string => b8(process.env.AC_VERIFY_PANE_BIN || "") || `${BIN_DIR}/ac-pane-agent.sh`;
 const qaRelayBin = (): string => b8(process.env.AC_VERIFY_QA_RELAY_BIN || "") || `${BIN_DIR}/ac-qa.sh`;
 
@@ -648,9 +646,6 @@ let prompt = "";
 let paneResult = "";
 let transcriptCopy = "";
 
-// `[ "$(ac_backend)" = orca ]`: a refused name is its ERROR line and no answer.
-const orcaFleet = (): boolean => backendRoute("inherit") === "orca";
-
 // restore_neutralized: every stubbed instruction file back to its pre-round
 // bytes - written THROUGH the path (W6), or the link recreated from `$(cat)` of
 // its target - then the backup gone.
@@ -680,9 +675,7 @@ function returnLeases(leases: string): boolean {
   restoreNeutralized();
   for (const l of leases.split(":")) {
     if (l === "") continue;
-    if (orcaFleet()) {
-      if (!orcaWorktreeRelease(u8(l))) return false;
-    } else if (run([treeBin(), "return", l, "--force"], { stdout: "ignore" }).status !== 0) return false;
+    if (!orcaWorktreeRelease(u8(l))) return false;
   }
   return true;
 }
@@ -1851,7 +1844,6 @@ fix delta touches.`;
   await checkpoint();
   if (l1.status !== 0) fail(`could not lease verifier worktree for ${id}`);
   lease = l1.out;
-  if (!(lease !== "" && isDir(lease))) fail(`tree allocator returned no verifier worktree for ${id}`);
   S.allLeases = lease;
   if (!bindTree(lease, sha)) fail(`could not bind verifier worktree to ${sha}`);
   verifyDropBranch(lease, id);
@@ -1905,9 +1897,8 @@ fix delta touches.`;
 
   // QA_NEUTRALIZED_EXEMPTION: ac-qa's own assertTargetCheckout runs INSIDE
   // this same lease mid-round (start/finish), and would otherwise refuse
-  // these stubs as a dirty tracked file. .crew/qa is the pool's own
-  // lease-lifetime home (tree.ts sweeps it only at the NEXT lease, never
-  // mid-round), so recording exactly which paths were stubbed - and the
+  // these stubs as a dirty tracked file. .crew/qa is this lease's own
+  // lifetime home, so recording exactly which paths were stubbed - and the
   // exact bytes - there lets that check recognize its own pending
   // verification without trusting any file that merely looks neutralized.
   if (kind === "qa" && neutralized > 0) {
@@ -1935,7 +1926,6 @@ fix delta touches.`;
       await checkpoint();
       if (l2.status !== 0) fail(`could not lease E2E verifier worktree for ${id}`);
       const e2eLease = l2.out;
-      if (!(e2eLease !== "" && isDir(e2eLease))) fail(`tree allocator returned no E2E worktree for ${id}`);
       S.allLeases = `${S.allLeases}:${e2eLease}`;
       if (!bindTree(e2eLease, e2eRef)) fail(`could not bind E2E verifier worktree to ${e2eRef}`);
       verifyDropBranch(e2eLease, `${id}-e2e`);
@@ -2434,25 +2424,20 @@ fix delta touches.`;
   must(["cat", output]);
 }
 
-// verify_lease: orca leases an Orca-managed worktree, herdr the crew-tree
-// pool's last printed line; a DURABLE lease (no --owner) either way.
+// verify_lease: an Orca-managed worktree; a DURABLE lease (no --owner).
 function verifyLease(repo: string, leaseId: string): { status: number; out: string } {
-  if (orcaFleet()) {
-    const r = orcaWorktreeLease(u8(leaseId), u8(repo));
-    return { status: r.status, out: subst(b8(r.out)) };
-  }
-  const r = pipeline([[treeBin(), "get", "--repo", repo, "--id", leaseId, "--holder", "verify"], ["tail", "-n", "1"]], null);
-  return { status: r.status, out: subst(r.out) };
+  const r = orcaWorktreeLease(u8(leaseId), u8(repo));
+  return { status: r.status, out: subst(b8(r.out)) };
 }
 
 // The caller's exact ref, hard: whatever base the lease resolved is discarded.
 const bindTree = (tree: string, ref: string): boolean =>
   run(["git", "-C", tree, "checkout", "--detach", "--force", "--quiet", ref]).status === 0 && run(["git", "-C", tree, "reset", "--hard", "--quiet", ref]).status === 0;
 
-// On orca the minted crew branch goes right after the detach: unlike a
-// crewmate's, a verifier's branch is never a deliverable.
+// The minted crew branch goes right after the detach: unlike a crewmate's, a
+// verifier's branch is never a deliverable.
 function verifyDropBranch(tree: string, leaseId: string): void {
-  if (orcaFleet()) run(["git", "-C", tree, "branch", "-D", b8(crewBranch(u8(leaseId)))], { stdout: "ignore", stderr: "ignore" });
+  run(["git", "-C", tree, "branch", "-D", b8(crewBranch(u8(leaseId)))], { stdout: "ignore", stderr: "ignore" });
 }
 
 // cases.tsv as `LC_ALL=C tr '\t' '\037'` hands it to `IFS=$'\037' read`: TAB
