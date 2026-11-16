@@ -402,27 +402,26 @@ rc=0
 run_on_tty bash -c 'exit 1' >/dev/null 2>&1 || rc=$?
 assert_eq "$rc" "1" "run_on_tty still reports an ordinary exit 1 untouched"
 
-# --- 12. the fake herdr refuses an unmodeled verb and names it (F53) ----------
+# --- 12. the fake orca refuses an unmodeled verb and names it (F53) ----------
 
-make_fake_herdr
+make_fake_orca
 
 # Control FIRST: a modeled verb still dispatches exactly as before. Without it,
 # a guard that swallowed the whole `case` would pass the refusal check below
 # while breaking every other test in the suite.
 rc=0
-herdr --session s1 tab list >/dev/null 2>&1 || rc=$?
+orca terminal list >/dev/null 2>&1 || rc=$?
 assert_eq "$rc" "0" "a modeled verb still dispatches"
 
-# An unmodeled verb must be REFUSED, not "succeed" with empty output. `pane run`
-# is the real instance, not a hypothetical: bin/ac-pane-agent.sh's step 5 launch issues it
-# against the backend, and this fake models no arm for it.
+# An unmodeled verb must be REFUSED, not "succeed" with empty output - this
+# fake models no arm for it.
 rc=0
-out="$(herdr --session s1 pane run p1 somecmd 2>&1)" || rc=$?
+out="$(orca terminal rename p1 somename 2>&1)" || rc=$?
 assert_eq "$rc" "2" "an unmodeled verb is refused, never a silent success"
 
 # ...and the refusal NAMES the verb. A bare non-zero would leave a test author
 # hunting which of the composed call's parts the fake could not answer.
-assert_contains "$out" "pane run p1 somecmd" "the refusal names the verb it could not model"
+assert_contains "$out" "terminal rename p1 somename" "the refusal names the verb it could not model"
 
 # --- 13. assert_contains refuses an empty needle (F56) ------------------------
 
@@ -506,45 +505,43 @@ case "$(cat "$TMP/h2.out")" in
   *'NOT REACHED'*) fail "hold_close returned instead of refusing" ;;
 esac
 
-# --- 15. the host's own herdr/orca never answers a test -----------------------
+# --- 15. the host's own orca never answers a test -----------------------------
 
 # A fake prepended to PATH shields only a first-match lookup. On a host with
-# herdr installed, every ac-room run executed it (2026-10-04): the session-start
+# orca installed, every ac-room run executed it (2026-10-04): the session-start
 # row's bin/ac-bootstrap.sh asks EVERY copy on PATH for its version, the fake's
 # and the host's alike. bin/ac-pane-agent.sh appends /opt/homebrew/bin to its
-# own PATH, too. A planted pair logging each call stands in for the host's, so
-# this holds on a host with neither installed.
+# own PATH, too. A planted binary logging each call stands in for the host's, so
+# this holds on a host with none installed.
 host="$TMP/host-backend"
 mkdir -p "$host"
-for b in herdr orca; do
-  cat >"$host/$b" <<HOST
+cat >"$host/orca" <<HOST
 #!/bin/sh
-printf '%s: %s\n' "\$ROW" "$b \$*" >>"$host/calls"
-echo "$b 9.9.9"
+printf '%s: %s\n' "\$ROW" "orca \$*" >>"$host/calls"
+echo "orca 9.9.9"
 HOST
-  chmod +x "$host/$b"
-done
+chmod +x "$host/orca"
 PATH="$host:$PATH" bash -c '. "$1/tests/sh/helpers.sh"; AC_SUITE_DECIDED=1; set +e
-  export ROW=first-match; herdr --version; orca status --json
-  export ROW=bootstrap-probe; make_fake_herdr; "$BIN/ac-bootstrap.sh" --quiet
-  grep -c "^herdr --version" "$FAKE_HERDR/log" >"$2/fake-versions"
-  export ROW=appended; rm "$TMP/stubbin/herdr"; PATH="$PATH:$2"; herdr --version; orca status --json
+  export ROW=first-match; orca status --json
+  export ROW=bootstrap-probe; make_fake_orca; "$BIN/ac-bootstrap.sh" --quiet
+  grep -c "^orca status --json" "$FAKE_ORCA/log" >"$2/fake-versions"
+  export ROW=appended; rm "$TMP/stubbin/orca"; PATH="$PATH:$2"; orca status --json
   true' _ "$ROOT" "$host" >/dev/null 2>&1
 assert_eq "$(cat "$host/calls" 2>/dev/null || true)" "" \
-  "the host's herdr/orca answer no test - not on first match, not to bootstrap's every-copy probe, not from a dir a script appends"
+  "the host's orca answers no test - not on first match, not to bootstrap's every-copy probe, not from a dir a script appends"
 # The probe route was really taken: bootstrap asked the suite's fake.
 [ "$(cat "$host/fake-versions" 2>/dev/null || echo 0)" -ge 1 ] \
   || fail "bootstrap never reached its version probe, so the every-copy route went unexercised"
 
-# A RELATIVE PATH dir holding herdr is mirrored too, and its other tools still
+# A RELATIVE PATH dir holding orca is mirrored too, and its other tools still
 # run - a mirror link made from the relative spelling would dangle.
 rel="$TMP/relhost"
 mkdir -p "$rel/tools"
-cp "$host/herdr" "$rel/tools/herdr"
+cp "$host/orca" "$rel/tools/orca"
 printf '#!/bin/sh\necho kept\n' >"$rel/tools/ac-mirror-probe"
 chmod +x "$rel/tools/ac-mirror-probe"
 out="$(cd "$rel" && PATH="tools:$PATH" bash -c '. "$1/tests/sh/helpers.sh"; AC_SUITE_DECIDED=1; set +e
-  export ROW=relative; herdr --version >/dev/null 2>&1; ac-mirror-probe' _ "$ROOT" 2>/dev/null)" || true
+  export ROW=relative; orca status --json >/dev/null 2>&1; ac-mirror-probe' _ "$ROOT" 2>/dev/null)" || true
 assert_eq "$out" "kept" "a relative PATH dir's other tools survive the mirror"
 # ...whatever CDPATH an exported environment carries: a decoy tools/ on it
 # must not stand in for the cwd's.
@@ -552,7 +549,7 @@ mkdir -p "$TMP/decoy/tools"
 out="$(cd "$rel" && CDPATH="$TMP/decoy" PATH="tools:$PATH" bash -c '. "$1/tests/sh/helpers.sh"; AC_SUITE_DECIDED=1; set +e
   ac-mirror-probe' _ "$ROOT" 2>/dev/null)" || true
 assert_eq "$out" "kept" "the mirror reads the relative dir itself, not a CDPATH namesake"
-assert_eq "$(cat "$host/calls" 2>/dev/null || true)" "" "and its herdr answers no test"
+assert_eq "$(cat "$host/calls" 2>/dev/null || true)" "" "and its orca answers no test"
 
 # --- 16. the host's own docker/codegraph are absent to a test ----------------
 
@@ -654,7 +651,8 @@ assert_eq "$(cat "$host3/calls" 2>/dev/null || true)" "" "that dir's gh answers 
 # Each of these is set by the code for a child and read back by a stub, so an
 # inherited copy decides the row: ac-ship.test.sh's pin that push exports
 # GIT_TERMINAL_PROMPT=0 passed with the export deleted under Claude Code, which
-# exports the same value, and ac-guard's herdr rows assert an EMPTY session.
+# exports the same value. HERDR_SESSION is a retired knob name kept here only
+# as an isolation-hygiene example, read by nothing now.
 iso="$(GIT_TERMINAL_PROMPT=0 GIT_OPTIONAL_LOCKS=0 HERDR_SESSION=host CLAUDE_CONFIG_DIR=/host/cfg \
   bash -c '. "$1/tests/sh/helpers.sh"; AC_SUITE_DECIDED=1
     printf "%s %s %s %s\n" "${GIT_TERMINAL_PROMPT-unset}" "${GIT_OPTIONAL_LOCKS-unset}" \
@@ -746,7 +744,7 @@ ka_rc=0; wait "$ka_pid" || ka_rc=$?
 assert_eq "$ka_rc" "137" "kill_after ... group takes the leader"
 wait_all_dead "$TMP/ka-group.inner" 2 || fail "kill_after ... group left a member of the group alive"
 
-# --- 21. fake orca: a partial API outage, mirroring fake herdr's .pane-api-down -
+# --- 21. fake orca: a partial API outage -------------------------------------
 
 # orca_handle <json> - pull the literal "handle":"..." field fake orca's own
 # output always carries at this exact shape; no jq dependency, like every
@@ -760,9 +758,8 @@ assert_contains "$(orca terminal show --terminal "$oh1" --json)" '"ok":true' \
   "control: terminal show answers before the outage"
 
 # The window-collision guard (ORPHAN-WINDOW SAFETY, src/spawn.ts) is proved
-# by a liveness probe that is BLIND while window creation still works - the
-# same partial shape fake herdr's .pane-api-down models for `pane get`/`pane
-# list` against `tab create`. Read-side orca calls are `terminal show`/`list`;
+# by a liveness probe that is BLIND while window creation still works.
+# Read-side orca calls are `terminal show`/`list`;
 # the create-side call that must stay healthy is `terminal create`. `status`
 # must fail TOO: backend_window_alive_orca falls back to a bare `orca status`
 # the instant `terminal show` fails, and a status that still answers reads as
@@ -787,8 +784,8 @@ assert_contains "$(orca terminal show --terminal "$oh1" --json)" '"ok":true' \
 
 # --- 22. fake orca: a per-terminal read failure, distinct from a gone terminal -
 
-# Mirrors fake herdr's per-pane `.read-fails`: the terminal is otherwise alive
-# (show still answers) but its capture specifically cannot be read - the
+# The terminal is otherwise alive (show still answers) but its capture
+# specifically cannot be read - the
 # unreadable-composer case a verified send/peek must treat as UNVERIFIED,
 # never as "gone".
 oh3="$(orca_handle "$(orca terminal create --json)")"
@@ -803,16 +800,15 @@ rm -f "$FAKE_ORCA/terminals/$oh3.read-fails"
 assert_contains "$(orca terminal read --terminal "$oh3" --json)" '"ok":true' \
   "terminal read answers again once the knob clears"
 
-# --- 23. fake orca: a per-terminal delayed-ready composer (herdr's delay-ready-secs twin) -
+# --- 23. fake orca: a per-terminal delayed-ready composer --------------------
 
 # kickoffWaitInputReady (src/spawn.ts) reads harnessUp (title) then
 # backendAgentIdle (title, falling back to `wait --for tui-idle`) - never a
 # process-info verb, which orca has none of. The clock therefore starts on
 # this terminal's FIRST `terminal show` (the "up" probe orca actually calls),
-# mirroring where fake herdr's own clock starts (the first `pane
-# process-info`, never the launch-line send-text) - title is the only part of
-# the delay this knob models; kickoffWaitInputReady also reads
-# backendDialogAnswer and a stable, non-blank render, neither timing-gated.
+# never the launch-line send-text - title is the only part of the delay this
+# knob models; kickoffWaitInputReady also reads backendDialogAnswer and a
+# stable, non-blank render, neither timing-gated.
 oh4="$(orca_handle "$(orca terminal create --json)")"
 [ -n "$oh4" ] || fail "fixture: terminal create must return a handle"
 printf '1\n' >"$FAKE_ORCA/terminals/$oh4.delay-ready-secs"
@@ -824,10 +820,10 @@ case "$out" in
   *'"title":"✳'*) fail "the composer must not read idle before its delay elapses" ;;
 esac
 
-# A send issued before the clock has elapsed must be DROPPED, exactly like
-# fake herdr's own pane send-text: without this, a send typed blind (no
-# readiness gate at all) would still land, and a ported readiness-gate test
-# could not tell "waited for ready" from "typed early and got lucky".
+# A send issued before the clock has elapsed must be DROPPED: without this, a
+# send typed blind (no readiness gate at all) would still land, and a
+# readiness-gate test could not tell "waited for ready" from "typed early and
+# got lucky".
 orca terminal send --terminal "$oh4" --text "typed too early" --json >/dev/null
 assert_contains "$(cat "$FAKE_ORCA/log")" "dropped-before-ready" \
   "a send before the delay elapses is dropped, not delivered"
