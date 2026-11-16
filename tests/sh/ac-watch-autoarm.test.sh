@@ -350,7 +350,7 @@ assert_eq "$(cat "$TMP/watch.env.skip")" "" \
 # asyncRewake delivery is a harness contract (measured on Claude Code 2.1.220;
 # the host has moved on): when the rewake is swallowed the chief sleeps on a
 # durable spool (measured: 101 minutes, woken by a human). A keystroke is a
-# turn on every backend; with no pane on the meta or no herdr to type through
+# turn on every backend; with no pane on the meta or no backend to type through
 # the nudge fails silently - the scoped exit-2 case above proves that
 # fail-open by running with neither.
 make_fake_orca
@@ -512,9 +512,9 @@ fi
 # with the status in $AN/stub/clock.rc, the ISO stamp fixed, a herdr AND an
 # orca each logging every call and answering only their own text-send verb -
 # the nudge (src/watch-autoarm.ts nudge()) reads AC_BACKEND from the SCOPED
-# CHIEF'S OWN meta, defaulting to herdr when that field is empty, never from
-# config/backend, so both stubs stay armed and a row picks its driver by what
-# it writes into the chief meta). The cwd is the home, stdin the Stop payload,
+# CHIEF'S OWN meta, defaulting to orca when that field is empty, never from
+# config/backend; the herdr stub stays only to prove a backend=herdr-pinned
+# chief is refused, not silently re-routed). The cwd is the home, stdin the Stop payload,
 # the env scrubbed of every knob the hook, the backend driver and the stub
 # read, LC_ALL=C. SIDE in a seeding text or an env word is the lab root.
 AN="$TMP/aa-n"
