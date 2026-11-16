@@ -60,9 +60,9 @@
 // IN ORDER:
 //  1. The fleet backend, as sourcing ac-backend.sh checked it (backendName,
 //     src/lib.ts), before anything else: AC_BACKEND, config/backend, the first
-//     word of <AC_FLEET_STATE>/../config/backend, herdr; any other name is
-//     `ERROR: unsupported backend '<b>' (valid backends: herdr, orca;
-//     tmux/wezterm were removed 2026-07-17)` - ahead of the solo refusal.
+//     word of <AC_FLEET_STATE>/../config/backend, orca; any other name is
+//     `ERROR: unsupported backend '<b>' (valid backend: orca)` - ahead of
+//     the solo refusal.
 //  2. AC_SOLO exactly `1`: `ERROR: a solo session (AC_SOLO=1) never steers a
 //     pane - the crew belongs to the chief session; hand it the order with
 //     bin/ac-remote.sh order (solo-session skill)`, homeless too.
@@ -78,8 +78,10 @@
 //     none): `ERROR: no crewmate meta for <id>`; homeless, the AC_HOME refusal
 //     precedes that line.
 //  6. AC_BACKEND is set, and so exported to every child, to the meta's last
-//     backend= (cut at a NUL), herdr when none; an unreadable meta prints
-//     `WARN: cannot read meta file <meta>` and reads herdr (W1).
+//     backend= (cut at a NUL), orca when none; an unreadable meta prints
+//     `WARN: cannot read meta file <meta>` and reads absent, so orca (W1).
+//     An explicit backend= unknown to the shared reader (herdr included) is
+//     the same named refusal as step 1, before any pane is ever touched.
 //  7. Liveness: backendCall("window_alive") (src/lib.ts, the twin of the
 //     bin/ac-backend.sh drivers) at the original's top level. A route that
 //     refuses the name (a meta's backend=tmux) is its ERROR line, exit 1.
@@ -344,7 +346,7 @@ const meta = taskMeta(id);
 if (!isA(meta, false)) die(`no crewmate meta for ${id}`);
 // taskBackend answers bytes; AC_BACKEND carries the text they spell, as the
 // shell's export did.
-process.env.AC_BACKEND = Buffer.from(cutNul(taskBackend(id)), "latin1").toString("utf8") || "herdr";
+process.env.AC_BACKEND = Buffer.from(cutNul(taskBackend(id)), "latin1").toString("utf8");
 
 const alive = call("window_alive", [id]);
 if (alive === 1) die(`window gone for ${id}`);

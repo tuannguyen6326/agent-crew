@@ -60,8 +60,8 @@
 //
 // BEFORE ANY VERB but rows, the fleet backend is resolved (backendName,
 // src/lib.ts): AC_BACKEND, config/backend, <AC_FLEET_STATE>/../config/backend,
-// herdr - any other name, usage included, is
-//   ERROR: unsupported backend '<b>' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)
+// orca - any other name, usage included, is
+//   ERROR: unsupported backend '<b>' (valid backend: orca)
 // exit 1. Every ERROR below is on stderr, exit 1 unless noted.
 //
 // post <family> <actor> <text...>, in this order:
@@ -83,8 +83,8 @@
 //     AC_SCOPE other than <family> and AC_ROOM_PROMOTE_RECEIPT other than 1,
 //     into a family whose roomchief is LIVE - state/<family>-chief.meta there
 //     (`[ -e ]`) and backend_window_alive answering 0 (backendCall, as its
-//     `( )` ran) under the meta's backend= (herdr when absent; an unreadable
-//     meta reads as none, silently), stderr dropped:  ERROR: post: <family> has a LIVE roomchief - its own TRIAGE/GATE/ASK/SELF-APPROVED/LANDED/HANDBACK/GATE-ROUTING/R1-DISPOSITION/DECIDED/STAGE-ADMISSION receipts belong to it, never to an unscoped caller (rooms-threads skill: 'Two chiefs on one family is a role violation, not extra help')
+//     `( )` ran) under the meta's backend= (orca when absent; an unreadable
+//     meta, or a refused name, reads as none, silently), stderr dropped:  ERROR: post: <family> has a LIVE roomchief - its own TRIAGE/GATE/ASK/SELF-APPROVED/LANDED/HANDBACK/GATE-ROUTING/R1-DISPOSITION/DECIDED/STAGE-ADMISSION receipts belong to it, never to an unscoped caller (rooms-threads skill: 'Two chiefs on one family is a role violation, not extra help')
 //     Every other answer - 1, 2, a refused backend name - is NOT live: the
 //     guard fails OPEN, refusing a real write being worse than a
 //     rare duplicate. Two chiefs writing one family's receipts is a role
@@ -222,10 +222,11 @@
 // open <family>: no family -> `ERROR: usage: ac-room.sh open <family>`; no
 // regular file at taskMeta(<family>-chief):
 //   ERROR: room <family> is not promoted (no <family>-chief in flight); promote with ac-spawn.sh --roomchief <family>, or keep talking here
-// AC_BACKEND becomes the meta's backend (taskBackend: herdr when absent, an
-// unreadable meta warned and herdr), then backend_window_alive (backendCall),
-// stdio passed: a refused backend name (a bogus meta backend's
-// unsupported-backend line) ends the run with its status; 1 ->
+// AC_BACKEND becomes the meta's backend (taskBackend: orca when absent, an
+// unreadable meta warned and read as absent too; an explicit name this
+// fleet refuses, herdr included, is the same named ERROR as ac_backend's own
+// ladder, exit 1, before window_alive ever runs), then backend_window_alive
+// (backendCall), stdio passed; 1 ->
 //   ERROR: roomchief window is gone; respawn (--roomchief <family>) or teardown <family>-chief
 // any other but 0 (2 unreadable, a timed-out herdr included) - never
 // "gone", a roomchief that may be alive is never torn down on an

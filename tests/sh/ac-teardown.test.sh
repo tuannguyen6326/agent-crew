@@ -92,7 +92,7 @@ xtree() {  # xtree <args...> - the live ac-tree.sh at this side, its home and st
 }
 xlease() {  # xlease <repo> <id> - one leased slot, the meta's worktree/leases/lease_ids
   local wt; wt="$(xtree get --repo "$H/$1" --id "$2")"
-  printf 'kind=ship\nbackend=herdr\nproject_dir=%s\nworktree=%s\nleases=%s\nlease_ids=0011223344556677\n' "$H/$1" "$wt" "$wt" >"$H/home/state/$2.meta"
+  printf 'kind=ship\nbackend=orca\nproject_dir=%s\nworktree=%s\nleases=%s\nlease_ids=0011223344556677\n' "$H/$1" "$wt" "$wt" >"$H/home/state/$2.meta"
 }
 xtab() {  # xtab <id> <n> [<label>] - the fake herdr's tab t<n> / pane p<n> and state/.pane-<id>
   printf 'p%s %s\n' "$2" "${3-crew:$1}" >"$H/fh/tabs/t$2"; : >"$H/fh/panes/p$2.buf"
@@ -224,8 +224,8 @@ if [ "$XROOTED" = 0 ]; then
 fi
 xdo xput home/config/backend 'tmux
 '
-xrefuse "ERROR: unsupported backend 'tmux' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)"
-xrefuse "ERROR: unsupported backend 'tmux' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)" u
+xrefuse "ERROR: unsupported backend 'tmux' (valid backend: orca)"
+xrefuse "ERROR: unsupported backend 'tmux' (valid backend: orca)" u
 XENV=("AC_BACKEND=orca")
 xrefuse "$XUSAGE"
 XENV=()
@@ -633,7 +633,7 @@ XV=t1-verify-codereview
 x6() {
   xseed; xrepo r
   local wt; wt="$(xtree get --repo "$H/r" --id "$XV")"
-  printf 'kind=verify-codereview\nbackend=herdr\ncaller=t1\nfamily=t1\nleases=%s\nlease_ids=0011223344556677\n' "$wt" >"$H/home/state/$XV.meta"
+  printf 'kind=verify-codereview\nbackend=orca\ncaller=t1\nfamily=t1\nleases=%s\nlease_ids=0011223344556677\n' "$wt" >"$H/home/state/$XV.meta"
   printf 'pv tv\n' >"$H/home/state/.pane-$XV"
   local s; for s in hash change seen seen-hash stale gone ask unobservable report-hash superseded busy busy-stalled ended rewake; do : >"$H/home/state/.$s-$XV"; done
   : >"$H/home/state/.hash-t1"
@@ -645,17 +645,22 @@ xrun "$XV"
 assert_eq "$XRC:$(xout):$(xerr)" "0:teardown $XV complete (verifier):" "6: a direct verifier"
 assert_eq "$(ls -A "$XH/home/state" | LC_ALL=C sort | tr '\n' ' ')" ".hash-t1 archive " "6: nothing of it is left in state/"
 assert_eq "$(cat "$XH/home/state/archive/$XV/status")" "2026 started" "6: ...its status archived beside its meta"
-assert_eq "$(ls "$XH/fh/tabs")" "" "6: ...its pane reaped"
-x6pane() { x6; : >"$H/fh/panes/pv.buf"; }
-xdo x6pane
+assert_eq "$(ls "$FAKE_ORCA/terminals" | LC_ALL=C sort | tr '\n' ' ')" "" "6: ...its pane reaped"
+# Cutover (T8): a VERIFIER meta's backend=herdr refuses too, before the
+# archive or the reap - the fail-closed reader owns every subject alike,
+# never only the main task's own meta.
+x6herdr() { x6; sed -i '' 's/^backend=orca$/backend=herdr/' "$H/home/state/$XV.meta"; }
+xdo x6herdr
 xrun "$XV"
-assert_eq "$XRC:$(xout)" "0:teardown $XV complete (verifier)" "6: a pane the reap left open never stops the run"
-assert_contains "$(xerr)" "WARN: pane pv (@H/home/state/.pane-$XV) did not close" "6: a pane the reap left open is warned"
+assert_eq "$XRC:$(xout)" "1:" "6: a herdr-pinned verifier refuses too"
+assert_eq "$(xerr)" "ERROR: unsupported backend 'herdr' (valid backend: orca)" "6: ...the exact cutover error, nothing else"
+[ -e "$XH/home/state/$XV.meta" ] || fail "6: ...the verifier meta is still there, never archived"
+[ ! -e "$XH/home/state/archive/$XV" ] || fail "6: ...nothing archived - refused before any side effect"
 XQ=t2-verify-qa
 x6q() {
   xseed; mkdir -p "$H/qt/.crew/qa/run1"; printf 'state\n' >"$H/qt/.crew/qa/run1/steps.tsv"; ln -s run1 "$H/qt/.crew/qa/current"
   printf '{"partial":1}\n' >"$H/out.json"; printf '{"e":1}\n' >"$H/pane.ndjson"
-  printf 'kind=verify-qa\nbackend=herdr\ncaller=t2\nfamily=t2\nworktree=%s/qt\noutput=%s/out.json\npane_result=%s/pane.ndjson\n%s' "$H" "$H" "$H" "${1:-}" >"$H/home/state/$XQ.meta"
+  printf 'kind=verify-qa\nbackend=orca\ncaller=t2\nfamily=t2\nworktree=%s/qt\noutput=%s/out.json\npane_result=%s/pane.ndjson\n%s' "$H" "$H" "$H" "${1:-}" >"$H/home/state/$XQ.meta"
 }
 xdo x6q
 xrun "$XQ"
@@ -708,15 +713,15 @@ x6l() {
 }
 xdo x6l
 xrun "$XV"
-assert_contains "$(xerr)" "WARN: skipping vanished verifier lease @H/gone: directory no longer exists" "6: a vanished lease"
-assert_contains "$(xerr)" "WARN: could not return verifier worktree @H/nolease (it may have been re-leased); inspect @H/home/state/archive/$XV/meta" "6: a lease with its id the pool refuses"
-xdo x6l ffffffffffffffff
-xrun "$XV"
-assert_contains "$(xerr)" "WARN: could not return verifier worktree @H/r/.crew/worktrees/1-r (it may have been re-leased)" "6: a re-leased slot is refused by id"
+# Cutover (T8): backend=herdr refuses before the lease loop ever runs - the
+# ac-tree.sh POOL release branch this used to exercise (a non-orca backendV)
+# is unreachable now that orca is the only valid backend; T9 removes the
+# branch itself.
+assert_eq "$XRC:$(xout):$(xerr)" "1::ERROR: unsupported backend 'herdr' (valid backend: orca)" "6: a herdr-pinned verifier's leases are never walked"
 x6n() { xseed; mkdir -p "$H/nolease"; printf 'kind=verify-codereview\nbackend=herdr\nworktree=%s/nolease\n' "$H" >"$H/home/state/$XV.meta"; }
 xdo x6n
 xrun "$XV"
-assert_contains "$(xerr)" "WARN: could not return verifier worktree @H/nolease; inspect @H/home/state/archive/$XV/meta" "6: a pre-leases verifier with no id"
+assert_eq "$XRC:$(xout):$(xerr)" "1::ERROR: unsupported backend 'herdr' (valid backend: orca)" "6: a pre-leases herdr verifier refuses too"
 x6o() { xseed; mkdir -p "$H/owt"; printf 'kind=verify-codereview\nbackend=orca\nleases=%s/owt\n' "$H" >"$H/home/state/$XV.meta"; printf 'term1 tab1\n' >"$H/home/state/.pane-$XV"; }
 xdo x6o
 xrun "$XV"
@@ -730,9 +735,9 @@ assert_contains "$(cat "$XH/fo/log")" "orca worktree rm --worktree path:$XH/owt 
 #    stamps reaped and status archived.
 x7() {
   xseed; xrepo r; xlease r t; xtab t 1
-  printf 'kind=verify-codereview\nbackend=herdr\ncaller=t\n' >"$H/home/state/t-verify-codereview.meta"
-  printf 'kind=verify-codereview\nbackend=herdr\nfamily=t\n' >"$H/home/state/t-old-verify.meta"
-  printf 'kind=verify-codereview\nbackend=herdr\ncaller=other\nfamily=t\n' >"$H/home/state/co-verify.meta"
+  printf 'kind=verify-codereview\nbackend=orca\ncaller=t\n' >"$H/home/state/t-verify-codereview.meta"
+  printf 'kind=verify-codereview\nbackend=orca\nfamily=t\n' >"$H/home/state/t-old-verify.meta"
+  printf 'kind=verify-codereview\nbackend=orca\ncaller=other\nfamily=t\n' >"$H/home/state/co-verify.meta"
   : >"$H/home/state/.change-t-verify-codereview"
   printf 'swept\n' >"$H/home/state/t-verify-codereview.status"
   mkdir -p "$H/home/state/.verify-t-codereview.lock.d"
@@ -748,7 +753,7 @@ assert_eq "$(cat "$XH/home/state/archive/t-verify-codereview/status")" "swept" "
 x7q() {
   xseed; xrepo r; xlease r t; xtab t 1
   git -C "$H/$XS" checkout -q -b crew/t; xcommit "$XS" w.txt
-  printf 'kind=verify-qa\nbackend=herdr\ncaller=t\nfamily=t\n' >"$H/home/state/t-verify-qa.meta"
+  printf 'kind=verify-qa\nbackend=orca\ncaller=t\nfamily=t\n' >"$H/home/state/t-verify-qa.meta"
 }
 xdo x7q
 xrun t
@@ -771,7 +776,7 @@ x8() {
   local l="$H/lease"; mkdir -p "$l/.crew/qa/q-ours" "$l/.crew/qa/q-other" "$l/.crew/qa/q-none" "$l/.crew/qa/q-dead" "$l/.crew/ship/s-ours" "$l/.crew/ship/s-none"
   # A clean git tree, so the gate reads it; .crew/ is the pool's own.
   git init -q "$l"; printf '/.crew/\n' >>"$l/.git/info/exclude"
-  printf 'kind=ship\nbackend=herdr\nproject_dir=%s/r\nworktree=%s\nleases=%s\n' "$H" "$l" "$l" >"$H/home/state/t.meta"
+  printf 'kind=ship\nbackend=orca\nproject_dir=%s/r\nworktree=%s\nleases=%s\n' "$H" "$l" "$l" >"$H/home/state/t.meta"
   xtab t 1
   printf 'pA\n' >"$l/.crew/qa/agent-t.pane"
   printf 'id=q1\ntask=t\ntask=ignored\n' >"$l/.crew/qa/q-ours/run.meta"; printf 'pW tW\n' >"$l/.crew/qa/q-ours/watch.pane"
@@ -801,29 +806,27 @@ WARN: not reaping pNB - run @H/lease/.crew/qa/q-none-b is attributed to no task 
 WARN: not reaping pR - run @H/lease/.crew/qa/q-none is attributed to no task (@H/lease/.crew/qa/q-none/review.pane)
 WARN: not reaping pN - run @H/lease/.crew/qa/q-none is attributed to no task (@H/lease/.crew/qa/q-none/watch.pane)
 WARN: not reaping 777 - run @H/lease/.crew/qa/q-none is attributed to no task (@H/lease/.crew/qa/q-none/serve.pid)
-WARN: pane pSTUCK (@H/lease/.crew/ship/s-ours/watch.pane) did not close - it is orphaned in the pane-agent workspace; retire it by hand: ac-pane-agent.sh reap-pane --pane pSTUCK
-WARN: could not return worktree @H/lease; check the pool with ac-tree.sh list" "8: a dead serve pid, each unattributed record by pane and path, a pane the reap left open"
+WARN: could not return worktree @H/lease; check the pool with ac-tree.sh list" "8: a dead serve pid, each unattributed record by pane and path - pSTUCK closes clean under orca (no .crew fixture names it)"
 for xf in qa/agent-t.pane qa/q-ours/watch.pane qa/q-ours/serve.pid qa/q-dead/watch.pane qa/q-dead/serve.pid ship/s-ours/review.pane ship/s-ours/watch.pane; do
   [ ! -e "$XH/lease/.crew/$xf" ] || fail "8: $xf is reaped"
 done
 [ -e "$XH/lease/.crew/qa/q-none/watch.pane" ] && [ -e "$XH/lease/.crew/qa/q-none/review.pane" ] && [ -e "$XH/lease/.crew/qa/q-none/serve.pid" ] || fail "8: an unattributed run's records are kept"
 [ -e "$XH/lease/.crew/qa/q-other/watch.pane" ] && [ -e "$XH/lease/.crew/qa/q-other/serve.pid" ] || fail "8: another task's run is untouched"
 # The reap is gated on the binary of the backend reap-pane itself resolves -
-# ac_backend, reading the AC_BACKEND teardown pins to the task's backend=. A
-# herdr task with no herdr keeps the record; an orca task with no herdr
-# closes it; an orca task with herdr but no orca warns and keeps it.
+# ac_backend, reading the AC_BACKEND teardown pins to the task's backend=.
+# An orca task with no orca warns and keeps the record; backend=herdr now
+# refuses the whole run before reaping is ever reached (cutover, T8).
 x8o() {
   xseed; xrepo r; mkdir -p "$H/lease/.crew/qa"; printf 'term7\n' >"$H/lease/.crew/qa/agent-t.pane"; : >"$H/fo/terminals/term7.buf"
   git init -q "$H/lease"; printf '/.crew/\n' >>"$H/lease/.git/info/exclude"
   printf 'kind=ship\nbackend=%s\nproject_dir=%s/r\nworktree=%s/lease\nleases=%s/lease\n' "${1:-orca}" "$H" "$H" "$H" >"$H/home/state/t.meta"
 }
 xdo x8o herdr
-XPATH="$(xwithout herdr)"
 xrun t
-XPATH=""
-assert_eq "$XRC" 0 "8: a pane that cannot be reaped never stops the run"
-assert_contains "$(xerr)" "WARN: could not reap pane term7 (@H/lease/.crew/qa/agent-t.pane): herdr or ac-pane-agent.sh unavailable" "8: a herdr task's pane is not reaped without herdr"
-[ -e "$XH/lease/.crew/qa/agent-t.pane" ] && [ -e "$XH/fo/terminals/term7.buf" ] || fail "8: ...its record kept, its terminal open"
+assert_eq "$XRC:$(xout)" "1:" "8: a herdr-pinned task refuses before any reap is attempted"
+assert_eq "$(xerr)" "ERROR: unsupported backend 'herdr' (valid backend: orca)" "8: ...the exact cutover error, nothing else"
+[ -e "$XH/lease/.crew/qa/agent-t.pane" ] && [ -e "$XH/fo/terminals/term7.buf" ] || fail "8: ...its record kept, its terminal untouched - no reap attempted"
+[ ! -e "$XH/home/state/archive/t" ] || fail "8: ...the task's own meta/status never archived either - refused before any side effect"
 xdo x8o
 XPATH="$(xwithout herdr)"
 xrun t
@@ -876,38 +879,20 @@ if [ "$XROOTED" = 0 ]; then
   [ -e "$XH/lease/.crew/ship/s-ours/review.pane" ] || fail "8: ...its panes kept"
 fi
 
-# 9. the pane kill: an owned tab closed; a stale label; a close that fails
-#    on an owned tab (the WARN, the archived status line and the timeline,
-#    with AC_HERDR_SESSION and with config/herdr-session); orca's terminal
-#    closed and its emptied tab's family record retired; a kill that ends
-#    the caller (meta and status archived, the lease left).
-x9() { xseed; xrepo r; xlease r t; xtab t 1 "${1-crew:t}"; mkdir -p "$H/home/data/t"; }
+# 9. the pane kill: a backend=herdr task refuses before any kill is
+#    attempted (cutover, T8 - the tab-close WARN text, AC_HERDR_SESSION and
+#    config/herdr-session hand-commands it used to exercise are herdr driver
+#    internals with no reachable caller left; T11 deletes them); orca's
+#    terminal closed and its emptied tab's family record retired (x9o below,
+#    already orca-pinned - the dedicated dual coverage T4 established); a
+#    kill that ends the caller (meta and status archived, the lease left).
+x9() { xseed; xrepo r; xlease r t; sed -i '' 's/^backend=orca$/backend=herdr/' "$H/home/state/t.meta"; xtab t 1 "${1-crew:t}"; mkdir -p "$H/home/data/t"; }
 xdo x9
 xrun t
-assert_eq "$XRC:$(xout):$(xerr)" "0:teardown t complete:" "9: an owned tab"
-assert_eq "$(ls "$XH/fh/tabs")" "" "9: ...is closed"
-xdo x9 crew:other
-xrun t
-assert_contains "$(xerr)" "WARN: not closing tab t1 for t: it is labelled 'crew:other', not crew:t - the handle is stale (close the tab by hand if it really is this task's)" "9: a stale label"
-xdo x9
-xdo touch @H/fh/.tab-close-fails
-xrun t
-assert_contains "$(xerr)" "WARN: tab t1 of t refused to close and workspace t1 could not be read - close the tab by hand
-WARN: pane close FAILED for t - a live pane may survive this teardown (handle: p1 t1); close it by hand: herdr tab close t1" "9: a failed close on an owned tab"
-assert_contains "$(cat "$XH/home/state/archive/t/status")" "2026-01-01T00:00:00Z warn: pane close failed - handle p1 t1; close by hand: herdr tab close t1" "9: ...on the archived record"
-assert_contains "$(cat "$XH/home/data/t/timeline.log")" "warn: pane close failed" "9: ...and the timeline"
-xdo x9
-xdo touch @H/fh/.tab-close-fails
-XENV=("AC_HERDR_SESSION=s9")
-xrun t
-XENV=()
-assert_contains "$(xerr)" "close it by hand: herdr tab close t1 --session s9" "9: the session in the hand command"
-xdo x9
-xdo touch @H/fh/.tab-close-fails
-xdo xput home/config/herdr-session 'cfg
-'
-xrun t
-assert_contains "$(xerr)" "--session cfg" "9: config/herdr-session in the hand command"
+assert_eq "$XRC:$(xout)" "1:" "9: a herdr-pinned task refuses before any kill is attempted"
+assert_eq "$(xerr)" "ERROR: unsupported backend 'herdr' (valid backend: orca)" "9: ...the exact cutover error, nothing else"
+assert_eq "$(ls "$XH/fh/tabs")" "t1" "9: ...the tab untouched - no kill attempted"
+[ ! -e "$XH/home/state/archive/t" ] || fail "9: ...nothing archived either - refused before any side effect"
 x9o() {
   xseed; xrepo r; xlease r t
   sed -i '' 's/^backend=herdr$/backend=orca/' "$H/home/state/t.meta"
@@ -917,12 +902,10 @@ x9o() {
 xdo x9o
 xrun t
 assert_eq "$(ls -A "$XH/home/state" | grep orca-fam)" ".orca-fam-x" "9: orca closed the terminal and retired its emptied tab's record"
-xdo x9
-xdo touch @H/fh/.kill-caller-on-tab-close
-# The killed run's job report stays out of the suite output.
-{ xrun t; } 2>/dev/null
-assert_eq "$XRC:$(xout)" "137:" "9: a kill at the pane step ends the run by its signal"
-[ -e "$XH/home/state/archive/t/meta" ] && [ -e "$XH/home/state/archive/t/status" ] || fail "9: ...with meta and status already archived"
+# A kill signalled mid-close at the pane step (fh/.kill-caller-on-tab-close)
+# was a herdr-driver-reached scenario; backend=herdr now refuses before
+# that step is ever reached (proven above) - no reachable caller is left
+# for it under orca (T11 removes the herdr-only knob with the driver).
 
 # 10. the lease loop: a pre-leases meta (worktree= is the list, no id); a
 #     vanished dir and an empty entry; a short id list (the first lease takes
@@ -989,7 +972,7 @@ assert_contains "$(xerr)" "worktree @H/fo/orca-wt/t cannot be read by git, so it
 [ -e "$XH/fo/orca-wt/t/precious.txt" ] || fail "10: ...and its files stay"
 x10t() {
   x10a; printf '1\t%s/%s\tr\t2026\n2\tother\tr\t2026\n' "$H" "$XS" >"$H/home/state/port-slots.tsv"
-  mkdir -p "$H/ev"; printf 'kind=verify-qa\nbackend=herdr\ncaller=t\nevidence=%s/ev\n' "$H" >"$H/home/state/t-verify-qa.meta"
+  mkdir -p "$H/ev"; printf 'kind=verify-qa\nbackend=orca\ncaller=t\nevidence=%s/ev\n' "$H" >"$H/home/state/t-verify-qa.meta"
   printf 'victim bytes\n' >"$H/victim1"; printf 'victim bytes\n' >"$H/victim2"
 }
 xdo x10t
@@ -1047,7 +1030,7 @@ xrun t
 assert_eq "$XRC:$(xerr):$(git -C "$XH/r" branch --list crew/t)" "0::" "11: the epic branch on origin alone drops it with -D"
 x11w() {
   xseed; xrepo cwdrepo; git -C "$H/cwdrepo" branch crew/t
-  printf 'kind=ship\nbackend=herdr\nproject_dir=\n' >"$H/home/state/t.meta"
+  printf 'kind=ship\nbackend=orca\nproject_dir=\n' >"$H/home/state/t.meta"
 }
 xdo x11w
 XCWD=cwdrepo
@@ -1067,7 +1050,7 @@ assert_eq "$(xerr)" "WARN: no project_dir recorded for t - crew/t was not looked
 xdecoy="$TMP/xdecoy"
 rm -rf "$xdecoy"; mkdir -p "$xdecoy"; cp -R "$ROOT/bin" "$ROOT/src" "$ROOT/dashboard" "$xdecoy/"
 git init -q -b main "$xdecoy"; git -C "$xdecoy" commit -q --allow-empty -m decoy; git -C "$xdecoy" branch crew/t
-x11g() { xseed; printf 'kind=ship\nbackend=herdr\nproject_dir=.\n' >"$H/home/state/t.meta"; }
+x11g() { xseed; printf 'kind=ship\nbackend=orca\nproject_dir=.\n' >"$H/home/state/t.meta"; }
 xdo x11g
 XGONE=1; XNBIN="$xdecoy/bin"
 xrun t
@@ -1084,7 +1067,7 @@ assert_eq "$(git -C "$xdecoy" branch --list crew/t)" "  crew/t" "11: the decoy r
 #     archived members recorded - fam-spec by its id, zz and zy by
 #     fleet_scope, sharing one - byte order, a gone one skipped; a verifier,
 #     a chief and a prefix family's member recorded none.
-x12() { xseed; xrepo r; printf 'kind=roomchief\nbackend=herdr\nworktree=%s/r\nproject_dir=%s/r\n' "$H" "$H" >"$H/home/state/fam-chief.meta"; xtab fam-chief 3; }
+x12() { xseed; xrepo r; printf 'kind=roomchief\nbackend=orca\nworktree=%s/r\nproject_dir=%s/r\n' "$H" "$H" >"$H/home/state/fam-chief.meta"; xtab fam-chief 3; }
 x12g() { x12; mkdir -p "$H/home/data/fam/spec"; printf 'kind=scout\n' >"$H/home/state/fam-spec.meta"; }
 xdo x12g
 xrefuse "family fam still has crew in flight: fam-spec
@@ -1115,7 +1098,7 @@ if [ "$XROOTED" = 0 ]; then
   xdo chmod 644 @H/home/records/backlog.md
   assert_eq "$XRC:$(xout)" "0:teardown fam-chief complete" "12: a failing ac-ready advises nothing"
 fi
-x12b() { xseed; printf 'kind=roomchief\nbackend=herdr\n' >"$H/home/state/dem bad-chief.meta"; }
+x12b() { xseed; printf 'kind=roomchief\nbackend=orca\n' >"$H/home/state/dem bad-chief.meta"; }
 xdo x12b
 xrun "dem bad-chief"
 assert_contains "$(xerr)" "WARN: could not post DEMOTED to room dem bad: " "12: a refused post warns"
@@ -1123,7 +1106,7 @@ assert_contains "$(xerr)" "post it by hand: ROOT/bin/ac-room.sh post dem bad cre
 x12w() {
   x12; xrepo d; xrepo r2; xrepo v; xrepo e
   xput home/state/fam-chief.meta 'kind=roomchief
-backend=herdr
+backend=orca
 worktree=@H/d
 project_dir=@H/d
 '
@@ -1173,7 +1156,7 @@ XDOCK=0
 
 # 13. a crewdeputy: a home with crew in flight refuses; an empty home lands;
 #     its home is no repo, so nothing is swept for a deputy.
-x13() { xseed; mkdir -p "$H/dhome/state"; printf 'kind=crewdeputy\nbackend=herdr\nworktree=%s/dhome\nproject_dir=%s/dhome\n' "$H" "$H" >"$H/home/state/dq.meta"; }
+x13() { xseed; mkdir -p "$H/dhome/state"; printf 'kind=crewdeputy\nbackend=orca\nworktree=%s/dhome\nproject_dir=%s/dhome\n' "$H" "$H" >"$H/home/state/dq.meta"; }
 x13b() { x13; printf 'kind=ship\n' >"$H/dhome/state/x.meta"; }
 xdo x13b
 xrefuse "crewdeputy home still has crew in flight: @H/dhome/state/*.meta
@@ -1200,7 +1183,7 @@ x14m() { xput "home/state/archive/q-a/meta" "kind=crewmate
 fleet_scope=$1
 project_dir=@H/r
 "; }
-x14() { xseed; xrepo r; printf 'kind=roomchief\nbackend=herdr\nproject_dir=%s/r\n' "$H" >"$H/home/state/q-chief.meta"; x14m q; }
+x14() { xseed; xrepo r; printf 'kind=roomchief\nbackend=orca\nproject_dir=%s/r\n' "$H" >"$H/home/state/q-chief.meta"; x14m q; }
 xdo x14
 xrun q-chief
 assert_eq "$XRC:$(xout):$(xerr)" "0:teardown q-chief complete:" "14: no docker"
@@ -1210,13 +1193,13 @@ xdo x14
 xrun q-chief
 assert_eq "$(cat "$XH/stub/docker.log")" "compose -p crew-qa-r-q-chief down -v --remove-orphans
 compose -p crew-qa-r-q-qa down -v --remove-orphans" "14: both downs"
-x14t() { xseed; xrepo r; printf 'kind=scout\nbackend=herdr\nproject_dir=%s/r\n' "$H" >"$H/home/state/q-spec.meta"; printf 'kind=crewmate\nfleet_scope=q\n' >"$H/home/state/q-member.meta"; mkdir -p "$H/home/data/q/spec"; }
+x14t() { xseed; xrepo r; printf 'kind=scout\nbackend=orca\nproject_dir=%s/r\n' "$H" >"$H/home/state/q-spec.meta"; printf 'kind=crewmate\nfleet_scope=q\n' >"$H/home/state/q-member.meta"; mkdir -p "$H/home/data/q/spec"; }
 xdo x14t
 xrun q-spec --force
 assert_eq "$(xout)" "qa-infra: family stack q-qa kept - q-member is still in flight and its qa run may hold it
 teardown q-spec complete (forced)" "14: a member in flight keeps the family stack"
 assert_eq "$(cat "$XH/stub/docker.log")" "compose -p crew-qa-r-q-spec down -v --remove-orphans" "14: ...and only the task's own stack goes down"
-x14i() { xseed; xrepo r; mkdir -p "$H/home/data/q/qa"; printf 'kind=crewmate\nbackend=herdr\nproject_dir=%s/r\n' "$H" >"$H/home/state/q-qa.meta"; }
+x14i() { xseed; xrepo r; mkdir -p "$H/home/data/q/qa"; printf 'kind=crewmate\nbackend=orca\nproject_dir=%s/r\n' "$H" >"$H/home/state/q-qa.meta"; }
 xdo x14i
 xrun q-qa --force
 assert_eq "$(cat "$XH/stub/docker.log")" "compose -p crew-qa-r-q-qa down -v --remove-orphans" "14: a family stack that is the id goes down once"
@@ -1264,7 +1247,7 @@ for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
   [ "$(grep -c . "$XH/stub/docker.log" 2>/dev/null)" -lt 2 ] || break
   /bin/sleep 0.25
 done
-x14j() { xseed; xrepo r; printf 'kind=roomchief\nbackend=herdr\nproject_dir=%s/r\n' "$H" >"$H/home/state/inj\$(echo PWNED-BY-TRAP >&2)-chief.meta"; x14m 'inj$(echo PWNED-BY-TRAP >&2)'; printf 'URG\n' >"$H/stub/docker.signal"; }
+x14j() { xseed; xrepo r; printf 'kind=roomchief\nbackend=orca\nproject_dir=%s/r\n' "$H" >"$H/home/state/inj\$(echo PWNED-BY-TRAP >&2)-chief.meta"; x14m 'inj$(echo PWNED-BY-TRAP >&2)'; printf 'URG\n' >"$H/stub/docker.signal"; }
 xdo x14j
 xrun 'inj$(echo PWNED-BY-TRAP >&2)-chief'
 assert_eq "$XRC" 0 "14: an id that is shell text completes"

@@ -125,7 +125,7 @@
 // THE NUDGE. A SCOPED handback (exit 2) first types `wake: <reason> - run
 // bin/ac-wake-drain.sh, act on each wake, then re-arm bin/ac-watch.sh as your
 // own background task` into its own chief pane, <scope>-chief through the
-// backend its meta names (herdr without one), stdout and stderr dropped, its
+// backend its meta names (orca without one), stdout and stderr dropped, its
 // failure ignored. asyncRewake delivery is a harness contract (measured on
 // Claude Code 2.1.220; hosts move on): when the rewake is swallowed the chief
 // sleeps on a durable spool - measured 101 minutes, woken by a human. A
@@ -198,9 +198,9 @@
 //
 // AT PARITY with the bash this module replaced (each until its own fix lands):
 // - W3 BAD BACKEND: a scoped handback whose fleet backend name is refused
-//   (AC_BACKEND, config/backend or the fleet-state config naming no herdr or
-//   orca) ends the run 1 at the nudge, silently, before its trace and its
-//   exit 2 - the wake is lost.
+//   (AC_BACKEND, config/backend or the fleet-state config naming anything
+//   but orca) ends the run 1 at the nudge, silently, before its trace and
+//   its exit 2 - the wake is lost.
 // - W4 LOCK PID: `kill -0 <pid=>` takes 0, -1 and -<n> as process-GROUP
 //   probes (0 is this firing's own group), so a lock reading pid=0 or pid=-1
 //   stands every unscoped firing aside as not the holder.
@@ -478,7 +478,11 @@ function promotedFamilies(): string {
 
 // The scoped chief's meta is read quietly, the bash having dropped the
 // subshell's stderr; a fleet backend name the driver refuses ends the whole
-// run 1 (W3), the driver having been sourced into the hook's own shell.
+// run 1 (W3), the driver having been sourced into the hook's own shell. The
+// chief meta's OWN pinned backend= is best-effort like the rest of the
+// nudge: orca without one, and a name this fleet refuses (herdr included)
+// is silently NOT sent to - backendCall's own refusal, never a hard exit,
+// so one bad per-meta pin never costs the hook's exit-2 handback.
 function nudge(why: string): void {
   const meta = `${sd}/${scope}-chief.meta`;
   if (scope === "" || !isFile(meta)) return;
@@ -489,7 +493,7 @@ function nudge(why: string): void {
     b = cutNul(metaGet(meta, "backend"));
   } catch {}
   const saved = process.env.AC_BACKEND;
-  process.env.AC_BACKEND = Buffer.from(b, "latin1").toString("utf8") || "herdr";
+  process.env.AC_BACKEND = Buffer.from(b, "latin1").toString("utf8") || "orca";
   try {
     backendCall(
       "send_line",

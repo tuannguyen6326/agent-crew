@@ -1859,22 +1859,34 @@ export function backendName(soft = false): string {
     }
   }
   b ||= "orca";
-  if (b !== "herdr" && b !== "orca") {
+  if (b !== "orca") {
     if (soft) process.exit(1);
-    die(`unsupported backend '${b}' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)`);
+    die(`unsupported backend '${b}' (valid backend: orca)`);
   }
   return b;
 }
 
-// ac_task_backend's twin: the backend <id> was spawned on (its meta's
-// backend=), herdr without one; an unreadable meta warns as ac_meta_get does
-// and reads herdr.
-export function taskBackend(id: string): string {
+// ac_meta_backend's twin: the SHARED validating reader behind taskBackend
+// and every direct backend= reader (send, watch, wake-drain, watch-autoarm,
+// teardown, room all route their OWN subject's meta through this one): orca
+// when the field is absent, else exactly orca or backendName's own named
+// refusal for a bad pin - a missing field is the no-config route, an
+// explicit bad one is never silently re-routed. An unreadable meta warns as
+// ac_meta_get does and reads as absent.
+export function metaBackend(metaFile: string): string {
   let b = "";
   try {
-    b = metaGet(taskMeta(id), "backend");
+    b = metaGet(metaFile, "backend");
   } catch {}
-  return b || "herdr";
+  b = cutNul(b) || "orca";
+  if (b !== "orca") die(`unsupported backend '${b}' (valid backend: orca)`);
+  return b;
+}
+
+// ac_task_backend's twin: the backend <id> was spawned on (its meta's
+// backend=).
+export function taskBackend(id: string): string {
+  return metaBackend(taskMeta(id));
 }
 
 // ac_vn_ts's twin, the captain-display stamp: date(1) with TZ ADDED, read as
@@ -2219,12 +2231,14 @@ export function metaIsSelf(file: string): boolean {
 
 export type ProbeIo = { stdin: "inherit" | "ignore"; stdout: "inherit" | "ignore" };
 
-// `( AC_BACKEND="${b:-herdr}"; export AC_BACKEND; backend_window_alive
+// `( AC_BACKEND="${b:-orca}"; export AC_BACKEND; backend_window_alive
 // <target> ) 2>/dev/null`, <b> the meta's backend= read as `ac_meta_get ...
 // 2>/dev/null || true` read it (cut at a NUL; an unreadable meta or no key is
-// herdr): AC_BACKEND set to the text <b>'s bytes spell, as the shell's export
+// orca): AC_BACKEND set to the text <b>'s bytes spell, as the shell's export
 // did, for the ONE backendCall, a subshell call as the `( )` made it, and
-// restored after; true only for status 0.
+// restored after; true only for status 0 - a refused backend name (a bogus
+// meta backend=) reads as status 1, an orphan like gone, never a hard
+// refusal: a liveness probe over OTHER members fails safe, it never aborts.
 export function windowAliveAs(m: string, target: string, io: ProbeIo): boolean {
   let b = "";
   try {
@@ -2232,7 +2246,7 @@ export function windowAliveAs(m: string, target: string, io: ProbeIo): boolean {
     b = cutNul(metaGet(m, "backend"));
   } catch {}
   const saved = process.env.AC_BACKEND;
-  process.env.AC_BACKEND = Buffer.from(b, "latin1").toString("utf8") || "herdr";
+  process.env.AC_BACKEND = Buffer.from(b, "latin1").toString("utf8") || "orca";
   try {
     return backendCall("window_alive", [target], { ...io, stderr: "ignore", subshell: true }).status === 0;
   } finally {
@@ -2479,8 +2493,8 @@ function backendRoute(stderr: "inherit" | "ignore"): string | null {
     }
   }
   b ||= "orca";
-  if (b === "herdr" || b === "orca") return b;
-  if (stderr === "inherit") writeSync(2, prefixed("ERROR: ", `unsupported backend '${b}' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)`));
+  if (b === "orca") return b;
+  if (stderr === "inherit") writeSync(2, prefixed("ERROR: ", `unsupported backend '${b}' (valid backend: orca)`));
   return null;
 }
 
@@ -3392,7 +3406,10 @@ const CLOSEABLE_JQ = `
                     then "closeable" else "occupied" end)
               else "unreadable" end`;
 
-function herdrKillWindow(id: string): number {
+// Exported like herdrVerb: tests/ts/teardown.test.ts calls it directly
+// (bypassing backendRoute's now-refusing ladder, T8) to keep proving this
+// driver's own kill behavior until T11 deletes it.
+export function herdrKillWindow(id: string): number {
   const tab = paneField(id, 2, true);
   const who = lat(id);
   let unclosed = 0;

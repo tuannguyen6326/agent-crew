@@ -775,40 +775,44 @@ assert_eq "$(aa_calls)" "call skip=[famA,famB] only=[unset] autoarm=[1]
 call skip=[famB] only=[unset] autoarm=[1]" "the arm env, rebuilt each pass"
 
 # 8. the nudge: a scoped handback types the wake into its own chief pane.
+# backend=herdr is refused now (cutover, T8): nudge()'s own per-meta read
+# is best-effort (never a hard exit, so one bad pin never costs the exit-2
+# handback - the "bogus"/unreadable/empty-field rows below still prove
+# that), but backendCall itself silently sends nothing for a refused name,
+# so every chief here is orca-pinned to keep the nudge's own text provable.
 aa_fresh; aa_meta t1 'kind=ship\n'
-aa_meta famA-chief 'kind=roomchief\nwindow=crew:famA-chief\nbackend=herdr\n'
-aa_each 'printf "pFAC tFAC\n" >SIDE/home/state/.pane-famA-chief'
+aa_meta famA-chief 'kind=roomchief\nwindow=crew:famA-chief\nbackend=orca\n'
+aa_each 'printf "termFAC tabFAC\n" >SIDE/home/state/.pane-famA-chief'
 for l in 'report:t1' '' 'heartbeat'; do
   aa_lines "$l"
   aa_go 2 AC_SCOPE=famA AC_AUTOARM_BUDGET=600
-  assert_contains "$(aa_sent)" "herdr pane send-text pFAC wake: " "the handback is typed into the chief's pane ($l)"
+  assert_contains "$(aa_sent_orca)" "terminal send --terminal termFAC --text wake: " "the handback is typed into the chief's pane ($l)"
 done
-assert_contains "$(aa_sent)" "herdr pane send-text pFAC wake: auto-arm budget spent with crew still in flight - coverage handed back - run bin/ac-wake-drain.sh" "the budget handback's nudge names its branch"
+assert_contains "$(aa_sent_orca)" "terminal send --terminal termFAC --text wake: auto-arm budget spent with crew still in flight - coverage handed back - run bin/ac-wake-drain.sh" "the budget handback's nudge names its branch"
 # Valid UTF-8 reaches the chief pane as its bytes: the watcher's reason, and a
 # scope naming its own chief's pane.
 aa_lines "$(printf 'gone:famA-t\303\251st')"
 aa_go 2 AC_SCOPE=famA
-assert_contains "$(aa_sent)" "$(printf 'herdr pane send-text pFAC wake: gone:famA-t\303\251st - run')" "a UTF-8 reason is typed as its bytes"
+assert_contains "$(aa_sent_orca)" "$(printf 'terminal send --terminal termFAC --text wake: gone:famA-t\303\251st - run')" "a UTF-8 reason is typed as its bytes"
 aa_fe="$(printf 'fam\303\251')"
-aa_each "printf 'kind=roomchief\nbackend=herdr\n' >SIDE/home/state/$aa_fe-chief.meta; printf 'pFEC tFEC\n' >SIDE/home/state/.pane-$aa_fe-chief"
+aa_each "printf 'kind=roomchief\nbackend=orca\n' >SIDE/home/state/$aa_fe-chief.meta; printf 'termFEC tabFEC\n' >SIDE/home/state/.pane-$aa_fe-chief"
 aa_lines 'report:t1'
 aa_go 2 "AC_SCOPE=$aa_fe"
-assert_contains "$(aa_sent)" "herdr pane send-text pFEC wake: report:t1 - run" "a UTF-8 scope's nudge reaches its own chief pane"
+assert_contains "$(aa_sent_orca)" "terminal send --terminal termFEC --text wake: report:t1 - run" "a UTF-8 scope's nudge reaches its own chief pane"
 aa_each "rm -f SIDE/home/state/$aa_fe-chief.meta SIDE/home/state/.pane-$aa_fe-chief"
 aa_stub 'mkdir -p SIDE/home/state/.wake-spool.famA; printf "3\treport\tt9\tdone: x\n" >SIDE/home/state/.wake-spool.famA/9.1.000000; printf "heartbeat\n"'
 aa_go 2 AC_SCOPE=famA
-assert_contains "$(aa_sent)" "herdr pane send-text pFAC wake: queued wakes pending - run" "queued wakes are nudged too"
-# The same nudge, driven through orca when the scoped chief's OWN meta says so
-# (nudge() reads backend= off the chief's meta, never config/backend, falling
-# back to herdr only when that field is empty).
-aa_meta famA-chief 'kind=roomchief\nwindow=crew:famA-chief\nbackend=orca\n'
-aa_each 'printf "termFAC tabFAC\n" >SIDE/home/state/.pane-famA-chief'
-aa_lines 'report:t1'
-aa_go 2 AC_SCOPE=famA
-assert_contains "$(aa_sent_orca)" "terminal send --terminal termFAC --text wake: " "an orca-backed chief's handback is typed into its own pane too"
-# Restore the herdr-backed chief the remaining rows below build on.
+assert_contains "$(aa_sent_orca)" "terminal send --terminal termFAC --text wake: queued wakes pending - run" "queued wakes are nudged too"
+# A herdr-pinned chief is refused silently: backendCall's own refusal, no
+# send, no crash - the hook still hands back exit 2.
 aa_meta famA-chief 'kind=roomchief\nwindow=crew:famA-chief\nbackend=herdr\n'
 aa_each 'printf "pFAC tFAC\n" >SIDE/home/state/.pane-famA-chief'
+aa_lines 'report:t1'
+aa_go 2 AC_SCOPE=famA
+assert_eq "$(aa_sent)$(aa_sent_orca)" "" "a herdr-pinned chief's nudge sends nothing - refused, not crashed"
+# Restore the orca-backed chief the remaining rows below build on.
+aa_meta famA-chief 'kind=roomchief\nwindow=crew:famA-chief\nbackend=orca\n'
+aa_each 'printf "termFAC tabFAC\n" >SIDE/home/state/.pane-famA-chief'
 aa_meta famA-chief 'kind=roomchief\nbackend=bogus\n'
 aa_go 2 AC_SCOPE=famA
 aa_each 'chmod 000 SIDE/home/state/famA-chief.meta'
@@ -846,9 +850,9 @@ done
 # The nudge's driver is the module's own: no ac-backend.sh beside the hook
 # still types the wake.
 aa_meta famA-chief 'kind=roomchief\n'
-aa_each 'printf "pFAC tFAC\n" >SIDE/home/state/.pane-famA-chief; rm SIDE/root/bin/ac-backend.sh'
+aa_each 'printf "termFAC tabFAC\n" >SIDE/home/state/.pane-famA-chief; rm SIDE/root/bin/ac-backend.sh'
 aa_go 2 AC_SCOPE=famA
-assert_contains "$(aa_sent)" "pane send-text pFAC wake: report:t1 - run bin/ac-wake-drain.sh" "the wake is typed with no ac-backend.sh beside the hook"
+assert_contains "$(aa_sent_orca)" "terminal send --terminal termFAC --text wake: report:t1 - run bin/ac-wake-drain.sh" "the wake is typed with no ac-backend.sh beside the hook"
 aa_each 'cp '"$BIN"'/ac-backend.sh SIDE/root/bin/'
 # A scope byte that is not UTF-8 arrives decoded: U+FFFD in the trace.
 aa_each 'rm -f SIDE/home/state/.stop-hooks.log'
@@ -859,8 +863,8 @@ assert_contains "$(od -An -tx1 "$AN/home/state/.stop-hooks.log" | tr -d ' \n')" 
 aa_each 'rm -f SIDE/home/state/.stop-hooks.log'
 aa_lines "$(printf 'gone:t\351x')"
 aa_go 2 AC_SCOPE=famA
-aa_wake="$(printf 'wake: gone:t' | od -An -tx1 | tr -d ' \n')"
-assert_contains "$(od -An -tx1 "$AN/stub/herdr.log" | tr -d ' \n')" "${aa_wake}efbfbd78" "the nudge types U+FFFD"
+aa_wake="$(printf -- '--text wake: gone:t' | od -An -tx1 | tr -d ' \n')"
+assert_contains "$(od -An -tx1 "$AN/stub/orca.log" | tr -d ' \n')" "${aa_wake}efbfbd78" "the nudge types U+FFFD"
 aa_detail="$(printf 'gone:t' | od -An -tx1 | tr -d ' \n')"
 assert_contains "$(od -An -tx1 "$TMP/aa.n.err" | tr -d ' \n')" "${aa_detail}e978" "stderr keeps the byte"
 assert_contains "$(od -An -tx1 "$AN/home/state/.stop-hooks.log" | tr -d ' \n')" "$(printf 'detail=' | od -An -tx1 | tr -d ' \n')${aa_detail}e9780a" "the trace keeps the byte"

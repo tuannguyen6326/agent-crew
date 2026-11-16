@@ -417,8 +417,8 @@ ac_backend() {
   fi
   b="${b:-orca}"
   case "$b" in
-    herdr|orca) printf '%s\n' "$b" ;;
-    *) ac_die "unsupported backend '$b' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)" ;;
+    orca) printf '%s\n' "$b" ;;
+    *) ac_die "unsupported backend '$b' (valid backend: orca)" ;;
   esac
 }
 # The backend_* primitives defined in THIS file are the herdr driver (renamed
@@ -1469,7 +1469,7 @@ backend_clear_wait_herdr() {
 
 ac_backend_route() {
   # Resolution is ac_backend's full ladder (env pin > home config >
-  # fleet-state config > herdr), never the raw env default: a homeless pane
+  # fleet-state config > orca), never the raw env default: a homeless pane
   # agent on an orca fleet placed its pane through the orca driver but READ
   # it through herdr - unreadable pane, blind prompt, no submit confirmation.
   # ac_backend validates the name, so no third arm is reachable here.

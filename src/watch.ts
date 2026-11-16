@@ -11,9 +11,9 @@
 //
 // PREAMBLE, in order: the backend AC_BACKEND, config/backend or the
 // AC_FLEET_STATE rung names is validated (`ERROR: unsupported backend '<b>'
-// (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)`, exit
-// 1); a solo session refuses (`ERROR: a solo session (AC_SOLO=1) never arms a
-// watcher - supervision belongs to the chief session (solo-session skill)`,
+// (valid backend: orca)`, exit 1); a solo session refuses (`ERROR: a solo
+// session (AC_SOLO=1) never arms a watcher - supervision belongs to the
+// chief session (solo-session skill)`,
 // exit 1) - its watcher would publish into the chief's spool, whose records
 // only the chief may consume; the home is bound and state/ minted (no AC_HOME
 // is ac_home's refusal, exit 1). Only the first argument is read: `--release`
@@ -2326,7 +2326,7 @@ async function checkPane(meta: string): Promise<string | null> {
           accessSync(`${sd}/${chief}.meta`, constants.R_OK);
           b = metaGet(`${sd}/${chief}.meta`, "backend");
         } catch {}
-        process.env.AC_BACKEND = u8(b) || "herdr";
+        process.env.AC_BACKEND = u8(b) || "orca";
         try {
           backendCall(
             "send_line",

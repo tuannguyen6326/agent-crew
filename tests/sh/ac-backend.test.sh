@@ -16,7 +16,30 @@ mkdir -p "$stub"
 
 run_backend() {
   # run_backend <backend> <script> - source the libs with the stub PATH and
-  # the given backend, then run the script body.
+  # the given backend, then run the script body. A herdr row sources under
+  # orca (still the one valid name) and then overrides ac_backend to answer
+  # herdr for the rest of this subshell: the cutover (T8) refuses herdr at
+  # both ac_backend's own ladder AND herdr_cli's per-call leak guard (which
+  # re-derives the same ladder on every RPC), so this file's job - the
+  # herdr driver's OWN behavior, kept provable until T11 deletes the driver
+  # - needs the override to reach the driver at all. The dispatch
+  # VALIDATION section below calls run_backend_routed instead, which never
+  # overrides, so it still proves the real cutover refusal.
+  local src="$1" override=""
+  [ "$1" != herdr ] || { src=orca; override="ac_backend() { printf 'herdr\n'; }"; }
+  PATH="$stub:$PATH" AC_BACKEND="$src" AC_HOME="$AC_HOME" bash -c "
+    set -euo pipefail
+    . '$BIN/ac-lib.sh'
+    . '$BIN/ac-backend.sh'
+    $override
+    $2
+  "
+}
+
+run_backend_routed() {
+  # run_backend_routed <backend> <script> - the REAL ladder, no override:
+  # used only by the SELECTION/VALIDATION section, which exercises
+  # ac_backend itself (the cutover's own refusal), never the herdr driver.
   PATH="$stub:$PATH" AC_BACKEND="$1" AC_HOME="$AC_HOME" bash -c "
     set -euo pipefail
     . '$BIN/ac-lib.sh'
@@ -914,15 +937,18 @@ out="$(PATH="$stub:$PATH" AC_HOME="$AC_HOME" bash -c '
 ')"
 assert_eq "$out" "orca" "an isolated home with no config/backend and AC_BACKEND unset selects orca"
 
-# --- dispatch validation: herdr and orca are the valid backends ----------------------
+# --- dispatch validation: orca is the only valid backend; herdr is refused too -----
 
-# tmux and wezterm were removed (2026-07-17); their names must be refused,
-# and the error must name the valid backend set.
-assert_fails run_backend tmux 'backend_target x1'
-assert_fails run_backend wezterm 'backend_target x1'
-err="$(run_backend tmux 'backend_target x1' 2>&1 || true)"
-assert_contains "$err" "valid backends: herdr, orca" "rejection names the valid backend set"
-assert_fails run_backend screen 'backend_target x1'
+# The cutover (T8) ends herdr's standing as a backend: tmux, wezterm, screen
+# and now herdr itself are all refused, named, before any primitive runs.
+assert_fails run_backend_routed herdr 'backend_target x1'
+assert_fails run_backend_routed tmux 'backend_target x1'
+assert_fails run_backend_routed wezterm 'backend_target x1'
+err="$(run_backend_routed herdr 'backend_target x1' 2>&1 || true)"
+assert_contains "$err" "ERROR: unsupported backend 'herdr' (valid backend: orca)" "herdr refuses with the exact cutover error"
+err="$(run_backend_routed tmux 'backend_target x1' 2>&1 || true)"
+assert_contains "$err" "valid backend: orca" "an unknown name's rejection names the sole valid backend"
+assert_fails run_backend_routed screen 'backend_target x1'
 
 # --- the startup sequence is bounded on EVERY arm -----------------------------
 # A dialog the driver answers but that does not clear (a key the screen ignores,

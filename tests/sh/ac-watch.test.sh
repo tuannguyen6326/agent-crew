@@ -872,31 +872,18 @@ wedge_survivors() {
 reap_wedge_children() { local p; for p in $(wedge_survivors); do kill -9 "$p" 2>/dev/null || true; done; }
 reap_wedge_children
 
+# The RPC-wedge scenario below needed the herdr driver specifically (no
+# orca RPC timeout exists to model it against, per seed_pane's own header);
+# the cutover (T8) refuses backend=herdr before the pane pass ever reaches
+# a dispatch call, so the wedge itself is unreachable now - this proves the
+# refusal fires there instead, named, before any pane is even touched.
 printf 'window=crew:w1\nbackend=herdr\n' >"$state/w1.meta"
 seed_pane w1 pW1 tW1 herdr
-: >"$FAKE_HERDR/.hang"
-AC_HERDR_RPC_TIMEOUT=1 AC_LOCK_PID=$$ AC_REMOTE_POLL=0 \
-  bash "$BIN/ac-watch.sh" --once >"$TMP/wedge.out" 2>&1 &
-wedge_job=$!
-for _ in $(seq 1 100); do          # 20s cap, ~10x the two 1s ceilings one pane pays
-  kill -0 "$wedge_job" 2>/dev/null || break
-  sleep 0.2
-done
-if kill -0 "$wedge_job" 2>/dev/null; then
-  kill -9 "$wedge_job" 2>/dev/null || true
-  reap_wedge_children
-  fail "a wedged backend must not freeze the pane pass: --once never returned"
-fi
-wait "$wedge_job" 2>/dev/null || true
-rm -f "$FAKE_HERDR/.hang"
-
-# UNOBSERVABLE, and that is the whole point: a call that never answered is no
-# evidence about the pane, so the pass reports an outage the chief can act on
-# rather than a death that would strand live work.
-assert_contains "$(cat "$TMP/wedge.out")" "unobservable:w1" \
-  "a wedged backend reports an outage, never a death"
-assert_no_file "$state/.gone-w1" "a wedge never stamps a pane gone"
-assert_contains "$(fleet_spool)" "liveness unknown" "and the chief is woken about it"
+AC_LOCK_PID=$$ AC_REMOTE_POLL=0 bash "$BIN/ac-watch.sh" --once >"$TMP/wedge.out" 2>"$TMP/wedge.err" || true
+assert_contains "$(cat "$TMP/wedge.err")" "ERROR: unsupported backend 'herdr' (valid backend: orca)" \
+  "a herdr-pinned task refuses, named, instead of ever reaching the pane"
+assert_no_file "$state/.gone-w1" "a refusal never stamps a pane gone"
+assert_no_file "$state/.unobservable-w1" "a refusal is never read as unobservable either"
 if [ -n "$(wedge_survivors)" ]; then
   reap_wedge_children
   fail "the pane pass must reap what a killed RPC forked"

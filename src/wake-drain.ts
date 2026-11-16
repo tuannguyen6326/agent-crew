@@ -26,9 +26,9 @@
 // BEFORE ANY ARGUMENT, in this order, every refusal `ERROR: <text>` on stderr,
 // exit 1:
 // 1. the fleet backend (backendName, src/lib.ts): AC_BACKEND, config/backend,
-//    <AC_FLEET_STATE>/../config/backend, herdr - any other name is
-//    `unsupported backend '<b>' (valid backends: herdr, orca; tmux/wezterm
-//    were removed 2026-07-17)`, solo and ack included.
+//    <AC_FLEET_STATE>/../config/backend, orca - any other name (herdr
+//    included) is `unsupported backend '<b>' (valid backend: orca)`, solo
+//    and ack included.
 // 2. the home: no AC_HOME is ac_home's refusal (`AC_HOME is not set - ...`);
 //    one cd cannot enter, or a relative one from a caller cwd bun could not
 //    name, is `AC_HOME is not a readable directory: <h>`. <state> is
@@ -207,7 +207,7 @@
 //   backend_window_alive <member id>  - step 7 (chiefChildLive), stdin and
 //                                       stdout this run's
 //   backend_capture <id> 40           - step 7, stdout captured
-// each window probe under AC_BACKEND = the probed meta's backend= (herdr when
+// each window probe under AC_BACKEND = the probed meta's backend= (orca when
 // none) for that call alone, as the original's `( )` - herdr reading
 // /dev/null, orca the stdin passed; only status 0 is live, so a refused
 // backend name reads gone and that family's spool drains.
@@ -562,7 +562,7 @@ topLevel(() => {
     if (chiefGateParked(id) || chiefChildLive(sd, id, PROBE_IO)) continue;
     // taskBackend answers bytes; AC_BACKEND carries the text they spell, as
     // the shell's export did.
-    process.env.AC_BACKEND = u8(cutNul(taskBackend(id))) || "herdr";
+    process.env.AC_BACKEND = u8(cutNul(taskBackend(id)));
     const cap = backendCall("capture", [id, "40"], { stdin: "inherit", stdout: "pipe", stderr: "ignore" });
     if (cap.exited || cap.status !== 0) continue;
     const sed = run(["sed", "/^$/d"], "pipe", "inherit", Buffer.from(`${subst(cap.out)}\n`, "latin1"));

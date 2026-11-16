@@ -194,13 +194,25 @@ function side(row: Row, s: string, oracle: boolean): Side {
   const env: Record<string, string> = { PATH, HOME: W, TMPDIR: W, LC_ALL: row.lc ?? "C", STUB_DIR: join(s, "stub"), ...GIT_ENV };
   if (!row.homeless) env.AC_HOME = join(s, "home");
   for (const [k, v] of Object.entries(row.env ?? {})) env[k] = v.replaceAll("@S", s);
+  // The cutover (T8) refuses herdr at ac_backend's own ladder, so a herdr
+  // row sources (and dispatches, on the twin) under orca and reaches the
+  // driver directly instead: this file's job - the herdr driver's own
+  // kill behavior - stays provable until T11 deletes the driver.
+  const direct = env.AC_BACKEND === "herdr";
+  if (direct) env.AC_BACKEND = "orca";
   const args = (row.args ?? []).map((a) => a.replaceAll("@S", s));
   const cmd = oracle
-    ? ["/bin/bash", "-c", `set -uo pipefail; . "$0/ac-lib.sh" || exit $?; . "$0/ac-backend.sh" || exit $?; ${row.bash}; printf '|rc=%s' "$?"`, BIN, ...args]
+    ? [
+        "/bin/bash",
+        "-c",
+        `set -uo pipefail; . "$0/ac-lib.sh" || exit $?; . "$0/ac-backend.sh" || exit $?; ${direct ? "ac_backend() { printf 'herdr\\n'; }; " : ""}${row.bash}; printf '|rc=%s' "$?"`,
+        BIN,
+        ...args,
+      ]
     : [
         process.execPath,
         "-e",
-        `import { writeSync } from "node:fs"; const L = { ...await import(${JSON.stringify(LIB)}), ...await import(${JSON.stringify(LIBT)}) }; const A = ${JSON.stringify(args)}; const rc = await (async () => { ${row.twin} })(); writeSync(1, "|rc=" + rc);`,
+        `import { writeSync } from "node:fs"; const L = { ...await import(${JSON.stringify(LIB)}), ...await import(${JSON.stringify(LIBT)}) }; const A = ${JSON.stringify(args)}; const rc = await (async () => { ${direct ? row.twin.replace("L.backendKillWindow(A[0])", "{ status: L.herdrKillWindow(A[0]), exited: false }") : row.twin} })(); writeSync(1, "|rc=" + rc);`,
       ];
   const run = row.fsize === undefined ? cmd : ["/bin/sh", "-c", `ulimit -f ${row.fsize}; trap "" XFSZ; exec "$@"`, "sh", ...cmd];
   const r = Bun.spawnSync(run, { cwd: ROOT, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });

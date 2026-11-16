@@ -233,52 +233,45 @@ assert_fails lib "ac_wake_pending '$pd' ''"
 
 # --- ac_roomchief_live: meta + window, both signals ------------------------
 
-stub="$TMP/stubbin"
-mkdir -p "$stub"
-# Stub herdr: `pane get` succeeds exactly when the sentinel exists, so a
-# test drives chief liveness with a file and no real backend, no sleep.
-cat >"$stub/herdr" <<'EOF'
-#!/usr/bin/env bash
-# Liveness only: `pane get <p>` succeeds iff the sentinel exists.
-if [ "${1:-} ${2:-}" = "pane get" ]; then
-  [ -e "$AC_HOME/state/.mock-win-${3:-}" ] || exit 1
-fi
-exit 0
-EOF
-chmod +x "$stub/herdr"
+make_fake_orca
 
 live() {
   # live <fam> - ac_roomchief_live under the stub backend; prints live|dead.
-  PATH="$stub:$PATH" bash -c "
+  PATH="$TMP/stubbin:$PATH" bash -c "
     set -uo pipefail
     . '$BIN/ac-lib.sh'; . '$BIN/ac-wake-lib.sh'; . '$BIN/ac-backend.sh'
     if ac_roomchief_live '$sd' '$1'; then printf 'live\n'; else printf 'dead\n'; fi"
 }
 
 # meta ABSENT (teardown archived it) -> NOT LIVE, without probing a backend.
-rm -f "$sd/famL-chief.meta" "$sd/.mock-win-famL-chief"
+rm -f "$sd/famL-chief.meta" "$sd/.pane-famL-chief"
 assert_eq "$(live famL)" "dead" "meta archived -> not live (drainable orphan)"
 
 # meta PRESENT + window alive -> LIVE.
-printf 'window=crew:famL-chief\nbackend=herdr\n' >"$sd/famL-chief.meta"
-printf 'famL-chief t0\n' >"$sd/.pane-famL-chief"
-: >"$sd/.mock-win-famL-chief"
+printf 'window=crew:famL-chief\nbackend=orca\n' >"$sd/famL-chief.meta"
+printf 'h0\n' >"$sd/.pane-famL-chief"
+: >"$FAKE_ORCA/terminals/h0.buf"
 assert_eq "$(live famL)" "live" "meta present + window alive -> live"
 
 # meta PRESENT + window dead -> NOT LIVE.
-rm -f "$sd/.mock-win-famL-chief"
+: >"$FAKE_ORCA/terminals/h0.exited"
 assert_eq "$(live famL)" "dead" "meta present + window dead -> not live"
+
+# Cutover (T8): a meta's backend=herdr is refused by the shared reader, not
+# silently re-routed to orca - NOT LIVE, fail-safe, no window probe issued.
+rm -f "$FAKE_ORCA/terminals/h0.exited"
+printf 'window=crew:famL-chief\nbackend=herdr\n' >"$sd/famL-chief.meta"
+assert_eq "$(live famL)" "dead" "a herdr-pinned meta refuses -> not live, never re-routed to orca"
 
 # Fail-safe: with no backend layer sourced at all, a family reads NOT LIVE
 # (an orphan drains to the fleet chief - a wake is never stranded silently).
-: >"$sd/.mock-win-famL-chief"
-assert_eq "$(PATH="$stub:$PATH" bash -c "
+assert_eq "$(PATH="$TMP/stubbin:$PATH" bash -c "
   set -uo pipefail
   . '$BIN/ac-lib.sh'
   . '$BIN/ac-wake-lib.sh'
   if ac_roomchief_live '$sd' 'famL'; then printf 'live\n'; else printf 'dead\n'; fi")" \
   "dead" "no backend layer sourced -> not live (fail-safe, never stranded)"
-rm -f "$sd/famL-chief.meta" "$sd/.mock-win-famL-chief"
+rm -f "$sd/famL-chief.meta"
 
 # --- lock primitives: liveness, staleness, owner-checked release -----------
 

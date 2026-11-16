@@ -599,7 +599,7 @@ serr() { cat "$TMP/n.err2"; }
 slast() { tail -n 1 "$TMP/n.err2"; }
 SUSAGE="ERROR: usage: ac-send.sh <id> [--force] '<text>' | --key <key>"
 SNOHOME='ERROR: AC_HOME is not set - set AC_HOME=<fleet home> (the directory holding state/ data/ records/ config/ projects/); the distro checkout is not one'
-SBAD="ERROR: unsupported backend 'tmux' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)"
+SBAD="ERROR: unsupported backend 'tmux' (valid backend: orca)"
 SSOLO='ERROR: a solo session (AC_SOLO=1) never steers a pane - the crew belongs to the chief session; hand it the order with bin/ac-remote.sh order (solo-session skill)'
 SUNREAD="the BACKEND could not be read for c1 - nothing was delivered, and the pane's liveness is UNKNOWN (it may well be alive); check the backend itself (herdr status server), then send again"
 SDEL='delivered (arrival unverified) to herdr:pane-pC1'

@@ -347,8 +347,8 @@ ac_roomchief_live() {
   m="$sd/$fam-chief.meta"
   [ -e "$m" ] || return 1
   command -v backend_window_alive >/dev/null 2>&1 || return 1
-  b="$(ac_meta_get "$m" backend 2>/dev/null || true)"
-  ( AC_BACKEND="${b:-herdr}"; export AC_BACKEND
+  b="$(ac_meta_backend "$m" 2>/dev/null)" || return 1
+  ( AC_BACKEND="$b"; export AC_BACKEND
     backend_window_alive "$fam-chief" ) 2>/dev/null
 }
 
@@ -873,8 +873,8 @@ ac_chief_child_live() {
     case "$cid" in "$fam"-chief) continue ;; esac
     [ "$(ac_family_of_id "$cid")" = "$fam" ] \
       || [ "$(ac_meta_get "$m" fleet_scope)" = "$fam" ] || continue
-    b="$(ac_meta_get "$m" backend 2>/dev/null || true)"
-    ( AC_BACKEND="${b:-herdr}"; export AC_BACKEND
+    b="$(ac_meta_backend "$m" 2>/dev/null)" || continue
+    ( AC_BACKEND="$b"; export AC_BACKEND
       backend_window_alive "$cid" ) 2>/dev/null && return 0
   done
   return 1

@@ -1602,11 +1602,22 @@ ac_task_stamps() {
   done
 }
 
-ac_task_backend() {
-  # ac_task_backend <id> - backend the task was spawned on (meta), herdr default.
+ac_meta_backend() {
+  # ac_meta_backend <meta-file> - the SHARED validating reader behind
+  # ac_task_backend and every direct backend= reader (bin/ac-wake-lib.sh's
+  # liveness probes included): orca when the field is absent, else exactly
+  # orca or ac_backend's own named refusal for a bad pin - a missing field is
+  # the no-config route, an explicit bad one is never silently re-routed.
   local b
-  b="$(ac_meta_get "$(ac_task_meta "$1")" backend)"
-  printf '%s\n' "${b:-herdr}"
+  b="$(ac_meta_get "$1" backend)"
+  b="${b:-orca}"
+  [ "$b" = orca ] || ac_die "unsupported backend '$b' (valid backend: orca)"
+  printf '%s\n' "$b"
+}
+
+ac_task_backend() {
+  # ac_task_backend <id> - backend the task was spawned on (meta).
+  ac_meta_backend "$(ac_task_meta "$1")"
 }
 
 ac_captain() {

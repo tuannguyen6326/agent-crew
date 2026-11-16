@@ -66,8 +66,8 @@
 // --- the run, in order (AUTHORITATIVE) ---
 // PREAMBLE. The ambient backend ladder is checked first, as sourcing
 // ac-backend.sh did (backendName: an invalid AC_BACKEND or config/backend is
-// `ERROR: unsupported backend '<b>' (valid backends: herdr, orca; tmux/wezterm
-// were removed 2026-07-17)`, exit 1), then `ERROR: required tool not found:
+// `ERROR: unsupported backend '<b>' (valid backend: orca)`, exit 1), then
+// `ERROR: required tool not found:
 // git`. The FIRST word is always the id: none or '' is `ERROR: usage:
 // ac-teardown.sh <id> [--force] [--pr-ready '<the captain acceptance>']
 // [--ci-override '<why CI need not be green>'] [--no-lesson '<why>']
@@ -97,9 +97,12 @@
 // short and keeps every id). lease_base (spawn.ts: an explicit --base-branch)
 // is absent on every meta that never named one - older tasks and herdr leases
 // read exactly as before. The branch is crew/<family>. AC_BACKEND becomes
-// the meta's backend= (herdr without one) for every child and backend call -
-// validated only at the pane kill (W6). stdin is never read. Every ERROR is
-// on stderr, exit 1; every WARN is on stderr.
+// the meta's backend= (orca without one) for every child and backend call -
+// validated here, by the shared reader (taskBackend), before any archiving
+// or pane step: an explicit backend= this fleet refuses (herdr included) is
+// the same named error as the preamble's own ladder, nothing moved or
+// killed. stdin is never read. Every ERROR is on stderr, exit 1; every WARN
+// is on stderr.
 //
 // DIRECT VERIFIER (a kind=verify-* meta): no landed proof - --force,
 // --pr-ready and the waivers are accepted and ignored. (1) An INCOMPLETE
@@ -812,7 +815,7 @@ async function main(): Promise<void> {
   const projectDir = pget("project_dir");
   const leaseBase = pget("lease_base");
   const branch = b8(crewBranch(u8(id)));
-  process.env.AC_BACKEND = u8(cutNul(taskBackend(u8(id)))) || "herdr";
+  process.env.AC_BACKEND = u8(cutNul(taskBackend(u8(id))));
 
   const recordsDir = (): string => b8(softSubdir("records", true));
   const short = (sha: string): string => sha.slice(0, 12);

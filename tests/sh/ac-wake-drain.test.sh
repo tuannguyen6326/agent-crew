@@ -1107,7 +1107,7 @@ pane() { printf '%s t\n' "${2:-p$1}" >"$H/home/state/.pane-$1"; }  # pane <id> [
 win() { : >"$H/stub/win-$1"; }
 ptail() { printf "$2" >"$H/stub/tail-$1"; }  # ptail <handle> <printf format>
 chief() {  # chief <fam> [<backend>] - a promoted roomchief meta and its pane handle (live only with win p<fam>-chief)
-  m "$1-chief" "kind=roomchief\nbackend=${2:-herdr}\n"; pane "$1-chief"
+  m "$1-chief" "kind=roomchief\nbackend=${2:-orca}\n"; pane "$1-chief"
 }
 chg() { printf "$2" >"$H/home/state/.change-$1"; touch -t 202301010000 "$H/home/state/.change-$1"; }  # chg <id> <printf format>
 idle() { m "$1" 'kind=implement\nbackend=orca\n'; pane "$1"; win "p$1"; chg "$1" "$((WT - 999))\n"; ptail "p$1" "${2:-quiet here}\n"; }
@@ -1150,7 +1150,7 @@ assert_eq "$WRC" 1 "row 1: homeless exits 1"
 assert_contains "$(werr)" "ERROR: AC_HOME is not set" "row 1: homeless refuses before solo"
 cfg backend tmux
 WD_ENV=(AC_SOLO=1); wd; WD_ENV=()
-assert_eq "$WRC:$(werr)" "1:ERROR: unsupported backend 'tmux' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)" "row 1: config/backend before solo"
+assert_eq "$WRC:$(werr)" "1:ERROR: unsupported backend 'tmux' (valid backend: orca)" "row 1: config/backend before solo"
 rm -f "$H/home/config/backend"
 WD_ENV=(AC_BACKEND=Herdr AC_SOLO=1); WD_HOMELESS=1; wd; WD_HOMELESS=0; WD_ENV=()
 assert_eq "$WRC" 1 "row 1: an unsupported AC_BACKEND exits 1"
@@ -1252,8 +1252,7 @@ if [ "$(id -u)" != 0 ]; then
 fi
 
 # 4. scope: the fleet drains orphans (no chief meta, a dead window, a meta
-#    backend it refuses) and leaves a live family (herdr or orca), each probe
-#    on config/herdr-session.
+#    backend it refuses) and leaves a live family (orca).
 fresh
 cfg herdr-session s1
 rec '' 1.1.000001 '1\treport\tf1\tdone: fleet\n'
@@ -1267,8 +1266,8 @@ assert_eq "$WRC:$(wout | grep '^report')" "0:report f1 done: fleet
 report famA-t1 done: archived chief
 report famB-t1 done: a refused meta backend
 report famD-t1 done: dead window" "row 4: the fleet's own, then each orphan family in byte order"
-assert_contains "$(wlog)" "herdr pane get pfamD-chief --session s1 [s1]" "row 4: the probe on the configured session"
-assert_contains "$(wlog)" "orca terminal show --terminal pfamO-chief" "row 4: an orca chief is probed through orca"
+assert_contains "$(wlog)" "orca terminal show --terminal pfamD-chief" "row 4: a dead chief is still probed, through orca"
+assert_contains "$(wlog)" "orca terminal show --terminal pfamO-chief" "row 4: a live orca chief is probed through orca"
 
 # 5. orphan order: byte order, under C and under UTF-8 alike.
 wd_order() { for f in afam Bfam Cfam; do rec "$f" 1.1.000001 "1\treport\t$f-t1\tdone: $f\n"; done; }
@@ -1431,9 +1430,10 @@ printf 'caller-stdin\n' >"$TMP/wd-stdin"
 WD_STDIN="$TMP/wd-stdin"; wd; WD_STDIN=""
 assert_contains "$(wout)" "UNACKNOWLEDGED COMPLETION: w6-api" "row 9 (stdin): the completion scope probed the chief"
 case "$(wout)" in *"YOU: sv-chief"*) fail "row 9 (stdin): a live member keeps its chief quiet" ;; esac
-assert_eq "$(wlog | /usr/bin/grep -c 'stdin=\[\]$')" "$(wlog | /usr/bin/grep -c '^herdr ')" "row 9 (stdin): no herdr call read the caller's stdin"
-assert_contains "$(wlog)" "herdr pane get pw6-chief stdin=[]" "row 9 (stdin): ...the completion scope's"
-assert_contains "$(wlog)" "herdr pane get psv-spec stdin=[]" "row 9 (stdin): ...chiefChildLive's"
+# orca, a foreground command, always reads the caller's stdin (no herdr-only
+# "stdin by position" quirk to prove here) - both probes still ran, through orca.
+assert_contains "$(wlog)" "orca terminal show --terminal pw6-chief" "row 9 (stdin): ...the completion scope's"
+assert_contains "$(wlog)" "orca terminal show --terminal psv-spec" "row 9 (stdin): ...chiefChildLive's"
 
 # 10. WATCHER-DOWN: the in-flight set (verifier and self out, a chief and a
 #     directory named x.meta in), AC_GUARD_GRACE, an expression clock.

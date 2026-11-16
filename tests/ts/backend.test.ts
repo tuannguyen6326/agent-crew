@@ -298,6 +298,8 @@ function side(row: Row, s: string, oracle: boolean, label: string): Side {
   };
   if (!row.homeless) env.AC_HOME = join(s, "home");
   for (const [k, v] of Object.entries(row.env ?? {})) env[k] = v.replaceAll("@S", s);
+  const direct = env.AC_BACKEND === HERDR_DIRECT;
+  if (direct) env.AC_BACKEND = "orca"; // sourcing needs a valid pin; overridden (oracle) or unused (twin) below
   let cmd: string[];
   if (oracle) {
     let call = `backend_${row.fn} "$@"`;
@@ -306,12 +308,16 @@ function side(row: Row, s: string, oracle: boolean, label: string): Side {
     if (io.stdout === "ignore") call += " >/dev/null";
     if (io.stderr === "ignore") call += " 2>/dev/null";
     call = row.errexit ? `set -e; trap 'printf "|rc=%s" "$?"' EXIT; ${call}` : `${call}; printf "|rc=%s" "$?"`;
-    cmd = ["/bin/bash", "-c", `set -uo pipefail; . "$0/ac-lib.sh" || exit $?; . "$0/ac-backend.sh" || exit $?; ${call}`, BIN, ...row.args];
+    const override = direct ? `ac_backend() { printf 'herdr\\n'; }; ` : "";
+    cmd = ["/bin/bash", "-c", `set -uo pipefail; . "$0/ac-lib.sh" || exit $?; . "$0/ac-backend.sh" || exit $?; ${override}${call}`, BIN, ...row.args];
   } else {
+    const twinCall = direct
+      ? `(() => { const chunks = []; const say = (b) => { if (io.stdout === "pipe") chunks.push(b); else if (io.stdout === "inherit") writeSync(1, b); }; return { status: L.herdrVerb(${JSON.stringify(row.fn)}, ${JSON.stringify(row.args)}, io, say), exited: false, out: Buffer.concat(chunks) }; })()`
+      : `L.backendCall(${JSON.stringify(row.fn)}, ${JSON.stringify(row.args)}, io)`;
     cmd = [
       process.execPath,
       "-e",
-      `import { writeSync } from "node:fs"; const L = await import(${JSON.stringify(LIB)}); const io = ${JSON.stringify(io)}; const r = L.backendCall(${JSON.stringify(row.fn)}, ${JSON.stringify(row.args)}, io); if (io.stdout === "pipe") writeSync(1, r.out); if (r.exited) process.exit(r.status); writeSync(1, "|rc=" + r.status);${row.errexit ? " process.exit(r.status);" : ""}`,
+      `import { writeSync } from "node:fs"; const L = await import(${JSON.stringify(LIB)}); const io = ${JSON.stringify(io)}; const r = ${twinCall}; if (io.stdout === "pipe") writeSync(1, r.out); if (r.exited) process.exit(r.status); writeSync(1, "|rc=" + r.status);${row.errexit ? " process.exit(r.status);" : ""}`,
     ];
   }
   const t0 = Date.now();
@@ -363,7 +369,20 @@ function same(label: string, row: Row): { o: Side; t: Side } {
 }
 
 const X = (s: string): void => pane(s, "x", "px tx\n");
-const HERDR_ = { AC_BACKEND: "herdr" };
+// A sentinel, never a real AC_BACKEND value: ac_backend's own ladder (T8)
+// now refuses herdr before any primitive runs, and herdr_cli re-derives
+// and enforces the SAME refusal on every RPC (its own per-call leak
+// guard), so a plain bypass of the public dispatcher cannot reach the
+// driver either. Every row below that means to exercise the HERDR
+// DRIVER's own behavior - not backend SELECTION itself, which test 1
+// alone covers - asks side() to force ac_backend to answer herdr for the
+// oracle (an override defined after sourcing, local to that subshell) and
+// to call herdrVerb directly for the twin (which carries no such guard);
+// T11 deletes the driver and this override together. A literal "herdr"
+// string (test 1's own rows) is never the sentinel, so it keeps going
+// through the real ladder and is refused like any other row there.
+const HERDR_DIRECT = "\u0000herdr-driver-direct\u0000";
+const HERDR_ = { AC_BACKEND: HERDR_DIRECT };
 const ORCA_ = { AC_BACKEND: "orca" };
 // A fleet state dir whose ../config/backend holds <body>.
 const fleet = (body: string) => (s: string): void => {
@@ -380,14 +399,12 @@ test("0. the harness: a side a signal ended fails its row by name - two killed s
 
 test("1. the route: AC_BACKEND verbatim, config/backend trimmed, AC_FLEET_STATE cut at its first space, orca; any other name refused before anything is read or minted", () => {
   const accepted: [string, Record<string, string>, (s: string) => void, string][] = [
-    ["AC_BACKEND herdr", HERDR_, () => {}, "herdr"],
     ["AC_BACKEND orca", ORCA_, () => {}, "orca"],
     ["config orca", {}, (s) => cfg(s, "backend", "orca\n"), "orca"],
     ["config ' orca\\r'", {}, (s) => cfg(s, "backend", " orca\r\n"), "orca"],
     ["fleet state orca", { AC_FLEET_STATE: "@S/fleet/state/" }, fleet("orca\n"), "orca"],
     ["fleet state ' orca'", { AC_FLEET_STATE: "@S/fleet/state" }, fleet(" orca\n"), "orca"],
     ["fleet state 'orca x'", { AC_FLEET_STATE: "@S/fleet/state" }, fleet("orca x\n"), "orca"],
-    ["fleet state under the home's knob", { AC_FLEET_STATE: "@S/fleet/state" }, (s) => (fleet("orca\n")(s), cfg(s, "backend", "herdr\n")), "herdr"],
     ["no rung at all", {}, () => {}, "orca"],
   ];
   for (const [label, env, seed, b] of accepted)
@@ -396,10 +413,15 @@ test("1. the route: AC_BACKEND verbatim, config/backend trimmed, AC_FLEET_STATE 
       if (fn === "target") expect({ label, out: p.t.out }).toEqual({ label, out: b === "herdr" ? "herdr:pane-px\n|rc=0" : "orca:px\n|rc=0" });
     }
   const refused: [string, Record<string, string>, (s: string) => void][] = [
+    ["AC_BACKEND herdr", { AC_BACKEND: "herdr" }, () => {}],
     ["AC_BACKEND tmux", { AC_BACKEND: "tmux" }, () => {}],
     ["AC_BACKEND Herdr", { AC_BACKEND: "Herdr" }, () => {}],
     ["AC_BACKEND ' herdr'", { AC_BACKEND: " herdr" }, () => {}],
     ["config tmux", {}, (s) => cfg(s, "backend", "tmux\n")],
+    ["config herdr", {}, (s) => cfg(s, "backend", "herdr\n")],
+    // Precedence still proven: the home's config/backend is read (and
+    // refused) even though the fleet state alone would have accepted orca.
+    ["fleet state under the home's knob", { AC_FLEET_STATE: "@S/fleet/state" }, (s) => (fleet("orca\n")(s), cfg(s, "backend", "herdr\n"))],
   ];
   for (const [label, env, seed] of refused)
     for (const fn of ["window_alive", "target", "focus", "capture", "mark_wait", "clear_wait", "agent_blocked", "harness_up", "send_key", "send_line"] as Fn[]) {
@@ -411,7 +433,7 @@ test("1. the route: AC_BACKEND verbatim, config/backend trimmed, AC_FLEET_STATE 
         seed: (s) => (rmSync(join(s, "home", "state"), { recursive: true }), sent(s, "win-px"), seed(s)),
       });
       expect({ label, fn, out: p.t.out, log: p.t.log, minted: p.t.world.includes("state/") }).toEqual({ label, fn, out: "", log: "", minted: false });
-      expect(p.t.err).toMatch(/^ERROR: unsupported backend '.*' \(valid backends: herdr, orca; tmux\/wezterm were removed 2026-07-17\)\n$/);
+      expect(p.t.err).toMatch(/^ERROR: unsupported backend '.*' \(valid backend: orca\)\n$/);
     }
 }, 30000);
 
@@ -729,12 +751,24 @@ test("11. a driver that failed to load is the oracle's 127 alone - the twin has 
   mkdirSync(join(s, "home", "state"), { recursive: true });
   mkdirSync(join(s, "stub"));
   X(s);
-  const r = Bun.spawnSync(["/bin/bash", "-c", 'set -uo pipefail; . "$0/ac-lib.sh" || exit $?; . "$0/ac-backend.sh" || exit $?; backend_window_alive "$@"; printf "|rc=%s" "$?"', join(lab, "bin"), "x"], {
-    cwd: s,
-    env: { PATH: PATHS.both, HOME: process.env.HOME!, LC_ALL: "C", STUB_DIR: join(s, "stub"), AC_HOME: join(s, "home"), AC_BACKEND: "herdr" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  const r = Bun.spawnSync(
+    [
+      "/bin/bash",
+      "-c",
+      // The cutover (T8) refuses herdr at ac_backend's own ladder, so this
+      // override reaches the (deliberately broken) driver exactly as the
+      // pre-cutover AC_BACKEND=herdr pin did, confined to this subshell.
+      'set -uo pipefail; . "$0/ac-lib.sh" || exit $?; . "$0/ac-backend.sh" || exit $?; ac_backend() { printf "herdr\\n"; }; backend_window_alive "$@"; printf "|rc=%s" "$?"',
+      join(lab, "bin"),
+      "x",
+    ],
+    {
+      cwd: s,
+      env: { PATH: PATHS.both, HOME: process.env.HOME!, LC_ALL: "C", STUB_DIR: join(s, "stub"), AC_HOME: join(s, "home"), AC_BACKEND: "orca" },
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
   expect(r.stdout.toString()).toBe("|rc=127");
   expect(r.stderr.toString()).toContain("backend_window_alive_herdr: command not found");
 }, 30000);
@@ -969,10 +1003,17 @@ test("16. named (V1): once harness_up's `done <<<` ran, bash 3.2 handed a later 
     mkdirSync(join(s, "stub"));
     X(s);
     for (const [name, body] of [["win-px", ""], ["readstdin", ""], ["pinfo-px", '{"result":{"process_info":{"foreground_processes":[{"argv0":"claude"}]}}}\n']]) sent(s, name!, body);
+    // Both sides reach the herdr driver despite the cutover's refusal: the
+    // oracle via a local ac_backend override (confined to this subshell),
+    // the twin via herdrVerb directly (it carries no per-call leak guard).
     const cmd = oracle
-      ? ["/bin/bash", "-c", 'set -uo pipefail; . "$0/ac-lib.sh" || exit $?; . "$0/ac-backend.sh" || exit $?; backend_harness_up x; backend_agent_blocked x', BIN]
-      : [process.execPath, "-e", `const L = await import(${JSON.stringify(LIB)}); const io = { stdout: "inherit", stderr: "inherit" }; L.backendCall("harness_up", ["x"], io); L.backendCall("agent_blocked", ["x"], io);`];
-    Bun.spawnSync(cmd, { cwd: s, env: { PATH: PATHS.both, HOME: process.env.HOME!, TMPDIR: W, LC_ALL: "C", STUB_DIR: join(s, "stub"), AC_HOME: join(s, "home"), AC_BACKEND: "herdr" }, stdin: Buffer.from("from-caller\n"), stdout: "pipe", stderr: "pipe" });
+      ? ["/bin/bash", "-c", 'set -uo pipefail; . "$0/ac-lib.sh" || exit $?; . "$0/ac-backend.sh" || exit $?; ac_backend() { printf "herdr\\n"; }; backend_harness_up x; backend_agent_blocked x', BIN]
+      : [
+          process.execPath,
+          "-e",
+          `const L = await import(${JSON.stringify(LIB)}); const io = { stdout: "inherit", stderr: "inherit" }; const say = () => {}; L.herdrVerb("harness_up", ["x"], io, say); L.herdrVerb("agent_blocked", ["x"], io, say);`,
+        ];
+    Bun.spawnSync(cmd, { cwd: s, env: { PATH: PATHS.both, HOME: process.env.HOME!, TMPDIR: W, LC_ALL: "C", STUB_DIR: join(s, "stub"), AC_HOME: join(s, "home"), AC_BACKEND: "orca" }, stdin: Buffer.from("from-caller\n"), stdout: "pipe", stderr: "pipe" });
     logs.push(read(join(s, "stub", "log")));
   }
   expect(logs).toEqual([
