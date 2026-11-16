@@ -3,8 +3,8 @@
 // and bin/ac-lib.sh set, metaPaths against the `"$sd"/*.meta` glob, metaIsSelf
 // against ac_meta_is_self, chiefGateParked against ac_chief_gate_parked,
 // chiefChildLive against ac_chief_child_live and roomchiefLive's io against
-// ac_roomchief_live's stdin (both through backendCall, under a fake herdr and
-// orca logging every call), and claimLive's dead-claim verdict.
+// ac_roomchief_live's stdin (both through backendCall, under a fake orca
+// logging every call), and claimLive's dead-claim verdict.
 // The CLI contract is tests/sh/ac-wake-drain.test.sh's.
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -52,24 +52,11 @@ function exe(path: string, body: string): void {
   chmodSync(path, 0o755);
 }
 
-// herdr and orca answering per sentinel file, every call logged; orca logs
-// what reached its stdin too.
+// orca answering per sentinel file, every call logged with what reached its
+// stdin.
 function fakeBackend(): string {
   const d = dir("fake");
   mkdirSync(join(d, "bin"));
-  exe(
-    join(d, "bin", "herdr"),
-    `#!/bin/sh
-d="${d}"
-printf 'herdr %s\\n' "$*" >>"$d/log"
-case "$1 $2" in
-  "pane get") [ -e "$d/win-$3" ] ;;
-  "pane list") printf '{"result":{"panes":[]}}\\n' ;;
-  "status server") printf '{"running":true}\\n' ;;
-  *) exit 2 ;;
-esac
-`,
-  );
   exe(
     join(d, "bin", "orca"),
     `#!/bin/sh
@@ -96,7 +83,8 @@ function takeLog(d: string): string {
 const WAKE = '. "$0/ac-lib.sh"; . "$0/ac-backend.sh"; . "$0/ac-wake-lib.sh"';
 // The shell's own `<file>: line N: ...` lines, which no twin prints.
 // Shell-own stderr, never reproduced: a `<script>: line <n>:` diagnostic, and
-// bash 3.2's job-control race line from herdr_rpc_bounded's `set -m`.
+// bash 3.2's own `set -m` job-control race line, defensive here (nothing in
+// this file's dispatch path sets -m today).
 const shellOwn = (s: string): string =>
   s.replace(/^[^ ]*: line [0-9]+: .*\n/gm, "").replace(/^.*: child setpgid \([0-9]+ to [0-9]+\): Operation not permitted\n/gm, "");
 
