@@ -117,9 +117,8 @@ fi
 
 # --- the render, row by row ---------------------------------------------------
 # Every run is piped (no colors) unless a row says tty, TERM fixed, stdin
-# /dev/null, the backends stubbed (the fake herdr/orca of helpers.sh; claude
-# and gh refuse).
-make_fake_herdr
+# /dev/null, the backend stubbed (the fake orca of helpers.sh; claude and gh
+# refuse).
 make_fake_orca
 for t in claude gh; do printf '#!/bin/sh\nexit 1\n' >"$TMP/stubbin/$t"; chmod +x "$TMP/stubbin/$t"; done
 export TERM=xterm
@@ -137,17 +136,17 @@ fresh_home() {  # fresh_home <name> - a new five-dir home, exported as AC_HOME
   AC_HOME="$TMP/$1"; export AC_HOME
   mkdir -p "$AC_HOME/state" "$AC_HOME/data" "$AC_HOME/records" "$AC_HOME/config" "$AC_HOME/projects"
 }
-# A live crewmate under the fake herdr: handle + tab + pane buffer (the
-# buffer's text decides busy); without a handle the state is gone/detached.
-mk_live() { printf '%s %s\n' "p$1" "t$1" >"$AC_HOME/state/.pane-$1"; printf 'p%s\n' "$1" >"$FAKE_HERDR/tabs/t$1"; printf '%s\n' "${2:-\$ }" >"$FAKE_HERDR/panes/p$1.buf"; }
+# A live crewmate under the fake orca: handle + terminal buffer (the buffer's
+# text decides busy); without a handle the state is gone/detached.
+mk_live() { printf 'term%s tab%s\n' "$1" "$1" >"$AC_HOME/state/.pane-$1"; printf '%s\n' "${2:-\$ }" >"$FAKE_ORCA/terminals/term$1.buf"; }
 
 # 1. the header line of an empty home: no config/backend selects orca.
 fresh_home h1; render
 assert_contains "$(nout)" "⚓ h1  captain: captain  backend: orca  flow: auto" "the header line, byte for byte"
 
-# 2. the populated fixture of the legs above (herdr backend, no pane: gone).
+# 2. the populated fixture of the legs above (orca backend, no pane: gone).
 fresh_home h2
-printf 'kind=ship\nproject=alpha\nbackend=herdr\n' >"$AC_HOME/state/t1.meta"
+printf 'kind=ship\nproject=alpha\nbackend=orca\n' >"$AC_HOME/state/t1.meta"
 printf '2026-01-01T00:00:00Z done: shipped\n' >"$AC_HOME/state/t1.status"
 "$BIN/ac-room.sh" post t1 crewchief "GATE: awaiting captain" >/dev/null
 printf '# Backlog\n\n## In flight\n- [ ] t1 - thing (repo: alpha)\n\n## Queued\n- [ ] t2 - other\n- [ ] t3 - more\n\n## Done\n- [x] t0 - past\n' >"$AC_HOME/records/backlog.md"
@@ -336,15 +335,15 @@ RUN_ENV=
 # 14. colors: NO_COLOR= (empty) piped is no ESC; on a tty (run_on_tty) with
 #     NO_COLOR unset the header and rows are colored per state class, with
 #     NO_COLOR=1 none, with NO_COLOR= (empty) colored. The states come from the
-#     real ac-crew-state.sh under the fake herdr.
+#     real ac-crew-state.sh under the fake orca.
 fresh_home h14
-printf 'kind=ship\nproject=p\n' >"$AC_HOME/state/c-done.meta";  mk_live c-done;  printf '2026 done: shipped\n' >"$AC_HOME/state/c-done.status"
-printf 'kind=ship\nproject=p\n' >"$AC_HOME/state/c-block.meta"; mk_live c-block; printf '2026 blocked: y\n' >"$AC_HOME/state/c-block.status"
-printf 'kind=ship\nproject=p\n' >"$AC_HOME/state/c-nd.meta";    mk_live c-nd;    printf '2026 needs-decision: z\n' >"$AC_HOME/state/c-nd.status"
-printf 'kind=ship\nproject=p\n' >"$AC_HOME/state/c-busy.meta";  mk_live c-busy "Thinking..."
-printf 'kind=ship\nproject=p\n' >"$AC_HOME/state/c-idle.meta";  mk_live c-idle
-printf 'kind=ship\nproject=p\n' >"$AC_HOME/state/c-gone.meta"
-printf 'kind=self\nproject=p\n' >"$AC_HOME/state/c-self.meta"
+printf 'kind=ship\nproject=p\nbackend=orca\n' >"$AC_HOME/state/c-done.meta";  mk_live c-done;  printf '2026 done: shipped\n' >"$AC_HOME/state/c-done.status"
+printf 'kind=ship\nproject=p\nbackend=orca\n' >"$AC_HOME/state/c-block.meta"; mk_live c-block; printf '2026 blocked: y\n' >"$AC_HOME/state/c-block.status"
+printf 'kind=ship\nproject=p\nbackend=orca\n' >"$AC_HOME/state/c-nd.meta";    mk_live c-nd;    printf '2026 needs-decision: z\n' >"$AC_HOME/state/c-nd.status"
+printf 'kind=ship\nproject=p\nbackend=orca\n' >"$AC_HOME/state/c-busy.meta";  mk_live c-busy "Thinking..."
+printf 'kind=ship\nproject=p\nbackend=orca\n' >"$AC_HOME/state/c-idle.meta";  mk_live c-idle
+printf 'kind=ship\nproject=p\nbackend=orca\n' >"$AC_HOME/state/c-gone.meta"
+printf 'kind=self\nproject=p\nbackend=orca\n' >"$AC_HOME/state/c-self.meta"
 "$BIN/ac-room.sh" post h14 crewchief "GATE: g" >/dev/null
 RUN_ENV="NO_COLOR=" render
 case "$(nout)" in *$'\033'*) fail "NO_COLOR= (empty) piped: no ESC" ;; esac
@@ -372,10 +371,10 @@ case "$(cat "$TMP/n.tty")" in *$'\033[1;36m'*) ;; *) fail "NO_COLOR= (empty) on 
 #     through the real script; then a STUB ac-crew-state.sh in a lab copy of
 #     bin/ printing two lines (embedded raw), printing and then failing
 #     (`x` + `unknown`), printing a NUL, or failing on stderr alone.
-touch "$FAKE_HERDR/.unreachable"
+touch "$FAKE_ORCA/.unreachable"
 render
-rm -f "$FAKE_HERDR/.unreachable"
-assert_contains "$(nout)" "$(printf '  %-16s %-10s %-14s %s' c-idle ship p 'unobservable: backend could not be read for herdr:pane-pc-idle')" "an unreadable backend is unobservable"
+rm -f "$FAKE_ORCA/.unreachable"
+assert_contains "$(nout)" "$(printf '  %-16s %-10s %-14s %s' c-idle ship p 'unobservable: backend could not be read for orca:termc-idle')" "an unreadable backend is unobservable"
 assert_contains "$(nout)" "$(printf '  %-16s %-10s %-14s %s' c-gone ship p gone)" "no handle is gone whatever the backend"
 lab="$TMP/lab-dash"; mkdir -p "$lab/bin"; cp "$BIN"/*.sh "$lab/bin/"; ln -s "$ROOT/src" "$lab/src"; ln -s "$ROOT/dashboard" "$lab/dashboard"
 DASH_BIN="$lab/bin"
