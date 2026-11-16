@@ -3,7 +3,7 @@
 // taskBackend, vnTs, verbEmoji, shellPrefix, shellSpaceClass, spoolHasRecord)
 // against the ac-lib.sh / ac-backend.sh / ac-wake-lib.sh functions they twin,
 // roomPending against ac_room_pending, and backendCall against a direct bash
-// call of the same driver through a fake herdr. The CLI contract
+// call of the same driver through a fake orca. The CLI contract
 // itself is tests/sh/ac-room.test.sh's.
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -212,38 +212,39 @@ test("roomPending counts what ac_room_pending counts, and an unreadable room thr
   }
 }, 30000);
 
-// A herdr standing in for the real one: `pane get <p>` answers while
-// <dir>/<p> exists, `pane list` and `status server` per sentinel files, and
-// every call's argv is logged.
-function fakeHerdr(): string {
-  const d = join(W, `herdr${n++}`);
+// An orca standing in for the real one: `terminal show <h>` answers
+// connected per <dir>/<h>.conn (present) or <dir>/<h>.exists (present but
+// disconnected), else fails outright (no sentinel at all); `status` fails
+// only when <dir>/status-fails exists; every call's argv is logged.
+function fakeOrca(): string {
+  const d = join(W, `orca${n++}`);
   mkdirSync(join(d, "bin"), { recursive: true });
   writeFileSync(
-    join(d, "bin", "herdr"),
+    join(d, "bin", "orca"),
     `#!/bin/sh
 d="${d}"
-printf 'herdr %s\\n' "$*" >>"$d/log"
+printf 'orca %s\\n' "$*" >>"$d/log"
 case "$1 $2" in
-  "pane get") [ -e "$d/$3" ] ;;
-  "pane list") [ ! -e "$d/list-fails" ] || exit 1; printf '{"result":{"panes":[]}}\\n' ;;
-  "status server") printf '{"running":%s}\\n' "$( [ -e "$d/stopped" ] && echo false || echo true )" ;;
-  "tab focus") printf '%s\\n' "$3" >"$d/focused" ;;
+  "terminal show")
+    if [ -e "$d/$4.conn" ]; then printf '{"ok":true,"result":{"terminal":{"connected":true}}}\\n'
+    elif [ -e "$d/$4.exists" ]; then printf '{"ok":true,"result":{"terminal":{"connected":false}}}\\n'
+    else exit 1
+    fi ;;
+  "status --json"|"status") [ ! -e "$d/status-fails" ] || exit 1; printf '{"ok":true,"result":{}}\\n' ;;
+  "terminal switch") printf '%s\\n' "$4" >"$d/focused"; printf '{"ok":true,"result":{}}\\n' ;;
   *) exit 2 ;;
 esac
 `,
   );
-  chmodSync(join(d, "bin", "herdr"), 0o755);
+  chmodSync(join(d, "bin", "orca"), 0o755);
   return d;
 }
 
 test("backendCall answers what a direct bash call of the driver answers, and tells a refused backend name from a return", () => {
-  const fh = fakeHerdr();
+  const fo = fakeOrca();
   const h = home({ "state/.pane-x": "p1 t1\n", "state/.pane-y": "p2 t2\n" });
-  writeFileSync(join(fh, "p1"), "");
-  // Pinned explicitly: the fixture below is herdr-shaped (pane get/list,
-  // status server, tab focus) and would otherwise silently resolve the
-  // no-rung default, orca, and reach whatever orca the host PATH holds.
-  const env = { AC_HOME: h, PATH: `${fh}/bin:${process.env.PATH}`, AC_BACKEND: "herdr" };
+  writeFileSync(join(fo, "p1.conn"), "");
+  const env = { AC_HOME: h, PATH: `${fo}/bin:${process.env.PATH}`, AC_BACKEND: "orca" };
   const direct = (fn: string, id: string, extra: Record<string, string> = {}): Run => {
     const r = Bun.spawnSync(["/bin/bash", "-c", `set -uo pipefail; . "$0/ac-lib.sh"; . "$0/ac-backend.sh"; ${fn} "$1"; printf "|rc=%s" "$?"`, BIN, id], {
       env: { ...env, ...extra },
@@ -258,16 +259,21 @@ test("backendCall answers what a direct bash call of the driver answers, and tel
     const want = direct(fn!, id!);
     expect({ fn, id, ...twinned(fn!, id!) }).toEqual({ fn, id, ...want });
   }
-  writeFileSync(join(fh, "list-fails"), "");
+  // y (p2) has neither sentinel: `terminal show` fails outright, falling
+  // back to `status` - which succeeds, reading as GONE (the runtime answers,
+  // so a terminal it cannot show is really gone), never UNOBSERVABLE.
+  expect(twinned("backend_window_alive", "y").out).toBe(direct("backend_window_alive", "y").out);
+  expect(twinned("backend_window_alive", "y").out).toBe("|rc=1");
+  // ...and when the fallback itself fails too, there is no runtime left to
+  // answer ANY question about the pane - UNOBSERVABLE, never a verdict.
+  writeFileSync(join(fo, "status-fails"), "");
   expect(twinned("backend_window_alive", "y").out).toBe(direct("backend_window_alive", "y").out);
   expect(twinned("backend_window_alive", "y").out).toBe("|rc=2");
-  writeFileSync(join(fh, "stopped"), "");
-  expect(twinned("backend_window_alive", "y").out).toBe("|rc=1");
   // A bogus AC_BACKEND is refused by the route (the bash's source-time check
   // exits): an exit, never a return the caller would read as gone.
   const bogus = twinned("backend_window_alive", "x", { AC_BACKEND: "bogus" });
-  expect(bogus).toEqual({ code: 0, out: "|rc=1|exited", err: "ERROR: unsupported backend 'bogus' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)\n" });
-  const log = Bun.spawnSync(["cat", join(fh, "log")]).stdout.toString();
-  expect(log).toContain("herdr pane get p1");
-  expect(log).toContain("herdr tab focus t1");
+  expect(bogus).toEqual({ code: 0, out: "|rc=1|exited", err: "ERROR: unsupported backend 'bogus' (valid backend: orca)\n" });
+  const log = Bun.spawnSync(["cat", join(fo, "log")]).stdout.toString();
+  expect(log).toContain("terminal show --terminal p1 --json");
+  expect(log).toContain("terminal switch --terminal p1 --json");
 }, 60000);
