@@ -568,15 +568,21 @@ test("orcaWorktreeLease leases an Orca worktree on the crew branch as orca_workt
   if (!ROOTED) same("the fence: a ledger that cannot be read", { ...LEASE, seed: (s) => (repo(s), fence(s), chmodSync(join(s, "home/records/backlog.md"), 0o000)) });
 }, 240000);
 
-const WN: Row = { bash: `backend_window_new "$1" "$2"`, twin: `return L.backendWindowNew(A[0], A[1]).status;`, errexit: true, args: ["t1", "@S/wt"] };
+// backend_window_new routes through ac_backend_route's full ladder, so an
+// unpinned row would silently resolve the no-rung default (orca) rather than
+// exercise the herdr arm this base case is for.
+const HERDR_ = { AC_BACKEND: "herdr" };
+const WN: Row = { bash: `backend_window_new "$1" "$2"`, twin: `return L.backendWindowNew(A[0], A[1]).status;`, errexit: true, args: ["t1", "@S/wt"], env: HERDR_ };
 const wtDir = (s: string): void => mkdirSync(join(s, "wt"));
 const DEFAULT_TABS = '{"result":{"tabs":[{"tab_id":"wNEW:t0","label":"1"},{"tab_id":"wNEW:t1","label":"crew:t1"},{"tab_id":"wNEW:t9","label":"1"}]}}\n';
 
 test("backendWindowNew herdr: the legacy sweep, the family workspace, the tab, the default tabs, the handle written last", () => {
-  same("a fresh workspace, its default tabs closed", { ...WN, seed: (s) => (wtDir(s), put(s, "stub/tabs-wNEW", DEFAULT_TABS)) });
-  same("AC_WINDOW_FAMILY names the family", { ...WN, env: { AC_WINDOW_FAMILY: "fam" }, seed: wtDir });
-  same("AC_WINDOW_FAMILY empty: the fleet root", { ...WN, env: { AC_WINDOW_FAMILY: "" }, seed: wtDir });
-  same("AC_SCOPE", { ...WN, env: { AC_SCOPE: "sc" }, seed: wtDir });
+  // Proves the herdr pin actually bites: a dropped pin would still pass
+  // (both sides would agree on whatever backend they fell back to), just not here.
+  expect(same("a fresh workspace, its default tabs closed", { ...WN, seed: (s) => (wtDir(s), put(s, "stub/tabs-wNEW", DEFAULT_TABS)) }).o.log).toMatch(/^herdr /);
+  same("AC_WINDOW_FAMILY names the family", { ...WN, env: { ...HERDR_, AC_WINDOW_FAMILY: "fam" }, seed: wtDir });
+  same("AC_WINDOW_FAMILY empty: the fleet root", { ...WN, env: { ...HERDR_, AC_WINDOW_FAMILY: "" }, seed: wtDir });
+  same("AC_SCOPE", { ...WN, env: { ...HERDR_, AC_SCOPE: "sc" }, seed: wtDir });
   same("a staged id groups under its family", { ...WN, args: ["t1-spec", "@S/wt"], seed: (s) => (wtDir(s), mkdirSync(join(s, "home/data/t1/spec"), { recursive: true })) });
   same("the retired per-role groups swept once provably empty", {
     ...WN,
@@ -600,13 +606,13 @@ test("backendWindowNew herdr: the legacy sweep, the family workspace, the tab, t
   same("herdr missing", { ...WN, path: "noherdr", seed: wtDir });
   same("jq missing", { ...WN, path: "nojq", seed: wtDir });
   same("an unsupported backend", { ...WN, env: { AC_BACKEND: "tmux" }, seed: wtDir });
-  same("a herdr session rides every call", { ...WN, env: { AC_HERDR_SESSION: "s1" }, seed: wtDir });
-  same("UTF-8, a dir and family with UTF-8 bytes", { ...WN, lc: "en_US.UTF-8", args: ["t1", "@S/wt é"], env: { AC_WINDOW_FAMILY: "fé" }, seed: (s) => mkdirSync(join(s, "wt é")) });
+  same("a herdr session rides every call", { ...WN, env: { ...HERDR_, AC_HERDR_SESSION: "s1" }, seed: wtDir });
+  same("UTF-8, a dir and family with UTF-8 bytes", { ...WN, lc: "en_US.UTF-8", args: ["t1", "@S/wt é"], env: { ...HERDR_, AC_WINDOW_FAMILY: "fé" }, seed: (s) => mkdirSync(join(s, "wt é")) });
   // Homeless, the handle refused: bash re-expands a redirection it cannot open
   // to name it in its error, so the handle path's `$(ac_state_dir)` prints its
   // ERROR twice - a refusal printed twice (FAIL-PATH), not reproduced.
   if (!ROOTED) {
-    const p = pair({ ...WN, homeless: true, env: { AC_FLEET_NAME: "fl" }, seed: wtDir });
+    const p = pair({ ...WN, homeless: true, env: { ...HERDR_, AC_FLEET_NAME: "fl" }, seed: wtDir });
     const once = p.o.err.replace(/^(ERROR: AC_HOME is not set.*\n)\1/m, "$1");
     expect(once).not.toBe(p.o.err);
     expect(p.t).toEqual({ ...p.o, err: once });
@@ -652,7 +658,9 @@ test("backendWindowNew orca: worktree panes under their node, home panes in thei
 
 const H = (s: string): void => pane(s, "c1", "p1 w1:t1\n");
 const O = (s: string): void => pane(s, "c1", "h1 tab1\n");
-const verb = (call: string, ts: string, args: string[]): Row => ({ bash: `${call} "$@"`, twin: `const r = ${ts}; if (r.exited) process.exit(r.status); return r.status;`, args });
+// Each caller below routes through ac_backend_route's full ladder too, so a
+// "herdr:" row with no override needs the same explicit pin as WN's.
+const verb = (call: string, ts: string, args: string[]): Row => ({ bash: `${call} "$@"`, twin: `const r = ${ts}; if (r.exited) process.exit(r.status); return r.status;`, args, env: HERDR_ });
 const IO = `{ stderr: "inherit" }`;
 const BLK = (rule: string): string => `{"state":"blocked","matched_rule":{"id":"${rule}"}}\n`;
 const OSHOW = (terminal: string): string => `{"ok":true,"result":{"terminal":${terminal}}}\n`;
@@ -661,7 +669,7 @@ test("backendDialogAnswer and its raw-pane form answer the named startup dialogs
   const id = verb("backend_dialog_answer", `L.backendDialogAnswer(A[0], ${IO})`, ["c1"]);
   const raw = verb("backend_dialog_answer_pane", `L.backendDialogAnswerPane(A[0], ${IO})`, ["p1"]);
   same("herdr: no handle", id);
-  same("herdr: explain fails", { ...id, seed: (s) => (H(s), put(s, "stub/agent-explain.rc", "1\n")) });
+  expect(same("herdr: explain fails", { ...id, seed: (s) => (H(s), put(s, "stub/agent-explain.rc", "1\n")) }).o.log).toMatch(/^herdr /);
   same("herdr: explain names no state", { ...id, seed: (s) => (H(s), put(s, "stub/agent-explain.out", "{}\n")) });
   same("herdr: explain is no JSON", { ...id, seed: (s) => (H(s), put(s, "stub/agent-explain.out", "oops\n")) });
   same("herdr: nothing pending", { ...id, seed: (s) => (H(s), put(s, "stub/agent-explain.out", '{"state":"idle"}\n')) });
@@ -685,7 +693,7 @@ test("backendAgentIdle and its raw-pane form read idle as the drivers did", () =
   const id = verb("backend_agent_idle", `L.backendAgentIdle(A[0], ${IO})`, ["c1"]);
   const raw = verb("backend_agent_idle_pane", `L.backendAgentIdlePane(A[0], ${IO})`, ["p1"]);
   same("herdr: no handle", id);
-  same("herdr: pane get fails", { ...id, seed: (s) => (H(s), put(s, "stub/pane-get.rc", "1\n")) });
+  expect(same("herdr: pane get fails", { ...id, seed: (s) => (H(s), put(s, "stub/pane-get.rc", "1\n")) }).o.log).toMatch(/^herdr /);
   for (const st of ["idle", "done", "working", "blocked", ""]) same(`herdr: ${st || "no status"}`, { ...id, seed: (s) => (H(s), put(s, "stub/pane-get.out", `{"result":{"pane":{"agent_status":"${st}"}}}\n`)) });
   same("herdr: an answer that is no JSON (jq's line)", { ...id, seed: (s) => (H(s), put(s, "stub/pane-get.out", "oops\n")) });
   same("herdr raw: idle", { ...raw, seed: (s) => put(s, "stub/pane-get.out", '{"result":{"pane":{"agent_status":"idle"}}}\n') });
@@ -705,7 +713,7 @@ test("backendAgentIdle and its raw-pane form read idle as the drivers did", () =
 
 test("backendSubmitVerified presses Enter once and reads the render as the drivers did", () => {
   const sv = verb("backend_submit_verified", `L.backendSubmitVerified(A[0], A[1] ?? "", ${IO})`, ["c1", "hello"]);
-  same("herdr: the render reacts", { ...sv, seed: (s) => (H(s), put(s, "stub/pane-read.1.out", "a\n"), put(s, "stub/pane-read.out", "b\n")) });
+  expect(same("herdr: the render reacts", { ...sv, seed: (s) => (H(s), put(s, "stub/pane-read.1.out", "a\n"), put(s, "stub/pane-read.out", "b\n")) }).o.log).toMatch(/^herdr /);
   same("herdr: the render never reacts", { ...sv, seed: (s) => (H(s), put(s, "stub/pane-read.out", "a\n")) });
   same("herdr: the read fails", { ...sv, seed: (s) => (H(s), put(s, "stub/pane-read.rc", "1\n")) });
   same("herdr: no handle", sv);
@@ -715,18 +723,20 @@ test("backendSubmitVerified presses Enter once and reads the render as the drive
 }, 120000);
 
 test("backendStartupDialogs runs ac_startup_dialogs' sequence over the id-keyed verbs", () => {
-  const sd: Row = { bash: `backend_startup_dialogs "$1" "$2"`, twin: `return L.backendStartupDialogs(A[0], A[1], ${IO}).status;`, errexit: true, args: ["c1", "codex"] };
+  const sd: Row = { bash: `backend_startup_dialogs "$1" "$2"`, twin: `return L.backendStartupDialogs(A[0], A[1], ${IO}).status;`, errexit: true, args: ["c1", "codex"], env: HERDR_ };
   const upCodex = (s: string): void => put(s, "stub/pane-process-info.out", '{"result":{"process_info":{"foreground_processes":[{"argv0":"codex"}]}}}\n');
-  same("herdr: named, unnamed, then up", {
-    ...sd,
-    seed: (s) => (H(s), upCodex(s), put(s, "stub/agent-explain.1.out", BLK("startup_update")), put(s, "stub/agent-explain.2.out", BLK("trust")), put(s, "stub/agent-explain.3.out", '{"state":"idle"}\n'), put(s, "stub/pane-get.out", '{"result":{"pane":{"tab_id":"w1:t1"}}}\n')),
-  });
+  expect(
+    same("herdr: named, unnamed, then up", {
+      ...sd,
+      seed: (s) => (H(s), upCodex(s), put(s, "stub/agent-explain.1.out", BLK("startup_update")), put(s, "stub/agent-explain.2.out", BLK("trust")), put(s, "stub/agent-explain.3.out", '{"state":"idle"}\n'), put(s, "stub/pane-get.out", '{"result":{"pane":{"tab_id":"w1:t1"}}}\n')),
+    }).o.log,
+  ).toMatch(/^herdr /);
   same("herdr: an unnamed dialog twice: the key once", { ...sd, seed: (s) => (H(s), put(s, "stub/agent-explain.out", BLK("trust"))) });
   same("herdr: claude has no key", { ...sd, args: ["c1", "claude"], seed: (s) => (H(s), put(s, "stub/agent-explain.out", BLK("trust"))) });
   same("herdr: unobservable: the key, once, and out", { ...sd, seed: H });
-  same("herdr: answered every round, the budget spent", { ...sd, env: { AC_STARTUP_DIALOG_BUDGET: "2" }, seed: (s) => (H(s), put(s, "stub/agent-explain.out", BLK("startup_update"))) });
-  same("herdr: a budget [ -lt ] cannot read", { ...sd, env: { AC_STARTUP_DIALOG_BUDGET: "abc" }, seed: (s) => (H(s), put(s, "stub/agent-explain.out", BLK("startup_update"))) });
-  same("herdr: nothing pending, up unreadable until the budget", { ...sd, env: { AC_STARTUP_DIALOG_BUDGET: "1" }, seed: (s) => (H(s), put(s, "stub/agent-explain.out", '{"state":"idle"}\n')) });
+  same("herdr: answered every round, the budget spent", { ...sd, env: { ...HERDR_, AC_STARTUP_DIALOG_BUDGET: "2" }, seed: (s) => (H(s), put(s, "stub/agent-explain.out", BLK("startup_update"))) });
+  same("herdr: a budget [ -lt ] cannot read", { ...sd, env: { ...HERDR_, AC_STARTUP_DIALOG_BUDGET: "abc" }, seed: (s) => (H(s), put(s, "stub/agent-explain.out", BLK("startup_update"))) });
+  same("herdr: nothing pending, up unreadable until the budget", { ...sd, env: { ...HERDR_, AC_STARTUP_DIALOG_BUDGET: "1" }, seed: (s) => (H(s), put(s, "stub/agent-explain.out", '{"state":"idle"}\n')) });
   same("herdr: nothing pending, a bare shell", { ...sd, seed: (s) => (H(s), put(s, "stub/agent-explain.out", '{"state":"idle"}\n'), put(s, "stub/pane-process-info.out", '{"result":{"process_info":{"foreground_processes":[{"argv0":"-zsh"}]}}}\n')) });
   same("a sleep that fails ends the caller", { ...sd, seed: (s) => (H(s), put(s, "stub/agent-explain.out", BLK("startup_update")), put(s, "stub/sleep.rc", "3\n")) });
   same("orca: both codex prompts answered, then up", {

@@ -240,7 +240,10 @@ test("backendCall answers what a direct bash call of the driver answers, and tel
   const fh = fakeHerdr();
   const h = home({ "state/.pane-x": "p1 t1\n", "state/.pane-y": "p2 t2\n" });
   writeFileSync(join(fh, "p1"), "");
-  const env = { AC_HOME: h, PATH: `${fh}/bin:${process.env.PATH}` };
+  // Pinned explicitly: the fixture below is herdr-shaped (pane get/list,
+  // status server, tab focus) and would otherwise silently resolve the
+  // no-rung default, orca, and reach whatever orca the host PATH holds.
+  const env = { AC_HOME: h, PATH: `${fh}/bin:${process.env.PATH}`, AC_BACKEND: "herdr" };
   const direct = (fn: string, id: string, extra: Record<string, string> = {}): Run => {
     const r = Bun.spawnSync(["/bin/bash", "-c", `set -uo pipefail; . "$0/ac-lib.sh"; . "$0/ac-backend.sh"; ${fn} "$1"; printf "|rc=%s" "$?"`, BIN, id], {
       env: { ...env, ...extra },

@@ -96,6 +96,7 @@ type Row = {
   args?: string[];
   seed?: (s: string) => void;
   path?: keyof typeof PATHS;
+  env?: Record<string, string>;
 };
 type Side = { out: string; err: string; rc: number | null; log: string; world: string };
 
@@ -142,6 +143,7 @@ const PRE = `import { writeSync } from "node:fs"; const L = await import(${JSON.
 let rows = 0;
 function side(row: Row, s: string, oracle: boolean): Side {
   const env: Record<string, string> = { PATH: PATHS[row.path ?? "all"], HOME: NOHOME, TMPDIR: join(s, "tmp"), LC_ALL: "C", STUB_DIR: join(s, "stub"), AC_HOME: join(s, "home") };
+  for (const [k, v] of Object.entries(row.env ?? {})) env[k] = v.replaceAll("@S", s);
   const args = (row.args ?? []).map((a) => a.replaceAll("@S", s));
   const cmd = oracle
     ? ["/bin/bash", "-c", `set -uo pipefail; . "$0/ac-lib.sh" || exit $?; . "$0/ac-backend.sh" || exit $?; ${row.bash}; printf '|rc=%s' "$?"`, BIN, ...args]
@@ -157,7 +159,7 @@ function side(row: Row, s: string, oracle: boolean): Side {
   return out;
 }
 
-function same(label: string, row: Row): void {
+function same(label: string, row: Row): { o: Side; t: Side } {
   const root = join(W, `r${rows++}`);
   const out: Side[] = [];
   for (const name of ["o", "t"]) {
@@ -168,6 +170,7 @@ function same(label: string, row: Row): void {
   }
   const view = (x: Side) => ({ label, ...x });
   expect(view(out[1]!)).toEqual(view(out[0]!));
+  return { o: out[0]!, t: out[1]! };
 }
 
 const put = (s: string, rel: string, body: string, mode = 0o644): void => {
@@ -204,16 +207,22 @@ test("familyOwned reads what ac_family_owned reads: an in-flight meta of the id'
 
 // The original's pane open: the subshell on the left of `|| ac_die`, so the
 // driver ran with errexit asleep and only its own dies ended it.
+// backend_window_new routes through ac_backend_route's full ladder, so an
+// unpinned row would silently resolve the no-rung default (orca) rather than
+// exercise the herdr-shaped fixture (workspace/tab verbs) this test seeds.
 const WN: Row = {
   bash: `( AC_WINDOW_FAMILY="" backend_window_new "$1" "$2" )`,
   twin: `process.env.AC_WINDOW_FAMILY = ""; return L.backendWindowNew(A[0], A[1], false).status;`,
   args: ["s1", "@S/wt"],
+  env: { AC_BACKEND: "herdr" },
 };
 const wtDir = (s: string): void => mkdirSync(join(s, "wt"));
 const DEFAULT_TABS = '{"result":{"tabs":[{"tab_id":"wNEW:t0","label":"1"},{"tab_id":"wNEW:t1","label":"crew:s1"},{"tab_id":"wNEW:t9","label":"1"}]}}\n';
 
 test("backendWindowNew with errexit asleep opens the root tab as the self-task subshell did, its statuses unread", () => {
-  same("a fresh root workspace, its default tabs closed", { ...WN, seed: (s) => (wtDir(s), put(s, "stub/tabs-wNEW", DEFAULT_TABS)) });
+  // Proves the herdr pin actually bites: a dropped pin would still pass
+  // (both sides would agree on whatever backend they fell back to), just not here.
+  expect(same("a fresh root workspace, its default tabs closed", { ...WN, seed: (s) => (wtDir(s), put(s, "stub/tabs-wNEW", DEFAULT_TABS)) }).o.log).toMatch(/^herdr /);
   same("an existing root workspace adopted", { ...WN, seed: (s) => (wtDir(s), put(s, "stub/workspace-list.out", '{"result":{"workspaces":[{"workspace_id":"w5","label":"home","tab_count":2}]}}\n')) });
   same("the sweep's list failing goes on to the open", { ...WN, seed: (s) => (wtDir(s), put(s, "stub/workspace-list.1.rc", "3\n")) });
   same("the sweep's list no JSON goes on to the open", { ...WN, seed: (s) => (wtDir(s), put(s, "stub/workspace-list.1.out", "junk\n")) });

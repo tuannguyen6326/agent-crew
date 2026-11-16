@@ -371,7 +371,11 @@ test("soloLandingCheck: the line on the record and stdout, the hint per missing 
   }
 }, 60000);
 
-const KILL: Row = { bash: `backend_kill_window "$1"`, twin: `const r = L.backendKillWindow(A[0]); if (r.exited) process.exit(r.status); return r.status;`, args: ["k1"] };
+// backend_kill_window routes through ac_backend_route's full ladder, so an
+// unpinned row would silently resolve the no-rung default (orca) rather than
+// exercise the herdr arm this base case is for.
+const HERDR_ = { AC_BACKEND: "herdr" };
+const KILL: Row = { bash: `backend_kill_window "$1"`, twin: `const r = L.backendKillWindow(A[0]); if (r.exited) process.exit(r.status); return r.status;`, args: ["k1"], env: HERDR_ };
 const herdrPane = (s: string, tab = "w1:t1", label = "crew:k1"): void => {
   pane(s, "k1", `p1 ${tab}\n`);
   stub(s, `tab-${tab}`, label);
@@ -403,7 +407,7 @@ test("backendKillWindow herdr: the label proof, the last-tab fallback and its wo
     expect({ label, rc: p.t.out }).toEqual({ label, rc: `|rc=${rc}` });
     expect({ label, swept: p.t.world.includes(".pane-k1") || p.t.world.includes(".captain-wait-k1") }).toEqual({ label, swept: false });
   }
-  same("the session knob", { ...KILL, env: { AC_HERDR_SESSION: "s9" }, seed: (s) => (herdrPane(s), stub(s, "close-rc", "1"), stub(s, "list", '{"result":{"tabs":[]}}'), stub(s, "ws-group-w1")) });
+  same("the session knob", { ...KILL, env: { ...HERDR_, AC_HERDR_SESSION: "s9" }, seed: (s) => (herdrPane(s), stub(s, "close-rc", "1"), stub(s, "list", '{"result":{"tabs":[]}}'), stub(s, "ws-group-w1")) });
   same("config/herdr-session", { ...KILL, seed: (s) => (herdrPane(s), put(s, "home/config/herdr-session", "cfg\n")) });
   same("W6: an unsupported task backend", { ...KILL, env: { AC_BACKEND: "tmux" }, seed: (s) => herdrPane(s) });
 }, 60000);
