@@ -7,7 +7,7 @@
 # no-append invariant.
 #
 # Deterministic and sleep-free throughout: liveness is a sentinel file behind
-# a stub herdr, the R1 interleaving is forced through the TEST-ONLY seam
+# a stub orca, the R1 interleaving is forced through the TEST-ONLY seam
 # inside the real ac_wake_publish (ac-wake-lib.sh), collisions are SEEDED (never
 # raced for), and same-stamp ordering is pinned with a stubbed clock.
 
@@ -23,22 +23,8 @@ state="$AC_HOME/state"
 
 stub="$TMP/stubbin"
 mkdir -p "$stub"
-cat >"$stub/herdr" <<'EOF'
-#!/usr/bin/env bash
-# Liveness only: `pane get <p>` succeeds iff the sentinel exists.
-if [ "${1:-} ${2:-}" = "pane get" ]; then
-  [ -e "$AC_HOME/state/.mock-win-${3:-}" ] || exit 1
-fi
-# Pane render for the idleness channel: whatever the test seeded for the pane.
-if [ "${1:-} ${2:-}" = "pane read" ]; then
-  cat "$AC_HOME/state/.mock-tail-${3:-}" 2>/dev/null || true
-fi
-exit 0
-EOF
-chmod +x "$stub/herdr"
-# The orca twin: `terminal show --terminal <h>` succeeds iff the sentinel
-# exists, `terminal read --terminal <h>` serves the same mock tail content as
-# its one line.
+# `terminal show --terminal <h>` succeeds iff the sentinel exists,
+# `terminal read --terminal <h>` serves the mock tail content as its one line.
 cat >"$stub/orca" <<'EOF'
 #!/usr/bin/env bash
 if [ "${1:-} ${2:-}" = "terminal show" ]; then
@@ -1016,9 +1002,11 @@ assert_eq "$(spool_records "$state/.wake-spool")" "1" "a refused solo drain leav
 # One side root $H: a home at $H/home and the caller's cwd $H/cwd; a lab bin/
 # holding every live script (src/ linked beside it) with ac-ready, ac-remote,
 # ac-learn and ac-brain replaced by ONE logging stub (argv and AC_BACKEND,
-# answers per sentinel file); a stub dir $H/stub first on PATH - herdr and orca
-# logging argv (herdr with HERDR_SESSION) and answering per sentinel file,
-# `date +%s` answering $H/stub/clock. Every knob the drain reads is scrubbed,
+# answers per sentinel file); a stub dir $H/stub first on PATH - orca logging
+# argv and answering per sentinel file, `date +%s` answering $H/stub/clock
+# (every live scenario below is orca; a backend=herdr meta is refused
+# outright, before any pane or RPC is touched - no stub needed to prove it).
+# Every knob the drain reads is scrubbed,
 # then AC_HOME and the row's (HOME in a value is the side root); stdin
 # /dev/null; LC_ALL=C unless a row names en_US.UTF-8. stdout and stderr are
 # read with the side root spelled HOME and a claim dir's pid PID.
@@ -1076,18 +1064,6 @@ fresh() {  # a clean side: home, cwd, the PATH stubs, the clock at WT
 [ "$*" = +%s ] && exec cat "$STUB_DIR/clock"
 exec /bin/date "$@"
 EOF
-  cat >"$H/stub/herdr" <<'EOF'
-#!/bin/sh
-d="$STUB_DIR"
-printf 'herdr %s [%s]\n' "$*" "${HERDR_SESSION:-}" >>"$d/log"
-case "$1 $2" in
-  "pane get") [ -e "$d/win-$3" ] ;;
-  "pane list") [ ! -e "$d/list-fails" ] || exit 1; printf '{"result":{"panes":[]}}\n' ;;
-  "status server") printf '{"running":true}\n' ;;
-  "pane read") [ -e "$d/tail-$3" ] || exit 1; cat "$d/tail-$3" ;;
-  *) exit 2 ;;
-esac
-EOF
   cat >"$H/stub/orca" <<'EOF'
 #!/bin/sh
 d="$STUB_DIR"
@@ -1098,7 +1074,7 @@ case "$1 $2" in
   *) printf '{"ok":true}\n' ;;
 esac
 EOF
-  chmod +x "$H/stub/date" "$H/stub/herdr" "$H/stub/orca"
+  chmod +x "$H/stub/date" "$H/stub/orca"
 }
 rec() { mkdir -p "$H/home/state/.wake-spool${1:+.$1}"; printf "$3" >"$H/home/state/.wake-spool${1:+.$1}/$2"; }  # rec <family|''> <name> <printf format>
 claim() { mkdir -p "$H/home/state/.wake-spool-draining.$1"; printf "$3" >"$H/home/state/.wake-spool-draining.$1/$2"; }  # claim <suffix> <name> <format>
@@ -1406,22 +1382,11 @@ assert_contains "$(wlog)" "orca terminal read --terminal ho1 --limit 40 --screen
 assert_eq "$(wout | grep '^IDLE' | cut -d' ' -f2)" "o1" "row 9: the orca pane is idle, the uncapturable one skipped"
 fresh; rec '' 1.1.000001 '1\treport\tq1\tdone: consumed\n'; idle b13 'bad \351 byte'; wd
 assert_contains "$(wout)" "IDLE-MAY-BE-WAITING-ON-YOU: b13" "row 9: under C an invalid byte in the capture reads"
-# stdin by position: a herdr that logs what its stdin holds, the drain's
-# stdin a line. The completion scope's roomchief probe and chiefChildLive's
-# member probes run with stdin /dev/null - the caller's stdin passed to them
-# is orca's alone.
+# stdin by position: the completion scope's roomchief probe and
+# chiefChildLive's member probes run with stdin /dev/null - the drain's
+# caller's stdin passed to them is orca's alone (orca always reads it
+# regardless, so there is no "stdin by position" distinction left to prove).
 wd_stdin() {
-  cat >"$H/stub/herdr" <<'EOF'
-#!/bin/sh
-d="$STUB_DIR"
-printf 'herdr %s stdin=[%s]\n' "$*" "$(cat)" >>"$d/log"
-case "$1 $2" in
-  "pane get") [ -e "$d/win-$3" ] ;;
-  "pane list") printf '{"result":{"panes":[]}}\n' ;;
-  "pane read") [ -e "$d/tail-$3" ] || exit 1; cat "$d/tail-$3" ;;
-  *) exit 2 ;;
-esac
-EOF
   m w6-api 'fleet_scope=w6\n'; report w6-api w6/tasks/api; chief w6
   idle sv-chief; mkdir -p "$H/home/data/sv/spec"; m sv-spec 'kind=spec\n'; pane sv-spec; win psv-spec
 }
