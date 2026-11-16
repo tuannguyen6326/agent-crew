@@ -1048,13 +1048,18 @@ tail_json() {
   # sits on a glyph row BETWEEN two horizontal rules (the transcript echoes a
   # submitted line with the SAME glyph, which is why the driver's pending
   # check reads the between-rules region, never text-anywhere).
+  # jq -R -s, never awk: this host's awk truncates a record at an embedded
+  # NUL (C-string semantics), silently dropping every byte after it. split
+  # on a TRAILING "\n" always adds one extra empty element, which a byte
+  # stream ending without one never has - stripped only when it is there, so
+  # zero complete lines stays [] rather than becoming a false empty line.
   { tail -n "$2" "$d/terminals/$1.buf" 2>/dev/null || tail -n "$2" "$d/terminals/$1" 2>/dev/null
     if [ -s "$d/terminals/$1.in" ]; then
       printf '%s\n' "────────────────────────"
       printf '❯ %s\n' "$(cat "$d/terminals/$1.in")"
       printf '%s\n' "────────────────────────"
     fi
-  } | awk 'BEGIN{printf "["} {gsub(/\\/,"\\\\"); gsub(/"/,"\\\""); printf "%s\"%s\"", (NR>1?",":""), $0} END{printf "]"}'
+  } | jq -R -s -c 'if . == "" then [] else (split("\n") | if .[-1] == "" then .[:-1] else . end) end'
 }
 case "${1:-}" in
   status)
