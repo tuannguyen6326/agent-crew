@@ -610,10 +610,10 @@ assert_file "$AC_HOME/state/dep1.meta" "the crewdeputy spawned"
 # workspace = home: the deputy pane opens AT its home - ac-home-seed links the
 # executable core there (bin/ CLAUDE.md .claude/ AGENTS.md), so the charter's
 # relative `bin/ac-session-start.sh` resolves from the home itself.
-assert_contains "$(grep 'tab create' "$FAKE_HERDR/log" | tail -n 1)" "--cwd $dhome " \
+assert_contains "$(grep 'terminal create' "$FAKE_ORCA/log" | tail -n 1)" "--worktree path:$dhome " \
   "the crewdeputy pane opens with its cwd at the deputy home"
-case "$(grep 'tab create' "$FAKE_HERDR/log" | tail -n 1)" in
-  *"--cwd $ROOT "*) fail "the crewdeputy pane must not open at the distro checkout - workspace is the home" ;;
+case "$(grep 'terminal create' "$FAKE_ORCA/log" | tail -n 1)" in
+  *"--worktree path:$ROOT "*) fail "the crewdeputy pane must not open at the distro checkout - workspace is the home" ;;
 esac
 # FILE-DELIVERED KICKOFF: the prompt lands on disk and the pane receives only
 # a short pointer - a typed multi-KB prompt measurably lost its head on the
@@ -645,7 +645,7 @@ assert_file "$AC_HOME/state/dep1.meta" "the refused teardown kept the meta"
 # stays readable), respawns through the ordinary path, and never touches the
 # deputy's own state.
 archived_with() { grep -rl -- "$1" "$AC_HOME/state/archive/dep1" 2>/dev/null | wc -l | tr -d ' '; }
-kill_pane() { rm -f "$FAKE_HERDR/panes/$(fake_pane dep1)".*; }
+kill_pane() { rm -f "$FAKE_ORCA/terminals/$(fake_pane dep1)".*; }
 
 "$BIN/ac-send.sh" dep1 'routed order EPOCH1' >/dev/null
 kill_pane
@@ -674,15 +674,20 @@ assert_eq "$(archived_with 'routed order EPOCH2')" "1" "the second retirement is
 # before the first meta byte - and must take that window with it. The drop
 # pattern targets the LAUNCH line only (AC_HOME= never appears in the kickoff
 # prompt, which spells the same name out in prose).
+# A crewdeputy pane never leases, so its own terminal is the next one minted;
+# make_fake_orca's `.drop-enters` has no pattern filter like herdr's "<count>
+# AC_HOME=" (tests/sh/helpers.sh, T11's) - it drops the terminal's next N
+# `--enter` calls unconditionally, but the LAUNCH LINE is the first enter a
+# fresh pane ever gets, so an overwhelming count still strands it directly.
 dhome2="$("$BIN/ac-home-seed.sh" dep2 --no-projects 2>/dev/null)"
 mkdir -p "$AC_HOME/data/dep2"
 printf 'charter for dep2\n' >"$AC_HOME/data/dep2/brief.md"
-n="$(cat "$FAKE_HERDR/.n")"; dtab="t$((n + 1))"
-printf '9 AC_HOME=\n' >"$FAKE_HERDR/panes/p$((n + 1)).drop-enters"
-: >"$FAKE_HERDR/log"
+n="$(cat "$FAKE_ORCA/.n" 2>/dev/null || echo 0)"; dterm="term$((n + 1))"
+printf '9\n' >"$FAKE_ORCA/terminals/$dterm.drop-enters"
+: >"$FAKE_ORCA/log"
 assert_fails "$BIN/ac-spawn.sh" dep2 --crewdeputy --harness fake
 assert_no_file "$AC_HOME/state/dep2.meta" "a died crewdeputy spawn leaves no meta"
-assert_contains "$(cat "$FAKE_HERDR/log")" "tab close $dtab" "it reaps the window it created"
+assert_contains "$(cat "$FAKE_ORCA/log")" "terminal close --terminal $dterm" "it reaps the window it created"
 assert_no_file "$AC_HOME/state/.pane-dep2" "no orphan pane handle survives"
 # ...and the retry is not wedged: with the window gone it is an ordinary spawn.
 "$BIN/ac-spawn.sh" dep2 --crewdeputy --harness fake >/dev/null 2>&1 \
@@ -711,13 +716,15 @@ rm -rf "$dhome3"
 
 # The --recover ladder's live-pane guard is NOT the meta-race orphan, so it stays
 # a REFUSAL: the ladder deliberately leaves state/.pane-<id> behind so this check
-# can still catch a LIVE deputy its own probe could not answer for (a meta naming
-# an unsupported backend is exactly such a probe), and reaping there would
-# double-spawn onto a living deputy's tab.
+# can still catch a LIVE deputy its own probe could not answer for. A meta
+# naming an unsupported backend used to be such an unanswerable probe; T8's
+# metaBackend now refuses it outright (`unsupported backend 'bogus'`) before
+# the ladder ever runs - still a dead stop, never a reap, so the invariant
+# under test (no double-spawn onto a living deputy's tab) still holds.
 printf 'backend=bogus\nkind=crewdeputy\n' >"$AC_HOME/state/dep1.meta"
 err="$("$BIN/ac-spawn.sh" dep1 --crewdeputy --harness fake --recover 2>&1)" \
   && fail "--recover must refuse a window collision, never reap it"
-assert_contains "$err" "already exists" "the recover collision stays a refusal"
+assert_contains "$err" "unsupported backend 'bogus'" "an unreadable backend refuses before the recover ladder runs"
 assert_file "$AC_HOME/state/.pane-dep1" "the refused recovery left the live deputy's window alone"
 
 # ...and an UNREADABLE backend is refused at BOTH window-collision guards, for a
@@ -726,15 +733,18 @@ assert_file "$AC_HOME/state/.pane-dep1" "the refused recovery left the live depu
 # may well be alive (contract: ORPHAN-WINDOW SAFETY in bin/ac-spawn.sh, WINDOW
 # LIVENESS in bin/ac-backend.sh). `.pane-api-down` is the partial outage that
 # makes this bite: the liveness probe is blind while `tab create` still works, so
-# an unguarded spawn really does create the second window.
-touch "$FAKE_HERDR/.pane-api-down"
-: >"$FAKE_HERDR/log"
+# an unguarded spawn really does create the second window. The meta's own
+# backend must read as valid first (T8's metaBackend refuses 'bogus' outright,
+# proven above), so this and the next sub-test need their own fault, not that one.
+printf 'backend=orca\nkind=crewdeputy\n' >"$AC_HOME/state/dep1.meta"
+touch "$FAKE_ORCA/.terminal-api-down"
+: >"$FAKE_ORCA/log"
 err="$("$BIN/ac-spawn.sh" dep1 --crewdeputy --harness fake --recover 2>&1)" \
   && fail "--recover must refuse a backend it cannot READ, never spawn onto a possibly-live deputy"
-rm -f "$FAKE_HERDR/.pane-api-down"
+rm -f "$FAKE_ORCA/.terminal-api-down"
 assert_contains "$err" "could not be READ" "the refusal blames the BACKEND, not the pane"
 case "$err" in *"already exists"*) fail "an unreadable backend is not a window-already-exists verdict" ;; esac
-assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" "no second deputy window was created"
+assert_eq "$(grep -c 'terminal create' "$FAKE_ORCA/log" || true)" "0" "no second deputy window was created"
 assert_file "$AC_HOME/state/.pane-dep1" "the blind recovery left the deputy's window alone"
 
 # ...and any code but 0 and 1 refuses the SAME way, never treated as the
@@ -742,45 +752,26 @@ assert_file "$AC_HOME/state/.pane-dep1" "the blind recovery left the deputy's wi
 # possibly-live deputy (contract: ac-backend.sh WINDOW LIVENESS). This row once
 # drove a driver that failed to LOAD (bash's 127, through a lab bin/ with the
 # herdr driver renamed); the backend verbs are native now (src/lib.ts
-# backendCall), so no driver can fail to load, and the row reaches the same
-# unreadable verdict with herdr absent from PATH (the liveness ladder's 2).
+# backendCall), which still shells out to the real `orca` CLI for the liveness
+# probe itself, so the row reaches the same unreadable verdict with orca absent
+# from PATH (the liveness ladder's 2).
 nh_path="$(dirname "$(command -v bun)"):/usr/bin:/bin:/usr/sbin:/sbin"
-if [ -z "$(PATH="$nh_path" command -v herdr || true)" ]; then
-  : >"$FAKE_HERDR/log"
+if [ -z "$(PATH="$nh_path" command -v orca || true)" ]; then
+  : >"$FAKE_ORCA/log"
   err="$(PATH="$nh_path" "$BIN/ac-spawn.sh" dep1 --crewdeputy --harness fake --recover 2>&1)" \
     && fail "THE REGRESSION: --recover must refuse a 127 driver-load failure, never reap and re-spawn onto a possibly-live deputy"
   assert_contains "$err" "could not be READ" "the 127 refusal blames the BACKEND, the same wording as rc=2"
-  assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" "no second deputy window was created"
+  assert_eq "$(grep -c 'terminal create' "$FAKE_ORCA/log" || true)" "0" "no second deputy window was created"
   assert_file "$AC_HOME/state/.pane-dep1" "the refused recovery left the live deputy's window alone"
 else
-  printf 'SKIP: deputy recovery with herdr absent - bun shares its directory with a herdr on this host\n'
+  printf 'SKIP: deputy recovery with orca absent - bun shares its directory with an orca on this host\n'
 fi
 
 # The crew path's own guard, same defect: reaching it PROVES no meta exists (the
 # duplicate-meta refusal above dies on one), so the orphan handle a SIGKILLed
 # spawn leaves behind is exactly what it must still resolve - and a blind backend
-# is no licence to open a second window beside it.
-"$BIN/ac-brief.sh" bw1 proj --mode local-only >/dev/null
-"$BIN/ac-spawn.sh" bw1 "$repo" --harness fake --mode local-only >/dev/null 2>&1
-rm -f "$AC_HOME/state/bw1.meta"   # the SIGKILL-mid-spawn orphan: handle, no meta
-
-# rc=0 (the orphan window is genuinely ALIVE): the case's 0) branch is
-# untouched by the 127 fix, and must keep refusing exactly as it does today.
-: >"$FAKE_HERDR/log"
-err="$("$BIN/ac-spawn.sh" bw1 "$repo" --harness fake --mode local-only 2>&1)" \
-  && fail "a crew spawn must refuse a genuinely alive orphan window"
-assert_contains "$err" "already exists" "a genuinely alive orphan window still refuses as before"
-assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" "no second crewmate window was created"
-
-touch "$FAKE_HERDR/.pane-api-down"
-: >"$FAKE_HERDR/log"
-err="$("$BIN/ac-spawn.sh" bw1 "$repo" --harness fake --mode local-only 2>&1)" \
-  && fail "a crew spawn must refuse a backend it cannot READ, never open a second window"
-rm -f "$FAKE_HERDR/.pane-api-down"
-assert_contains "$err" "could not be READ" "the crew refusal blames the BACKEND, not the pane"
-case "$err" in *"already exists"*) fail "an unreadable backend is not a window-already-exists verdict" ;; esac
-assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" "no second crewmate window was created"
-assert_no_file "$AC_HOME/state/bw1.meta" "the refused spawn leaves no task in flight"
+# is no licence to open a second window beside it. Proven below directly on the
+# orca path (bw1o) - herdr is unreachable, so there is no separate herdr case.
 
 # ...and the ORCA twin of the two rows above: `.terminal-api-down` is the
 # partial-outage knob (orca's own `.pane-api-down`) - `terminal show`/`list`
@@ -831,19 +822,13 @@ rm -f "$FAKE_ORCA/terminals/"termS*.buf "$FAKE_ORCA/terminals/"termS*.in \
 # ...and any code but 0 and 1 refuses the SAME way at the ordinary spawn path
 # too - the exact production shape a missing default branch let fall through
 # to backend_window_new. This row once drove a driver that failed to LOAD
-# (bash's 127); with the backend verbs native, it reaches the same unreadable
-# verdict with herdr absent from PATH, as the deputy recovery row above does.
-if [ -z "$(PATH="$nh_path" command -v herdr || true)" ]; then
-  : >"$FAKE_HERDR/log"
-  err="$(PATH="$nh_path" "$BIN/ac-spawn.sh" bw1 "$repo" --harness fake --mode local-only 2>&1)" \
-    && fail "THE REGRESSION: a crew spawn must refuse a 127 driver-load failure, never open a second window"
-  assert_contains "$err" "could not be READ" "the 127 refusal blames the BACKEND, the same wording as rc=2"
-  case "$err" in *"already exists"*) fail "a 127 driver failure is not a window-already-exists verdict" ;; esac
-  assert_eq "$(grep -c 'tab create' "$FAKE_HERDR/log" || true)" "0" "no second crewmate window was created"
-  assert_no_file "$AC_HOME/state/bw1.meta" "the refused spawn leaves no task in flight"
-else
-  printf 'SKIP: the crew spawn with herdr absent - bun shares its directory with a herdr on this host\n'
-fi
+# (bash's 127, through the crewdeputy path above, which never leases). A plain
+# crew spawn cannot reproduce it the same way: orcaWorktreeLease needs the real
+# `orca` CLI BEFORE the window-collision check ever runs, so PATH-hiding orca
+# fails the LEASE itself ("orca worktree create failed for bw1o", measured
+# directly) rather than isolating a 127 at the window check - no orca
+# equivalent exists for THIS path; the same rc=2 "could not be READ" contract
+# is already proven above via `.terminal-api-down`.
 
 # reap_orphan_window (bin/ac-spawn.sh, called from the crewdeputy NON-recover
 # path): the SAME fail-OPEN as the ordinary crew/recover guards above, but a
