@@ -529,7 +529,7 @@ assert_eq "$(AC_HOME="$noconf" bash -c "set -euo pipefail; . '$BIN/ac-lib.sh'; a
   "deflt" "ac_config_read answers the default for an absent knob"
 assert_no_file "$noconf/config" "ac_config_read creates no config/ (a READ mints nothing)"
 
-# --- ac_fleet_name: the fleet token in a herdr workspace label --------------
+# --- ac_fleet_name: the fleet token in a pane's creation title --------------
 
 # The label must never be DERIVED from whichever checkout happens to own bin/.
 # Pane agents run from crewmate panes, which carry no AC_HOME by design
@@ -908,7 +908,7 @@ mkdir -p "$TMP/metabin"
 # The reaper's rm (bin/ac-lock.sh do_acquire), made deterministic: one shim that deletes
 # the target AFTER ac_meta_get's `-f` test has passed and BEFORE the real awk
 # opens it - no load, no second process, no timing. Same PATH-stub technique as
-# make_fake_herdr's fake CLI. Scoped to *.vanish.meta so no other awk call moves.
+# make_fake_orca's fake CLI. Scoped to *.vanish.meta so no other awk call moves.
 cat >"$TMP/metabin/awk" <<SHIM
 #!/usr/bin/env bash
 t="\${*: -1}"
