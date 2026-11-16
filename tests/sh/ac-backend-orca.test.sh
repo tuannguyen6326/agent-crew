@@ -2,8 +2,7 @@
 # ac-backend-orca.test.sh - the orca driver of the backend contract behind the
 # per-call dispatch: handle persistence, three-state liveness, capture,
 # verified send, key mapping, came-up probe, agent idle/blocked, wait stamp,
-# kill - plus the guarantees the dispatch owes herdr: per-task routing inside
-# one process, and no herdr RPC ever issued under the orca backend.
+# kill.
 # shellcheck disable=SC2016  # script bodies are deliberately unexpanded here
 
 # Fail-closed sourcing: unsourced (suite run outside tests/sh/), errexit is never
@@ -15,7 +14,6 @@ command -v jq >/dev/null || skip 'jq not available'
 
 make_home
 make_fake_orca
-make_fake_herdr
 export AC_SEND_SETTLE=0.05
 
 run_backend() {
@@ -57,8 +55,6 @@ case "$after_cd" in
   *"terminal send"*"--enter"*) ;;
   *) fail "the typed cd is submitted at once with its own Enter (got: $after_cd)" ;;
 esac
-assert_eq "$(cat "$FAKE_HERDR/log" 2>/dev/null || true)" "" \
-  "no herdr RPC under the orca backend"
 
 # --- window_alive: three states --------------------------------------------------
 
@@ -355,8 +351,6 @@ touch "$FAKE_ORCA/.unreachable"
 rc=0; run_backend orca 'backend_dialog_answer o1' || rc=$?
 assert_eq "$rc" "3" "an unreachable backend is unobservable (3)"
 rm -f "$FAKE_ORCA/.unreachable"
-rc=0; run_backend herdr 'backend_dialog_answer_pane p1' || rc=$?
-assert_eq "$rc" "3" "a pane herdr hosts no agent in is unobservable (3), the blind key stays"
 
 # --- the startup SEQUENCE both launchers run ------------------------------------
 # Named dialogs are answered as they appear (update, then hooks review), the
@@ -380,14 +374,6 @@ assert_eq "$(grep -c -- '--enter' "$FAKE_ORCA/log")" "1" "an unnamed dialog gets
 : >"$FAKE_ORCA/log"
 run_backend orca 'backend_startup_dialogs o1 claude'
 case "$(cat "$FAKE_ORCA/log")" in *"terminal send"*) fail "claude with nothing pending must receive no keystroke" ;; esac
-# herdr on a pane it can classify nothing in: the blind key right away, and
-# only for a harness whose registry names one.
-: >"$FAKE_HERDR/log"
-run_backend herdr 'backend_startup_dialogs_pane p1 codex'
-assert_contains "$(cat "$FAKE_HERDR/log")" "send-keys p1 enter" "herdr presses the registry key at once"
-: >"$FAKE_HERDR/log"
-run_backend herdr 'backend_startup_dialogs_pane p1 claude'
-case "$(cat "$FAKE_HERDR/log")" in *send*) fail "herdr types nothing for a keyless harness" ;; esac
 rm -f "$FAKE_ORCA/terminals/term1.agent"
 printf 'zsh\n' >"$FAKE_ORCA/terminals/term1.title"
 
@@ -572,31 +558,25 @@ run_backend orca '
   || fail "a family whose tab died must get a FRESH tab, not a stale record"
 run_backend orca 'backend_kill_window fy-again'
 
-# --- per-task dispatch: both drivers in ONE process ------------------------------
-
-run_backend herdr '
-  backend_window_new mixh /tmp
-  [ "$(backend_target mixh)" = "herdr:pane-p1" ]
-  export AC_BACKEND=orca
-  backend_window_new mixo /tmp
-  case "$(backend_target mixo)" in orca:term*) ;; *) exit 9 ;; esac
-  export AC_BACKEND=herdr
-  [ "$(backend_target mixh)" = "herdr:pane-p1" ]
-' >/dev/null
+# GAP, not ported: a "both drivers in ONE process" block used to flip
+# AC_BACKEND between herdr and orca mid-script, proving per-task dispatch
+# never sticks to the first driver a process happened to route through. With
+# one backend left there is no second driver to flip to and prove separation
+# from.
 
 # --- rejection: unknown names still refuse, naming the valid set -----------------
 
 assert_fails run_backend tmux 'backend_target x1'
 err="$(run_backend tmux 'backend_target x1' 2>&1 || true)"
-assert_contains "$err" "valid backends: herdr, orca" \
+assert_contains "$err" "valid backend: orca" \
   "rejection names the valid backend set"
 
 # --- homeless resolution rides AC_FLEET_STATE ------------------------------------
 # A crewmate pane deliberately carries NO AC_HOME and no AC_BACKEND - only the
 # AC_FLEET_* channel (ac-spawn fleet_env). A verifier it calls (ac-verify via
-# ac-qa) must still resolve the FLEET's backend, not the herdr default
-# (measured: an orca-fleet QA round opened a herdr pane and leased from the
-# crew-tree pool).
+# ac-qa) must still resolve the FLEET's backend, not the bare env default
+# (measured: a homeless pane's unpinned read used to answer the raw default
+# instead of the fleet's own config/backend, and leased from the wrong pool).
 mkdir -p "$AC_HOME/config" "$AC_HOME/state"
 printf 'orca\n' >"$AC_HOME/config/backend"
 b="$(env -u AC_HOME -u AC_BACKEND AC_FLEET_STATE="$AC_HOME/state" bash -c "
@@ -606,18 +586,19 @@ b="$(env -u AC_HOME -u AC_BACKEND AC_FLEET_STATE="$AC_HOME/state" bash -c "
   ac_backend
 ")"
 assert_eq "$b" "orca" "a homeless caller resolves the fleet backend via AC_FLEET_STATE"
-b="$(env -u AC_HOME AC_BACKEND=herdr AC_FLEET_STATE="$AC_HOME/state" bash -c "
+err="$(env -u AC_HOME AC_BACKEND=tmux AC_FLEET_STATE="$AC_HOME/state" bash -c "
   set -euo pipefail
   . '$BIN/ac-lib.sh'
   . '$BIN/ac-backend.sh'
   ac_backend
-")"
-assert_eq "$b" "herdr" "an explicit AC_BACKEND pin still outranks the fleet-state rung"
-# The ROUTE and the herdr-RPC guard must resolve through the same ladder, not
-# the raw env default: a homeless pane agent on an orca fleet placed its pane
-# through the orca driver but READ it through herdr (capture, harness-up, the
-# ready gate all route) - the pane came up unreadable and the prompt never
-# landed.
+" 2>&1 || true)"
+assert_contains "$err" "unsupported backend 'tmux'" \
+  "an explicit AC_BACKEND pin still outranks the fleet-state rung - it dies on the pin's own name, never falling through to the fleet's valid one"
+# The ROUTE must resolve through the same ladder, not the raw env default: a
+# homeless pane agent on an orca fleet that resolved the wrong rung placed its
+# pane through the right driver but READ it through the wrong resolution
+# (capture, harness-up, the ready gate all route) - the pane came up
+# unreadable and the prompt never landed.
 printf 'HOMELESS-ORCA-BUF\n' >"$FAKE_ORCA/terminals/hless.buf"
 printf 'tabH\n' >"$FAKE_ORCA/terminals/hless.tab"
 out="$(env -u AC_HOME -u AC_BACKEND AC_FLEET_STATE="$AC_HOME/state" bash -c "
@@ -628,13 +609,11 @@ out="$(env -u AC_HOME -u AC_BACKEND AC_FLEET_STATE="$AC_HOME/state" bash -c "
 " 2>/dev/null || true)"
 assert_contains "$out" "HOMELESS-ORCA-BUF" \
   "routed pane reads follow the fleet-state backend, never the raw env default"
-err="$(env -u AC_HOME -u AC_BACKEND AC_FLEET_STATE="$AC_HOME/state" bash -c "
-  . '$BIN/ac-lib.sh'
-  . '$BIN/ac-backend.sh'
-  herdr_cli pane list
-" 2>&1 || true)"
-assert_contains "$err" "leaked past the per-call dispatch" \
-  "a homeless herdr RPC on an orca fleet dies as the leak it is"
+# GAP, not ported: a herdr_cli guard used to prove a raw RPC that bypassed
+# the per-call dispatch and landed on the WRONG driver died loudly as the
+# leak it was. herdr_cli, and the second driver it could leak into, are both
+# gone; calling orca's own primitive directly is no longer a wrong-driver
+# leak, since orca is the only driver dispatch can ever resolve to.
 rm -f "$AC_HOME/config/backend" "$FAKE_ORCA/terminals/hless.buf" "$FAKE_ORCA/terminals/hless.tab"
 
 # --- orca_worktree_lease: branch source + freshest tip ---------------------------
