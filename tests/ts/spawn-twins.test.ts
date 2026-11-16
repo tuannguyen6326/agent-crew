@@ -17,7 +17,7 @@
 // side's tree; a lease row also the repo's refs and worktrees.
 //
 // DISPUTED: the implementation of each helper (the live bash vs the spawn twins of src/lib.ts and src/lib-spawn.ts)
-// HELD-CONSTANT: one side root per side and row seeded alike (a home at <side>/home with state/ records/ data/ config/, the container .claude at <side>/.claude, worktrees and repos under <side>, the stubs' sentinels, call counters and log at <side>/stub, TMPDIR at <side>/tmp); argv; env (PATH = refusing claude/codex/opencode/pi/cursor-agent/docker/codegraph/gh stand-ins, then herdr, orca, sleep and date stubs, the host's jq and git, bun alone, /bin plus /usr/bin without those names - no row can reach a real backend or harness; LC_ALL=C unless a row names UTF-8; HOME an empty dir; STUB_DIR, TMPDIR, AC_HOME unless homeless, fixed git identities and dates, the row's own names); cwd (the distro root, so ac_root and STARTED_BIN name one bin/); stdin (/dev/null).
+// HELD-CONSTANT: one side root per side and row seeded alike (a home at <side>/home with state/ records/ data/ config/, the container .claude at <side>/.claude, worktrees and repos under <side>, the stubs' sentinels, call counters and log at <side>/stub, TMPDIR at <side>/tmp); argv; env (PATH = refusing claude/codex/opencode/pi/cursor-agent/docker/codegraph/gh stand-ins, then orca, sleep and date stubs, the host's jq and git, bun alone, /bin plus /usr/bin without those names - no row can reach a real backend or harness; LC_ALL=C unless a row names UTF-8; HOME an empty dir; STUB_DIR, TMPDIR, AC_HOME unless homeless, fixed git identities and dates, the row's own names); cwd (the distro root, so ac_root and STARTED_BIN name one bin/); stdin (/dev/null).
 import { afterAll, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -56,33 +56,7 @@ const BUN = join(W, "bun");
 mkdirSync(BUN);
 symlinkSync(process.execPath, join(BUN, "bun"));
 
-// A file-backed herdr: every call logged with its argv bracketed and the
-// HERDR_SESSION it saw; the n-th call of a verb (`<a>-<b>`) answers from
-// <verb>.<n>.{err,out,rc} when any exists, else <verb>.{err,out,rc}, else the
-// verb's default (a tab create mints wNEW:t<n> / p<n>; `tab list --workspace
-// <ws>` serves tabs-<ws>).
-const HERDR = String.raw`#!/bin/sh
-d="$STUB_DIR"
-{ printf herdr; for a in "$@"; do printf ' [%s]' "$a"; done; printf ' {%s}\n' "$HERDR_SESSION"; } >>"$d/log"
-v="$1-$2"
-n=$(($(cat "$d/$v.n" 2>/dev/null || echo 0) + 1))
-echo "$n" >"$d/$v.n"
-for f in "$v.$n" "$v"; do
-  if [ -e "$d/$f.out" ] || [ -e "$d/$f.rc" ] || [ -e "$d/$f.err" ]; then
-    [ ! -e "$d/$f.err" ] || cat "$d/$f.err" >&2
-    [ ! -e "$d/$f.out" ] || cat "$d/$f.out"
-    exit "$(cat "$d/$f.rc" 2>/dev/null || echo 0)"
-  fi
-done
-case "$v" in
-  workspace-list) printf '{"result":{"workspaces":[]}}\n' ;;
-  workspace-create) printf '{"result":{"workspace":{"workspace_id":"wNEW"}}}\n' ;;
-  tab-list) if [ -e "$d/tabs-$4" ]; then cat "$d/tabs-$4"; else printf '{"result":{"tabs":[]}}\n'; fi ;;
-  tab-create) printf '{"result":{"tab":{"tab_id":"wNEW:t%s"},"root_pane":{"pane_id":"p%s"}}}\n' "$n" "$n" ;;
-esac
-exit 0
-`;
-// orca, the same file-backed shape; `worktree create` cuts a REAL linked
+// orca, a file-backed shape; `worktree create` cuts a REAL linked
 // worktree at <stub>/wt/<name> on tester/<name> from the base ref (the CLI's
 // own minted branch) unless a sentinel answers for it; `worktree show`
 // resolves nothing by default; a terminal create mints h<n>/tab<n>.
@@ -128,18 +102,17 @@ printf 'sleep %s\n' "$*" >>"$STUB_DIR/log"
 const DATE = String.raw`#!/bin/sh
 case "$*" in *%Y-%m-%dT*) echo 2026-01-01T00:00:00Z ;; *%s*) echo 1767225600 ;; *) exec /bin/date "$@" ;; esac
 `;
-function stubs(name: string, herdr: boolean, orca: boolean): string {
+function stubs(name: string, orca: boolean): string {
   const d = join(W, name);
   mkdirSync(d);
-  if (herdr) writeFileSync(join(d, "herdr"), HERDR, { mode: 0o755 });
   if (orca) writeFileSync(join(d, "orca"), ORCA, { mode: 0o755 });
   writeFileSync(join(d, "sleep"), SLEEP, { mode: 0o755 });
   writeFileSync(join(d, "date"), DATE, { mode: 0o755 });
   return d;
 }
 const PATHS = {
-  all: `${GUARD}:${stubs("stubs", true, true)}:${TOOLS}:${BUN}:${BASE}`,
-  noorca: `${GUARD}:${stubs("stubs-noorca", true, false)}:${TOOLS}:${BUN}:${BASE}`,
+  all: `${GUARD}:${stubs("stubs", true)}:${TOOLS}:${BUN}:${BASE}`,
+  noorca: `${GUARD}:${stubs("stubs-noorca", false)}:${TOOLS}:${BUN}:${BASE}`,
   nojq: `${GUARD}:${join(W, "stubs")}:${TOOLS_NOJQ}:${BUN}:${BASE}`,
 };
 const NOHOME = join(W, "nohome");
@@ -239,8 +212,10 @@ function side(row: Row, s: string, oracle: boolean): Side {
     ? ["/bin/bash", "-c", `${head}; . "$0/ac-lib.sh" || exit $?; . "$0/ac-backend.sh" || exit $?; ${row.bash}${row.errexit ? "" : `; printf '|rc=%s' "$?"`}`, BIN, ...args]
     : [process.execPath, "-e", `${PRE} const A = ${JSON.stringify(args)}; const rc = await (async () => { ${row.twin} })(); writeSync(1, "|rc=" + rc); process.exit(${row.errexit ? "rc" : "0"});`];
   const r = Bun.spawnSync(cmd, { cwd: ROOT, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-  // bash 3.2's `set -m` (herdr_rpc_bounded) now and then prints its own
-  // `child setpgid` line - shell-own stderr, never reproduced.
+  // bash 3.2's `set -m` used to print its own `child setpgid` line now and
+  // then (herdr_rpc_bounded's own job control, since deleted) - shell-own
+  // stderr, never reproduced. Kept harmless: nothing sourced here still runs
+  // under `set -m`, so this never matches, but a future one might.
   const norm = (t: string): string =>
     t.replaceAll(s, "S").replace(/\.tmp\.[0-9]+/g, ".tmp.PID").replace(/\/ac-seed\.[A-Za-z0-9]{6}\b/g, "/ac-seed.XXXXXX").replace(/^.*: child setpgid \([0-9]+ to [0-9]+\): Operation not permitted\n/gm, "");
   let err = norm(r.stderr.toString("latin1"));
