@@ -46,12 +46,9 @@
 //      (src/home-carriers.ts), never this seed's
 //   c. the parent's config knobs copied by basename with plain `cp` (content
 //      and mode through umask; macOS cp carries xattrs/ACLs): backend
-//      crew-harness crew-dispatch.json herdr-session wedge-alarm captain flow
+//      crew-harness crew-dispatch.json wedge-alarm captain flow
 //      promote, each when a regular file, then every regular config/launch-*
-//      in byte order. Workspace ids are deliberately absent: the retired
-//      herdr-workspace* knobs are never read (ac-backend.sh FAMILY WORKSPACE
-//      GROUPING resolves workspaces adopt-by-label per fleet). herdr-session
-//      IS inherited: the herdr server session is shared across homes.
+//      in byte order.
 //   d. the parent's CREWMATE.md copied when it is a regular file
 //   e. records/projects.md := `# Projects\n\n`; records/backlog.md :=
 //      `# Backlog\n\n## In flight\n\n## Queued\n\n## Done\n`
@@ -89,7 +86,7 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statS
 import { join } from "node:path";
 import { die, enterCaller, envHome, iso, recordsDir, seedRuntimeLinks, spawnShellSync, warn } from "./lib.ts";
 
-const KNOBS = ["backend", "crew-harness", "crew-dispatch.json", "herdr-session", "wedge-alarm", "captain", "flow", "promote"];
+const KNOBS = ["backend", "crew-harness", "crew-dispatch.json", "wedge-alarm", "captain", "flow", "promote"];
 
 const isFile = (p: string): boolean => {
   try {

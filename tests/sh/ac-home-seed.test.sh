@@ -17,7 +17,6 @@ git clone --quiet "$repo" "$AC_HOME/projects/alpha"
 git -C "$AC_HOME/projects/alpha" remote set-url origin https://example.test/alpha.git
 printf 'orca\n' >"$AC_HOME/config/backend"
 printf 'codex\n' >"$AC_HOME/config/crew-harness"
-printf 'lab\n' >"$AC_HOME/config/herdr-session"
 printf 'wPARENT\n' >"$AC_HOME/config/herdr-workspace"
 printf 'FLEET RULES\n' >"$AC_HOME/CREWMATE.md"
 printf '# Projects\n\n- alpha [direct-pr] - a project (added 2026-07-13)\n' >"$AC_HOME/records/projects.md"
@@ -29,8 +28,7 @@ for d in state data config projects; do
 done
 assert_eq "$(cat "$home/config/backend")" "orca" "backend inherited"
 assert_eq "$(cat "$home/config/crew-harness")" "codex" "crew-harness inherited"
-assert_eq "$(cat "$home/config/herdr-session")" "lab" "herdr-session inherited (the herdr server session is shared)"
-assert_no_file "$home/config/herdr-workspace" "herdr-workspace NOT inherited - a workspace id is fleet-specific, the crewdeputy owns its own group"
+assert_no_file "$home/config/herdr-workspace" "herdr-workspace NOT inherited - a retired knob, never read"
 assert_eq "$(cat "$home/CREWMATE.md")" "FLEET RULES" "CREWMATE.md inherited"
 assert_file "$home/.ac-crewdeputy-home" "crewdeputy marker for the turn-end guard"
 [ -d "$home/projects/alpha/.git" ] || fail "project not cloned into home"
@@ -150,12 +148,12 @@ WARN: fill in charter and scope: for $1 in $N/records/crewdeputies.md - an entry
 }
 
 # 1. A full parent: clone, every knob, two launch templates, the retired
-# workspace knob, CREWMATE.md, captain.md, a bracketed registry line.
+# knobs, CREWMATE.md, captain.md, a bracketed registry line.
 fresh_parent
 add_clone alpha https://example.test/alpha.git
 mkdir -p "$N/config" "$N/records"
-KNOBS="backend crew-harness crew-dispatch.json herdr-session wedge-alarm captain flow promote launch-claude launch-codex"
-for k in $KNOBS herdr-workspace; do
+KNOBS="backend crew-harness crew-dispatch.json wedge-alarm captain flow promote launch-claude launch-codex"
+for k in $KNOBS herdr-workspace herdr-session; do
   printf "%s value\n" "$k" >"$N/config/$k"
 done
 printf "FLEET RULES\n" >"$N/CREWMATE.md"
@@ -179,7 +177,7 @@ assert_eq "$(cat "$N/crewdeputies/mate1/records/backlog.md")" "# Backlog
 ## Done" "seed 1: the backlog skeleton"
 assert_eq "$(git -C "$N/crewdeputies/mate1/projects/alpha" remote get-url origin)" "https://example.test/alpha.git" "seed 1: origin re-pointed"
 assert_eq "$(git -C "$N/crewdeputies/mate1/projects/alpha" rev-parse HEAD)" "$(git -C "$N/projects/alpha" rev-parse HEAD)" "seed 1: the clone is at the parent's HEAD"
-assert_eq "$(ls -A "$N/crewdeputies/mate1/config" | tr '\n' ' ')" "$(printf '%s\n' $KNOBS | LC_ALL=C sort | tr '\n' ' ')" "seed 1: every knob and launch template inherited, the workspace knob not"
+assert_eq "$(ls -A "$N/crewdeputies/mate1/config" | tr '\n' ' ')" "$(printf '%s\n' $KNOBS | LC_ALL=C sort | tr '\n' ' ')" "seed 1: every knob and launch template inherited, the retired knobs not"
 for k in $KNOBS; do
   assert_eq "$(cat "$N/crewdeputies/mate1/config/$k")" "$k value" "seed 1: $k copied whole"
 done
