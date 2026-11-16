@@ -629,6 +629,11 @@ jq -cn --arg transcript "$transcript" '{event:"done",status:"ok",session_id:"fre
 EOF
 chmod +x "$fake_pane"
 
+# verifyLease (src/verify.ts:2439-2446), returnLeases (src/verify.ts:683) and
+# verifyDropBranch (src/verify.ts:2455) all branch on orcaFleet() before ever
+# reaching AC_VERIFY_TREE_BIN - the fake tree driver above is the herdr-pool
+# path only, so this whole battery needs the backend pinned explicitly.
+printf 'herdr\n' >"$AC_HOME/config/backend"
 export AC_VERIFY_TREE_BIN="$fake_tree"
 export AC_VERIFY_PANE_BIN="$fake_pane"
 export VERIFY_TREE_LOG="$tree_log"
@@ -2898,7 +2903,11 @@ STUB
 chmod +x "$XS"/*
 make_fake_orca
 
-xseed() { [ ! -e "$XW" ] || chmod -R u+w "$XW"; rm -rf "$XW"; mkdir -p "$XW/home/state" "$XW/home/config" "$XW/cwd" "$XW/tmp" "$XW/log"; }
+# verifyLease (src/verify.ts:2439-2446), returnLeases (src/verify.ts:683) and
+# verifyDropBranch (src/verify.ts:2455) all branch on orcaFleet() before ever
+# reaching AC_VERIFY_TREE_BIN - the $XS/xtree stub below is the herdr-pool
+# path only, so every row needs this pinned unless its own XE overrides it.
+xseed() { [ ! -e "$XW" ] || chmod -R u+w "$XW"; rm -rf "$XW"; mkdir -p "$XW/home/state" "$XW/home/config" "$XW/cwd" "$XW/tmp" "$XW/log"; printf 'herdr\n' >"$XW/home/config/backend"; }
 xstd() {  # the standard world
   xseed
   git init -q -b main "$XW/repo"

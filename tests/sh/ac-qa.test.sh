@@ -2782,6 +2782,9 @@ chmod +x "$TMP/stub/herdr"
 wqrepo="$(make_repo qawatchrepo)"
 ln -s "$BIN" "$wqrepo/binlink"
 cd "$wqrepo" || fail "cd qawatchrepo"
+# The board opens only on a herdr fleet (src/qa.ts:1100, backendName() ===
+# "herdr"); pin it explicitly rather than lean on the no-config default.
+printf 'herdr\n' >"$AC_HOME/config/backend"
 AC_QA_WATCH=auto binlink/ac-qa.sh start --target HEAD --task watchpath >/dev/null 2>&1
 assert_contains "$(cat "$QHLOG")" "ac-qa-watch.sh" "watch board launched"
 qsp="$(sed -n "s/.*'\([^']*ac-qa-watch\.sh\)'.*/\1/p" "$QHLOG" | head -1)"
@@ -2822,11 +2825,14 @@ qprepo="$(make_repo qapaneopsrepo)"
 cd "$qprepo" || fail "cd qapaneopsrepo"
 export WHLOG="$TMP/qa-paneops.log"
 : >"$WHLOG"
+# Same herdr-only board-open gate as the section above.
+printf 'herdr\n' >"$AC_HOME/config/backend"
 rc=0
 out="$(PATH="$gstub:$PATH" AC_QA_WATCH=auto "$QA" start --target HEAD --task paneopsfail 2>&1)" || rc=$?
 [ "$rc" -eq 0 ] || fail "qa start must survive failing watch pane ops, got rc=$rc: $out"
 qprun="$qprepo/.crew/qa/$(readlink "$qprepo/.crew/qa/current")"
 assert_eq "$(cat "$qprun/watch.pane")" "pW1" "the opened pane is still recorded so finish can retire it"
+rm -f "$AC_HOME/config/backend"
 cd "$repo" || fail "cd back from qapaneopsrepo"
 
 # --- completion gate negatives: grade / evidence root / web visual ----------------
