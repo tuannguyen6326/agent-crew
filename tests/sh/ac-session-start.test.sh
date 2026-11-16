@@ -207,7 +207,6 @@ assert_contains "$hd_section" "HOOK-DEAD: every ported hook - bun is not on PATH
 # ever using a crewdeputy home. An off-by-one here would silently starve every
 # crewdeputy of its inherited config with nothing else to catch it.
 
-make_fake_herdr
 make_home
 
 dep="$AC_HOME/crewdeputies/dep1"
