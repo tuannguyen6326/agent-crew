@@ -1879,7 +1879,16 @@ export function metaBackend(metaFile: string): string {
     b = metaGet(metaFile, "backend");
   } catch {}
   b = cutNul(b) || "orca";
-  if (b !== "orca") die(`unsupported backend '${b}' (valid backend: orca)`);
+  if (b !== "orca") {
+    // b is latin1-decoded raw bytes (metaGet's contract); a template-literal
+    // string would UTF-8-encode it a second time, so it is concatenated as
+    // bytes and handed to die()'s Uint8Array branch instead.
+    die(Buffer.concat([
+      Buffer.from("unsupported backend '", "utf8"),
+      Buffer.from(b, "latin1"),
+      Buffer.from("' (valid backend: orca)", "utf8"),
+    ]));
+  }
   return b;
 }
 

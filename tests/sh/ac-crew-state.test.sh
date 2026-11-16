@@ -215,19 +215,13 @@ clive k2 pK2 'kind=self\n'
 crun k2; assert_eq "$(cout)" "idle" "4: a self task with a live pane reads its pane"
 cfmt home/state/k1.meta 'backend=tmux\n'
 crun k1; assert_eq "$C_RC:$(cout):$(cerr)" "1::$CBAD" "4: a stale tmux meta exits inside the route"
-# KNOWN DEFECT (metaBackend, src/lib.ts:1876-1884): die()'s own contract (lib.ts:34-35) writes a
-# Uint8Array verbatim but UTF-8-ENCODES a string - metaBackend passes the
-# latin1-decoded meta byte(s) straight into a template-literal string, so
-# they are encoded a SECOND time. A valid two-byte UTF-8 char comes back
-# double-encoded, and a single invalid byte happens to come back as the
-# two-byte char its own latin1 codepoint re-encodes to, never U+FFFD. Both
-# rows below assert the CURRENT (buggy) bytes, measured directly against
-# the binary; fix by routing b through a byte-preserving die() call.
+# A refused backend= name is written byte-preserving, like the bash: a
+# meta's bytes pass through metaBackend's die() unchanged, never re-encoded.
 cfmt home/state/k1.meta 'backend=caf\303\251\n'
-crun k1; assert_eq "$C_RC:$(cout):$(cerr)" "1::ERROR: unsupported backend 'caf$(printf '\303\203\302\251')' (valid backend: orca)" "4: a meta's UTF-8 backend name comes back double-encoded (lib.ts:1882 defect above)"
+crun k1; assert_eq "$C_RC:$(cout):$(cerr)" "1::ERROR: unsupported backend 'caf$(printf '\303\251')' (valid backend: orca)" "4: a meta's UTF-8 backend name is refused byte-for-byte"
 cfmt home/state/k1.meta 'backend=caf\351\n'
 crun k1
-assert_eq "$C_RC:$(cout):$(cerr)" "1::ERROR: unsupported backend 'caf$(printf '\303\251')' (valid backend: orca)" "4: a non-UTF-8 backend= is NOT read as U+FFFD (lib.ts:1882 defect above)"
+assert_eq "$C_RC:$(cout):$(cerr)" "1::ERROR: unsupported backend 'caf$(printf '\351')' (valid backend: orca)" "4: a non-UTF-8 backend= byte is refused as that same byte, never U+FFFD"
 cfmt home/state/k1.meta 'backend=orca\n'; rm -f "$H/home/state/.pane-k1"
 crun k1; assert_eq "$(cout)" "gone" "4: an orca meta with no handle is gone"
 cfmt home/state/k1.meta 'backend=\000orca\n'
