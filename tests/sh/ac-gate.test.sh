@@ -1329,6 +1329,10 @@ assert_contains "$(cat "$AC_HOME/data/noroom/room.md")" "GATE-VERIFY:" "gate-ver
 # caller's - so a caller-relative "$(dirname "$0")" would not resolve there.
 # This invokes ac-gate.sh the way AGENTS.md tells every chief to (a RELATIVE
 # path, from a cwd that is not the bin dir).
+# The auto-opened board is a herdr-only feature (src/gate.ts:1023 returns
+# before opening one on any other backend), so this section pins herdr
+# explicitly rather than lean on the no-config default.
+printf 'herdr\n' >"$AC_HOME/config/backend"
 export HDLOG="$TMP/hd.log"
 cat >"$stub/herdr" <<'EOF'
 #!/usr/bin/env bash
@@ -1397,7 +1401,7 @@ printf 'orca\n' >"$AC_HOME/config/backend"
 rc=0
 ( cd "$ROOT" && PATH="$stub:$PATH" AC_PANE_AGENT="$stub/pane-agent" AC_GATE_WATCH=auto \
     bin/ac-gate.sh widget spec >"$TMP/orcagate.out" 2>"$TMP/orcagate.err" ) || rc=$?
-rm -f "$AC_HOME/config/backend"
+printf 'herdr\n' >"$AC_HOME/config/backend"   # 13b below still needs the board open
 assert_eq "$rc:$(cat "$TMP/orcagate.err")" "0:" "an orca fleet's gate settles with exit 0"
 assert_contains "$(cat "$TMP/orcagate.out")" "widget/spec r1:" "...and prints its result"
 assert_eq "$(grep -c 'tab create' "$HDLOG")" "$after" "an orca fleet opens no herdr board"
@@ -1455,6 +1459,7 @@ assert_eq "$(grep -c 'tab create' "$HDLOG")" "$before" \
   "an empty foreground list must not be read as a dead board"
 assert_eq "$(cat "$HDLOG.closed")" "pDEAD" \
   "an empty foreground list closes nothing at open - only the last run's exit retires the board"
+rm -f "$AC_HOME/config/backend"
 
 # ============================================================================
 # 14. a LARGE captain.md never aborts the gate (fed as a PATH, no cap, no truncation)
@@ -2339,7 +2344,9 @@ assert_no_file "$busy4" "the last holder's exit clears the declaration"
 
 # --- the gate board is the FAMILY's: only its last live run retires it ----------
 # The run that opened the board may exit first; a same-family run still live
-# keeps it open, and the family's last run closes it by its label.
+# keeps it open, and the family's last run closes it by its label. The board
+# is herdr-only (src/gate.ts:1023), so this section pins the backend too.
+printf 'herdr\n' >"$AC_HOME/config/backend"
 fam5=boardshare
 for s in spec arch; do
   mkdir -p "$AC_HOME/data/$fam5/$s"
@@ -2372,6 +2379,7 @@ assert_eq "$(cat "$HDLOG.closed")" "" "the board stays open while a same-family 
 release_held bdB
 assert_eq "$(cat "$hold/bdB.rc")" "0" "the family's last run settles"
 assert_eq "$(cat "$HDLOG.closed")" "pG1" "the family's last run retires the board by its label"
+rm -f "$AC_HOME/config/backend"
 
 # --- a run starting while another of its family exits keeps its declaration ------
 # X is held inside its exit, after it found no other live run and before it clears
@@ -2588,7 +2596,12 @@ xstd_m() {  # a maintenance run: manifest, staged skill, plan, run report
 }
 XMARGS=(maintenance --mode learning --run "$XMR" --subject example --manifest "$XMR/input-manifest.md" --plan "$XMR/plan.json")
 # A row's world: XBASE (xstd unless named) then XPLUS, a shell snippet over it.
-xplus() { "${XBASE:-xstd}"; [ -z "${XPLUS:-}" ] || eval "$XPLUS"; }
+xplus() {  # the auto-opened board is herdr-only (src/gate.ts:1023), so a
+  # row proving it pins the backend rather than lean on the no-config default.
+  "${XBASE:-xstd}"
+  [ "$XWATCH" != auto ] || printf 'herdr\n' >"$XW/home/config/backend"
+  [ -z "${XPLUS:-}" ] || eval "$XPLUS"
+}
 XLC=C; XCWD=cwd; XPRE=""; XPATH=""; XHOMELESS=0; XWATCH=off; XE=""
 xrun_side() {  # xrun_side <args...> - XEXEC=1 execs in place (a caller's background job IS the gate)
   local path x

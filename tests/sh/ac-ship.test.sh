@@ -681,6 +681,9 @@ frame="$("$BIN/ac-ship-watch.sh" --repo "$repo" --once)"
 assert_contains "$frame" "ac-ship" "watch renders header"
 assert_contains "$frame" "intent: ship the widget" "watch shows intent"
 assert_contains "$frame" "findings lint" "watch shows findings summary"
+# The watch-tab open is gated on backendName() === "herdr" (src/ship.ts:1008);
+# pin it explicitly through this whole battery.
+printf 'herdr\n' >"$AC_HOME/config/backend"
 wrepo="$(make_repo watchrepo)"
 export WHLOG="$TMP/wh.log"
 cat >"$stub/herdr" <<'EOF'
@@ -767,7 +770,7 @@ out="$(PATH="$stub:$PATH" AC_SHIP_WATCH=auto "$BIN/ac-ship.sh" start --intent "o
 assert_contains "$out" "started run" "an orca fleet's ship run starts"
 case "$(cat "$WHLOG")" in *"tab create"*) fail "an orca fleet must open no ship board: $(cat "$WHLOG")" ;; esac
 assert_no_file "$wrepo/.crew/ship/$(readlink "$wrepo/.crew/ship/current")/watch.pane" "an orca fleet records no board pane"
-rm -f "$AC_HOME/config/backend"
+printf 'herdr\n' >"$AC_HOME/config/backend"
 cd "$repo" || fail "cd back"
 
 # The watch start also closes herdr's default "1" tabs of its OWN workspace,
@@ -811,6 +814,7 @@ rc=0
 PATH="$sstub:$PATH" SWEEP_FAIL=1 AC_SHIP_WATCH=auto "$BIN/ac-ship.sh" start --intent "sweep down" >/dev/null 2>&1 || rc=$?
 assert_eq "$rc" "0" "a failed tab list never fails the start"
 PATH="$sstub:$PATH" "$BIN/ac-ship.sh" finish cancelled >/dev/null
+rm -f "$AC_HOME/config/backend"
 cd "$repo" || fail "cd back"
 
 # --- TDD attestation: attestation by execution, honored by the test step ---
@@ -1651,6 +1655,8 @@ assert_eq "$rc" "1" "before any run, a vanished threaded config reads as no conf
 # run, and its pane may be gone (or herdr wedged) by then. Every one of them
 # aborted `start` SILENTLY - the run dir and `current` symlink already existed,
 # so the caller saw rc=1 with no output and a half-started run.
+# The watch open (src/ship.ts:1008) only runs on backendName() === "herdr".
+printf 'herdr\n' >"$AC_HOME/config/backend"
 gstub="$TMP/paneopstub"; mkdir -p "$gstub"
 cat >"$gstub/herdr" <<'EOF'
 #!/usr/bin/env bash
@@ -1690,6 +1696,7 @@ rc=0
 out="$(PATH="$gstub:$PATH" "$BIN/ac-ship.sh" finish checks-passed 2>&1)" || rc=$?
 assert_eq "$rc" "1" "the pane-op guards must not leak into the finish gate"
 assert_contains "$out" "fail-closed" "a fresh run still cannot mint checks-passed"
+rm -f "$AC_HOME/config/backend"
 
 # The .crew/ exclude write is cosmetic housekeeping (it keeps .crew/ out of
 # `git status`; the pool manager normally wrote it already). An info/ that
@@ -3768,7 +3775,8 @@ xhas 'checks-passed: RUN2 PR raised, awaiting the captain'"'"'s merge - passed-w
 # -- leg 12: the live board -------------------------------------------------------------
 xtabs() { printf '%s' '{"result":{"tabs":[{"tab_id":"tJ","workspace_id":"wW","label":"1"},{"tab_id":"tO","workspace_id":"wO","label":"1"},{"tab_id":"tK","workspace_id":"wW","label":"keep"},{"tab_id":"tJ2","workspace_id":"wW","label":"1"}]}}' >"$XW/stub/tabs.json"; }
 x12a() {
-  xtabs; XWATCH=auto
+  # The watch open (src/ship.ts:1008) only runs on backendName() === "herdr".
+  xtabs; XWATCH=auto; printf 'herdr\n' >"$XW/home/config/backend"
   xc start --intent board; xc step intent running; xc step review fixing; xc step intent completed; xc finish cancelled
   XENV=(AC_FLEET_SCOPE=fam9 'AC_SCOPE=a b'); xc start --intent scoped
   XENV=(AC_HERDR_SESSION=s1); xc start --intent s1
@@ -3787,9 +3795,9 @@ xwhas 'herdr workspace list --session s2'
 # Nothing opens: AC_SHIP_WATCH=off, an orca fleet, no herdr on PATH, a tab
 # create that fails; a failing rename, run, list or close never fails the start.
 x12b() {
-  xtabs; XWATCH=auto
+  xtabs; XWATCH=auto; printf 'herdr\n' >"$XW/home/config/backend"
   XWATCH=off; xc start --intent off; XWATCH=auto
-  printf 'orca\n' >"$XW/home/config/backend"; xc start --intent orca; rm -f "$XW/home/config/backend"
+  printf 'orca\n' >"$XW/home/config/backend"; xc start --intent orca; printf 'herdr\n' >"$XW/home/config/backend"
   XPATH="$(xwithout herdr)"; xc start --intent noherdr; XPATH=""
   XENV=(HERDR_FAIL=tabcreate); xc start --intent nocreate
   XENV=('HERDR_FAIL=rename run tabclose'); xc start --intent opsfail
