@@ -1,14 +1,12 @@
-// self-task.test.ts - the self-task twins of src/lib.ts held to the LIVE bash
-// helpers they twin, each run in the call context the bash self-task entry
-// gave it: familyOwned against
-// ac_family_owned inside an `if`, and backendWindowNew with errexit false
-// against `( AC_WINDOW_FAMILY="" backend_window_new <id> <dir> ) || ...`, the
-// subshell whose errexit sleeps (bin/ac-backend.sh's herdr arm). Every row
-// compares stdout, stderr (less the shell's own `line N:` lines), the status,
-// the stub log and the side's tree.
+// self-task.test.ts - familyOwned's twin (src/lib.ts) held to the LIVE bash
+// ac_family_owned it twins, called in the context the bash self-task entry
+// gave it: inside an `if`. Compares stdout, stderr (less the shell's own
+// `line N:` lines), the status, the stub log and the side's tree. (The
+// backendWindowNew twin this file once held is gone - see the GAP comment
+// below.)
 //
-// DISPUTED: the implementation of each helper (the live bash vs src/lib.ts)
-// HELD-CONSTANT: one side root per side and row seeded alike (a home at <side>/home with state/ records/ data/ config/, the stubs' sentinels, call counters and log at <side>/stub, TMPDIR at <side>/tmp); argv; env (PATH = refusing claude/codex/opencode/pi/cursor-agent/docker/codegraph/gh/orca stand-ins, then herdr, sleep and date stubs, the host's jq and git, bun alone, /bin plus /usr/bin without those names - no row can reach a real backend or harness; LC_ALL=C; HOME an empty dir; STUB_DIR, TMPDIR, AC_HOME, the row's own names); cwd (the distro root, so ac_root and STARTED_BIN name one bin/); stdin (/dev/null).
+// DISPUTED: the implementation of ac_family_owned (the live bash vs src/lib.ts)
+// HELD-CONSTANT: one side root per side and row seeded alike (a home at <side>/home with state/ records/ data/ config/, the stubs' sentinels, call counters and log at <side>/stub, TMPDIR at <side>/tmp); argv; env (PATH = refusing claude/codex/opencode/pi/cursor-agent/docker/codegraph/gh/orca stand-ins, then sleep and date stubs, the host's jq and git, bun alone, /bin plus /usr/bin without those names - no row can reach a real backend or harness; LC_ALL=C; HOME an empty dir; STUB_DIR, TMPDIR, AC_HOME, the row's own names); cwd (the distro root, so ac_root and STARTED_BIN name one bin/); stdin (/dev/null).
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -42,49 +40,20 @@ const BUN = join(W, "bun");
 mkdirSync(BUN);
 symlinkSync(process.execPath, join(BUN, "bun"));
 
-// A file-backed herdr: every call logged with its argv bracketed; the n-th
-// call of a verb (`<a>-<b>`) answers from <verb>.<n>.{err,out,rc} when any
-// exists, else <verb>.{err,out,rc}, else the verb's default (a tab create
-// mints wNEW:t<n> / p<n>; `tab list --workspace <ws>` serves tabs-<ws>).
-const HERDR = String.raw`#!/bin/sh
-d="$STUB_DIR"
-{ printf herdr; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'; } >>"$d/log"
-v="$1-$2"
-n=$(($(cat "$d/$v.n" 2>/dev/null || echo 0) + 1))
-echo "$n" >"$d/$v.n"
-for f in "$v.$n" "$v"; do
-  if [ -e "$d/$f.out" ] || [ -e "$d/$f.rc" ] || [ -e "$d/$f.err" ]; then
-    [ ! -e "$d/$f.err" ] || cat "$d/$f.err" >&2
-    [ ! -e "$d/$f.out" ] || cat "$d/$f.out"
-    exit "$(cat "$d/$f.rc" 2>/dev/null || echo 0)"
-  fi
-done
-case "$v" in
-  workspace-list) printf '{"result":{"workspaces":[]}}\n' ;;
-  workspace-create) printf '{"result":{"workspace":{"workspace_id":"wNEW"}}}\n' ;;
-  tab-list) if [ -e "$d/tabs-$4" ]; then cat "$d/tabs-$4"; else printf '{"result":{"tabs":[]}}\n'; fi ;;
-  tab-create) printf '{"result":{"tab":{"tab_id":"wNEW:t%s"},"root_pane":{"pane_id":"p%s"}}}\n' "$n" "$n" ;;
-esac
-exit 0
-`;
 const SLEEP = String.raw`#!/bin/sh
 printf 'sleep %s\n' "$*" >>"$STUB_DIR/log"
 `;
 const DATE = String.raw`#!/bin/sh
 case "$*" in *%Y-%m-%dT*) echo 2026-01-01T00:00:00Z ;; *%s*) echo 1767225600 ;; *) exec /bin/date "$@" ;; esac
 `;
-function stubs(name: string, herdr: boolean): string {
+function stubs(name: string): string {
   const d = join(W, name);
   mkdirSync(d);
-  if (herdr) writeFileSync(join(d, "herdr"), HERDR, { mode: 0o755 });
   writeFileSync(join(d, "sleep"), SLEEP, { mode: 0o755 });
   writeFileSync(join(d, "date"), DATE, { mode: 0o755 });
   return d;
 }
-const PATHS = {
-  all: `${GUARD}:${stubs("stubs", true)}:${TOOLS}:${BUN}:${BASE}`,
-  noherdr: `${GUARD}:${stubs("stubs-noherdr", false)}:${TOOLS}:${BUN}:${BASE}`,
-};
+const PATH = `${GUARD}:${stubs("stubs")}:${TOOLS}:${BUN}:${BASE}`;
 const NOHOME = join(W, "nohome");
 mkdirSync(NOHOME);
 
@@ -95,7 +64,6 @@ type Row = {
   twin: string;
   args?: string[];
   seed?: (s: string) => void;
-  path?: keyof typeof PATHS;
   env?: Record<string, string>;
 };
 type Side = { out: string; err: string; rc: number | null; log: string; world: string };
@@ -142,7 +110,7 @@ const PRE = `import { writeSync } from "node:fs"; const L = await import(${JSON.
 
 let rows = 0;
 function side(row: Row, s: string, oracle: boolean): Side {
-  const env: Record<string, string> = { PATH: PATHS[row.path ?? "all"], HOME: NOHOME, TMPDIR: join(s, "tmp"), LC_ALL: "C", STUB_DIR: join(s, "stub"), AC_HOME: join(s, "home") };
+  const env: Record<string, string> = { PATH, HOME: NOHOME, TMPDIR: join(s, "tmp"), LC_ALL: "C", STUB_DIR: join(s, "stub"), AC_HOME: join(s, "home") };
   for (const [k, v] of Object.entries(row.env ?? {})) env[k] = v.replaceAll("@S", s);
   const args = (row.args ?? []).map((a) => a.replaceAll("@S", s));
   const cmd = oracle
@@ -205,43 +173,18 @@ test("familyOwned reads what ac_family_owned reads: an in-flight meta of the id'
   same("no state dir", { ...owned("fam"), args: ["fam", "@S/home/none"] });
 }, 120000);
 
-// The original's pane open: the subshell on the left of `|| ac_die`, so the
-// driver ran with errexit asleep and only its own dies ended it.
-// backend_window_new routes through ac_backend_route's full ladder, so an
-// unpinned row would silently resolve the no-rung default (orca) rather than
-// exercise the herdr-shaped fixture (workspace/tab verbs) this test seeds.
-const WN: Row = {
-  bash: `( AC_WINDOW_FAMILY="" backend_window_new "$1" "$2" )`,
-  twin: `process.env.AC_WINDOW_FAMILY = ""; return L.backendWindowNew(A[0], A[1], false).status;`,
-  args: ["s1", "@S/wt"],
-  env: { AC_BACKEND: "herdr" },
-};
-const wtDir = (s: string): void => mkdirSync(join(s, "wt"));
-const DEFAULT_TABS = '{"result":{"tabs":[{"tab_id":"wNEW:t0","label":"1"},{"tab_id":"wNEW:t1","label":"crew:s1"},{"tab_id":"wNEW:t9","label":"1"}]}}\n';
-
-test("backendWindowNew with errexit asleep opens the root tab as the self-task subshell did, its statuses unread", () => {
-  // Proves the herdr pin actually bites: a dropped pin would still pass
-  // (both sides would agree on whatever backend they fell back to), just not here.
-  expect(same("a fresh root workspace, its default tabs closed", { ...WN, seed: (s) => (wtDir(s), put(s, "stub/tabs-wNEW", DEFAULT_TABS)) }).o.log).toMatch(/^herdr /);
-  same("an existing root workspace adopted", { ...WN, seed: (s) => (wtDir(s), put(s, "stub/workspace-list.out", '{"result":{"workspaces":[{"workspace_id":"w5","label":"home","tab_count":2}]}}\n')) });
-  same("the sweep's list failing goes on to the open", { ...WN, seed: (s) => (wtDir(s), put(s, "stub/workspace-list.1.rc", "3\n")) });
-  same("the sweep's list no JSON goes on to the open", { ...WN, seed: (s) => (wtDir(s), put(s, "stub/workspace-list.1.out", "junk\n")) });
-  same("every list failing: the workspace is created", { ...WN, seed: (s) => (wtDir(s), put(s, "stub/workspace-list.rc", "1\n")) });
-  same("a workspace create that fails names the unresolved workspace", { ...WN, seed: (s) => (wtDir(s), put(s, "stub/workspace-create.rc", "1\n"), put(s, "stub/workspace-create.err", "server down\n")) });
-  same("a workspace create answering no id", { ...WN, seed: (s) => (wtDir(s), put(s, "stub/workspace-create.out", '{"result":{}}\n')) });
-  same("a stopped server: the lists and the create refused", {
-    ...WN,
-    seed: (s) => {
-      wtDir(s);
-      put(s, "stub/workspace-list.rc", "1\n");
-      put(s, "stub/workspace-create.rc", "1\n");
-      put(s, "stub/workspace-create.err", '{"error":{"code":"server_not_running","message":"no herdr server is running"}}\n');
-    },
-  });
-  same("a tab create that fails", { ...WN, seed: (s) => (wtDir(s), put(s, "stub/tab-create.rc", "4\n"), put(s, "stub/tab-create.err", "boom\n")) });
-  same("a tab create answer that is no JSON: both reads run, then the parse ERROR", { ...WN, seed: (s) => (wtDir(s), put(s, "stub/tab-create.out", "oops\n")) });
-  same("a tab create answer without ids", { ...WN, seed: (s) => (wtDir(s), put(s, "stub/tab-create.out", '{"result":{}}\n')) });
-  same("a default-tab list that is no JSON goes on to the handle", { ...WN, seed: (s) => (wtDir(s), put(s, "stub/tabs-wNEW", "oops\n")) });
-  same("a handle the shell cannot write", { ...WN, seed: (s) => (wtDir(s), mkdirSync(join(s, "home/state/.pane-s1"))) });
-  same("herdr missing", { ...WN, path: "noherdr", seed: wtDir });
-}, 120000);
+// GAP (T9): this block used to pin AC_BACKEND=herdr and run backend_window_new's
+// herdr arm (workspace/tab verbs) through both sides' dispatchers. T8's cutover
+// made both dispatchers refuse "herdr" outright: the bash oracle now dies
+// sourcing ac-backend.sh before backend_window_new is ever called, and the TS
+// twin's backendRoute() returns null before reaching the herdr branch - so
+// every one of the fixture's twelve seeded scenarios (tab-create failures,
+// workspace-list races, the missing-herdr-binary row) now collapses to the
+// SAME "unsupported backend 'herdr'" refusal on both sides, never exercising
+// backendWindowNew's herdr arm at all. T8's own precedent for this class of
+// problem is a driver-internal bypass that skips the dispatcher (confined to
+// tests/ts/backend.test.ts and tests/ts/teardown.test.ts, via the exported
+// herdrVerb/herdrKillWindow primitives) - but backendWindowNew's herdr branch
+// is inlined in that one function behind the unexported backendRoute(), with
+// no equivalent exported low-level entry point to call directly, so no bypass
+// is reachable from a test file alone. Deleted rather than ported.
