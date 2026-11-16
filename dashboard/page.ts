@@ -2493,7 +2493,7 @@ function familyDetailHtml(d){
 // ONE live target at a time: a family overlay's roomchief, or the fleet
 // crewchief drawer - opening either closes the other, so the shared ids
 // (chief-term/chief-tabs/...) never exist twice. View-only: typing retired
-// with the herdr steer endpoints (orca-dashboard, T12).
+// along with the herdr steer endpoints it depended on.
 var chiefWatch='';   // ''=the chief itself; else a family pane id (read-only)
 var chiefNoChief=false;             // task-terminal-mount: panel mounted for crew panes only (no roomchief tab, auto-watch)
 function chatRoute(){ return S.route&&S.route.name==='chat'?S.route:null; }

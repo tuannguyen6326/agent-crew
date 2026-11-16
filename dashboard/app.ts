@@ -6181,8 +6181,8 @@ export function dashboardMain(argv: string[] = process.argv) {
       if (url.pathname === "/api/room/stream") {
         // Chat-panel pane stream (native, ONE task pane, never a full herdr
         // client): the server reads the pane every 250ms and pushes a frame
-        // only when it changed. View-only - typing retired with the herdr
-        // steer endpoints (orca-dashboard, T12); the open-Orca focus jump is
+        // only when it changed. View-only - typing retired along with the
+        // herdr steer endpoints it depended on; the open-Orca focus jump is
         // the replacement.
         const p2 = url.searchParams.get("path") ?? "";
         if (!(await allowedHomePaths()).has(p2)) return json({ error: "unknown home" }, 404);

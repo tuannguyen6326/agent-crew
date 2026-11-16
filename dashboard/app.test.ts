@@ -1118,7 +1118,7 @@ test("the System One knobs are editable, constrained, and placed in a config sec
   for (const name of EDITABLE_CONFIG) expect(sections.includes(`'${name}'`)).toBe(true);
 });
 
-// --- orca-dashboard (T12): herdr refused fleet-wide, orca is the sole backend
+// --- herdr refused fleet-wide: orca is the sole backend ---------------------
 
 test("the editable backend knob offers only orca now - herdr is refused fleet-wide", () => {
   expect(CONFIG_KNOB_META["backend"].options).toEqual(["orca"]);
