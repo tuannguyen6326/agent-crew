@@ -3115,11 +3115,11 @@ function snapshotRemove(id: string): void {
   run(["git", "-C", root, "worktree", "prune"], { stdout: "ignore", stderr: "ignore" });
 }
 
-// `( AC_BACKEND="${b:-herdr}"; export AC_BACKEND; backend_window_alive <id> )
+// `( AC_BACKEND="${b:-orca}"; export AC_BACKEND; backend_window_alive <id> )
 // 2>/dev/null`: the status under the meta's backend, restored after.
 function windowAliveUnder(b: string, id: string): number {
   const saved = process.env.AC_BACKEND;
-  process.env.AC_BACKEND = u8(b === "" ? "herdr" : b);
+  process.env.AC_BACKEND = u8(b === "" ? "orca" : b);
   try {
     return backendCall("window_alive", [u8(id)], { stdin: "inherit", stdout: "ignore", stderr: "ignore", subshell: true }).status;
   } finally {

@@ -16,9 +16,9 @@
 //
 // BEFORE ANY VERB, usage included (W2), the fleet backend is resolved as
 // sourcing ac-backend.sh resolved it (backendName, src/lib.ts): AC_BACKEND,
-// config/backend, the first word of <AC_FLEET_STATE>/../config/backend, herdr;
-// any other name is `ERROR: unsupported backend '<b>' (valid backends: herdr,
-// orca; tmux/wezterm were removed 2026-07-17)`, exit 1.
+// config/backend, the first word of <AC_FLEET_STATE>/../config/backend, orca;
+// any other name is `ERROR: unsupported backend '<b>' (valid backend: orca)`,
+// exit 1.
 //
 // THE REGISTRY GRAMMAR is ac-lib.sh's `crewdeputy routing table` block,
 // read through deputyParse (src/lib.ts): ac_deputy_parse's awk program,
@@ -55,8 +55,8 @@
 //                   hint - repairing a registry line is a captain-facing act.
 //     NOT-RUNNING   no regular file at the PARENT's state/<id>.meta.
 //     else the window probe: AC_BACKEND set to taskBackend(<id>) (the
-//     meta's backend=, herdr without one; an unreadable meta WARNs as
-//     ac_meta_get did and reads herdr) for that one call and restored after,
+//     meta's backend=, orca without one; an unreadable meta WARNs as
+//     ac_meta_get did and reads orca) for that one call and restored after,
 //     then backendCall("window_alive", [<id>]) (src/lib.ts, the twin of
 //     bin/ac-backend.sh's driver) as the original's `( )` ran it - stdin
 //     /dev/null, stdout captured, stderr passed through. Its status: 0 LIVE,
