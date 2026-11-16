@@ -315,10 +315,10 @@ rm -f "$AC_HOME/config/model-ship"
 # Fresh-fallback guard: resuming a non-claude task refuses loudly.
 assert_fails "$BIN/ac-spawn.sh" t3 "$repo" --resume-from t1
 
-# A spawn refused on a genuinely alive orphan window leaks neither the lease
-# nor the window - proven below (bw1o, the orca lease model's own section)
-# with the branch-leak nuance an orca lease (minted before the window check)
-# adds on top of the plain window-collision refusal.
+# A spawn refused on a genuinely alive orphan window leaks neither the lease,
+# the window, nor (an orca-only nuance: the lease mints crew/<id> before the
+# window check ever runs) the branch - proven below (bw1o, the orca lease
+# model's own section).
 
 # Staged-flow layout: a --stage brief nests under the family; spawn resolves
 # it, hands the crewmate the NESTED path, and the scout teardown fail-closed
@@ -794,10 +794,11 @@ err="$("$BIN/ac-spawn.sh" bw1o "$repo" --harness fake --mode local-only 2>&1)" \
 assert_contains "$err" "already exists" "a genuinely alive orca orphan still refuses as before"
 assert_eq "$(grep -c 'terminal create' "$FAKE_ORCA/log" || true)" "0" "no second orca terminal was created"
 # An orca lease mints crew/<id> BEFORE the window-collision check runs
-# (src/spawn.ts: orcaWorktreeLease precedes the alive() probe), so even a
-# window-refused attempt leaves the branch behind - drop it before the next
-# attempt or it trips the EARLIER branch-collision guard instead.
-git -C "$repo" branch -D crew/bw1o >/dev/null 2>&1 || true
+# (src/spawn.ts: orcaWorktreeLease precedes the alive() probe); spawnFailedCleanup
+# drops it again on exactly this refusal (S.branchFresh, since bw1o is new),
+# so the next attempt below does not trip the EARLIER branch-collision guard
+# instead of the window-collision guard under test.
+assert_eq "$(git -C "$repo" branch --list 'crew/bw1o')" "" "a window-refused spawn gives its freshly-minted branch back"
 
 touch "$FAKE_ORCA/.terminal-api-down"
 : >"$FAKE_ORCA/log"
@@ -808,7 +809,7 @@ assert_contains "$err" "could not be READ" "the orca crew refusal blames the BAC
 case "$err" in *"already exists"*) fail "an unreadable orca backend is not a window-already-exists verdict" ;; esac
 assert_eq "$(grep -c 'terminal create' "$FAKE_ORCA/log" || true)" "0" "no second orca terminal was created"
 assert_no_file "$AC_HOME/state/bw1o.meta" "the refused orca spawn leaves no task in flight"
-git -C "$repo" branch -D crew/bw1o >/dev/null 2>&1 || true
+assert_eq "$(git -C "$repo" branch --list 'crew/bw1o')" "" "an unreadable-backend refusal gives the fresh branch back too"
 # The lease closes its own startup terminal by finding it through `terminal
 # list` (src/lib.ts) - which itself fails under `.terminal-api-down`, so
 # ONLY the second attempt above leaves one behind (the first, a healthy
