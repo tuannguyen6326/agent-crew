@@ -428,8 +428,7 @@ orca_composer_pending() {
   local pane="$1" text="$2" cap r1 r2 region want
   # </dev/null: a read never needs the caller's stdin, whatever the caller's
   # own send calls were asked to inherit - matching herdr_submit_verified_pane's
-  # render(), which reads the same way. agent_idle's own screen compare (below)
-  # keeps inheriting: it is not part of the submit check this invariant covers.
+  # render(), which reads the same way.
   cap="$(backend_capture_pane_orca "$pane" 15 2>/dev/null </dev/null)" || return 1
   # LC_ALL=C + a GROUPED repeat: an interval over the bare 3-byte glyph binds
   # to its LAST byte under a C locale and never matches (measured on this
@@ -489,8 +488,7 @@ orca_submit_verified_pane() {
 orca_pane_dialog() {
   # 0 when the runtime reports the pane parked on a human-only prompt
   # (agentWait non-null); any unreadable answer is NOT a dialog verdict.
-  # </dev/null: a read never needs the caller's stdin (backend_capture_pane_orca's
-  # note above).
+  # </dev/null: a read never needs the caller's stdin.
   orca_json terminal show --terminal "$1" 2>/dev/null </dev/null \
     | jq -e '.result.terminal.agentWait != null' >/dev/null 2>&1
 }

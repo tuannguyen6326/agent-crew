@@ -3525,20 +3525,10 @@ assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "report:pd1" \
 reset_state
 rm -rf "$AC_HOME/data/pd1"
 
-# (4) STALE-READ INTERLEAVING is herdr-only, with no orca counterpart to pin
-# it against: the race needs a BACKEND call sitting in the window between the
-# marker branch's status append and its publish, costing the tens of
-# milliseconds a push can land inside - herdr's mark_wait/clear_wait make
-# exactly that call (`pane report-agent`/`release-agent`, hookable via fake
-# herdr's .hook-report-agent, which is how the herdr suite pinned the
-# interleaving with no sleeps and no racing processes); orca's mark_wait/clear_wait (src/lib.ts)
-# are bare touch/rm on a local state file - no RPC, so no window exists to
-# land a push in, and fake orca carries no equivalent hook (helpers.sh, out
-# of this suite's write set) even if one did. The cutover also makes this
-# fixture's own premise - a LIVE backend=herdr crewmate - unreachable: any
-# real backend-validating call against it (ac-done.sh, below) now dies
-# `unsupported backend 'herdr'` before the race is ever reached. Tracked in
-# report.md, not ported.
+# (4) STALE-READ INTERLEAVING has no orca port: the race needs a BACKEND
+# call sitting in the window between the marker branch's status append and
+# its publish, and orca's mark_wait/clear_wait (src/lib.ts) are bare
+# touch/rm on a local file - no call, so no window to land a push in.
 
 # (5) PUSH + ARTIFACT, ONE WAKE. A scout that finishes properly does BOTH: it
 # writes its stage report.md and it pushes. The push is the wake, so the report
