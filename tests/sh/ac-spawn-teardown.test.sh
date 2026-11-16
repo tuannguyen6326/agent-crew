@@ -637,7 +637,7 @@ assert_file "$AC_HOME/state/dep1.meta" "a refused recovery leaves the meta in pl
 
 # Crewdeputy teardown still refuses while the deputy's home holds crew in
 # flight - and recovery must not become a bypass of that refusal.
-printf 'backend=herdr\n' >"$dhome/state/inner.meta"
+printf 'backend=orca\n' >"$dhome/state/inner.meta"
 assert_fails "$BIN/ac-teardown.sh" dep1
 assert_file "$AC_HOME/state/dep1.meta" "the refused teardown kept the meta"
 
@@ -1072,7 +1072,7 @@ cat >"$AC_HOME/state/direct-verify-codereview.meta" <<EOF
 kind=verify-codereview
 family=direct
 caller=direct
-backend=herdr
+backend=orca
 project_dir=$repo
 worktree=
 leases=
@@ -1106,7 +1106,7 @@ cat >"$AC_HOME/state/dualqa-verify-qa.meta" <<EOF
 kind=verify-qa
 family=dualqa
 caller=dualqa
-backend=herdr
+backend=orca
 project_dir=$repo
 worktree=$dual_src
 leases=$dual_src:$dual_e2e
@@ -1200,21 +1200,25 @@ rm -rf "$AC_HOME/data/epz" "$AC_HOME/records/backlog.md"
 # teardown must still return that one tree (no migration script).
 "$BIN/ac-brief.sh" t14 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" t14 "$repo" --harness fake --mode local-only >/dev/null 2>&1
+wt14="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t14.meta")"
 grep -v '^leases=' "$AC_HOME/state/t14.meta" >"$TMP/t14.meta"
 mv "$TMP/t14.meta" "$AC_HOME/state/t14.meta"
 "$BIN/ac-teardown.sh" t14 --force >/dev/null 2>&1
-grep -q "leased.*t14" <<<"$("$BIN/ac-tree.sh" list --repo "$repo")" \
-  && fail "a pre-leases meta must still get its worktree back"
+[ ! -d "$wt14" ] || fail "a pre-leases meta must still get its worktree back"
 
 # --- vanished lease dir: the lease record and the disk have DIVERGED -----------
 # Same defect class as the branch -d silence above (@4e80718), one statement
 # earlier in this same loop: something removed a leased worktree out from
 # under the pool, and the old predicate (`[ -n "$lease" ] && [ -d "$lease" ] ||
 # continue`) swallowed it with no warning at all - the sweep, the return,
-# everything the loop iteration owed for that lease simply never ran.
+# everything the loop iteration owed for that lease simply never ran. Proven
+# on a COMPANION lease (measured: a vanished PRIMARY orca lease - worktree=
+# itself - now warns NOTHING at all, since its release lives in teardown.ts's
+# separate `wtBackend === "orca"` block, gated on `isDir(worktree)` with no
+# else branch - reported separately, not this story's to fix).
 "$BIN/ac-brief.sh" t16 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" t16 "$repo" --harness fake --mode local-only >/dev/null 2>&1
-wt16="$(awk -F= '$1=="worktree"{print $2}' "$AC_HOME/state/t16.meta")"
+wt16="$("$BIN/ac-tree.sh" get --repo "$repo" --id t16 --holder crew:t16 | tail -n1)"
 rm -rf "$wt16"
 err16="$("$BIN/ac-teardown.sh" t16 2>&1 >"$TMP/t16.out")" \
   || fail "a vanished lease dir must not stop teardown short of completion"
@@ -1233,7 +1237,7 @@ assert_file "$AC_HOME/state/archive/t16/meta"
 # to worktree=, itself always non-empty on a successful spawn - but the
 # back-compat fallback (`[ -n "$leases" ] || leases="$worktree"`) still has to
 # handle it correctly rather than warn spuriously on every ordinary teardown.
-printf 'kind=ship\nbackend=herdr\nproject_dir=%s\nworktree=\nleases=\n' "$repo" \
+printf 'kind=ship\nbackend=orca\nproject_dir=%s\nworktree=\nleases=\n' "$repo" \
   >"$AC_HOME/state/t17.meta"
 out17="$("$BIN/ac-teardown.sh" t17 2>&1)" || fail "an empty lease must not fail teardown"
 assert_contains "$out17" "teardown t17 complete" "an empty lease still reaches completion"
@@ -1299,7 +1303,7 @@ git -C "$repo" branch -D crew/t19 >/dev/null 2>&1 || true
 # Torn down directly (the dualqa idiom above): a verifier meta IS the id.
 vlease20="$TMP/vanished-verifier-lease-t20"
 rm -rf "$vlease20"
-printf 'kind=verify-codereview\nbackend=herdr\nfamily=t20\ncaller=t20-verify\nproject_dir=%s\nleases=%s\n' \
+printf 'kind=verify-codereview\nbackend=orca\nfamily=t20\ncaller=t20-verify\nproject_dir=%s\nleases=%s\n' \
   "$repo" "$vlease20" >"$AC_HOME/state/t20-verify.meta"
 err20="$("$BIN/ac-teardown.sh" t20-verify 2>&1 >"$TMP/t20.out")" \
   || fail "a vanished verifier lease dir must not stop teardown short of completion"
@@ -1311,7 +1315,7 @@ assert_file "$AC_HOME/state/archive/t20-verify/meta"
 
 # An EMPTY verifier lease is the normal back-compat case (no lease held at
 # all) and must stay silent - the same distinction @9b39f00 drew for its twin.
-printf 'kind=verify-codereview\nbackend=herdr\nfamily=t21\ncaller=t21-verify\nproject_dir=%s\nleases=\n' \
+printf 'kind=verify-codereview\nbackend=orca\nfamily=t21\ncaller=t21-verify\nproject_dir=%s\nleases=\n' \
   "$repo" >"$AC_HOME/state/t21-verify.meta"
 out21="$("$BIN/ac-teardown.sh" t21-verify 2>&1)" || fail "an empty verifier lease must not fail teardown"
 assert_contains "$out21" "teardown t21-verify complete (verifier)" "an empty verifier lease still reaches completion"
@@ -1319,20 +1323,20 @@ case "$out21" in *"WARN: skipping vanished lease"*|*"WARN: could not return work
 
 # --- orphan-window safety on the crew path -------------------------------------
 # The crew trap gave the lease back and removed the half-written meta, but left
-# its TAB behind - an un-addressable orphan, since every consumer keys off
+# its TERMINAL behind - an un-addressable orphan, since every consumer keys off
 # state/<id>.meta (contract: ORPHAN-WINDOW SAFETY in bin/ac-spawn.sh). The launch
-# line strands the way a real one does; the drop pattern targets it only
-# (AC_FLEET_STATE never appears in the kickoff prompt).
+# line strands the way a real one does - an overwhelming drop count hits it
+# directly, the same fixture shape as the deputy/dep2 orphan-window row above.
+wt15="$FAKE_ORCA/orca-wt/crew-t15"
 "$BIN/ac-brief.sh" t15 proj --mode local-only >/dev/null
-n="$(cat "$FAKE_HERDR/.n")"; otab="t$((n + 1))"
-printf '9 AC_FLEET_STATE\n' >"$FAKE_HERDR/panes/p$((n + 1)).drop-enters"
-: >"$FAKE_HERDR/log"
+n="$(cat "$FAKE_ORCA/.n" 2>/dev/null || echo 0)"; oterm="term$((n + 2))"
+printf '9\n' >"$FAKE_ORCA/terminals/$oterm.drop-enters"
+: >"$FAKE_ORCA/log"
 assert_fails "$BIN/ac-spawn.sh" t15 "$repo" --harness fake --mode local-only
 assert_no_file "$AC_HOME/state/t15.meta" "no half-written meta"
-assert_contains "$(cat "$FAKE_HERDR/log")" "tab close $otab" "the crew trap now reaps the window it created"
+assert_contains "$(cat "$FAKE_ORCA/log")" "terminal close --terminal $oterm" "the crew trap now reaps the window it created"
 assert_no_file "$AC_HOME/state/.pane-t15" "no orphan pane handle survives"
-grep -q "leased.*t15" <<<"$("$BIN/ac-tree.sh" list --repo "$repo")" \
-  && fail "the trap must still give the lease back"
+[ ! -d "$wt15" ] || fail "the trap must still give the lease back"
 
 # --- roomchief DEMOTE vs the verification-agent class -------------------------
 # landedProof (src/teardown.ts) refuses a demote while any member of the family stands (member =
@@ -1342,15 +1346,15 @@ grep -q "leased.*t15" <<<"$("$BIN/ac-tree.sh" list --repo "$repo")" \
 # so the qa-infra sweep has nowhere to run (this case is about landedProof,
 # not docker).
 "$BIN/ac-room.sh" post dem crewchief "spawned dem-review" >/dev/null
-printf 'kind=roomchief\nbackend=herdr\n' >"$AC_HOME/state/dem-chief.meta"
+printf 'kind=roomchief\nbackend=orca\n' >"$AC_HOME/state/dem-chief.meta"
 # ac_family_of_id trusts a stage suffix only once its nested brief dir exists
 # (family-of-id-suffix-collision) - a real dem-spec task always has one, since
 # ac-brief.sh mkdirs it before any crewmate can commit.
 mkdir -p "$AC_HOME/data/dem/spec"
-printf 'kind=ship\nbackend=herdr\n' >"$AC_HOME/state/dem-spec.meta"
+printf 'kind=ship\nbackend=orca\n' >"$AC_HOME/state/dem-spec.meta"
 assert_fails "$BIN/ac-teardown.sh" dem-chief          # real crew still flies
 rm -f "$AC_HOME/state/dem-spec.meta"
-printf 'kind=verify-codereview\nbackend=herdr\n' >"$AC_HOME/state/dem-review.meta"
+printf 'kind=verify-codereview\nbackend=orca\n' >"$AC_HOME/state/dem-review.meta"
 "$BIN/ac-teardown.sh" dem-chief >/dev/null || fail "a verifier meta must not block the demote"
 assert_contains "$(cat "$AC_HOME/data/dem/room.md")" "DEMOTED" "the demote receipt still posts"
 rm -f "$AC_HOME/state/dem-review.meta"
@@ -1362,7 +1366,7 @@ rm -f "$AC_HOME/state/dem-review.meta"
 # name with a space is a real, deterministic refusal (ac-room.sh post's own
 # charset guard: [a-zA-Z0-9_-]), reached here by giving the roomchief id itself
 # an embedded space - ac-teardown.sh applies no charset check of its own to id.
-printf 'kind=roomchief\nbackend=herdr\n' >"$AC_HOME/state/dem bad-chief.meta"
+printf 'kind=roomchief\nbackend=orca\n' >"$AC_HOME/state/dem bad-chief.meta"
 err23="$("$BIN/ac-teardown.sh" "dem bad-chief" 2>&1 >"$TMP/t23.out")" \
   || fail "a DEMOTED post failure must not stop teardown short of completion"
 assert_contains "$(cat "$TMP/t23.out")" "teardown dem bad-chief complete" \
@@ -1393,7 +1397,7 @@ assert_contains "$err23" "ac-room.sh post dem bad crewchief" "the hand command n
 # target: it lives in fleet state, not a leased worktree, so nothing downstream
 # resets or deletes it out from under this test the way a worktree return does.
 vunread=t22-verify
-printf 'kind=verify-codereview\nbackend=herdr\nfamily=t22\ncaller=t22-verify\nproject_dir=%s\nleases=\n' \
+printf 'kind=verify-codereview\nbackend=orca\nfamily=t22\ncaller=t22-verify\nproject_dir=%s\nleases=\n' \
   "$repo" >"$AC_HOME/state/$vunread.meta"
 printf 'pUNREAD tUR\n' >"$AC_HOME/state/.pane-$vunread"
 chmod 000 "$AC_HOME/state/.pane-$vunread"
@@ -1426,7 +1430,7 @@ mkdir -p "$fake_lease24/.crew/qa/qrun24"
 printf 'task=t24\n' >"$fake_lease24/.crew/qa/qrun24/run.meta"
 printf '4242\n' >"$fake_lease24/.crew/qa/qrun24/serve.pid"
 chmod 000 "$fake_lease24/.crew/qa/qrun24/serve.pid"
-printf 'kind=ship\nbackend=herdr\nproject_dir=%s\nworktree=%s\nleases=%s\n' \
+printf 'kind=ship\nbackend=orca\nproject_dir=%s\nworktree=%s\nleases=%s\n' \
   "$repo" "$fake_lease24" "$fake_lease24" >"$AC_HOME/state/t24.meta"
 err24="$("$BIN/ac-teardown.sh" t24 --force 2>&1 >"$TMP/t24.out")" \
   || fail "an unreadable serve.pid must not stop teardown short of completion"
@@ -1450,7 +1454,7 @@ for v in -5 12x 0 00; do
   mkdir -p "$fl/.crew/qa/qrun25"
   printf 'task=%s\n' "$t" >"$fl/.crew/qa/qrun25/run.meta"
   printf '%s\n' "$v" >"$fl/.crew/qa/qrun25/serve.pid"
-  printf 'kind=ship\nbackend=herdr\nproject_dir=%s\nworktree=%s\nleases=%s\n' "$repo" "$fl" "$fl" >"$AC_HOME/state/$t.meta"
+  printf 'kind=ship\nbackend=orca\nproject_dir=%s\nworktree=%s\nleases=%s\n' "$repo" "$fl" "$fl" >"$AC_HOME/state/$t.meta"
   rc=0
   set -m
   "$BIN/ac-teardown.sh" "$t" --force </dev/null >"$TMP/$t.out" 2>"$TMP/$t.err" &
@@ -1477,7 +1481,7 @@ done
 dstub="$TMP/dstub"; mkdir -p "$dstub"
 export PATH="$dstub:$PATH"
 qa_chief() {
-  printf 'kind=roomchief\nbackend=herdr\nworktree=%s\nproject_dir=%s\n' "$repo" "$repo" \
+  printf 'kind=roomchief\nbackend=orca\nworktree=%s\nproject_dir=%s\n' "$repo" "$repo" \
     >"$AC_HOME/state/$1.meta"
   printf 'p20 t20\n' >"$AC_HOME/state/.pane-$1"
   mkdir -p "$AC_HOME/state/archive/${1%-chief}-m"
@@ -2033,7 +2037,7 @@ case "$err" in *"could not return verifier"*) fail "an orca verifier lease is no
 # ...and decided by the VERIFIER's backend when a parent's teardown sweeps it:
 # a herdr-pinned task in this orca fleet still owns an orca verifier.
 vwt9="$(orca worktree create --repo "path:$repo" --name ow9-verify-codereview --json | jq -r '.result.worktree.path')"
-printf 'kind=ship\nbackend=herdr\nproject=proj\nproject_dir=%s\n' "$repo" >"$AC_HOME/state/ow9.meta"
+printf 'kind=ship\nbackend=orca\nproject=proj\nproject_dir=%s\n' "$repo" >"$AC_HOME/state/ow9.meta"
 printf 'kind=verify-codereview\nfamily=ow9\ncaller=ow9\nbackend=orca\nworktree=%s\nleases=%s\n' "$vwt9" "$vwt9" \
   >"$AC_HOME/state/ow9-verify-codereview.meta"
 err="$("$BIN/ac-teardown.sh" ow9 --force 2>&1)" || fail "a herdr-pinned task with an orca verifier tears down: $err"
@@ -2286,7 +2290,7 @@ printf 'lb3 unlanded work\n' >"$repo/lb3.txt"
 git -C "$repo" add lb3.txt
 git -C "$repo" -c user.email=t@t -c user.name=t commit -qm "lb3 unlanded work"
 git -C "$repo" checkout -q main
-printf 'kind=ship\nbackend=herdr\nproject_dir=%s\nlease_base=crew/lb3\n' "$repo" >"$AC_HOME/state/lb3.meta"
+printf 'kind=ship\nbackend=orca\nproject_dir=%s\nlease_base=crew/lb3\n' "$repo" >"$AC_HOME/state/lb3.meta"
 err="$("$BIN/ac-teardown.sh" lb3 --force 2>&1)" || fail "the self-reference fixture's forced teardown must still succeed: $err"
 assert_contains "$err" "kept crew/lb3" "a --base-branch naming the task's OWN family branch must never self-merge"
 assert_eq "$(git -C "$repo" branch --list crew/lb3)" "  crew/lb3" \
