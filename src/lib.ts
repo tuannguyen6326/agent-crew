@@ -2946,18 +2946,21 @@ export function orcaType(h: string, text: string, stdin: "inherit" | "ignore", s
 
 // backend_capture_pane_orca at 15 lines as `$(... 2>/dev/null)` read it:
 // null when there is no handle (no call), the read fails or jq does.
-function orcaScreen(h: string, stdin: "inherit" | "ignore"): string | null {
+// "ignore" hardcoded, never a passed-through stdin: submitVerifiedPane's
+// herdr render() reads the same way - a READ never needs the caller's stdin,
+// whatever the caller's own send calls were asked to inherit.
+function orcaScreen(h: string): string | null {
   if (h === "") return null;
-  const out = orcaJson(["terminal", "read", "--terminal", h, "--limit", "15", "--screen"], stdin);
+  const out = orcaJson(["terminal", "read", "--terminal", h, "--limit", "15", "--screen"], "ignore");
   if (out === null) return null;
   const r = jqOver(["-r", ".result.terminal.tail[]?"], out, "pipe", "ignore");
   return r.status === 0 ? capturedText(r.out) : null;
 }
 
 // orca_pane_dialog's twin: a show the runtime answered whose agentWait is
-// not null.
-function orcaDialog(h: string, stdin: "inherit" | "ignore"): boolean {
-  const show = orcaJson(["terminal", "show", "--terminal", h], stdin);
+// not null. A read, so "ignore" (orcaScreen's note above).
+function orcaDialog(h: string): boolean {
+  const show = orcaJson(["terminal", "show", "--terminal", h], "ignore");
   return show !== null && jqOver(["-e", ".result.terminal.agentWait != null"], show, "ignore", "ignore").status === 0;
 }
 
@@ -2969,8 +2972,8 @@ function orcaDialog(h: string, stdin: "inherit" | "ignore"): boolean {
 // invalid byte cuts tr's output short; none reaches them - jq writes U+FFFD
 // for one (probed) and the text is a decoded argv - so the twin joins and
 // squeezes the bytes itself.
-function orcaPending(h: string, text: string, stdin: "inherit" | "ignore"): boolean {
-  const cap = orcaScreen(h, stdin);
+function orcaPending(h: string, text: string): boolean {
+  const cap = orcaScreen(h);
   if (cap === null) return false;
   const lines = cap.split("\n");
   const ruled = lines.flatMap((l, i) => (RULE_RUN.test(l) ? [i] : []));
@@ -2990,22 +2993,22 @@ function orcaPending(h: string, text: string, stdin: "inherit" | "ignore"): bool
 // retry Enters, each behind the dialog guard and followed by a settle; still
 // pending after both, 1.
 export function orcaSubmitVerified(h: string, text: string, stdin: "inherit" | "ignore", stderr: "inherit" | "ignore"): number {
-  if (orcaDialog(h, stdin)) return 3;
-  const pre = orcaScreen(h, stdin);
+  if (orcaDialog(h)) return 3;
+  const pre = orcaScreen(h);
   orcaJson(["terminal", "send", "--terminal", h, "--enter"], stdin);
   if (pre === null) return 2;
   let i = 0;
   for (; i < 7; i++) {
     settle(stderr);
-    const post = orcaScreen(h, stdin);
+    const post = orcaScreen(h);
     if (post === null) return 2;
     if (post !== pre) break;
   }
   if (i === 7) return 1;
   if (text === "") return 0;
-  for (let retries = 0; orcaPending(h, text, stdin); retries++) {
+  for (let retries = 0; orcaPending(h, text); retries++) {
     if (retries >= 2) return 1;
-    if (orcaDialog(h, stdin)) return 3;
+    if (orcaDialog(h)) return 3;
     orcaJson(["terminal", "send", "--terminal", h, "--enter"], stdin);
     settle(stderr);
   }

@@ -1472,12 +1472,20 @@ test("26. send_line orca: reads that fail (2, UNVERIFIED), no handle, the caller
   OSL("no handle: every call with --terminal '', the reads never issued - UNVERIFIED", 2, { err: OSAYS.unverified.replace("orca:h1", "orca:"), log: OTYPE(TEXT, "") + SLEPT() + OSHOW("") + OENTER("") + OSWITCH("") + OSHOW("") + OENTER("") }, { seed: () => {} });
   OSL("one field: the handle alone", 0, { log: typed + OVERIFY(1) + OREAD() }, { seed: and(OUI, (s) => pane(s, "x", "h1\n")) });
   for (const [label, io, top] of [
-    ["top level: every orca call reads the caller's stdin, in the dialog's pipeline and the reads' $( ) too", { stdout: "inherit", stderr: "inherit" }, true],
+    ["top level: every SEND call reads the caller's stdin, the reads stay /dev/null", { stdout: "inherit", stderr: "inherit" }, true],
     ["in a subshell: the same", { stdout: "inherit", stderr: "inherit", subshell: true }, true],
     ["stdin ignored", { stdin: "ignore", stdout: "inherit", stderr: "inherit" }, false],
   ] as const) {
     const at = (l: string, n: number): string => l.replace(/\n$/, ` line=[${top ? `l${n}` : ""}]\n`);
-    OSL(`readline, ${label}`, 0, { log: at(OTYPE(), 1) + SLEPT() + at(OSHOW(), 2) + at(OREAD(), 3) + at(OENTER(), 4) + SLEPT() + at(OREAD(), 5) + at(OREAD(), 6) }, {
+    const ig = (l: string): string => l.replace(/\n$/, " line=[]\n");
+    // orcaScreen/orcaDialog (OSHOW/OREAD) hardcode "ignore" regardless of the
+    // caller's stdin (the note above orcaScreen, src/lib.ts) - the read still
+    // runs under the suite's own .readline sentinel, so it still logs an
+    // EMPTY bracket, never an absent one. Only the two SEND calls (OTYPE,
+    // OENTER) ever draw from the real stream, so they are the only ones
+    // whose bracket can hold a line and the only ones that advance its
+    // position.
+    OSL(`readline, ${label}`, 0, { log: at(OTYPE(), 1) + SLEPT() + ig(OSHOW()) + ig(OREAD()) + at(OENTER(), 2) + SLEPT() + ig(OREAD()) + ig(OREAD()) }, {
       io,
       input: "l1\nl2\nl3\nl4\nl5\nl6\nl7\n",
       seed: and(OUI, (s) => sent(s, "readline")),

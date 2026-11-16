@@ -426,7 +426,11 @@ orca_composer_pending() {
   # screen with no rule structure (another harness's shape, an unreadable
   # pane) never claims pending, so the caller keeps today's verdict.
   local pane="$1" text="$2" cap r1 r2 region want
-  cap="$(backend_capture_pane_orca "$pane" 15 2>/dev/null)" || return 1
+  # </dev/null: a read never needs the caller's stdin, whatever the caller's
+  # own send calls were asked to inherit - matching herdr_submit_verified_pane's
+  # render(), which reads the same way. agent_idle's own screen compare (below)
+  # keeps inheriting: it is not part of the submit check this invariant covers.
+  cap="$(backend_capture_pane_orca "$pane" 15 2>/dev/null </dev/null)" || return 1
   # LC_ALL=C + a GROUPED repeat: an interval over the bare 3-byte glyph binds
   # to its LAST byte under a C locale and never matches (measured on this
   # host) - a watcher or hook running with a minimal env would silently
@@ -461,12 +465,12 @@ orca_submit_verified_pane() {
   # grant a permanent always-allow - a caller must never turn this verdict
   # into a focus-and-retry press.
   orca_pane_dialog "$pane" && return 3
-  pre="$(backend_capture_pane_orca "$pane" 15 2>/dev/null)" || readable=0
+  pre="$(backend_capture_pane_orca "$pane" 15 2>/dev/null </dev/null)" || readable=0
   orca_submit_pane "$pane" || true
   [ "$readable" = 1 ] || return 2
   while [ "$i" -lt "$tries" ]; do
     sleep "${AC_SEND_SETTLE:-0.4}"
-    post="$(backend_capture_pane_orca "$pane" 15 2>/dev/null)" || return 2
+    post="$(backend_capture_pane_orca "$pane" 15 2>/dev/null </dev/null)" || return 2
     [ "$post" != "$pre" ] && break
     i=$((i + 1))
   done
@@ -485,7 +489,9 @@ orca_submit_verified_pane() {
 orca_pane_dialog() {
   # 0 when the runtime reports the pane parked on a human-only prompt
   # (agentWait non-null); any unreadable answer is NOT a dialog verdict.
-  orca_json terminal show --terminal "$1" 2>/dev/null \
+  # </dev/null: a read never needs the caller's stdin (backend_capture_pane_orca's
+  # note above).
+  orca_json terminal show --terminal "$1" 2>/dev/null </dev/null \
     | jq -e '.result.terminal.agentWait != null' >/dev/null 2>&1
 }
 
