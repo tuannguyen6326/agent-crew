@@ -17,8 +17,11 @@
 make_fake_herdr
 
 # Pin every scenario below to herdr explicitly: the fallback default is now
-# orca (ac_config_read backend orca), and this suite migrates to fake Orca
-# only at orca-tests-core.
+# orca (ac_config_read backend orca). The doctor's herdr checks (protocol
+# mismatch, wedge, version/capability floors) exercise herdr's own wire
+# shape and have no generic backend-neutral content to migrate - orca's
+# parallel dispatch (status --json, the not-ready state) is already covered
+# separately below under its own explicit orca pin.
 printf 'herdr\n' >"$AC_HOME/config/backend"
 
 # Nor from the box's gh, which helpers.sh mirrors out of PATH: a logged-in

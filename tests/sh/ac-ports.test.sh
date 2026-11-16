@@ -10,10 +10,14 @@
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
-make_fake_herdr
+make_fake_orca
 make_home
 repo="$(make_repo proj)"
 state="$AC_HOME/state"
+# Port-slot seeding (src/self-task.ts's seedPortsEnv call) runs on every
+# lease regardless of which backend won it - pin orca explicitly rather than
+# lean on self-task's own configReadSoft("backend","herdr") default.
+printf 'orca\n' >"$AC_HOME/config/backend"
 
 lib() { AC_HOME="$AC_HOME" bash -c "set -euo pipefail; . '$BIN/ac-lib.sh'; $1"; }
 
