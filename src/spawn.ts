@@ -145,12 +145,11 @@
 // in the meta). --resume-from <old-id> reopens that recorded claude session
 // (`claude --resume`) - for same-stage revisions where the old context is
 // worth keeping. Role changes and code-review never resume.
-// claude keys sessions by their cwd, so a resume asks the pool for the old
-// task's exact worktree slot back (worktree= from its meta, passed as
-// ac-tree.sh get --prefer); when that slot cannot be honored the spawn still
-// proceeds but warns loudly:
+// claude keys sessions by their cwd, so a resume that lands anywhere but the
+// old task's exact worktree (worktree= from its meta) may not find the old
+// session; every lease is a fresh orca worktree now, never the same path
+// twice, so the spawn still proceeds but warns loudly on every resume:
 //   resume may not find the old session (cwd changed: <old> -> <new>)
-// Non-resume spawns lease exactly as before (no --prefer).
 //
 // LEASES (the authoritative grammar): the crew meta records
 //   leases=<path>[:<path>...]

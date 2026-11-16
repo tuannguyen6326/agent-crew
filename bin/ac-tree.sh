@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ac-tree.sh - the herdr fleets' in-repo worktree pool at
+# ac-tree.sh - a standalone in-repo worktree pool at
 # <repo>/.crew/worktrees/<n>: lease a slot (get, lease), read the pool (list),
 # release it (return), and drop idle or named slots (prune, remove); the first
 # lease also installs the pre-commit and commit-msg guard hooks. The

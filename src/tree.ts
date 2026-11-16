@@ -1,5 +1,7 @@
-// tree.ts - pooled git worktrees INSIDE the target repo, the herdr fleets'
-// lease mechanism. The entry is bin/ac-tree.sh (a shim that starts this file
+// tree.ts - pooled git worktrees INSIDE the target repo, a standalone lease
+// mechanism (src/spawn.ts now leases crew worktrees through orca directly;
+// src/pool-health.ts and src/teardown.ts still call this pool for their own
+// worktrees). The entry is bin/ac-tree.sh (a shim that starts this file
 // through bin/ac-bun.sh); THIS header is the authoritative spec, and
 // tests/sh/ac-tree.test.sh is its contract test.
 // Worktrees live at <repo>/.crew/worktrees/<n>, and /.crew/ is auto-ignored
