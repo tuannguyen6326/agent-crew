@@ -198,7 +198,7 @@ git clone -q "$repo" "$lease"
 # (switch/reset --hard to the exact ref) still run for real on the path
 # this returns, so the exact-ref and detached-HEAD contract is proven
 # genuinely, not assumed.
-tree_log="$TMP/tree.log"   # never written now; read-only callers below see it stay empty
+tree_log="$TMP/tree.log"   # fake_orca logs "get"/"return" lines here, same shape fake_tree's log had
 fake_orca_dir="$TMP/ac-verify-fake-orca"; mkdir -p "$fake_orca_dir"
 fake_orca="$fake_orca_dir/orca"
 cat >"$fake_orca" <<'EOF'
@@ -216,8 +216,11 @@ case "$1 $2" in
   "repo show"|"repo add") printf '{"ok":true,"result":{}}\n'; exit 0 ;;
   "worktree create")
     n=$(( $(cat "$fake_orca_dir/.n" 2>/dev/null || echo 0) + 1 )); printf '%s\n' "$n" >"$fake_orca_dir/.n"
+    printf 'get %s\n' "$wt" >>"$VERIFY_TREE_LOG"
     printf '{"ok":true,"result":{"worktree":{"path":"%s","id":"fake-%s","branch":""}}}\n' "$wt" "$n"; exit 0 ;;
-  "worktree rm") printf '{"ok":true,"result":{}}\n'; exit 0 ;;
+  "worktree rm")
+    printf 'return %s --force\n' "${4#path:}" >>"$VERIFY_TREE_LOG"
+    printf '{"ok":true,"result":{}}\n'; exit 0 ;;
   "terminal list") printf '{"ok":true,"result":{"terminals":[]}}\n'; exit 0 ;;
   *) printf '{"ok":false,"error":{"message":"unhandled: %s"}}\n' "$*"; exit 1 ;;
 esac
@@ -926,7 +929,7 @@ assert_contains "$meta" "family=$family" "meta records family"
 assert_contains "$meta" "caller=$caller" "meta records caller"
 assert_contains "$meta" "owner=$caller" "caller is the default recovery owner"
 assert_contains "$meta" "project=$(basename "$repo")" "meta records project"
-assert_contains "$meta" "backend=herdr" "meta records backend"
+assert_contains "$meta" "backend=orca" "meta records backend"
 assert_contains "$meta" "window=pVerify" "meta records the live pane"
 assert_contains "$meta" "worktree=$lease" "meta records worktree"
 assert_contains "$meta" "leases=$lease" "meta uses plural lease grammar"
@@ -1691,7 +1694,17 @@ assert_eq "$(git -C "$lf_lease" status --porcelain)" "" "the round leaves the le
 # a death.
 caller="$ctx_family-die-implement"
 export VERIFY_EXPECT_ID="$caller-verify-codereview"
-die_lease="$TMP/ctx-die-lease"; mkdir -p "$die_lease"
+# A plain non-git directory now fails at the LEASE itself (orcaWorktreeLease
+# switches onto crew/<id> as part of leasing, unlike the old pool's trivial
+# `get`) - an unrelated repo that does not carry $target reproduces the
+# intended "lease succeeds, the bind to the exact ref is what dies" shape:
+# the branch switch lands fine, and bindTree's own checkout --detach $target
+# is what fails, on a commit this repo never had.
+die_lease="$TMP/ctx-die-lease"
+git init -q -b main "$die_lease"
+printf 'unrelated\n' >"$die_lease/unrelated.txt"
+git -C "$die_lease" add unrelated.txt
+git -C "$die_lease" commit -qm unrelated
 export VERIFY_WORKTREE="$die_lease" VERIFY_REF="$target"
 gets_before="$(grep -c '^get ' "$tree_log" || true)"
 returns_before="$(grep -cF "return $die_lease --force" "$tree_log" || true)"
@@ -2923,6 +2936,7 @@ case "$1 $2" in
     [ -z "${XT_GET_RC:-}" ] || exit "$XT_GET_RC"
     printf '{"ok":true,"result":{"worktree":{"path":"%s","id":"fake","branch":""}}}\n' "$wt"; exit 0 ;;
   "worktree rm")
+    printf 'return %s --force\n' "${4#path:}" >>"$XW/log/tree.log"
     rc="${XT_RETURN_RC:-0}"
     [ "$rc" = 0 ] && printf '{"ok":true,"result":{}}\n'
     exit "$rc" ;;
@@ -2941,10 +2955,12 @@ chmod +x "$XS"/*
 make_fake_orca
 
 # verifyLease (src/verify.ts:2439-2446), returnLeases (src/verify.ts:683) and
-# verifyDropBranch (src/verify.ts:2455) all branch on orcaFleet() before ever
-# reaching AC_VERIFY_TREE_BIN - the $XS/xtree stub below is the herdr-pool
-# path only, so every row needs this pinned unless its own XE overrides it.
-xseed() { [ ! -e "$XW" ] || chmod -R u+w "$XW"; rm -rf "$XW"; mkdir -p "$XW/home/state" "$XW/home/config" "$XW/cwd" "$XW/tmp" "$XW/log"; printf 'herdr\n' >"$XW/home/config/backend"; }
+# verifyDropBranch (src/verify.ts:2455) always lease through
+# orcaWorktreeLease/orcaWorktreeRelease now (T9 deleted the orcaFleet()-gated
+# branch and AC_VERIFY_TREE_BIN) - the $XS/orca stub above stands in for the
+# CLI those two helpers shell out to, so every row needs backend=orca pinned
+# unless its own XE overrides it.
+xseed() { [ ! -e "$XW" ] || chmod -R u+w "$XW"; rm -rf "$XW"; mkdir -p "$XW/home/state" "$XW/home/config" "$XW/cwd" "$XW/tmp" "$XW/log"; printf 'orca\n' >"$XW/home/config/backend"; }
 xstd() {  # the standard world
   xseed
   git init -q -b main "$XW/repo"
@@ -3091,7 +3107,7 @@ XUSAGE="usage: ac-verify.sh codereview|qa --repo DIR --ref REF --family ID --cal
 xrefuse "$XUSAGE"
 xrefuse "$XUSAGE" -h
 xrefuse "$XUSAGE" design --repo "$XW/repo"
-XE="AC_BACKEND=tmux" xrefuse "unsupported backend 'tmux' (valid backends: herdr, orca; tmux/wezterm were removed 2026-07-17)"
+XE="AC_BACKEND=tmux" xrefuse "unsupported backend 'tmux' (valid backend: orca)"
 xrefuse "unknown argument: --bogus" codereview --bogus x
 xrefuse "$XUSAGE" codereview --repo "$XW/repo" --ref HEAD --family fam --caller fam-impl
 xrefuse "family must match [a-z0-9-]: BAD" codereview --repo "$XW/repo" --ref HEAD --family BAD --caller fam-impl --output "$XW/out/review.json"
@@ -3189,7 +3205,11 @@ XPLUS='d="$XW/lease/x
 .."; mkdir -p "$d" && printf "lf\n" >"$d/CLAUDE.md"' xok "${XCR[@]}"
 XE="XT_GET_RC=1" xrefuse_late "could not lease verifier worktree for $XCID" "${XCR[@]}"
 case "$(cat "$XW/log/tree.log")" in *return*) fail "a lease never taken is never returned" ;; esac
-XE="XT_LEASE=" xrefuse_late "tree allocator returned no verifier worktree for $XCID" "${XCR[@]}"
+# A lease that comes back with no worktree path reads through orcaWorktreeLease
+# (src/lib.ts) as a plain failure, not a distinct empty-path case - it already
+# cleans up via `worktree rm --worktree id:<id> --force` and returns status 1,
+# so this is the same refusal as the CLI call itself failing (verify.ts:1845).
+XE="XT_LEASE=" xrefuse_late "could not lease verifier worktree for $XCID" "${XCR[@]}"
 XE="AC_BACKEND=orca FAKE_ORCA=$XW/orca" XPRE="$TMP/stubbin" XPLUS='mkdir -p "$XW/orca/terminals"' xok "${XCR[@]}"
 assert_contains "$(xfile orca/log)" "worktree rm" "an orca lease goes back through the orca CLI"
 
@@ -3299,7 +3319,7 @@ xqa_e2e() {
   make_profile_bundle "$XW/bundle" "$XT0" fixture-key "$XW/e2e" "$(git -C "$XW/e2e" rev-parse HEAD)" "" ""
 }
 XBASE=xqa_e2e XID="$XQID" XE="VERIFY_QA_RUN=1" xok "${XQA[@]}" "${XQAP[@]}"
-assert_contains "$(xfile log/tree.log)" "--id $XQID-e2e" "the E2E worktree is leased"
+assert_contains "$(xfile log/tree.log)" "--name crew-$XQID-e2e" "the E2E worktree is leased"
 
 # --- 11. cleanup ------------------------------------------------------------
 XE="VERIFY_REAP_CLOSED=false" xfails "verifier $XCID output is durable but pane pVerify did not close; inspect $XMETA" "${XCR[@]}"
