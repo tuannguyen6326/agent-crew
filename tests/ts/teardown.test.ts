@@ -1,13 +1,13 @@
 // teardown.test.ts - what src/teardown.ts brought into src/lib.ts and src/lib-teardown.ts, held to the
 // LIVE bash helpers it twins: taskStamps (ac_task_stamps), portSlotRelease
 // (ac_port_slot_release), soloLandingCheck (ac_solo_landing_check),
-// backendKillWindow (backend_kill_window, both drivers, with herdr_ws_close's
-// group arm) and orcaWorktreeRelease (orca_worktree_release); and the
+// backendKillWindow (backend_kill_window) and orcaWorktreeRelease
+// (orca_worktree_release); and the
 // module's killServePid, driven through a kill SPY - no row sends a real
 // signal. The CLI contract itself is tests/sh/ac-teardown.test.sh's.
 //
 // DISPUTED: the implementation of each helper (the bash vs src/lib-teardown.ts, src/lib.ts)
-// HELD-CONSTANT: one side root per side and row seeded alike (a home at <side>/home with state/ records/ data/ config/, the stubs' sentinels and log at <side>/stub); argv; env (PATH = the herdr/orca/sleep/date stubs, the host's jq and git, /bin and /usr/bin without herdr, orca or docker; LC_ALL=C unless a row names UTF-8; HOME, TMPDIR, STUB_DIR, AC_HOME unless homeless, a row's own names); cwd (the distro root, so `ac_root` and STARTED_BIN name one bin/); stdin (/dev/null); stdout, stderr and the status compared whole (the side root spelled S, the process's pid PID), then the home's tree and the stub log.
+// HELD-CONSTANT: one side root per side and row seeded alike (a home at <side>/home with state/ records/ data/ config/, the stubs' sentinels and log at <side>/stub); argv; env (PATH = the orca/sleep/date stubs, the host's jq and git, /bin and /usr/bin without herdr, orca or docker; LC_ALL=C unless a row names UTF-8; HOME, TMPDIR, STUB_DIR, AC_HOME unless homeless, a row's own names); cwd (the distro root, so `ac_root` and STARTED_BIN name one bin/); stdin (/dev/null); stdout, stderr and the status compared whole (the side root spelled S, the process's pid PID), then the home's tree and the stub log.
 import { afterAll, expect, test } from "bun:test";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -74,31 +74,6 @@ const TOOLS = join(W, "tools");
 mkdirSync(TOOLS);
 for (const t of ["jq", "git"]) symlinkSync(Bun.which(t)!, join(TOOLS, t));
 
-// herdr: tabs are <stub>/tab-<id> files holding the label; `tab close` honours
-// close-rc (exit it, the tab kept) and close-drops (exit 1, the tab gone);
-// `tab list` serves <stub>/list (list-fails: exit 1); `workspace close`
-// refuses with workspace_group_close_required while ws-group-<ws> exists
-// (the --group form then fails while group-fails exists), or with another
-// text while ws-close-fails exists; unreachable fails every call.
-const HERDR = `#!/bin/sh
-d="$STUB_DIR"
-printf 'herdr %s [%s]\\n' "$*" "\${HERDR_SESSION:-}" >>"$d/log"
-[ ! -e "$d/unreachable" ] || { echo '{"error":{"code":"protocol_mismatch"}}' >&2; exit 1; }
-case "$1 $2" in
-  "tab get") [ -e "$d/tab-$3" ] || exit 1; printf '{"result":{"tab":{"tab_id":"%s","label":"%s"}}}\\n' "$3" "$(cat "$d/tab-$3")" ;;
-  "tab close")
-    [ ! -e "$d/close-drops" ] || { rm -f "$d/tab-$3"; exit 1; }
-    [ ! -e "$d/close-rc" ] || exit "$(cat "$d/close-rc")"
-    rm -f "$d/tab-$3" ;;
-  "tab list") [ ! -e "$d/list-fails" ] || exit 1; [ ! -e "$d/list" ] || cat "$d/list" ;;
-  "workspace close")
-    if [ "$4" = --group ]; then [ ! -e "$d/group-fails" ] || exit 1; rm -f "$d/ws-group-$3"; exit 0; fi
-    [ ! -e "$d/ws-group-$3" ] || { echo '{"error":{"code":"workspace_group_close_required"}}' >&2; exit 1; }
-    [ ! -e "$d/ws-close-fails" ] || { echo 'some other refusal' >&2; exit 1; }
-    : ;;
-  *) exit 2 ;;
-esac
-`;
 // orca: <stub>/terms lists "<handle> <tab>" per terminal; `terminal close`
 // marks the handle closed (close-fails: exit 1), and `terminal list` keeps a
 // closed handle listed while <stub>/linger counts down (list-raw is served
@@ -130,7 +105,6 @@ esac
 `;
 const STUBS = join(W, "stubs");
 mkdirSync(STUBS);
-writeFileSync(join(STUBS, "herdr"), HERDR, { mode: 0o755 });
 writeFileSync(join(STUBS, "orca"), ORCA, { mode: 0o755 });
 writeFileSync(join(STUBS, "sleep"), `#!/bin/sh\nprintf 'sleep %s\\n' "$*" >>"$STUB_DIR/log"\n`, { mode: 0o755 });
 writeFileSync(join(STUBS, "date"), `#!/bin/sh\ncase "$*" in *%Y-%m-%dT*) echo 2026-01-01T00:00:00Z ;; *%Y-%m-%d*) echo 2026-01-01 ;; *%s*) echo 1767225600 ;; *) exec /bin/date "$@" ;; esac\n`, { mode: 0o755 });
@@ -194,25 +168,19 @@ function side(row: Row, s: string, oracle: boolean): Side {
   const env: Record<string, string> = { PATH, HOME: W, TMPDIR: W, LC_ALL: row.lc ?? "C", STUB_DIR: join(s, "stub"), ...GIT_ENV };
   if (!row.homeless) env.AC_HOME = join(s, "home");
   for (const [k, v] of Object.entries(row.env ?? {})) env[k] = v.replaceAll("@S", s);
-  // The cutover (T8) refuses herdr at ac_backend's own ladder, so a herdr
-  // row sources (and dispatches, on the twin) under orca and reaches the
-  // driver directly instead: this file's job - the herdr driver's own
-  // kill behavior - stays provable until T11 deletes the driver.
-  const direct = env.AC_BACKEND === "herdr";
-  if (direct) env.AC_BACKEND = "orca";
   const args = (row.args ?? []).map((a) => a.replaceAll("@S", s));
   const cmd = oracle
     ? [
         "/bin/bash",
         "-c",
-        `set -uo pipefail; . "$0/ac-lib.sh" || exit $?; . "$0/ac-backend.sh" || exit $?; ${direct ? "ac_backend() { printf 'herdr\\n'; }; " : ""}${row.bash}; printf '|rc=%s' "$?"`,
+        `set -uo pipefail; . "$0/ac-lib.sh" || exit $?; . "$0/ac-backend.sh" || exit $?; ${row.bash}; printf '|rc=%s' "$?"`,
         BIN,
         ...args,
       ]
     : [
         process.execPath,
         "-e",
-        `import { writeSync } from "node:fs"; const L = { ...await import(${JSON.stringify(LIB)}), ...await import(${JSON.stringify(LIBT)}) }; const A = ${JSON.stringify(args)}; const rc = await (async () => { ${direct ? row.twin.replace("L.backendKillWindow(A[0])", "{ status: L.herdrKillWindow(A[0]), exited: false }") : row.twin} })(); writeSync(1, "|rc=" + rc);`,
+        `import { writeSync } from "node:fs"; const L = { ...await import(${JSON.stringify(LIB)}), ...await import(${JSON.stringify(LIBT)}) }; const A = ${JSON.stringify(args)}; const rc = await (async () => { ${row.twin} })(); writeSync(1, "|rc=" + rc);`,
       ];
   const run = row.fsize === undefined ? cmd : ["/bin/sh", "-c", `ulimit -f ${row.fsize}; trap "" XFSZ; exec "$@"`, "sh", ...cmd];
   const r = Bun.spawnSync(run, { cwd: ROOT, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
@@ -383,46 +351,7 @@ test("soloLandingCheck: the line on the record and stdout, the hint per missing 
   }
 }, 60000);
 
-// backend_kill_window routes through ac_backend_route's full ladder, so an
-// unpinned row would silently resolve the no-rung default (orca) rather than
-// exercise the herdr arm this base case is for.
-const HERDR_ = { AC_BACKEND: "herdr" };
-const KILL: Row = { bash: `backend_kill_window "$1"`, twin: `const r = L.backendKillWindow(A[0]); if (r.exited) process.exit(r.status); return r.status;`, args: ["k1"], env: HERDR_ };
-const herdrPane = (s: string, tab = "w1:t1", label = "crew:k1"): void => {
-  pane(s, "k1", `p1 ${tab}\n`);
-  stub(s, `tab-${tab}`, label);
-};
-
-test("backendKillWindow herdr: the label proof, the last-tab fallback and its workspace close, the files swept", () => {
-  const cases: [string, (s: string) => void, number][] = [
-    ["no handle file", () => {}, 0],
-    ["a handle with no tab", (s) => pane(s, "k1", "p1\n"), 0],
-    ["owned and closed", (s) => herdrPane(s), 0],
-    ["a stale label", (s) => herdrPane(s, "w1:t1", "crew:other"), 0],
-    ["no label at all", (s) => herdrPane(s, "w1:t1", ""), 0],
-    ["the tab gone", (s) => pane(s, "k1", "p1 w1:t1\n"), 0],
-    ["herdr unreachable (W18)", (s) => (herdrPane(s), stub(s, "unreachable")), 0],
-    ["refused, the workspace closeable", (s) => (herdrPane(s), stub(s, "close-rc", "1"), stub(s, "list", '{"result":{"tabs":[{"tab_id":"w1:t1","label":"crew:k1"},{"tab_id":"w1:t2","label":"1"}]}}')), 0],
-    ["refused, closeable, group required then --group", (s) => (herdrPane(s), stub(s, "close-rc", "1"), stub(s, "list", '{"result":{"tabs":[]}}'), stub(s, "ws-group-w1")), 0],
-    ["refused, closeable, group required and --group fails", (s) => (herdrPane(s), stub(s, "close-rc", "1"), stub(s, "list", '{"result":{"tabs":[]}}'), stub(s, "ws-group-w1"), stub(s, "group-fails")), 0],
-    ["refused, closeable, another refusal", (s) => (herdrPane(s), stub(s, "close-rc", "1"), stub(s, "list", '{"result":{"tabs":[]}}'), stub(s, "ws-close-fails")), 0],
-    ["refused, the workspace occupied", (s) => (herdrPane(s), stub(s, "close-rc", "1"), stub(s, "list", '{"result":{"tabs":[{"tab_id":"w1:t2","label":"crew:x"}]}}')), 1],
-    ["refused, the list unreadable", (s) => (herdrPane(s), stub(s, "close-rc", "1"), stub(s, "list-fails")), 1],
-    ["refused, the list empty", (s) => (herdrPane(s), stub(s, "close-rc", "1")), 1],
-    ["refused, no tabs array", (s) => (herdrPane(s), stub(s, "close-rc", "1"), stub(s, "list", '{"result":{}}')), 1],
-    ["refused, the tab gone", (s) => (herdrPane(s), stub(s, "close-drops")), 1],
-    ["refused with rc 7, the tab kept", (s) => (herdrPane(s), stub(s, "close-rc", "7"), stub(s, "list", '{"result":{"tabs":[]}}')), 0],
-    ["a tab id with no workspace part", (s) => (herdrPane(s, "t9"), stub(s, "close-rc", "1"), stub(s, "list", '{"result":{"tabs":[]}}')), 0],
-  ];
-  for (const [label, seed, rc] of cases) {
-    const p = same(label, { ...KILL, seed: (s) => (seed(s), put(s, "home/state/.captain-wait-k1", "")) });
-    expect({ label, rc: p.t.out }).toEqual({ label, rc: `|rc=${rc}` });
-    expect({ label, swept: p.t.world.includes(".pane-k1") || p.t.world.includes(".captain-wait-k1") }).toEqual({ label, swept: false });
-  }
-  same("the session knob", { ...KILL, env: { ...HERDR_, AC_HERDR_SESSION: "s9" }, seed: (s) => (herdrPane(s), stub(s, "close-rc", "1"), stub(s, "list", '{"result":{"tabs":[]}}'), stub(s, "ws-group-w1")) });
-  same("config/herdr-session", { ...KILL, seed: (s) => (herdrPane(s), put(s, "home/config/herdr-session", "cfg\n")) });
-  same("W6: an unsupported task backend", { ...KILL, env: { AC_BACKEND: "tmux" }, seed: (s) => herdrPane(s) });
-}, 60000);
+const KILL: Row = { bash: `backend_kill_window "$1"`, twin: `const r = L.backendKillWindow(A[0]); if (r.exited) process.exit(r.status); return r.status;`, args: ["k1"] };
 
 const orcaPane = (s: string, h = "term1", tab = "tab1"): void => {
   pane(s, "k1", `${h} ${tab}\n`);
@@ -455,6 +384,10 @@ test("backendKillWindow orca: the terminal closed, the bounded wait for it to le
   const eight = same("eight sleeps at most", { ...KILL, env: ORCA_, seed: (s) => (orcaPane(s), stub(s, "linger", "20")) });
   expect(eight.t.log.split("\n").filter((l) => l === "sleep 0.25").length).toBe(8);
 }, 60000);
+
+test("backendKillWindow: an unsupported task backend refuses before any pane read", () => {
+  same("W6: an unsupported task backend", { ...KILL, env: { AC_BACKEND: "tmux" }, seed: (s) => orcaPane(s) });
+});
 
 test("orcaWorktreeRelease: the CLI's rm, its failure and an ok:false answer both refused", () => {
   const rel: Row = { bash: `orca_worktree_release "$1"`, twin: `return L.orcaWorktreeRelease(A[0]) ? 0 : 1;`, args: ["@S/wt"] };

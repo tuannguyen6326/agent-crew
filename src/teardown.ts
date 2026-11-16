@@ -95,11 +95,11 @@
 // it is the only one, else its `<wt>:` prefix) and its id slot is popped from
 // lease_ids ONLY when both lists hold as many `:` (a legacy list is one id
 // short and keeps every id). lease_base (spawn.ts: an explicit --base-branch)
-// is absent on every meta that never named one - older tasks and herdr leases
+// is absent on every meta that never named one - older tasks
 // read exactly as before. The branch is crew/<family>. AC_BACKEND becomes
 // the meta's backend= (orca without one) for every child and backend call -
 // validated here, by the shared reader (taskBackend), before any archiving
-// or pane step: an explicit backend= this fleet refuses (herdr included) is
+// or pane step: an explicit backend= this fleet refuses is
 // the same named error as the preamble's own ladder, nothing moved or
 // killed. stdin is never read. Every ERROR is on stderr, exit 1; every WARN
 // is on stderr.
@@ -129,7 +129,8 @@
 // verifier lease <l>: directory no longer exists`; on the verifier's own
 // backend (backend=, else the route's), orca releases it (orcaWorktreeRelease,
 // else `WARN: could not release orca verifier worktree <l>; inspect
-// <archive>/meta`), herdr runs `ac-tree.sh return <l> --force [--if-lease-id
+// <archive>/meta`), a pool-leased one (never orca's own worktree) runs
+// `ac-tree.sh return <l> --force [--if-lease-id
 // <id>]` (else `WARN: could not return verifier worktree <l> (it may have
 // been re-leased); inspect <archive>/meta`, or without an id `WARN: could not
 // return verifier worktree <l>; inspect <archive>/meta`); then
@@ -251,11 +252,10 @@
 // 2. PANE KILL (backendKillWindow, src/lib.ts), the handle read first: a
 //    task backend the route refuses ends the run here, exit 1 (W6). A
 //    failure is `WARN: pane close FAILED for <id> - a live pane may survive
-//    this teardown (handle: <handle|none>); close it by hand: <cmd>` - herdr
-//    tab close <field 2>[ --session <AC_HERDR_SESSION or
-//    config/herdr-session>], orca `orca terminal close --terminal <field 1>`
-//    (unreachable, W19) - and `<iso> warn: pane close failed - handle <h>;
-//    close by hand: <cmd>` appended to the ARCHIVED status and the timeline.
+//    this teardown (handle: <handle|none>); close it by hand: <cmd>` -
+//    `orca terminal close --terminal <field 1>` (unreachable, W19) - and
+//    `<iso> warn: pane close failed - handle <h>; close by hand: <cmd>`
+//    appended to the ARCHIVED status and the timeline.
 //    TOKEN LEDGER, then, for every
 //    kind but self (no agent ran): rows appended to records/task-tokens.tsv
 //    (a header line `at id kind harness model input cache_creation
@@ -359,8 +359,7 @@
 // cannot read it `WARN: could not read <f>: the pane could not be
 // identified, it may be orphaned`, kept; no first field, removed; no
 // executable <bin>/ac-pane-agent.sh, or on PATH no binary of the backend
-// reap-pane resolves for itself (backendRoute, which reads the AC_BACKEND
-// pinned above; a bad name reads as herdr, as reap-pane's own fallback)
+// reap-pane resolves for itself (orca, the AC_BACKEND already pinned above)
 // `WARN: could not reap pane <p>
 // (<f>): <backend> or ac-pane-agent.sh unavailable`, kept; else
 // `ac-pane-agent.sh reap-pane --pane <p>`, whose
@@ -382,10 +381,9 @@
 // KNOWN WARTS, kept as they are: W1 (the id is always the first word),
 // W3 (--force --pr-ready records
 // both), W6 (the task backend validated only at the pane kill, after the
-// archive), W16 (the named member is the first in byte order), W18 (an
-// unreachable herdr reads as a stale handle), W19 (the orca close never
-// fails), W20 (a held registry lock leaves the row, silently), W21 (an
-// ambiguous task dir prints taskDir's ERROR and refuses).
+// archive), W16 (the named member is the first in byte order), W19 (the
+// orca close never fails), W20 (a held registry lock leaves the row,
+// silently), W21 (an ambiguous task dir prints taskDir's ERROR and refuses).
 //
 // Also: incomplete-run.md.tmp.<pid> and port-slots.tsv.tmp.<pid> are created
 // exclusively (the next .<n> past a name taken) and keep the record's mode.
@@ -423,7 +421,6 @@ import {
   backendName,
   backendRoute,
   commandV,
-  configReadSoft,
   crewBranch,
   defaultBranch,
   defaultRef,
@@ -1103,8 +1100,9 @@ async function main(): Promise<void> {
       accessSync(fsPath(`${bin}/ac-pane-agent.sh`), constants.X_OK);
       agent = true;
     } catch {}
-    // reap-pane picks its arm through ac_backend, so by the pinned AC_BACKEND.
-    const be = backendRoute("ignore") ?? "herdr";
+    // reap-pane picks its arm through ac_backend, so by the pinned AC_BACKEND
+    // - always orca by now (main's own validation already refused anything else).
+    const be = "orca";
     if (!agent || !commandV(be)) {
       say(`could not reap pane ${p} (${f}): ${be} or ac-pane-agent.sh unavailable`);
       return;
@@ -1322,12 +1320,7 @@ async function main(): Promise<void> {
   const killed_ = backendKillWindow(u8(id));
   if (killed_.exited) process.exit(killed_.status);
   if (killed_.status !== 0) {
-    let cmd: string;
-    if (backendRoute("inherit") === "orca") cmd = `orca terminal close --terminal ${handle.split(" ")[0]}`;
-    else {
-      const sess = b8(process.env.AC_HERDR_SESSION || configReadSoft("herdr-session", ""));
-      cmd = `herdr tab close ${handle.includes(" ") ? handle.slice(handle.indexOf(" ") + 1) : handle}${sess ? ` --session ${sess}` : ""}`;
-    }
+    const cmd = `orca terminal close --terminal ${handle.split(" ")[0]}`;
     say(`pane close FAILED for ${id} - a live pane may survive this teardown (handle: ${handle || "none"}); close it by hand: ${cmd}`);
     const ts = isoOrExit();
     const line = `warn: pane close failed - handle ${handle || "none"}; close by hand: ${cmd}`;
