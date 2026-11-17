@@ -189,4 +189,36 @@ run; assert_eq "$rc|$(printf '%s\n' "$out" | wc -l | tr -d ' ')|$(printf '%s\n' 
 run --ids; assert_eq "$rc|$(printf '%s\n' "$out" | wc -l | tr -d ' ')|$(printf '%s\n' "$out" | tail -n 1)" "0|2000|job-1999" "2000 jobs: --ids lists each"
 rm -f "$sj"
 
+# 7. A job carried by an Orca automation (`orca:<automation-id>` right after
+#    the state) has a liveness signal on disk-independent ground: the digest
+#    reads `orca automations show` instead of the CronList caveat. The stub
+#    answers with the envelopes the real CLI gave (orca 1.4.259, 2026-11-17).
+mkdir -p "$TMP/orca-bin"
+cat >"$TMP/orca-bin/orca" <<'EOF'
+#!/usr/bin/env bash
+[ "$1 $2" = "automations show" ] || exit 2
+cat "$ORCA_SHOW_OUT"
+EOF
+chmod +x "$TMP/orca-bin/orca"
+cat >"$AC_HOME/records/standing-jobs.md" <<'EOF'
+- brain-sync [on] orca:a1 cadence:30m recreate:orca automations create --name brain-sync ...
+- quiet [off] orca:a2 cadence:daily recreate:orca automations edit a2 --enabled
+EOF
+orun() { out="$(PATH="$TMP/orca-bin:$PATH" ORCA_SHOW_OUT="$TMP/show.json" "$BIN/ac-standing-jobs.sh")"; }
+printf '%s\n' '{"ok":true,"result":{"automation":{"id":"a1","enabled":true,"nextRunAt":1794906000000}}}' >"$TMP/show.json"
+orun
+line="$(printf '%s\n' "$out" | grep '^brain-sync:')"
+assert_contains "$line" "Orca automation a1 enabled" "an enabled automation is reported live"
+case "$line" in *CronList*) fail "an automation-carried job must not get the CronList caveat (got: $line)" ;; esac
+assert_contains "$(printf '%s\n' "$out" | grep '^quiet:')" "declared OFF" "an OFF automation job stays OFF"
+printf '%s\n' '{"ok":true,"result":{"automation":{"id":"a1","enabled":false,"nextRunAt":null}}}' >"$TMP/show.json"
+orun
+assert_contains "$(printf '%s\n' "$out" | grep '^brain-sync:')" "DISABLED" "a disabled automation behind an ON job is flagged"
+printf '%s\n' '{"ok":false,"error":{"code":"runtime_error","message":"Automation not found."}}' >"$TMP/show.json"
+orun
+line="$(printf '%s\n' "$out" | grep '^brain-sync:')"
+assert_contains "$line" "NOT FOUND or unreadable" "a missing automation is flagged"
+assert_contains "$line" "orca automations create --name brain-sync" "a missing automation names its re-create action"
+run --ids; assert_eq "$out" "$(printf 'brain-sync\nquiet')" "--ids reads the id before the orca token"
+
 pass

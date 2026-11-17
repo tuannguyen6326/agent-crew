@@ -14,13 +14,17 @@
 // actual liveness. A digest line that claimed a job was live when it cannot
 // know that would be a worse defect than the invisible-cron failure this
 // exists to surface.
+// A job carried by an Orca automation instead is durable and outside any
+// session, so its liveness IS readable: `orca automations show <aid> --json`
+// answers enabled/disabled/absent, and the digest reports that instead.
 //
 // records/standing-jobs.md is the machine-readable source of truth for a
 // job's current declared state - a fleet's captain.md should CITE it rather
 // than duplicate cadence/on-off/re-create text, which would drift.
 //
 // Line format (one job per line):
-//   - <id> [on|off] cadence:<cadence> recreate:<exact re-create action>
+//   - <id> [on|off] [orca:<automation-id>] cadence:<cadence> recreate:<exact re-create action>
+// The optional `orca:<automation-id>` token sits right after the state group.
 // Mirrors the records/projects.md bracket grammar (src/project-mode.ts). A job
 // line starts with `- ` and holds a `[` with a `]` somewhere after it. The id
 // is the run of non-space bytes after `- ` and NEEDS a space after it (a
@@ -39,6 +43,9 @@
 //   -- standing jobs --
 //   (no standing-jobs declaration - records/standing-jobs.md)   file absent or empty
 //   <id>: declared ON (cadence: <cadence>) - runtime liveness unverifiable from disk (CronCreate is session-only); run CronList to confirm, re-create if missing: <recreate>
+//   <id>: ON as Orca automation <aid> enabled (cadence: <cadence>, next run <local time>); history: orca automations runs --id <aid>
+//   <id>: declared ON but Orca automation <aid> is DISABLED - enable it: orca automations edit <aid> --enabled
+//   <id>: declared ON as Orca automation <aid> - NOT FOUND or unreadable; re-create: <recreate>
 //   <id>: declared OFF - do not re-create (<recreate>)
 //   <id>: unknown declared state [<state>] in records/standing-jobs.md - fix the line
 //   (records/standing-jobs.md has no declared job lines)        non-empty file, no job line
@@ -70,6 +77,7 @@
 // the line. A byte that is not valid UTF-8 is parsed as a byte whatever the
 // caller's locale, and a digest over a present file this process cannot read
 // says nothing on stderr.
+import { spawnSync } from "node:child_process";
 import { accessSync, constants, readFileSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { die, enterCaller, recordsDir } from "./lib.ts";
@@ -87,17 +95,31 @@ export function isJobLine(line: string): boolean {
   return open >= 0 && line.indexOf("]", open + 1) >= 0;
 }
 
-export function jobFields(line: string): { id: string; state: string; cadence: string; recreate: string } {
+export function jobFields(line: string): { id: string; state: string; automation: string; cadence: string; recreate: string } {
   const pick = (re: RegExp): string => line.match(re)?.[1] ?? "";
   return {
     id: pick(/^- ([^ ]*) /s),
     state: pick(/^- [^[]*\[([^\]]*)\]/s),
+    automation: pick(/^- [^[]*\[[^\]]*\] orca:([^ ]+) /s),
     cadence: pick(/.*cadence:(.*) recreate:/s),
     recreate: pick(/.*recreate:(.*)$/s),
   };
 }
 
 const say = (s: string) => writeSync(1, Buffer.from(s, "latin1"));
+
+function automationLine(id: string, aid: string, cadence: string, recreate: string): string {
+  const r = spawnSync("orca", ["automations", "show", aid, "--json"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  let a: { enabled?: boolean; nextRunAt?: number | null } | undefined;
+  try {
+    const env = JSON.parse(r.stdout ?? "");
+    if (env.ok === true) a = env.result?.automation;
+  } catch {}
+  if (a === undefined) return `${id}: declared ON as Orca automation ${aid} - NOT FOUND or unreadable; re-create: ${recreate}\n`;
+  if (a.enabled !== true) return `${id}: declared ON but Orca automation ${aid} is DISABLED - enable it: orca automations edit ${aid} --enabled\n`;
+  const next = typeof a.nextRunAt === "number" ? new Date(a.nextRunAt).toLocaleString() : "unscheduled";
+  return `${id}: ON as Orca automation ${aid} enabled (cadence: ${cadence}, next run ${next}); history: orca automations runs --id ${aid}\n`;
+}
 
 function main(args: string[]): void {
   let ids = false;
@@ -131,9 +153,10 @@ function main(args: string[]): void {
   for (const line of readLines(buf)) {
     if (!isJobLine(line)) continue;
     found = true;
-    const { id, state, cadence, recreate } = jobFields(line);
+    const { id, state, automation, cadence, recreate } = jobFields(line);
     if (id === "") continue;
     if (ids) say(`${id}\n`);
+    else if (state === "on" && automation !== "") say(automationLine(id, automation, cadence, recreate));
     else if (state === "on")
       say(`${id}: declared ON (cadence: ${cadence}) - runtime liveness unverifiable from disk (CronCreate is session-only); run CronList to confirm, re-create if missing: ${recreate}\n`);
     else if (state === "off") say(`${id}: declared OFF - do not re-create (${recreate})\n`);
