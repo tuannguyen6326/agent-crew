@@ -17,6 +17,9 @@
 #   startup dialog holds it - every harness alike) and the terminal TITLE,
 #   which tracks the foreground process (measured on orca CLI 1.4.188: a bare
 #   shell reports its own name, harness TUIs set an OSC title of their own).
+# - Idle vs working is Orca's hook-backed TURN state first (orca_turn_state:
+#   the `worktree ps` row keyed by `terminal show`'s recordedPaneKey); the
+#   title glyph, tui-idle and codex screen readings cover a pane with no row.
 # - Startup dialogs are NAMED (agentWait.reason), so backend_dialog_answer
 #   answers the known codex ones with the key safe on each instead of the
 #   registry's blind Enter (which runs the upgrade on the update prompt).
@@ -624,7 +627,29 @@ backend_agent_blocked_orca() {
   jq -e '.result.terminal.agentWait != null' <<<"$out" >/dev/null 2>&1
 }
 
+orca_turn_state() {
+  # orca_turn_state <show-json> - the turn state Orca's agent hooks record
+  # for this pane, empty when it has none (probe 2026-11-17, orca 1.4.259):
+  # `worktree ps` rows are keyed by the paneKey `terminal show` reports as
+  # recordedPaneKey - never `terminal list`'s tabId/leafId, which differ for
+  # a headless pane. mainAgent is the TURN: a claude whose turn ended under
+  # a background task reads state working, mainAgent done; cursor and pi
+  # report no mainAgent, so their row's own state stands in. A row without
+  # a live PTY vouches for nothing.
+  local key
+  key="$(jq -r '.result.terminal.recordedPaneKey // empty' <<<"$1" 2>/dev/null)"
+  [ -n "$key" ] || return 0
+  orca_json worktree ps 2>/dev/null | jq -r --arg k "$key" '
+    first((.result.worktrees // [])[] | (.agents // [])[] | select(.paneKey == $k and .hasLivePty == true))
+    | .mainAgent.state // .state // empty' 2>/dev/null || true
+}
+
 backend_agent_idle_pane_orca() {
+  # Orca's hook-backed turn state decides first (orca_turn_state): done is
+  # idle; working, blocked and waiting (its documented vocabulary) are not.
+  # No row, an unreadable ps or any other value falls through to the
+  # heuristics below, which predate it and still cover a pane Orca's hooks
+  # never reached.
   # `wait --for tui-idle` returns the instant the TUI is idle and times out
   # otherwise; 1000ms bounds a working-TUI poll (orca answers by observing
   # the render rather than a status field - measured ~113ms on an idle TUI).
@@ -646,6 +671,10 @@ backend_agent_idle_pane_orca() {
   [ -n "$pane" ] || return 1
   out="$(orca_json terminal show --terminal "$pane" 2>/dev/null)" || return 1
   jq -e '.result.terminal.agentWait != null' <<<"$out" >/dev/null 2>&1 && return 1
+  case "$(orca_turn_state "$out")" in
+    done) return 0 ;;
+    working|blocked|waiting) return 1 ;;
+  esac
   t="$(jq -r '.result.terminal.title // empty' <<<"$out")"
   orca_title_spinner "$t" && return 1
   case "$t" in "✳"*) return 0 ;; esac

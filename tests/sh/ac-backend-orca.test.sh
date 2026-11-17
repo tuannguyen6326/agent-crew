@@ -374,6 +374,56 @@ assert_eq "$rc" "1" "the quiet-screen reading is codex's alone - another identit
 rm -f "$FAKE_ORCA/terminals/term1.screen" "$FAKE_ORCA/terminals/term1.agent"
 printf 'zsh\n' >"$FAKE_ORCA/terminals/term1.title"
 
+# --- Orca's hook-backed turn state outranks the heuristics ----------------------
+# Probe 2026-11-17 (orca 1.4.259): `worktree ps` carries one agent row per
+# hooked pane, keyed by the paneKey `terminal show` reports as
+# recordedPaneKey; its turn state is .mainAgent.state // .state (a claude
+# chief whose turn ended under a background task reads state working,
+# mainAgent done).
+spin='\342\227\220 working on things\n'
+glyph='\342\234\263 Claude Code\n'
+row() { printf '%s\n' "$1" >"$FAKE_ORCA/terminals/term1.agentrow"; }
+printf "$spin" >"$FAKE_ORCA/terminals/term1.title"
+row '{"state":"done","mainAgent":{"state":"done"},"hasLivePty":true}'
+run_backend orca 'backend_agent_idle o1' || fail "a done row is idle even under a spinner title"
+assert_eq "$(run_backend orca 'backend_agent_status_pane term1')" "idle" "status follows the done row"
+row '{"state":"working","workingMode":"monitoring","mainAgent":{"state":"done","stateStartedAt":1},"hasLivePty":true}'
+run_backend orca 'backend_agent_idle o1' || fail "a turn that ended under a background task (mainAgent done) is idle"
+row '{"state":"done","mainAgent":null,"hasLivePty":true}'
+run_backend orca 'backend_agent_idle o1' || fail "a row with no mainAgent reads its own state: done is idle"
+printf "$glyph" >"$FAKE_ORCA/terminals/term1.title"
+for st in working blocked waiting; do
+  row "{\"state\":\"$st\",\"hasLivePty\":true}"
+  rc=0; run_backend orca 'backend_agent_idle o1' || rc=$?
+  assert_eq "$rc" "1" "a $st row is not idle even under the idle glyph"
+done
+row '{"state":"working","mainAgent":{"state":"working"},"hasLivePty":true}'
+rc=0; run_backend orca 'backend_agent_idle o1' || rc=$?
+assert_eq "$rc" "1" "mainAgent working is not idle"
+touch "$FAKE_ORCA/terminals/term1.agentwait"
+row '{"state":"done","hasLivePty":true}'
+rc=0; run_backend orca 'backend_agent_idle o1' || rc=$?
+assert_eq "$rc" "1" "agentWait outranks a done row - a parked prompt is never idle"
+rm -f "$FAKE_ORCA/terminals/term1.agentwait"
+# No usable row leaves today's heuristics in charge: the idle glyph stays
+# idle under a working row Orca cannot vouch for, and a spinner stays
+# working under a done one.
+for bad in '{"state":"working","hasLivePty":false}' '{"state":"working"}' \
+  '{"state":"working","hasLivePty":true,"paneKey":"pk-other"}' '{"state":"idle","hasLivePty":true}'; do
+  row "$bad"
+  printf "$glyph" >"$FAKE_ORCA/terminals/term1.title"
+  run_backend orca 'backend_agent_idle o1' || fail "unusable row $bad must fall through to the idle glyph"
+  printf "$spin" >"$FAKE_ORCA/terminals/term1.title"
+  rc=0; run_backend orca 'backend_agent_idle o1' || rc=$?
+  assert_eq "$rc" "1" "unusable row $bad must fall through to the spinner"
+done
+row '{"state":"working","hasLivePty":true}'
+printf "$glyph" >"$FAKE_ORCA/terminals/term1.title"
+touch "$FAKE_ORCA/.ps-fails"
+run_backend orca 'backend_agent_idle o1' || fail "an unreadable ps falls through to the idle glyph"
+rm -f "$FAKE_ORCA/.ps-fails" "$FAKE_ORCA/terminals/term1.agentrow"
+printf 'zsh\n' >"$FAKE_ORCA/terminals/term1.title"
+
 # --- startup dialogs answered BY NAME ---------------------------------------------
 # Orca names the dialog; the driver answers the ones it knows with the key
 # that is safe on THAT dialog (a bare Enter on codex's update prompt runs the

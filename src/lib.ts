@@ -2754,13 +2754,29 @@ export function orcaSubmitVerified(h: string, text: string, stdin: "inherit" | "
   return 0;
 }
 
+const TURN_STATE = `first((.result.worktrees // [])[] | (.agents // [])[] | select(.paneKey == $k and .hasLivePty == true))
+    | .mainAgent.state // .state // empty`;
+
+// orca_turn_state's twin: "" for a show with no recordedPaneKey (no ps
+// call), a failed ps or no live-PTY row keyed by it.
+function orcaTurnState(show: string, stdin: "inherit" | "ignore"): string {
+  const key = capturedText(jqOver(["-r", ".result.terminal.recordedPaneKey // empty"], show, "pipe", "ignore").out);
+  if (key === "") return "";
+  const ps = orcaJson(["worktree", "ps"], stdin);
+  return ps === null ? "" : capturedText(jqOver(["-r", "--arg", "k", key, TURN_STATE], ps, "pipe", "ignore").out);
+}
+
 // backend_agent_idle_pane_orca as harness_up reaches it: a second show, its
-// title's glyph, then tui-idle's 1000 ms wait - the raw `orca terminal wait`,
-// no ok test - and for a codex identity a 40-line screen taken before it and
+// turn state (done idle; working, blocked, waiting not), else its title's
+// glyph, then tui-idle's 1000 ms wait - the raw `orca terminal wait`, no ok
+// test - and for a codex identity a 40-line screen taken before it and
 // compared after a timed-out one.
 export function orcaAgentIdle(h: string, stdin: "inherit" | "ignore", stderr: "inherit" | "ignore"): boolean {
   const show = orcaJson(["terminal", "show", "--terminal", h], stdin);
   if (show === null || jqOver(["-e", ".result.terminal.agentWait != null"], show, "ignore", "ignore").status === 0) return false;
+  const turn = orcaTurnState(show, stdin);
+  if (turn === "done") return true;
+  if (turn === "working" || turn === "blocked" || turn === "waiting") return false;
   const title = capturedText(jqOver(["-r", ".result.terminal.title // empty"], show, "pipe", stderr).out);
   if (spins(title)) return false;
   if (title.startsWith(IDLE_GLYPH)) return true;

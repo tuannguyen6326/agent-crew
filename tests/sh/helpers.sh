@@ -528,6 +528,9 @@ make_fake_orca() {
   #   <h>.prompt-blocked  present = a `--text --enter` send is refused with
   #                   error.code agent_prompt_blocked and types nothing (probe
   #                   2026-11-17: an agent parked on a trust prompt)
+  #   <h>.agentrow    content = one `worktree ps` agent row (JSON object);
+  #                   its paneKey defaults to the "pk-<h>" `show` reports as
+  #                   recordedPaneKey (probe 2026-11-17); absent = no row
   #   <h>.popup-once  one-shot: the next `--enter` on a non-empty composer is
   #                   CONSUMED by a popup (render changes, composer keeps its
   #                   text) - the false-success class the pending check closes
@@ -568,6 +571,7 @@ make_fake_orca() {
   # .create-no-path (worktree create answers ok with an id but NO path - the
   # partial-create shape whose leak the lease must release by id).
   # worktree-list.json (the envelope `worktree list` serves; absent = no entries).
+  # .ps-fails (`worktree ps` fails with an error envelope).
   # Every call appends one line to $FAKE_ORCA/log.
   export FAKE_ORCA="$TMP/fake-orca"
   mkdir -p "$FAKE_ORCA/terminals" "$TMP/stubbin"
@@ -688,6 +692,14 @@ case "${1:-}" in
         if [ -f "$d/worktree-list.json" ]; then cat "$d/worktree-list.json"
         else printf '{"ok":true,"result":{"worktrees":[]}}\n'; fi
         exit 0 ;;
+      ps)
+        [ -f "$d/.ps-fails" ] && { printf '{"ok":false,"error":{"message":"runtime_error"}}\n'; exit 1; }
+        for f in "$d"/terminals/*.agentrow; do
+          [ -e "$f" ] || continue
+          h="${f##*/}"; h="${h%.agentrow}"
+          jq -c --arg k "pk-$h" '{paneKey: $k} + .' "$f"
+        done | jq -s -c '{ok: true, result: {worktrees: [{agents: .}]}}'
+        exit 0 ;;
       *)
         printf '{"ok":true,"result":{"worktree":{}}}\n'; exit 0 ;;
     esac ;;
@@ -758,8 +770,8 @@ case "${2:-}" in
       else shown_title='◐ fake'
       fi
     fi
-    printf '{"ok":true,"result":{"terminal":{"handle":"%s","connected":%s,"writable":%s,"title":"%s","agentIdentity":%s,"agentWait":%s}}}\n' \
-      "$term" "$conn" "$conn" "$shown_title" "$ag" "$aw"; exit 0 ;;
+    printf '{"ok":true,"result":{"terminal":{"handle":"%s","connected":%s,"writable":%s,"title":"%s","agentIdentity":%s,"agentWait":%s,"recordedPaneKey":"pk-%s"}}}\n' \
+      "$term" "$conn" "$conn" "$shown_title" "$ag" "$aw" "$term"; exit 0 ;;
   read)
     [ -f "$d/terminals/$term.buf" ] || { printf '{"ok":false,"error":{"message":"terminal_not_found"}}\n'; exit 1; }
     [ -f "$d/terminals/$term.read-fails" ] && { printf '{"ok":false,"error":{"message":"read_failed"}}\n'; exit 1; }
