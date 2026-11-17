@@ -25,6 +25,8 @@ test first). If the change genuinely has no runtime surface to test, say so
 explicitly instead of skipping silently. The validation pipeline's test step
 is a gate, not a substitute for writing tests as you go.
 
+Assert what the code's users can observe, so the test fails when that behavior breaks and keeps passing when only the internals change.
+
 ## A bug fix starts from its root cause, never from its symptom
 
 No fix before you can state the root cause in ONE sentence that cites a
@@ -72,6 +74,10 @@ comment is worse than none: any edit that invalidates a comment updates or
 deletes it in the same diff. Match the file's existing comment density - in
 a sparsely-commented codebase, a burst of new comments is itself a diff
 defect (the over-engineering rule applies to comments too).
+
+A surprise in your own code is reshaped first - a rename, an extraction, a type - and keeps a comment only when reshaping cannot make it obvious.
+What survives is what you cannot reshape: an outside actor's constraint, a public contract (a script or module header spec), a linked issue.
+A comment asserting a constraint (`do not remove`, `must stay`) is a claim nothing executes: encode it as a test or guard when one is cheap, then drop the comment.
 
 ## A 0-fix review verdict FREEZES the tree
 
@@ -136,6 +142,9 @@ and it runs only as its own periodic task immediately before each
 Learning DISTILL run.
 This is the same "test only what your change puts at risk" discipline
 as the over-engineering rule above, applied to verification.
+
+Narrow is not shallow: the evidence is the real thing running - a test that drives the real code path, a value read from the real artifact, the feature exercised.
+"It compiles", a type check, and a self-report (yours or a subagent's) are not evidence that the behavior works.
 
 ## Reap your background jobs - never orphan a busy loop
 

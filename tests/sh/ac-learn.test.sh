@@ -407,6 +407,10 @@ assert_file "$learn_rundir/brief.md" "the durable scout brief survives the run"
 assert_file "$learn_rundir/kickoff.md" "the durable kickoff survives the run"
 assert_contains "$(cat "$learn_rundir/brief.md")" "Do NOT launch any async/background sub-agents" \
   "the brief forbids async sub-agents (turn-end harvest is incompatible with them)"
+assert_contains "$(cat "$learn_rundir/brief.md")" "A VIOLATION of a lesson by a crew that had it loaded is NOT evidence for it" \
+  "the brief refuses to count a violation of an always-loaded lesson as its reinforcement"
+assert_contains "$(cat "$learn_rundir/brief.md")" "\`enforce <slug> - violated: <the window pointers> - check: <the cheapest check that would have refused it, or judgment-only>\`" \
+  "the brief turns a violated always-loaded lesson into an enforce proposal"
 [ -z "$(ls "$AC_HOME"/state/verify-learning-*.meta 2>/dev/null)" ] || fail "the scout meta is removed at harvest"
 [ -z "$(ls "$AC_HOME"/state/.pane-verify-learning-* 2>/dev/null)" ] || fail "the scout pane handle is removed at harvest"
 

@@ -894,6 +894,15 @@ Pass 2 reads its output.
   reinforce <fresh-slug> --retire <slug> --evidence '<why>'\` to free its
   bytes directly, or names it as THIS run's own crewmate candidate's
   \`retire:\` header when one is being proposed anyway.
+  A VIOLATION of a lesson by a crew that had it loaded is NOT evidence for it -
+  it is evidence that its prose did not hold. For ANY entry, stale or fresh,
+  that THIS window shows broken that way, propose instead, in the same section:
+  \`enforce <slug> - violated: <the window pointers> - check: <the cheapest check that would have refused it, or judgment-only>\`
+  Rank the check by what makes the mistake impossible - a structure that
+  removes it, then a type, then a guard or lint whose refusal names the fix,
+  then a test - and name only a check that would have refused the REAL past
+  instance. The chief mints each check as an ordinary backlog row; a
+  judgment-only entry stays prose.
 - \`sources/scenes.md\` - the fleet's L2 SCENE store index (one line per scene:
   slug, heat, updated, summary), plus its count against \`config/scene-max\`. A
   scene is a consolidated TOPIC file a reader opens on purpose - the layer
