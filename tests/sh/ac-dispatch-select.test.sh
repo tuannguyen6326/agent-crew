@@ -35,6 +35,20 @@ assert_eq "$("$BIN/ac-dispatch-select.sh" --pane learning)" $'harness=ar\tmodel=
   "a config/launch-<h> template makes a custom harness launchable"
 rm -f "$AC_HOME/config/launch-ar" "$AC_HOME/config/crew-dispatch.json"
 
+# claude-teams is a CREW launch of claude (ac-spawn.sh types `orca claude-teams`),
+# so a crew rule or default takes it with no template, and a pane refuses it.
+cat >"$AC_HOME/config/crew-dispatch.json" <<'EOF'
+{"rules": [{"when": "fan-out", "use": {"harness": "claude-teams", "model": "opus"}}],
+ "default": {"harness": "claude-teams"},
+ "panes": {"learning": {"harness": "claude-teams"}}}
+EOF
+assert_eq "$("$BIN/ac-dispatch-select.sh" --rule 1)" $'harness=claude-teams\tmodel=opus\teffort=' "a crew rule resolves claude-teams"
+assert_eq "$("$BIN/ac-dispatch-select.sh")" $'harness=claude-teams\tmodel=\teffort=' "a crew default resolves claude-teams"
+rc=0; out="$("$BIN/ac-dispatch-select.sh" --pane learning 2>"$TMP/err")" || rc=$?
+assert_eq "$rc:$out" "1:" "a pane refuses claude-teams"
+assert_contains "$(cat "$TMP/err")" "harness 'claude-teams'" "the pane refusal names it"
+rm -f "$AC_HOME/config/crew-dispatch.json"
+
 # No config: fall back to crew-harness (default claude).
 assert_eq "$("$BIN/ac-dispatch-select.sh")" $'harness=claude\tmodel=\teffort=' "fallback claude"
 printf 'codex\n' >"$AC_HOME/config/crew-harness"

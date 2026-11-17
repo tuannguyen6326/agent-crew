@@ -8,7 +8,7 @@
 // tests/sh/ac-spawn-*.test.sh suites are its contract tests.
 //
 // Usage: ac-spawn.sh <id> <project-name-or-dir> [--scout] [--mode <m>]
-//                    [--harness <claude|codex|opencode|pi|cursor|custom>] [--model <name>]
+//                    [--harness <claude|claude-teams|codex|opencode|pi|cursor|custom>] [--model <name>]
 //                    [--effort <low|medium|high|xhigh|max|ultracode>]
 //                    [--backend <orca>]
 //                    [--resume-from <old-task-id>]
@@ -201,6 +201,13 @@
 // When config/crew-dispatch.json exists, crew spawns REFUSE to guess the
 // harness: pick a profile with ac-dispatch-select.sh (--list / --rule) and
 // pass --harness/--model/--effort explicitly.
+// --harness claude-teams (crew spawns only) is claude launched as
+// `orca claude-teams <the claude args>`: Claude Code Agent Teams, its
+// teammates in the crewmate's own worktree. The meta records harness=claude
+// and launch=claude-teams, so every later step - seeding, kickoff, ultracode,
+// --recover - is claude's, and the recovered pane resumes the same way.
+// Teammates inherit no AC_* env and the watcher reads only the leader's pane
+// (harness-facts.md), so it fits read-only fan-out inside one task.
 // Model and effort are fleet-wide defaults: absent --model/--effort fall back
 // to config/model and config/effort (like config/crew-harness). --model maps to
 // claude --model / codex -m / pi --model; the --effort FLAG is claude-only, but
@@ -692,6 +699,7 @@ import { accessSync, appendFileSync, constants as fsc, existsSync, lstatSync, mk
 import { basename as pathBase, dirname } from "node:path";
 import { acDoneline, records } from "./backlog.ts";
 import {
+  CLAUDE_TEAMS,
   STARTED_BIN,
   arithValue,
   backendAgentIdle,
@@ -1046,6 +1054,8 @@ function launchSessionId(line: string): { status: number; out: string } {
   const nl = r.out.indexOf("\n");
   return { status: r.status, out: cap(nl < 0 ? r.out : r.out.slice(0, nl)) };
 }
+
+const teamsLaunch = (claudeLine: string): string => claudeLine.replace(/^claude /, "orca claude-teams ");
 
 // A random RFC 4122 v4 id for a host without uuidgen, from od's 16 bytes.
 function uuidV4(): string {
@@ -1556,7 +1566,7 @@ async function main(argv: string[]): Promise<void> {
     resumeSid = recSid;
     const l = spawnLaunch("claude", model, effortFlag, brief, id);
     ee(l.status);
-    launch = l.out;
+    launch = metaGetSoft(S.meta, "launch") === CLAUDE_TEAMS ? teamsLaunch(l.out) : l.out;
     if (!commandV("claude")) die("harness binary not found: claude");
     let notice = "Notice: your pane was destroyed and has been RECOVERED - same session, same worktree, uncommitted work untouched. A command running when the pane died was killed mid-way: before continuing, check what it left (git status and log, the remote branch, any PR you were opening) and re-run it only if it did not finish.";
     let envPrefix: string;
@@ -1953,14 +1963,16 @@ then spawn again`);
   const prof = resolveProfile(["--harness", harnessFlag]);
   ee(prof.status);
   const ph = tabFields(u8(prof.out), 3)[0]!;
-  const harness = ph.startsWith("harness=") ? ph.slice("harness=".length) : ph;
+  const picked = ph.startsWith("harness=") ? ph.slice("harness=".length) : ph;
+  const teams = picked === CLAUDE_TEAMS;
+  const harness = teams ? "claude" : picked;
   // SHARP EDGE (above): a config-fallback model is dropped on a KNOWN
   // built-in other than the fleet's own harness.
   if (harnessKnown(harness) && !modelExplicit && harness !== configReadSoft("crew-harness", "claude")) model = "";
   const kind = scout ? "scout" : "ship";
   const l = spawnLaunch(harness, model, effortFlag, brief, id);
   ee(l.status);
-  launch = l.out;
+  launch = teams ? teamsLaunch(l.out) : l.out;
   const first = launch.split(" ")[0]!;
   if (!launchable(first)) die(`harness binary not found: ${first}`);
 
@@ -2024,6 +2036,7 @@ then spawn again`);
   const scope = process.env.AC_SCOPE ?? "";
   if (wakeScopeOk(scope)) metaSetHard(S.meta, "fleet_scope", scope);
   metaSetHard(S.meta, "harness", harness);
+  if (teams) metaSetHard(S.meta, "launch", CLAUDE_TEAMS);
   recordOpts(harness, model, effort, effortFlag);
   metaSetHard(S.meta, "kind", kind);
   metaSetHard(S.meta, "mode", mode);
