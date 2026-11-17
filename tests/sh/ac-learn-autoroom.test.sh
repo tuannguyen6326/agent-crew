@@ -33,8 +33,9 @@ export AC_KICKOFF_READY_BUDGET=5
 printf 'echo roomchief __ID__\n' >"$AC_HOME/config/launch-fake"
 printf 'fake\n' >"$AC_HOME/config/crew-harness"
 # ac-spawn.sh pins a NEW task's AC_BACKEND from configReadSoft("backend",
-# "herdr") when no --backend flag is given (src/spawn.ts) - the firing
-# path's real --roomchief spawn must find orca pinned explicitly.
+# "orca") when no --backend flag is given (src/spawn.ts) - pin it explicitly
+# anyway, so the firing path's real --roomchief spawn never relies on the
+# default.
 printf 'orca\n' >"$AC_HOME/config/backend"
 
 meta="$AC_HOME/state/learning-chief.meta"
@@ -799,8 +800,8 @@ assert_eq "$(suite_tasks | wc -l | tr -d ' ')" "1" "no second suite run while on
 
 # -- a run whose pane survived a REBOOT: ALIVE, but recorded against an
 #    EARLIER boot session - the failure mode a presence check cannot see at
-#    all, because the backend's own answer is "alive". herdr restores a pane
-#    across a reboot as a bare login shell with no runner inside it, so
+#    all, because the backend's own answer is "alive". A backend can restore a
+#    pane across a reboot as a bare login shell with no runner inside it, so
 #    "alive" stops being proof that the run is still going; only a changed
 #    boot-session token can tell the two cases apart. Both the "earlier"
 #    and the "current" token are synthetic fixtures, never a real host's
@@ -879,7 +880,7 @@ suite_task_clear
 # -- a run that DIED: only a DEFINITE gone reclaims it ------------------------
 # The one failure mode a presence check cannot heal. cmd_suite retires its own
 # identity when it FINISHES, never when it is KILLED, so a SIGKILLed pane (a
-# host reboot, a herdr restart) leaves a meta behind - and a presence-only gate
+# host reboot, a backend restart) leaves a meta behind - and a presence-only gate
 # would print "still in flight" on every drain for ever, waiting for a human to
 # rm a file. A killed owner is a case this codebase RECOVERS from, like
 # ac_lock_stale reclaiming a lock left by a dead pid.
@@ -888,8 +889,8 @@ suite_task_clear
 rm -f "$suite_rec"
 dead=verify-suite-1
 printf 'kind=verify-suite\nbackend=orca\nwindow=x\n' >"$AC_HOME/state/$dead.meta"
-# A handle naming a pane herdr does not have: `pane get` fails, `pane list`
-# answers and does not carry it - the backend was REACHED and said gone.
+# A handle naming a terminal orca does not have: `terminal show` fails, the
+# fallback `status` still answers - the backend was REACHED and said gone.
 printf 'termGONE tabGONE\n' >"$AC_HOME/state/.pane-$dead"
 out="$("$BIN/ac-learn.sh" autoroom 2>&1)" || fail "a held autoroom must still exit 0: $out"
 assert_no_file "$AC_HOME/state/$dead.meta" "a DEFINITE gone reclaims the dead run's meta"
