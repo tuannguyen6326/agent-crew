@@ -603,8 +603,7 @@ rm -f "$AC_HOME/config/remote-reply" "$AC_HOME/config/remote-mirror"
 # nothing about the ladder). backend_mark_wait_orca only needs a recorded
 # pane handle - it never calls the orca CLI at all (ac-backend-orca.sh) - so
 # the wait-file stamp is the only observable here; orca has no pane-visible
-# "blocked" render of its own to check alongside it (GAP: fake herdr's
-# `.reported` display had no orca production signal to port).
+# "blocked" render of its own to check alongside it.
 printf 'orca\n' >"$AC_HOME/config/backend"
 printf 'backend=orca\nkind=roomchief\n' >"$AC_HOME/state/sfam-chief.meta"
 printf 'pR1 tR1\n' >"$AC_HOME/state/.pane-sfam-chief"

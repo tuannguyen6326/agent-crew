@@ -966,8 +966,8 @@
 // ever - but closing it belongs to ingest_stream's own commit ordering, not to
 // this bound.
 // SIZING THE KNOB: keep ceiling + the pane pass + AC_POLL under AC_GUARD_GRACE -
-// the pane pass is a term in that sum, not the `~0` it once was, on the FAST-
-// failure counts above; it carries no ceiling of its own on a wedged call.
+// the pane pass is a term in that sum on the FAST-failure counts above; it
+// carries no ceiling of its own on a wedged call.
 // Above the grace a
 // wedged poll re-opens the very beacon gap the guard reads, and the chief is
 // blocked at its turn end to arm a watcher that is already running - the exact

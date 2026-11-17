@@ -304,10 +304,8 @@ const capture = (label: string, args: string[], env?: Record<string, string>, se
     twin: 'const r = L.backendCapturePane(A[0] ?? "", A[1] ?? "", { stdout: "pipe", stderr: "inherit" }); out(r.out); if (r.exited) process.exit(r.status); return r.status;',
   });
 
-// herdr's 200-line capture floor and its AC_HERDR_SESSION/config/herdr-session
-// knob have no orca counterpart (orca_json carries no session concept, and
-// backend_capture_pane_orca passes --limit straight through with no floor) -
-// reported as a gap, not ported.
+// backend_capture_pane_orca passes --limit straight through with no floor
+// of its own.
 
 test("C: orca reads the rendered screen", () => {
   capture("ok", ["t_1", "40"]);

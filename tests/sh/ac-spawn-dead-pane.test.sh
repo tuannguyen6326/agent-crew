@@ -98,15 +98,13 @@ assert_contains "$(cat "$(fake_orca_buf oblind2)")" \
 # here also gets a `cd` into its worktree (one text+Enter pair, orca-only -
 # backend_window_new_orca) ahead of its own launch line, so the baseline (no
 # dialog) is 2 Enters, not 1.
-# GAP, narrowed: proving the EXTRA Enter actually lands when a dialog IS
-# present needed fake herdr's static agent_status=blocked, which orca's own
-# dialog check (orca_pane_dialog) does not share - arming make_fake_orca's
-# .agentwait before the spawn starts also blocks the LAUNCH LINE's own first
-# submit (every press on that terminal is dialog-gated, not just the
-# startup-dialog block's), so it cannot be armed only AFTER that submit
-# without a dynamic trigger make_fake_orca has no knob for. What stays
-# provable is the baseline every harness shares when nothing needs
-# answering.
+# Proving the EXTRA Enter actually lands when a dialog IS present is not
+# provable with this fixture: arming make_fake_orca's .agentwait before the
+# spawn starts also blocks the LAUNCH LINE's own first submit (every press
+# on that terminal is dialog-gated, not just the startup-dialog block's),
+# so it cannot be armed only AFTER that submit without a dynamic trigger
+# make_fake_orca has no knob for. What stays provable is the baseline every
+# harness shares when nothing needs answering.
 
 enters_before_kickoff() {
   awk '/terminal send/ && /--text/ && /kickoff order at/ { exit }
