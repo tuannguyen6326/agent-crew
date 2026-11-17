@@ -1,18 +1,10 @@
 #!/usr/bin/env bash
 # ac-backend.test.sh - backend SELECTION and dispatch validation: the
-# no-config default, and rejection of every name but orca (including the
-# retired herdr and the removed tmux/wezterm/screen), plus the
+# no-config default, and rejection of every name but orca, plus the
 # ac_startup_dialogs loop bound, which is backend-neutral (injected
 # callbacks, never a real driver call). The orca driver's own behavior -
 # handle persistence, liveness, capture, send, kill, dialogs, the wait
-# stamp - is tests/sh/ac-backend-orca.test.sh; this file no longer carries
-# a driver of its own to prove, since herdr's was the only one it ever held
-# (GAP: every section that drove real herdr CLI calls - window placement,
-# capture, send, kill, focus, startup-dialog naming, the captain-wait stamp,
-# the three-state liveness ladder, the per-RPC hang ceiling, the launch-line
-# env fixup, and the composer-text byte matcher - is deleted outright, not
-# ported; orca's own versions of the ones that still apply are already
-# proven in ac-backend-orca.test.sh).
+# stamp - is proven in tests/sh/ac-backend-orca.test.sh.
 # shellcheck disable=SC2016  # script bodies are deliberately unexpanded here
 
 # Fail-closed sourcing: unsourced (suite run outside tests/sh/), errexit is never
@@ -27,7 +19,7 @@ mkdir -p "$stub"
 run_backend_routed() {
   # run_backend_routed <backend> <script> - source the libs with the stub
   # PATH and the given backend, the REAL ladder, no override: exercises
-  # ac_backend itself (the cutover's own refusal).
+  # ac_backend's own refusal of any backend name but orca.
   PATH="$stub:$PATH" AC_BACKEND="$1" AC_HOME="$AC_HOME" bash -c "
     set -euo pipefail
     . '$BIN/ac-lib.sh'

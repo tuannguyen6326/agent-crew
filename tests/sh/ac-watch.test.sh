@@ -847,12 +847,11 @@ rm -f "$state"/*.meta "$state"/.pane-* "$state"/.hash-* "$state"/.change-* \
   "$state"/.seen-* "$state"/.stale-* "$state"/.unobservable-* "$state"/.last-watcher-beat*
 rm -rf "$state"/.wake-spool*; mkdir -p "$state/.wake-spool"
 
-# The RPC-wedge scenario this row once drove needed the herdr driver itself
-# (no orca RPC timeout exists to model it against - ac-backend.sh HUNG RPC);
-# the cutover (T8) refuses backend=herdr before the pane pass ever reaches a
-# dispatch call, so the wedge itself is unreachable now - this proves the
-# refusal fires there instead, named, before any pane is even touched (no
-# pane fixture is needed either, for the same reason).
+# No orca RPC timeout exists to model an RPC-wedge scenario against
+# (ac-backend.sh's HUNG RPC note); ac_backend refuses backend=herdr before
+# the pane pass ever reaches a dispatch call, so this proves the refusal
+# fires there instead, named, before any pane is even touched (no pane
+# fixture is needed either, for the same reason).
 printf 'window=crew:w1\nbackend=herdr\n' >"$state/w1.meta"
 AC_LOCK_PID=$$ AC_REMOTE_POLL=0 bash "$BIN/ac-watch.sh" --once >"$TMP/wedge.out" 2>"$TMP/wedge.err" || true
 assert_contains "$(cat "$TMP/wedge.err")" "ERROR: unsupported backend 'herdr' (valid backend: orca)" \

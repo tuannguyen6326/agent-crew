@@ -173,11 +173,3 @@ test("familyOwned reads what ac_family_owned reads: an in-flight meta of the id'
   if (!ROOTED) same("an unreadable meta counts", { ...owned("fam"), seed: (s) => (meta(s, "fam", "verify-qa"), chmodSync(join(s, "home/state/fam.meta"), 0o000)) });
   same("no state dir", { ...owned("fam"), args: ["fam", "@S/home/none"] });
 }, 120000);
-
-// GAP, not ported: a twelve-scenario fixture here used to drive
-// backend_window_new's herdr arm (tab-create failures, workspace-list races,
-// the missing-herdr-binary row) through a driver-internal bypass in
-// tests/ts/backend.test.ts and tests/ts/teardown.test.ts. The herdr driver
-// and that bypass's own primitives (herdrVerb, herdrKillWindow) are deleted
-// outright now, not merely unreachable through the dispatcher - there is no
-// arm left to exercise, bypass or otherwise.

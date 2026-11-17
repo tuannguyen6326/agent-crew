@@ -212,10 +212,10 @@ function side(row: Row, s: string, oracle: boolean): Side {
     ? ["/bin/bash", "-c", `${head}; . "$0/ac-lib.sh" || exit $?; . "$0/ac-backend.sh" || exit $?; ${row.bash}${row.errexit ? "" : `; printf '|rc=%s' "$?"`}`, BIN, ...args]
     : [process.execPath, "-e", `${PRE} const A = ${JSON.stringify(args)}; const rc = await (async () => { ${row.twin} })(); writeSync(1, "|rc=" + rc); process.exit(${row.errexit ? "rc" : "0"});`];
   const r = Bun.spawnSync(cmd, { cwd: ROOT, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-  // bash 3.2's `set -m` used to print its own `child setpgid` line now and
-  // then (herdr_rpc_bounded's own job control, since deleted) - shell-own
-  // stderr, never reproduced. Kept harmless: nothing sourced here still runs
-  // under `set -m`, so this never matches, but a future one might.
+  // bash's `set -m` can print a `child setpgid` line to stderr as shell-own
+  // noise, never reproduced here; nothing sourced in this suite runs under
+  // `set -m`, so this regex never actually matches, but it's kept harmless
+  // in case a future one does.
   const norm = (t: string): string =>
     t.replaceAll(s, "S").replace(/\.tmp\.[0-9]+/g, ".tmp.PID").replace(/\/ac-seed\.[A-Za-z0-9]{6}\b/g, "/ac-seed.XXXXXX").replace(/^.*: child setpgid \([0-9]+ to [0-9]+\): Operation not permitted\n/gm, "");
   let err = norm(r.stderr.toString("latin1"));

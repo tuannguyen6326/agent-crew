@@ -430,10 +430,6 @@ assert_eq "$(cat "$LEARN_CREW_STATE_CAPTURE")" "status| started learning scout p
 unset LEARN_PANE LEARN_CREW_STATE LEARN_CREW_STATE_CAPTURE
 rm -f "$AC_HOME/config/backend"
 
-# GAP, not ported: this block used to re-run the same proof pinned to
-# config/backend=herdr, showing both drivers stayed operational. orca is now
-# the only backend - that line refuses before a pane is ever touched.
-
 unset AC_PANE_AGENT
 rm -f "$AC_HOME/state/.learn.meta"
 

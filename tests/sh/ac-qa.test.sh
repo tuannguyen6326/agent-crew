@@ -24,9 +24,8 @@
 . "$(dirname "$0")/helpers.sh" \
   || { printf 'run this suite from tests/sh/ (helpers.sh not found)\n' >&2; exit 1; }
 
-# The dashboard auto-open this knob used to gate is retired outright (T10):
-# `start` never opens one on any backend now, so AC_QA_WATCH is read by
-# nothing - kept set below only because every row already carries it.
+# AC_QA_WATCH is read by nothing: `start` never opens a dashboard board on
+# any backend. Kept set below only because every row already carries it.
 export AC_QA_WATCH=off
 
 make_home
@@ -2775,13 +2774,6 @@ cd "$wqrepo" || fail "cd qawatchrepo"
 assert_eq "$(cat "$QHLOG" 2>/dev/null)" "" "qa start invokes no herdr"
 assert_no_file "$wqrepo/.crew/qa/$(readlink "$wqrepo/.crew/qa/current")/watch.pane" "qa start records no board pane"
 cd "$repo" || fail "cd back from qawatchrepo"
-
-# GAP, not ported: a "finish retires a pre-cutover fleet's stale watch.pane"
-# block used to prove finish best-effort closed a watch.pane left over from
-# before the T10 cutover, through herdr when it was on PATH, then removed the
-# file. That whole sweep (the close call AND the file removal) is deleted
-# outright, not ported - nothing has written a watch.pane since T10, so a
-# fleet carrying one is pre-cutover legacy with no live path left to reach it.
 
 # --- completion gate negatives: grade / evidence root / web visual ----------------
 # One pass-shaped run, then break exactly one per-case guard at a time: the

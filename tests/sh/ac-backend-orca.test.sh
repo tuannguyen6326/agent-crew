@@ -558,12 +558,6 @@ run_backend orca '
   || fail "a family whose tab died must get a FRESH tab, not a stale record"
 run_backend orca 'backend_kill_window fy-again'
 
-# GAP, not ported: a "both drivers in ONE process" block used to flip
-# AC_BACKEND between herdr and orca mid-script, proving per-task dispatch
-# never sticks to the first driver a process happened to route through. With
-# one backend left there is no second driver to flip to and prove separation
-# from.
-
 # --- rejection: unknown names still refuse, naming the valid set -----------------
 
 assert_fails run_backend tmux 'backend_target x1'
@@ -574,9 +568,9 @@ assert_contains "$err" "valid backend: orca" \
 # --- homeless resolution rides AC_FLEET_STATE ------------------------------------
 # A crewmate pane deliberately carries NO AC_HOME and no AC_BACKEND - only the
 # AC_FLEET_* channel (ac-spawn fleet_env). A verifier it calls (ac-verify via
-# ac-qa) must still resolve the FLEET's backend, not the bare env default
-# (measured: a homeless pane's unpinned read used to answer the raw default
-# instead of the fleet's own config/backend, and leased from the wrong pool).
+# ac-qa) must still resolve the FLEET's backend, not the bare env default -
+# an unpinned read of a homeless pane answers from config/backend and leases
+# from the right pool, never from the bare env default.
 mkdir -p "$AC_HOME/config" "$AC_HOME/state"
 printf 'orca\n' >"$AC_HOME/config/backend"
 b="$(env -u AC_HOME -u AC_BACKEND AC_FLEET_STATE="$AC_HOME/state" bash -c "
@@ -609,11 +603,6 @@ out="$(env -u AC_HOME -u AC_BACKEND AC_FLEET_STATE="$AC_HOME/state" bash -c "
 " 2>/dev/null || true)"
 assert_contains "$out" "HOMELESS-ORCA-BUF" \
   "routed pane reads follow the fleet-state backend, never the raw env default"
-# GAP, not ported: a herdr_cli guard used to prove a raw RPC that bypassed
-# the per-call dispatch and landed on the WRONG driver died loudly as the
-# leak it was. herdr_cli, and the second driver it could leak into, are both
-# gone; calling orca's own primitive directly is no longer a wrong-driver
-# leak, since orca is the only driver dispatch can ever resolve to.
 rm -f "$AC_HOME/config/backend" "$FAKE_ORCA/terminals/hless.buf" "$FAKE_ORCA/terminals/hless.tab"
 
 # --- orca_worktree_lease: branch source + freshest tip ---------------------------

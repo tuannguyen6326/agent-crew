@@ -528,12 +528,8 @@ GD_ENV=()
 #    orca's terminal show; no pane handle (no call); a refused backend name
 #    (no call). The answering family sorts LAST; a chief meta is crew in
 #    flight, so every world has a fresh beacon.
-# GAP, not ported: herdr's own three-state ladder (pane get, then pane list,
-# then status server - gone vs unreachable), its AC_HERDR_SESSION knob
-# riding the call's argv, and a hung-RPC case bounded by AC_HERDR_RPC_TIMEOUT
-# all had no orca counterpart worth this file re-proving - orca's own
-# three-state shape (and the fact it carries no per-call RPC ceiling at all,
-# unlike herdr - ac-backend.sh HUNG RPC) is already proven in
+# orca's three-state liveness shape, and the fact it carries no per-call RPC
+# ceiling at all (ac-backend.sh HUNG RPC), is proven in
 # tests/sh/ac-backend-orca.test.sh; this file only needs "alive or not, and a
 # refused name is treated as neither".
 fresh() { fresh0; beat "$T"; }

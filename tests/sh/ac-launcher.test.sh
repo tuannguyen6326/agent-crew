@@ -1,14 +1,10 @@
 #!/usr/bin/env bash
 # ac-launcher.test.sh - the `ac` zsh launcher (docs/examples/ac.zsh): the
-# ORCA chief path only. The launcher's herdr branch is its own, unported
-# code (docs/ is out of scope for the herdr removal that retired
-# herdr_resolve_workspace/herdr_close_default_tabs from bin/ac-backend.sh -
-# the launcher's herdr branch sources that file and calls both by name, so
-# it is now dead on arrival, bash's 127 under `set -e`; T13 owns fixing or
-# retiring it). Every row this suite once ran through that branch (the root
-# workspace label, the pinned-session knob, the CRLF-saved backend=herdr
-# read, the chief pane's compact threshold) is gone with it - GAP, not
-# ported, and not fixable here without touching docs/examples/ac.zsh.
+# ORCA chief path only. docs/ is out of scope for this suite, so the
+# launcher's herdr branch - which sources bin/ac-backend.sh and calls
+# herdr_resolve_workspace/herdr_close_default_tabs, neither of which that
+# file defines - is dead on arrival (bash's 127 under `set -e`) and left
+# unfixed and unproven here.
 
 # Fail-closed sourcing: unsourced (suite run outside tests/sh/), errexit is never
 # armed and $AC_HOME is the operator's REAL fleet home - abort instead.

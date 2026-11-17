@@ -50,10 +50,9 @@ assert_contains "$(cat "$(fake_orca_buf oup1)")" \
 assert_contains "$(cat "$AC_HOME/data/oup1/kickoff.md")" \
   "You are an agent-crew crewmate. Read and follow the brief" "the kickoff FILE carries the full prompt"
 
-# GAP, not ported: the "came up at the gate, DIED on the kickoff" case needed
-# fake herdr's .die-on-text (exit the instant specific text is sent) to flip a
-# pane from alive to dead mid-spawn. make_fake_orca has no dynamic
-# death-trigger knob - .default-title is set once, at terminal creation.
+# make_fake_orca sets .default-title once, at terminal creation, with no
+# dynamic death-trigger knob - a pane cannot be made to flip from alive to
+# dead mid-spawn in this fixture.
 
 # --- a pane that fell back to a shell: fail closed -----------------------------
 
@@ -131,9 +130,8 @@ assert_eq "$(enters_before_kickoff)" "2" \
   "no other harness gets the codex dialog answer either - the same cd and launch-line submits precede its kickoff"
 "$BIN/ac-teardown.sh" cl1 --force >/dev/null 2>&1
 
-# GAP, not ported: "a codex pane whose harness died ON the dialog answer" needed
-# fake herdr's .die-on-bare-enter (exit the instant a bare Enter lands on an
-# empty composer) - make_fake_orca has no matching dynamic death-trigger knob.
+# make_fake_orca has no dynamic death-trigger knob, so a pane cannot be made
+# to die the instant a bare Enter lands on an empty composer in this fixture.
 
 # --- a CUSTOM launch-codex template gets no borrowed keystroke -----------------
 # Launch PROVENANCE decides, not the harness name: a custom template's TUI is

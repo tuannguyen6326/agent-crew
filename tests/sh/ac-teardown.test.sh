@@ -875,10 +875,9 @@ if [ "$XROOTED" = 0 ]; then
 fi
 
 # 9. the pane kill: a backend=herdr task refuses before any kill is
-#    attempted (cutover, T8); orca's terminal closed and its emptied tab's
-#    family record retired (x9o below, already orca-pinned - the dedicated
-#    dual coverage T4 established); a kill that ends the caller (meta and
-#    status archived, the lease left).
+#    attempted; orca's terminal closed and its emptied tab's family record
+#    retired is covered separately (x9o below, orca-pinned); a kill that
+#    ends the caller (meta and status archived, the lease left).
 x9() { xseed; xrepo r; xlease r t; sed -i '' 's/^backend=orca$/backend=herdr/' "$H/home/state/t.meta"; xtab t 1; mkdir -p "$H/home/data/t"; }
 xdo x9
 xrun t

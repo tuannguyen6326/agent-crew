@@ -114,11 +114,6 @@ rm -f "$H/home/state/t1.meta" "$H/home/state/.pane-t1" "$H/home/state/o0.meta" "
 
 # 3. the fleet backend name: AC_BACKEND=tmux and config/backend tmux are
 #    refused, ahead of any meta read.
-# GAP, not ported: a sibling case here used to prove a task meta's own
-# backend= overrides an AC_BACKEND the fleet-level check already accepted
-# (AC_BACKEND=orca, meta backend=herdr) - with one backend left, both name
-# the same driver, so a successful peek can no longer tell "accepted the
-# ambient value" from "the meta overrode it" apart.
 PENV=(AC_BACKEND=tmux)
 peek c1; prefuse "$PBAD" "3: AC_BACKEND=tmux is refused"
 PENV=()
@@ -127,11 +122,9 @@ peek c1; prefuse "$PBAD" "3: config/backend tmux is refused"
 rm -f "$H/home/config/backend"
 
 # 4. liveness: an unreachable orca and orca absent from PATH are the BACKEND
-#    line; an exited terminal is gone.
-# GAP, not ported: a wedged-at-a-ceiling sub-case used to prove a hung herdr
-# costs no more than AC_HERDR_RPC_TIMEOUT, its children reaped. The orca
-# driver carries no per-call RPC ceiling of its own (ac-backend.sh HUNG RPC);
-# there is no ceiling here to bound or prove.
+#    line; an exited terminal is gone. The orca driver carries no per-call
+#    RPC ceiling of its own (ac-backend.sh HUNG RPC), so there is no ceiling
+#    case to prove here.
 touch "$H/orca/.unreachable"
 peek c1; prefuse "ERROR: $PUNREAD" "4: an unreachable orca"
 rm -f "$H/orca/.unreachable"
@@ -183,14 +176,11 @@ pclosed="$(cd "$H" && env -u AC_BACKEND LC_ALL=C PATH="$TMP/stubbin:$PATH" FAKE_
   AC_GUARD_ROOT="$TMP/pguard-root" AC_HOME="$H/home" bash -c '"$0/ac-peek.sh" c1 20000 | head -n 1 >/dev/null; printf "%s" "${PIPESTATUS[0]}"' "$BIN" </dev/null)"
 assert_eq "$pclosed" "141" "6: a reader that leaves early ends the run with SIGPIPE's 141"
 
-# GAP, not ported: herdr's `pane read` served the pane's raw bytes directly
-# (fake herdr's own `pane read` was a bare `cat`), so an invalid-UTF-8 byte
-# passed through untouched - provable with that stub. orca's `terminal read`
-# answers JSON, which cannot carry a raw invalid byte without the real CLI's
-# own choice of escape (unverified here, no real binary to check against);
-# this fake's own JSON step (jq) replaces it with U+FFFD, which may or may
-# not match the real CLI - asserting either way without that CLI to check
-# against would be a claim this suite cannot back.
+# An invalid-UTF-8 byte has no proven behavior here: orca's `terminal read`
+# answers JSON, and JSON cannot carry a raw invalid byte without the real
+# CLI's own choice of escape. This fake's JSON step (jq) replaces it with
+# U+FFFD, which may or may not match the real CLI - asserting either way
+# without that CLI to check against would be a claim this suite cannot back.
 
 # 8. orca: a live terminal is read at --limit <lines> --screen, its blank
 #    lines dropped; an exited one is gone; an unreachable runtime is the

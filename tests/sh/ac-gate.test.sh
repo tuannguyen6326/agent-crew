@@ -1323,13 +1323,6 @@ assert_contains "$(cat "$GLOG.prompt")" "data/noroom/room.md" "the created room 
 assert_contains "$(cat "$AC_HOME/data/noroom/room.md")" "GATE-VERIFY:" "gate-verify records the chief pass in the created room"
 
 # ============================================================================
-# 13. (retired) the gate board used to auto-open through watchOpen, and a
-# board left over from a pre-cutover fleet was retired by watchRetire at the
-# family's last live run; both are gone - no run ever opens or retires a
-# board now.
-# ============================================================================
-
-# ============================================================================
 # 14. a LARGE captain.md never aborts the gate (fed as a PATH, no cap, no truncation)
 # ============================================================================
 # captain.md is the captain's full standing ledger: legitimately large and
@@ -2769,10 +2762,6 @@ if [ -e "$XWD/spec/second-chief-r1.md" ]; then
 fi
 rc=0; xrun_side widget spec || rc=$?
 assert_eq "$rc:$(cat "$TMP/xn.err")" "0:" "the next run settles the round the terminated one left"
-
-# 9. (retired) the board used to auto-open, launch line, live/dead/
-# unobservable reuse and all; watchOpen and watchRetire are both gone, so no
-# run opens or retires a board now.
 
 # 10. signals: HUP, INT and TERM to the gate alone mid-turn - the turn is
 #     waited out, the run ends 128+n through its exit, nothing published.

@@ -506,13 +506,9 @@ assert_eq "$(awk -F= '$1=="initiated_by"{print $2}' "$AC_HOME/state/orph2-chief.
   "initiated_by - the cap counts on it too (absent reads as chief-initiated)"
 "$BIN/ac-teardown.sh" orph2-chief >/dev/null
 
-# (3) GAP, not ported: the "reap stays INSIDE the KILL OWNERSHIP PROOF" case
-# (a tab no longer labelled crew:<id> is a co-tenant, refused and warned about
-# rather than closed) had no orca shape to begin with - backend_kill_window_orca
-# closes by its unique HANDLE alone and never round-trips a label, so there is
-# no foreign-tab state for orca to ever misidentify as its own. The mechanism
-# this case proved (backend_kill_window_herdr's label round-trip) no longer
-# exists in bin/ac-backend.sh.
+# backend_kill_window_orca closes by its unique HANDLE alone and never
+# round-trips a label, so there is no foreign-tab state for orca to ever
+# misidentify as its own co-tenant.
 
 # --- SOLO CHIEF: a roomchief that works its family's slices itself -----------
 # A small family need not cost a crewmate. The

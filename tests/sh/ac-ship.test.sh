@@ -675,11 +675,6 @@ assert_eq "$(git -C "$cb_origin" rev-parse refs/heads/crew/p2)" "$cb_diverged" \
 ( cd "$cbwork" && "$BIN/ac-ship.sh" finish cancelled >/dev/null )
 
 # Live dashboard: --once renders the run frame.
-# GAP, not ported: finish used to retire a PRE-EXISTING watch.pane handle
-# (best-effort, via herdr) left by a fleet from before the orca cutover -
-# src/ship.ts carries no such close any more (confirmed: no watch.pane
-# reference left in it), so there is no finish-time close behavior here to
-# prove, with or without a herdr stub.
 frame="$("$BIN/ac-ship-watch.sh" --repo "$repo" --once)"
 assert_contains "$frame" "ac-ship" "watch renders header"
 assert_contains "$frame" "intent: ship the widget" "watch shows intent"
@@ -3572,11 +3567,6 @@ x11d() {
 xrun xrevworld x11d
 xhas 'run RUN2: checks-passed (passed-with-override: tdd-declared,review-residual)'
 xhas 'checks-passed: RUN2 PR raised, awaiting the captain'"'"'s merge - passed-with-override: tdd-declared,review-residual'
-
-# GAP, not ported: a "leg 12: the live board" case used to prove a run never
-# opens a watch tab regardless of AC_SHIP_WATCH or the configured backend.
-# AC_SHIP_WATCH is read nowhere in src/ship.ts and no watch-tab-opening path
-# exists any more to prove quiet - there is nothing left here to assert.
 
 # -- leg 13: signals and continuation ------------------------------------------------
 xsig() {  # xsig <signal> <marker> <args...> - one ship call in the background; once the world holds <marker>, <signal> to its pid alone

@@ -358,10 +358,9 @@ x3k() { xput home/state/.pane-t1 'p77 t77\n'; xc t1 proj --harness fake; }
 xgo xt1 x3k
 xrcs '0 '
 xhas 'spawned t1 harness=fake'
-# GAP, not ported: a `.crew` FILE blocking the pool directory's own mkdir
-# refused a plain crew spawn under bin/ac-tree.sh's in-repo worktree pool,
-# which a crew spawn's orca lease never touches (orca_worktree_lease leases
-# through the Orca runtime directly, no <repo>/.crew/ involved).
+# A crew spawn's orca lease never touches <repo>/.crew/: orca_worktree_lease
+# leases through the Orca runtime directly, bypassing bin/ac-tree.sh's
+# in-repo worktree pool entirely.
 
 # -- 5: the crew path on orca -----------------------------------------------------
 xorca() { xt1; printf 'orca\n' >"$XW/home/config/backend"; printf '\342\234\263 fake\n' >"$XW/orca/.default-title"; }

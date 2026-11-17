@@ -507,11 +507,11 @@ esac
 
 # --- 15. the host's own orca never answers a test -----------------------------
 
-# A fake prepended to PATH shields only a first-match lookup. On a host with
-# orca installed, every ac-room run executed it (2026-10-04): the session-start
-# row's bin/ac-bootstrap.sh asks EVERY copy on PATH for its version, the fake's
-# and the host's alike. bin/ac-pane-agent.sh appends /opt/homebrew/bin to its
-# own PATH, too. A planted binary logging each call stands in for the host's, so
+# A fake prepended to PATH shields only a first-match lookup: bin/ac-bootstrap.sh's
+# session-start row asks EVERY copy of orca found on PATH for its version, the
+# fake's and the host's alike, so a fake that isn't first still leaves the host's
+# own orca probed too. bin/ac-pane-agent.sh appends /opt/homebrew/bin to its own
+# PATH, too. A planted binary logging each call stands in for the host's, so
 # this holds on a host with none installed.
 host="$TMP/host-backend"
 mkdir -p "$host"

@@ -223,9 +223,8 @@
 // plus the pane-agent's own transient stdout/stderr paths) so ac-gate-watch can
 // tail the ACTIVE run; only the DESCRIPTOR is deleted on exit, never the prompt
 // file it names, so --tail can still point back to it once the gate settles.
-// ac-gate.sh used to auto-open a board labelled ac-gate-watch:<family> and
-// retire it by label at the family's last live run's exit; nothing opens or
-// retires a board now - an operator runs ac-gate-watch.sh by hand.
+// Nothing opens or retires an ac-gate-watch:<family> board automatically -
+// an operator runs ac-gate-watch.sh by hand.
 //
 // BUSY DECLARATION: a positional-mode gate blocks its CALLER - typically the
 // family's roomchief - inside ONE synchronous tool call for up to

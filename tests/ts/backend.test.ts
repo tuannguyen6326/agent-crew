@@ -427,14 +427,12 @@ test("7. focus: orca's switch", () => {
   same("homeless", { fn: "focus", args: ["x"], env: ORCA_, homeless: true });
 }, 30000);
 
-// GAP, not ported, in mark_wait and clear_wait below: herdr's own mark_wait
-// RPC'd the message to a real "report-agent" call (so a report failure, a
-// hung RPC and the message's own bytes - Vietnamese, empty, absent - were
-// all live concerns); backend_mark_wait_orca ignores the message argument
-// entirely and only ever touches the stamp file, so none of that has an
-// orca shape to port to. The stamp file itself (ac_wait_file) is shared
-// code regardless of backend, so its own write mechanics (an unwritable
-// state dir, a dangling-symlink stamp) are proven below against orca.
+// backend_mark_wait_orca ignores the message argument entirely and only
+// ever touches the stamp file, so no RPC, hung-call or message-encoding
+// case applies here (no "report-agent" call is made). The stamp file
+// itself (ac_wait_file) is shared code regardless of backend, so its own
+// write mechanics (an unwritable state dir, a dangling-symlink stamp) are
+// proven below against orca.
 test("8. mark_wait: orca touches the stamp file on a handle, ignoring the message", () => {
   for (const [label, seed] of [
     ["with a handle", (s: string) => pane(s, "x", "h1 t\n")],
@@ -625,13 +623,6 @@ test("15. harness_up orca: a shell title is a bare shell; Orca's identity, a har
   same("homeless", { fn: "harness_up", args: ["x"], env: ORCA_, homeless: true });
 }, 60000);
 
-// GAP, not ported: a V1 regression test here used to prove that bash 3.2
-// hands a LATER `$( )` call the caller's stdin once an earlier `done <<<`
-// in the same call sequence had already consumed it - a herdr-driver-only
-// quirk (herdrVerb had no per-call leak guard to carry the proof through,
-// and that function is gone). orca's own per-call stdin behavior across a
-// multi-call sequence is proven directly in test 15's own readline cases.
-
 // The three keys ac-send.sh's usage names, in every spelling the orca case
 // map uses, with orca's flags for each.
 const KEYS: [string[], string][] = [
@@ -694,12 +685,9 @@ function SL(label: string, rc: number, want: { err?: string; log?: string }, row
   return { ...p, ...screen("t") };
 }
 
-// GAP, not ported, tests 19-22 (send_line herdr): herdr's own composer-proof
-// and strand-retry mechanics had no orca shape until T9's cutover built
-// orca's own (OSHOW/OREAD/OENTER's pending check, tests 23-27 below), which
-// this suite already proves end to end against orca's actual driver - a
-// byte-for-byte port of herdr's call shapes onto a driver that is gone would
-// prove nothing.
+// orca's own composer and strand-retry mechanics (OSHOW/OREAD/OENTER's
+// pending check, tests 23-27 below) are proven end to end against orca's
+// actual driver there, so no separate case is needed here.
 
 const OUI = (s: string): void => (pane(s, "x", "h1 tab1\n"), sent(s, "oui-h1", "> earlier turn\n"), sent(s, "ocmp-h1"));
 const OQUICK = { ...ORCA_, AC_SEND_SETTLE: "0" };

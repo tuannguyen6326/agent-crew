@@ -267,13 +267,10 @@ case "$line" in *"/effort ultracode"*) fail "custom launch-claude must not get t
 "$BIN/ac-teardown.sh" uct --force >/dev/null 2>&1
 rm -f "$AC_HOME/config/launch-claude"
 
-# GAP, not ported: the ultracode-strand case (an unacknowledged '/effort
-# ultracode' line WITHHOLDS the kickoff prompt and warns loudly) needed fake
-# herdr's "<count> <pattern>" .drop-enters to target the slash line's Enter
-# alone - make_fake_orca's own .drop-enters (tests/sh/helpers.sh) is a bare
-# count with no pattern field, and a count armed from the start would instead
-# swallow the LAUNCH LINE's own Enter first, stranding the wrong text. No
-# orca-shaped fixture exists for this case.
+# make_fake_orca's .drop-enters (tests/sh/helpers.sh) is a bare count with no
+# pattern field, so it cannot target the slash line's Enter alone - a count
+# armed from the start would instead swallow the launch line's own Enter
+# first, stranding the wrong text.
 
 # --- AC_FLEET_HOME_CHECKED / AC_FLEET_PROJECT_CONFIG: ac-spawn.sh resolves the
 # project's pipeline config with its OWN real AC_HOME and hands the answer to

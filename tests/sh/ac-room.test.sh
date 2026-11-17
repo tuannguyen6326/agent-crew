@@ -1424,12 +1424,10 @@ fi
 rat rm -f '$H/home/state/gd-chief.meta'
 
 # 6. the notify edge, in-process: every channel rings without a word on the
-#    post's stderr or status - notify's own failures sunk. GAP, not ported:
-#    the herdr channel itself is gone from src/notify.ts (off/osascript/bell/
-#    command:/auto are the whole list now), so this loop drops it; "auto"
-#    and a BOM-mangled "off" both fall to the SAME final else as herdr used
-#    to claim, but that else now prefers osascript (on PATH here) over any
-#    other fallback.
+#    post's stderr or status - notify's own failures sunk. off/osascript/
+#    bell/command:/auto are the whole channel list; "auto" and a
+#    BOM-mangled "off" both fall to the SAME final else, which prefers
+#    osascript (on PATH here) over any other fallback.
 ri=0
 for rch in osascript bell off auto 'command:exit 9' '  command:exit 0  ' 'command:' $'\357\273\277off'; do
   ri=$((ri + 1)); rat rcfg wedge-alarm "$rch"
@@ -1509,9 +1507,6 @@ rat rm -f '$H/date.fail-vn' '$H/home/config/remote-mirror' '$H/home/config/remot
 #    target chief's own meta (src/room.ts:811's taskBackend pin is cmd_open
 #    only) - config/backend is pinned explicitly here so the proof does not
 #    depend on ac_backend()'s own default happening to agree.
-#    GAP, not ported: W19 proved this ambient-vs-meta distinction by mixing
-#    an orca chief meta under a HERDR fleet - meaningless with one backend,
-#    since the ambient and the meta can no longer disagree.
 rat rcfg backend orca
 rat rchief st
 RENV=(AC_SCOPE=st)
@@ -1721,11 +1716,9 @@ rrun open o; assert_eq "$RC:$(rout):$(rerr)" "0:focused o-chief (orca:po):" "16:
 RUNREAD="ERROR: the BACKEND could not be READ for o-chief - whether orca:po still exists is UNKNOWN, so this is NOT treated as gone; check the backend itself, then try again"
 rat touch '$H/orca.unreachable'; rrefuse 1 "$RUNREAD" open o
 rat rm -f '$H/orca.unreachable'
-# GAP, not ported: the herdr RPC-timeout/hang case (AC_HERDR_RPC_TIMEOUT,
-# a wedged call bounded then read as unreachable) has no orca shape - the
-# orca driver carries no per-call RPC ceiling of its own (ac-backend.sh HUNG
-# RPC), so a wedged orca call has nothing here to time out against; it would
-# simply hang this test run instead.
+# The orca driver carries no per-call RPC ceiling of its own (ac-backend.sh
+# HUNG RPC), so a wedged orca call has nothing here to time out against; it
+# would simply hang this test run instead.
 rat rchief o orca; rat rm -f '$H/orca.alive'; rat touch '$H/orca.unreachable'
 rfail 1 open o
 assert_contains "$(rerr)" "ERROR: the BACKEND could not be READ for o-chief - whether orca:po still exists is UNKNOWN, so this is NOT treated as gone" "16: a dead orca reads unreadable, never gone"
@@ -1898,12 +1891,8 @@ if [ "$(id -u)" != 0 ]; then
   rat chmod 644 '$H/home/data/rv/spec/second-chief-r1.md'
 fi
 
-# 19. GAP, not ported: stdin by position distinguished calls whose herdr
-#     driver handed the child /dev/null (the guard's probe) from ones that
-#     read the caller's stdin (the stamp's report-agent, open's pane get).
-#     orca has no such distinction to prove - it always reads the caller's
-#     stdin at every call, regardless of what any call site passes it
-#     (backendCall's comment, src/lib.ts), so there is nothing here that
-#     could ever come back DIFFERENT.
+# orca always reads the caller's stdin at every call, regardless of what any
+# call site passes it (backendCall's comment, src/lib.ts), so there is no
+# stdin-by-position distinction left to prove here.
 
 pass
