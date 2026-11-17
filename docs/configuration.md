@@ -104,7 +104,7 @@ Operator cleanup: a fleet home may still carry the config files `config/herdr-wo
 | `config/remote-poll-timeout` | Seconds one remote poll may run before the watcher kills it; default 120, non-positive values fall back to 120. Keep it plus `AC_POLL` under `AC_GUARD_GRACE`. Owner: HUNG POLL in the `src/watch.ts` header. |
 | `config/remote-mirror` | Task-thread narrative: `off` (default), `chief` (the owning chief posts its own thread narrative via `ac-remote.sh thread-post`) or `on` (every room post and spawn announce is mirrored automatically). |
 | `config/slack-channel`, `config/slack-captain-id` | Slack transport only: control channel id, and the captain member id(s) one per line (also used for `<@id>` pings). Read by the example hooks in `docs/examples/slack-remote/` and the dashboard; setup guide in that directory's README. |
-| `config/wedge-alarm` | Captain notification when a room gate or ask is pending on them: `off`, `auto` (default: osascript when it is on PATH, else bell), `osascript`, `bell` or `command:<cmd>` (receives `AC_NOTIFY_TITLE` and `AC_NOTIFY_MESSAGE`). Owner: the `src/notify.ts` header. |
+| `config/wedge-alarm` | Captain notification when a room gate or ask is pending on them: `off`, `auto` (default: delivers nothing - Orca's own agent-status hooks already notify the captain), `osascript`, `bell` or `command:<cmd>` (receives `AC_NOTIFY_TITLE` and `AC_NOTIFY_MESSAGE`). Owner: the `src/notify.ts` header. |
 
 ### Misc
 

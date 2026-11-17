@@ -1424,31 +1424,26 @@ rat rm -f '$H/home/state/gd-chief.meta'
 
 # 6. the notify edge, in-process: every channel rings without a word on the
 #    post's stderr or status - notify's own failures sunk. off/osascript/
-#    bell/command:/auto are the whole channel list; "auto" and a
-#    BOM-mangled "off" both fall to the SAME final else, which prefers
-#    osascript (on PATH here) over any other fallback.
+#    bell/command:/auto are the whole channel list; auto and every unknown
+#    value (a BOM-mangled "off" included) share the SAME final branch, which
+#    now delivers nothing - Orca's own agent-status hooks already notify the
+#    captain - unaffected by config/backend or AC_BACKEND.
 ri=0
 for rch in osascript bell off auto 'command:exit 9' '  command:exit 0  ' 'command:' $'\357\273\277off'; do
   ri=$((ri + 1)); rat rcfg wedge-alarm "$rch"
   rpost "n6c$ri" crewchief "GATE: via $rch"
 done
 rat touch '$H/osa.fail'; rat rcfg wedge-alarm osascript; rpost n6f crewchief 'GATE: osascript fails'
-rat rcfg backend orca; rat rcfg wedge-alarm auto; rpost n6g crewchief 'GATE: auto, orca fleet'
-rosa_h=""
+rat rcfg backend orca; rat rcfg wedge-alarm auto; rpost n6g crewchief 'GATE: auto, orca fleet, delivers nothing'
 if [ "$(id -u)" != 0 ]; then
-  rosa_h='
-osascript -e display notification "n6h: GATE: an unreadable channel" with title "crew blocked"'
   rat rcfg wedge-alarm bell; rat chmod 000 '$H/home/config/wedge-alarm'
-  rpost n6h crewchief 'GATE: an unreadable channel'
+  rpost n6h crewchief 'GATE: an unreadable channel is read as auto, delivers nothing'
   rat chmod 644 '$H/home/config/wedge-alarm'
 fi
 rat rm -f '$H/home/config/backend' '$H/osa.fail'
 rat rcfg wedge-alarm off
 assert_eq "$(cat "$RH/osa.log")" 'osascript -e display notification "n6c1: GATE: via osascript" with title "crew blocked"
-osascript -e display notification "n6c4: GATE: via auto" with title "crew blocked"
-osascript -e display notification "n6c8: GATE: via '"$(printf '\357\273\277')"'off" with title "crew blocked"
-osascript -e display notification "n6f: GATE: osascript fails" with title "crew blocked"
-osascript -e display notification "n6g: GATE: auto, orca fleet" with title "crew blocked"'"$rosa_h" "6: osascript's argv for the explicit channel, auto, and a BOM-mangled off"
+osascript -e display notification "n6f: GATE: osascript fails" with title "crew blocked"' "6: osascript's argv for the explicit channel only - auto and every unknown value (a BOM-mangled off included) deliver nothing"
 
 # 7. the markerless WARN: a chief actor at 0 pending, not on a recognized verb.
 rrun post w7 w7-chief 'still investigating'

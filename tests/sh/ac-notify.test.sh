@@ -95,31 +95,35 @@ nalarm 'command:exit 9\n'; nrun x y; assert_eq "$(nerr)" "$(printf '\ax: y')" "6
 nalarm 'command:\n'; nrun x y; assert_eq "$(nerr)" "" "6: an empty command succeeds"
 nalarm 'command: echo hi; exit 2\nsecond line ignored\n'; nrun x y; assert_eq "$(nerr)" "$(printf '\ax: y')" "6: only the first line runs"
 nalarm '  command:exit 0  \r\n'; nrun x y; assert_eq "$(nerr)" "" "6: trimmed"
-# 7-8. auto, and every unknown value as auto: osascript when it is on PATH,
-#      else the bell. config/backend is not consulted at all.
-for nv in 'auto\n' 'bogus-channel\n' 'OFF\n' '\357\273\277off\n'; do nalarm "$nv"; nrun t m; assert_contains "$(nlog)" "osascript [-e]" "8: '$nv' is auto"; done
+# 7-8. auto, and every unknown value as auto: delivers nothing - Orca's own
+#      agent-status hooks already notify the captain, so no osascript, no
+#      bell, no command - config/backend, AC_BACKEND and PATH are not
+#      consulted either.
+for nv in 'auto\n' 'bogus-channel\n' 'OFF\n' '\357\273\277off\n'; do nalarm "$nv"; nrun t m; assert_eq "$(nerr)$(nlog)" "" "8: '$nv' is auto, delivers nothing"; done
 nalarm 'auto\n'
-printf 'herdr\n' >"$NH/home/config/backend"; nrun t m; assert_contains "$(nlog)" "osascript [-e]" "7: config/backend is not consulted"
+printf 'herdr\n' >"$NH/home/config/backend"; nrun t m; assert_eq "$(nerr)$(nlog)" "" "7: config/backend is not consulted"
 rm -f "$NH/home/config/backend"
-NENV=(AC_BACKEND=orca); nrun t m; assert_contains "$(nlog)" "osascript [-e]" "7: AC_BACKEND is not consulted"; NENV=()
-NENV=(OSA_RC=1); nrun t m; assert_eq "$(nerr)" "$(printf '\at: m')" "7: a failing osascript rings"; NENV=()
-rm -f "$NH/home/config/wedge-alarm"; nrun t m; assert_contains "$(nlog)" "osascript [-e]" "8: no config file"
-mkdir -p "$NH/home/config/wedge-alarm"; nrun t m; assert_contains "$(nlog)" "osascript [-e]" "8: a directory"
+NENV=(AC_BACKEND=orca); nrun t m; assert_eq "$(nerr)$(nlog)" "" "7: AC_BACKEND is not consulted"; NENV=()
+NENV=(OSA_RC=1); nrun t m; assert_eq "$(nerr)$(nlog)" "" "7: a would-be-failing osascript never runs under auto"; NENV=()
+rm -f "$NH/home/config/wedge-alarm"; nrun t m; assert_eq "$(nerr)$(nlog)" "" "8: no config file delivers nothing"
+mkdir -p "$NH/home/config/wedge-alarm"; nrun t m; assert_eq "$(nerr)$(nlog)" "" "8: a directory delivers nothing"
 rmdir "$NH/home/config/wedge-alarm"
 if [ "$(id -u)" != 0 ]; then
+  # nerr is left unchecked here: an unreadable file makes configReadSoft's own
+  # head(1) probe print its pre-existing, unrelated permission diagnostic -
+  # this case only proves the resulting empty channel still delivers nothing.
   nalarm 'bell\n'; chmod 000 "$NH/home/config/wedge-alarm"
-  nrun t m; assert_contains "$(nlog)" "osascript [-e]" "8: an unreadable channel is read as auto"
+  nrun t m; assert_eq "$(nlog)" "" "8: an unreadable channel is read as auto, delivers nothing"
   chmod 644 "$NH/home/config/wedge-alarm"
 fi
-# 9. auto with no osascript on PATH: the bell.
+# 9. auto with no osascript on PATH still delivers nothing - PATH is not consulted.
 nalarm 'auto\n'
-NPATH="$NBIN:/bin"; nrun t m; assert_eq "$(nerr)$(nlog)" "$(printf '\at: m')" "9: no osascript rings"
+NPATH="$NBIN:/bin"; nrun t m; assert_eq "$(nerr)$(nlog)" "" "9: no osascript on PATH, still delivers nothing"
 NPATH="$NPATH_BOTH"
-# 10. homeless reads auto; so does a home that cannot be entered, silently.
-NHOMELESS=1; nrun t m; assert_contains "$(nlog)" "osascript [-e]" "10: homeless is auto"; NHOMELESS=0
+# 10. homeless reads auto; so does a home that cannot be entered - both silent.
+NHOMELESS=1; nrun t m; assert_eq "$(nerr)$(nlog)" "" "10: homeless is auto, delivers nothing"; NHOMELESS=0
 NENV=(AC_HOME=HOME/nonexistent); nrun t m; NENV=()
-assert_eq "$(nerr)" "" "10: an unenterable home prints nothing"
-assert_contains "$(nlog)" "osascript [-e]" "10: ...and is auto"
+assert_eq "$(nerr)$(nlog)" "" "10: an unenterable home is auto, delivers nothing"
 # 11. two lines: the first is the channel.
 nalarm 'bell\noff\n'; nrun t m; assert_eq "$(nerr)" "$(printf '\at: m')" "11: the first line"
 # 12. a closed stderr: the bell is lost and the exit is still 0 -

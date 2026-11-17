@@ -22,14 +22,15 @@
 //   bell           stderr: BEL, then `<title>: <message>` and a newline
 //   command:<cmd>  sh -c <cmd> (`sh` from PATH, as the bash ran it), with
 //                  AC_NOTIFY_TITLE / AC_NOTIFY_MESSAGE added to its environment
-//   anything else  auto: osascript when it is on PATH; else the bell
+//   anything else  auto: nothing - Orca's own agent-status hooks already
+//                  notify the captain, so osascript/bell/command:<cmd> stay
+//                  explicit opt-ins instead of a default
 // Every spawned channel inherits stdin, has its stdout and stderr dropped, and
 // a status other than 0 - or a binary that cannot start - rings the bell.
 //
 // argv and the environment arrive decoded, so a title or message byte that is
 // not UTF-8 reaches the bell, osascript and the hook as U+FFFD; an
-// AC_HOME that cannot be entered prints nothing; `osascript` is
-// found by Bun.which, which skips a PATH file that is not executable. A PATH
+// AC_HOME that cannot be entered prints nothing (auto's own default). A PATH
 // without bun is the shim's `ERROR: required tool not found: bun`, exit 1 - the
 // one exit not 0, which no caller meets: the room calls notify() in-process.
 import { writeSync } from "node:fs";
@@ -68,9 +69,9 @@ export function notify(title: string, message: string, stderr: "inherit" | "igno
       else process.env[k] = v;
     }
     if (!ok) ring();
-  } else if (Bun.which("osascript")) {
-    if (!osascript()) ring();
-  } else ring();
+  }
+  // off, auto and any unknown value all deliver nothing: Orca's own
+  // agent-status hooks already notify the captain.
 }
 
 if (import.meta.main) {
