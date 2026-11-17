@@ -2555,11 +2555,11 @@ const utf8Locale = (): boolean => /utf-?8/i.test(process.env.LC_ALL || process.e
 // (ac-backend.sh's WINDOW LIVENESS); mark_wait/clear_wait answer touch's /
 // rm's; agent_blocked 0 blocked, 1 not, stamped or unreadable (jq -e's own
 // status); harness_up 0 up, 1 a bare shell, 2 unreadable (HARNESS CAME-UP
-// PROBE); send_key is one send, 0 or 1. send_line types its arguments joined
-// by a space and verifies the Enter by the render (ac-backend.sh's delivery
-// verification): 0 accepted, 1 stranded, 2 unreadable, 3 a dialog owns the
-// pane, the reason on stderr. orca, a foreground command, always reads the
-// caller's stdin. stdout and stderr are where the call site sent them
+// PROBE); send_key is one send, 0 or 1. send_line sends its arguments joined
+// by a space as one Orca prompt (orcaPromptSend): 0 sent, 1 stranded or a
+// dialog owns the pane, 2 no delivery receipt, the reason on stderr. orca, a
+// foreground command, always reads the caller's stdin. stdout and stderr are
+// where the call site sent them
 // ("pipe" returns the bytes); the jqs whose stderr the bash left open
 // (harness_up's title reads) write jq's error there.
 export function backendCall(
@@ -2638,15 +2638,7 @@ export function orcaVerb(fn: BackendFn, args: string[], io: VerbIo, say: (b: Buf
       return orcaJson(["terminal", "send", "--terminal", argvOf(handle()), ...how], stdin) !== null ? 0 : 1;
     }
     case "send_line": {
-      const text = args.slice(1).join(" ");
-      orcaType(argvOf(handle()), text, stdin, io.stderr);
-      settle(io.stderr);
-      let rc = orcaSubmitVerified(argvOf(handle()), text, stdin, io.stderr);
-      if (rc === 0) return 0;
-      if (rc !== 3) {
-        orcaVerb("focus", [id], io, say);
-        rc = orcaSubmitVerified(argvOf(handle()), text, stdin, io.stderr);
-      }
+      const rc = orcaPromptSend(argvOf(handle()), args.slice(1).join(" "), stdin, io.stderr);
       if (rc === 0) return 0;
       const target = `orca:${handle()}`;
       const who = lat(id);
@@ -2654,11 +2646,11 @@ export function orcaVerb(fn: BackendFn, args: string[], io: VerbIo, say: (b: Buf
         if (report) writeSync(2, Buffer.from(`ac-backend: ${msg}\n`, "latin1"));
       };
       if (rc === 3) {
-        tell(`a DIALOG owns the pane of ${target} - the text sits in the composer and no Enter was pressed (an Enter would ACCEPT the highlighted option). Peek it (ac-peek.sh ${who}) and answer deliberately with ac-send.sh ${who} --key <key>`);
+        tell(`a DIALOG owns the pane of ${target} - the text was not submitted and no Enter was pressed into the dialog (an Enter would ACCEPT the highlighted option). Peek it (ac-peek.sh ${who}) and answer deliberately with ac-send.sh ${who} --key <key>`);
         return 1;
       }
       if (rc === 2) {
-        tell(`could not read the pane of ${target} - submit UNVERIFIED, so the text may or may not have gone through (peek it: ac-peek.sh ${who})`);
+        tell(`no delivery receipt from ${target} - submit UNVERIFIED, so the text may or may not have gone through (peek it: ac-peek.sh ${who})`);
         return 2;
       }
       tell(`submit not acknowledged by ${target} - text likely stranded unsubmitted in the composer (peek, then resubmit: ac-send.sh ${who} --key Enter)`);
@@ -2667,19 +2659,28 @@ export function orcaVerb(fn: BackendFn, args: string[], io: VerbIo, say: (b: Buf
   }
 }
 
-// orca_type_pane's twin: `--text` sends of 512 units - characters under a
-// UTF-8 locale, bytes under any other (`${text:off:512}`) - with PATH's
-// `sleep 0.05` between them, every status ignored. A cut inside a character
-// sends each half as U+FFFD where the bash sent the half's bytes (named).
-export function orcaType(h: string, text: string, stdin: "inherit" | "ignore", stderr: "inherit" | "ignore"): void {
-  const utf8 = utf8Locale();
-  const units = utf8 ? [...text] : [...lat(text)];
-  for (let off = 0; off < units.length; ) {
-    const chunk = units.slice(off, off + 512).join("");
-    orcaJson(["terminal", "send", "--terminal", h, "--text", utf8 ? chunk : argvOf(chunk)], stdin);
-    off += 512;
-    if (off < units.length) stage(["sleep", "0.05"], "ignore", "ignore", stderr);
+const PROMPT_VERDICT =
+  'if .ok == true then (if .result.send.prompt.observation == "supported" then "seen" else "blind" end) elif .error.code == "agent_prompt_blocked" then "blocked" else "failed" end';
+
+// orca_prompt_send_pane's twin: the dialog guard (3), then ONE `terminal send
+// --text --enter --wait-submit 3` whose envelope is read whatever orca's
+// status - seen 0, blocked 3, anything but blind 2 - and for blind, while the
+// text sits pending, up to two retry Enters, each behind the dialog guard and
+// followed by a settle; still pending after both, 1.
+export function orcaPromptSend(h: string, text: string, stdin: "inherit" | "ignore", stderr: "inherit" | "ignore"): number {
+  if (orcaDialog(h)) return 3;
+  const out = capturedText(stage(["orca", "terminal", "send", "--terminal", h, "--text", text, "--enter", "--wait-submit", "3", "--json"], stdin, "pipe", "ignore").out);
+  const verdict = capturedText(jqOver(["-r", PROMPT_VERDICT], out, "pipe", "ignore").out);
+  if (verdict === "seen") return 0;
+  if (verdict === "blocked") return 3;
+  if (verdict !== "blind") return 2;
+  for (let retries = 0; orcaPending(h, text); retries++) {
+    if (retries >= 2) return 1;
+    if (orcaDialog(h)) return 3;
+    orcaJson(["terminal", "send", "--terminal", h, "--enter"], stdin);
+    settle(stderr);
   }
+  return 0;
 }
 
 // backend_capture_pane_orca at 15 lines as `$(... 2>/dev/null)` read it:
@@ -2753,13 +2754,29 @@ export function orcaSubmitVerified(h: string, text: string, stdin: "inherit" | "
   return 0;
 }
 
+const TURN_STATE = `first((.result.worktrees // [])[] | (.agents // [])[] | select(.paneKey == $k and .hasLivePty == true))
+    | .mainAgent.state // .state // empty`;
+
+// orca_turn_state's twin: "" for a show with no agentIdentity or no
+// recordedPaneKey (no ps call), a failed ps or no live-PTY row keyed by it.
+function orcaTurnState(show: string, stdin: "inherit" | "ignore"): string {
+  const key = capturedText(jqOver(["-r", "if .result.terminal.agentIdentity == null then empty else .result.terminal.recordedPaneKey // empty end"], show, "pipe", "ignore").out);
+  if (key === "") return "";
+  const ps = orcaJson(["worktree", "ps"], stdin);
+  return ps === null ? "" : capturedText(jqOver(["-r", "--arg", "k", key, TURN_STATE], ps, "pipe", "ignore").out);
+}
+
 // backend_agent_idle_pane_orca as harness_up reaches it: a second show, its
-// title's glyph, then tui-idle's 1000 ms wait - the raw `orca terminal wait`,
-// no ok test - and for a codex identity a 40-line screen taken before it and
+// turn state (done idle; working, blocked, waiting not), else its title's
+// glyph, then tui-idle's 1000 ms wait - the raw `orca terminal wait`, no ok
+// test - and for a codex identity a 40-line screen taken before it and
 // compared after a timed-out one.
 export function orcaAgentIdle(h: string, stdin: "inherit" | "ignore", stderr: "inherit" | "ignore"): boolean {
   const show = orcaJson(["terminal", "show", "--terminal", h], stdin);
   if (show === null || jqOver(["-e", ".result.terminal.agentWait != null"], show, "ignore", "ignore").status === 0) return false;
+  const turn = orcaTurnState(show, stdin);
+  if (turn === "done") return true;
+  if (turn === "working" || turn === "blocked" || turn === "waiting") return false;
   const title = capturedText(jqOver(["-r", ".result.terminal.title // empty"], show, "pipe", stderr).out);
   if (spins(title)) return false;
   if (title.startsWith(IDLE_GLYPH)) return true;

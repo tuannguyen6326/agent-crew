@@ -161,8 +161,9 @@
 //     else `0`, for that one call and restored after - orca's driver does not
 //     read it, so --force skips only the refusals above, never the arrival
 //     proof itself. A route refusal is its line, exit 1 (V12); 0 goes on;
-//     2 is `ERROR: delivery UNVERIFIED for <id> - the pane could not be read,
-//     so the submit was neither confirmed nor refuted (see stderr above)`;
+//     2 is `ERROR: delivery UNVERIFIED for <id> - the backend gave no delivery
+//     receipt, so the submit was neither confirmed nor refuted (see stderr
+//     above)`;
 //     anything else - orca's own DIALOG verdict included - is `ERROR:
 //     delivery NOT confirmed for <id> - the text likely sits stranded in the
 //     composer (see stderr above)`; the driver's `ac-backend: ...` line
@@ -407,7 +408,7 @@ if (rest[0] === "--key") {
   if (unproven === undefined) delete process.env.AC_SEND_UNPROVEN;
   else process.env.AC_SEND_UNPROVEN = unproven;
   if (sent.exited) process.exit(sent.status);
-  if (sent.status === 2) die(`delivery UNVERIFIED for ${id} - the pane could not be read, so the submit was neither confirmed nor refuted (see stderr above)`);
+  if (sent.status === 2) die(`delivery UNVERIFIED for ${id} - the backend gave no delivery receipt, so the submit was neither confirmed nor refuted (see stderr above)`);
   if (sent.status === 3) die(`delivery REFUSED for ${id} - nothing was submitted (see stderr above)`);
   if (sent.status !== 0) die(`delivery NOT confirmed for ${id} - the text likely sits stranded in the composer (see stderr above)`);
   verb = "delivered (arrival unverified) to";

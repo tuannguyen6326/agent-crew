@@ -253,20 +253,32 @@ test("backendSendKeyPane presses one key at a raw pane as the drivers did", () =
   same("an unsupported backend", tmuxAtCall(key));
 }, 120000);
 
-test("backendSendLinePane types and verifies one line at a raw pane as the drivers did", () => {
+test("backendSendLinePane sends one prompt to a raw pane as the drivers did", () => {
   const line = verb("backend_send_line_pane", `L.backendSendLinePane(A[0], A[1], ${IO})`, ["p1", "hello there"]);
-  const screen = (n: string, tail: string): string => `{"ok":true,"result":{"terminal":{"tail":${tail}}}}\n`;
-  same("orca: the render reacts", { ...line, args: ["h1", "hi"], env: ORCA_, seed: (s) => (put(s, "stub/terminal-read.1.out", screen("1", '["a"]')), put(s, "stub/terminal-read.out", screen("2", '["b"]'))) });
-  same("orca: a dialog owns the pane: 1, no retry", { ...line, args: ["h1", "hi"], env: ORCA_, seed: (s) => put(s, "stub/terminal-show.out", OSHOW('{"agentWait":{"reason":"x"}}')) });
-  same("orca: never reacts, a dialog on the retry: 3", {
+  const screen = (tail: string): string => lat(`{"ok":true,"result":{"terminal":{"tail":${tail}}}}\n`);
+  const R = "─".repeat(12);
+  const rcs: [number, string][] = [];
+  const seen = '{"ok":true,"result":{"send":{"prompt":{"stages":["input_accepted"],"provider":"claude","observation":"supported"}}}}\n';
+  rcs.push([0, same("orca: an observed receipt", { ...line, args: ["h1", "hi"], env: ORCA_, seed: (s) => put(s, "stub/terminal-send.out", seen) }).t.out]);
+  rcs.push([0, same("orca: unobserved, the text not pending", { ...line, args: ["h1", "hi"], env: ORCA_ }).t.out]);
+  rcs.push([0, same("orca: unobserved, pending once: one retry Enter", {
     ...line,
     args: ["h1", "hi"],
     env: ORCA_,
-    seed: (s) => (put(s, "stub/terminal-show.1.out", OSHOW("{}")), put(s, "stub/terminal-show.out", OSHOW('{"agentWait":{"reason":"x"}}')), put(s, "stub/terminal-read.out", screen("1", '["a"]'))),
-  });
-  same("orca: unreadable", { ...line, args: ["h1", "hi"], env: ORCA_, seed: (s) => put(s, "stub/terminal-read.rc", "1\n") });
+    seed: (s) => (put(s, "stub/terminal-read.1.out", screen(`["${R}","❯ hi","${R}"]`)), put(s, "stub/terminal-read.out", screen('["b"]'))),
+  }).t.out]);
+  rcs.push([1, same("orca: unobserved, pending for good: 1", { ...line, args: ["h1", "hi"], env: ORCA_, seed: (s) => put(s, "stub/terminal-read.out", screen(`["${R}","❯ hi","${R}"]`)) }).t.out]);
+  rcs.push([1, same("orca: a dialog owns the pane: 1, nothing sent", { ...line, args: ["h1", "hi"], env: ORCA_, seed: (s) => put(s, "stub/terminal-show.out", OSHOW('{"agentWait":{"reason":"x"}}')) }).t.out]);
+  rcs.push([1, same("orca: agent_prompt_blocked: 1", {
+    ...line,
+    args: ["h1", "hi"],
+    env: ORCA_,
+    seed: (s) => (put(s, "stub/terminal-send.out", '{"ok":false,"error":{"code":"agent_prompt_blocked"}}\n'), put(s, "stub/terminal-send.rc", "1\n")),
+  }).t.out]);
+  rcs.push([2, same("orca: no receipt: 2", { ...line, args: ["h1", "hi"], env: ORCA_, seed: (s) => put(s, "stub/terminal-send.rc", "1\n") }).t.out]);
   same("orca: no pane", { ...line, args: ["", "hi"], env: ORCA_ });
   same("an unsupported backend", tmuxAtCall(line));
+  expect(rcs.map(([, got]) => got)).toEqual(rcs.map(([w]) => `|rc=${w}`));
 }, 180000);
 
 test("backendAgentStatusPane prints a raw pane's status word as the drivers did, inside a capture", () => {

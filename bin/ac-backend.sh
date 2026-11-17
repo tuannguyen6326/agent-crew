@@ -15,18 +15,18 @@
 #                                     for the same reason (see WINDOW LIVENESS
 #                                     below): a backend that could not be READ is
 #                                     not reported as a dead pane
-#   backend_send_line <id> <text>     type literally, then submit VERIFIED
-#                                     (see delivery verification below); one
-#                                     focused retry, then non-zero + stderr -
-#                                     exit 1 the text is stranded in the
-#                                     composer OR a startup dialog owns the
-#                                     pane (its own stderr message says
-#                                     which - an Enter into a dialog would
-#                                     ANSWER it, never submit the text), exit
-#                                     2 the pane could not be READ, so
-#                                     whether the text was submitted is
-#                                     unknown; the CALLER decides what each
-#                                     one means
+#   backend_send_line <id> <text>     send the text with its Enter as ONE
+#                                     Orca prompt, submit VERIFIED (see
+#                                     delivery verification below), then
+#                                     non-zero + stderr - exit 1 the text is
+#                                     stranded in the composer OR a dialog
+#                                     owns the pane (its own stderr message
+#                                     says which - an Enter into a dialog
+#                                     would ANSWER it, never submit the
+#                                     text), exit 2 Orca gave no delivery
+#                                     receipt, so whether the text was
+#                                     submitted is unknown; the CALLER
+#                                     decides what each one means
 #   backend_submit_verified <id>      press Enter, ack by capture-change; the
 #                                     resubmit primitive for callers retrying
 #                                     a stranded line (re-TYPING would append
@@ -51,13 +51,9 @@
 #   backend_send_line_pane <pane-id> <text>
 #                                     send_line in that same raw-pane
 #                                     addressing, with the SAME verified-submit
-#                                     semantics: probe for the render to react,
-#                                     focus the pane's own tab (resolved from
-#                                     the backend itself, since there is no
-#                                     handle to read it from) and retry ONCE,
-#                                     then return the same
-#                                     three-state status (1 stranded, 2
-#                                     unobservable). It prints nothing: the
+#                                     semantics and the same status (1
+#                                     stranded or a dialog, 2 no receipt).
+#                                     It prints nothing: the
 #                                     caller owns the message, because only the
 #                                     caller knows what to call the pane
 #                                     (ac-pane-agent.sh steer names the handle),
@@ -193,7 +189,21 @@
 # and never returns non-zero; the fleet-local files (state/.pane-<id>, the
 # wait stamp) are swept either way.
 #
-# Delivery verification: a submit's Enter may be silently absorbed (an
+# Delivery verification: send_line hands the text and its Enter to Orca as
+# ONE prompt (`terminal send --text --enter --wait-submit 3`; probe
+# 2026-11-17, Orca 1.4.259): a recognized agent gets it bracket-pasted - a
+# 4871-byte, 62-line message arrived whole on claude, codex, opencode, pi and
+# cursor - and the receipt's observation "supported" (claude, codex) is the
+# acknowledgement, at input_accepted alone too, since a busy agent queues the
+# prompt and runs it after its turn. Orca's agent_prompt_blocked refusal
+# (nothing typed) and an agentWait read ahead of the send are the DIALOG
+# verdict. An "unsupported" observation (a shell, opencode, pi, cursor) means
+# Orca typed and pressed Enter blind: only a text PROVEN pending in the
+# composer (the region between the screen's last two rules) buys a retry
+# Enter, at most two, AC_SEND_SETTLE apart, then a strand. No parseable
+# receipt is UNOBSERVABLE (2) and is never resent.
+# The resubmit primitive, submit_verified, cannot ask Orca for a receipt (a
+# bare Enter carries no prompt): a submit's Enter may be silently absorbed (an
 # unfocused pane, a key the TUI ignores), so the sender must never trust its
 # own exit code - the acknowledgement observable is a RENDER-CHANGE probe:
 # byte-compare a capture from just before the Enter against re-reads taken
@@ -203,9 +213,7 @@
 # depth. The probe is ADAPTIVE, not one fixed pause: after the Enter the render
 # is re-read every AC_SEND_SETTLE seconds for up to 7 probes, returning ACCEPTED
 # the INSTANT it reacts - fast in the common unloaded case, while still
-# tolerating a redraw that lands late under host load. On a strand (no
-# reaction within the budget) send_line focuses the tab and retries ONCE,
-# verified again - never blind.
+# tolerating a redraw that lands late under host load.
 # The probe has THREE outcomes, not two, because "the render did not change" and
 # "the render could not be READ" are different facts: a failing `pane read`
 # leaves pre and post both empty, which the byte-compare cannot tell apart from
@@ -220,9 +228,9 @@
 # Callers must not collapse 2 into 1: they say WHICH ("could not read the pane"
 # vs "text stranded in the composer"), because the human's next move differs -
 # a strand is resubmitted, an unreadable pane is peeked at first.
-# AC_SEND_SETTLE (default 0.4) is the pause after typing, and the interval
-# between submit-verify probes; the total verify budget is 7 probes (~2.8s at
-# the default), inside the captain's sanctioned ~2-3s envelope.
+# AC_SEND_SETTLE (default 0.4) is the interval between submit-verify probes
+# and the pause after a retry Enter; the total verify budget is 7 probes
+# (~2.8s at the default), inside the captain's sanctioned ~2-3s envelope.
 # The probe covers SUBMITS only. send_key presses a bare key, whose effect may
 # legitimately redraw nothing (Escape with no dialog open, C-c on an idle pane,
 # a key the TUI absorbs), so an identical render there is NOT the dropped-key

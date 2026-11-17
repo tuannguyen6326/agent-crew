@@ -465,7 +465,8 @@
 // never blind (the 2026-07-16 eaten-kickoff incident: a booting TUI dropped the
 // first Enter, the next send-text APPENDED to the stranded line and garbled
 // both into one bad /effort argument): backend_send_line verifies its own
-// submit (capture-change probe + one focused retry - contract: ac-backend.sh);
+// submit (Orca's delivery receipt, else the composer-pending check and its
+// bounded retry Enters - contract: ac-backend.sh);
 // when it still reports a strand the text already SITS in the composer, so the
 // retry re-SUBMITS - never re-types - at most 2 more times, AC_SPAWN_SETTLE
 // apart (a booting TUI drops Enter until it is up), then warns LOUDLY naming

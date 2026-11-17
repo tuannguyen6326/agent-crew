@@ -17,6 +17,9 @@
 #   startup dialog holds it - every harness alike) and the terminal TITLE,
 #   which tracks the foreground process (measured on orca CLI 1.4.188: a bare
 #   shell reports its own name, harness TUIs set an OSC title of their own).
+# - Idle vs working is Orca's hook-backed TURN state first (orca_turn_state:
+#   the `worktree ps` row keyed by `terminal show`'s recordedPaneKey); the
+#   title glyph, tui-idle and codex screen readings cover a pane with no row.
 # - Startup dialogs are NAMED (agentWait.reason), so backend_dialog_answer
 #   answers the known codex ones with the key safe on each instead of the
 #   registry's blind Enter (which runs the upgrade on the update prompt).
@@ -492,46 +495,55 @@ orca_pane_dialog() {
 
 backend_submit_verified_orca() { orca_submit_verified_pane "$(orca_pane "$1")" "${2:-}"; }
 
-orca_type_pane() {
-  # Type WITHOUT submitting (`--text` with no `--enter` stays in the
-  # composer - measured). CHUNKED at 512 chars: one large --text write
-  # measurably lost its head (a ~4.7KB kickoff arrived as its last 723
-  # bytes - live, 2026-08-26). Best-effort per chunk: the verified submit
-  # is the real check.
-  local pane="$1" text="$2" off=0 len
-  len=${#text}
-  while [ "$off" -lt "$len" ]; do
-    orca_json terminal send --terminal "$pane" --text "${text:$off:512}" >/dev/null 2>&1 || true
-    off=$((off + 512))
-    [ "$off" -lt "$len" ] && sleep 0.05
+orca_focus_pane() { orca_json terminal switch --terminal "$1" >/dev/null 2>&1; }
+
+orca_prompt_send_pane() {
+  # One Orca prompt delivery (probe 2026-11-17, Orca 1.4.259): a recognized
+  # agent gets the text bracket-pasted with Enter and a receipt saying
+  # whether Orca OBSERVED the submit; anything else gets the text and Enter
+  # raw. 0 sent, 1 stranded, 2 no receipt (never resent - a resend could
+  # deliver twice), 3 a dialog owns the pane.
+  # The agentWait guard stays ahead of Orca's own agent_prompt_blocked
+  # refusal: that refusal was measured on a trust prompt only, and an Enter
+  # into any other dialog answers it.
+  local pane="$1" text="$2" out verdict retries=0
+  orca_pane_dialog "$pane" && return 3
+  out="$(orca terminal send --terminal "$pane" --text "$text" --enter --wait-submit 3 --json 2>/dev/null)" || true
+  verdict="$(jq -r 'if .ok == true then (if .result.send.prompt.observation == "supported" then "seen" else "blind" end)
+    elif .error.code == "agent_prompt_blocked" then "blocked" else "failed" end' <<<"$out" 2>/dev/null)" || true
+  case "$verdict" in
+    seen) return 0 ;;
+    blocked) return 3 ;;
+    blind) ;;
+    *) return 2 ;;
+  esac
+  # "seen" holds at input_accepted alone: mid-turn, Orca queues the prompt
+  # and delivers it after the turn (probe 2026-11-17). Only an unobserved
+  # send is checked here, and only a text PROVEN pending buys a retry Enter -
+  # never a retype.
+  while orca_composer_pending "$pane" "$text"; do
+    [ "$retries" -lt 2 ] || return 1
+    orca_pane_dialog "$pane" && return 3
+    orca_submit_pane "$pane" || true
+    sleep "${AC_SEND_SETTLE:-0.4}"
+    retries=$((retries + 1))
   done
   return 0
 }
-
-orca_focus_pane() { orca_json terminal switch --terminal "$1" >/dev/null 2>&1; }
 
 backend_send_line_orca() {
   local id="$1"
   shift
   local text="$*" rc=0
-  orca_type_pane "$(orca_pane "$id")" "$text"
-  sleep "${AC_SEND_SETTLE:-0.4}"
-  rc=0
-  orca_submit_verified_pane "$(orca_pane "$id")" "$text" || rc=$?
-  [ "$rc" = 0 ] && return 0
-  if [ "$rc" != 3 ]; then
-    backend_focus_orca "$id" || true
-    rc=0
-    orca_submit_verified_pane "$(orca_pane "$id")" "$text" || rc=$?
-  fi
+  orca_prompt_send_pane "$(orca_pane "$id")" "$text" || rc=$?
   [ "$rc" = 0 ] && return 0
   if [ "$rc" = 3 ]; then
-    printf 'ac-backend: a DIALOG owns the pane of %s - the text sits in the composer and no Enter was pressed (an Enter would ACCEPT the highlighted option). Peek it (ac-peek.sh %s) and answer deliberately with ac-send.sh %s --key <key>\n' \
+    printf 'ac-backend: a DIALOG owns the pane of %s - the text was not submitted and no Enter was pressed into the dialog (an Enter would ACCEPT the highlighted option). Peek it (ac-peek.sh %s) and answer deliberately with ac-send.sh %s --key <key>\n' \
       "$(backend_target_orca "$id")" "$id" "$id" >&2
     return 1
   fi
   if [ "$rc" = 2 ]; then
-    printf 'ac-backend: could not read the pane of %s - submit UNVERIFIED, so the text may or may not have gone through (peek it: ac-peek.sh %s)\n' \
+    printf 'ac-backend: no delivery receipt from %s - submit UNVERIFIED, so the text may or may not have gone through (peek it: ac-peek.sh %s)\n' \
       "$(backend_target_orca "$id")" "$id" >&2
     return 2
   fi
@@ -541,18 +553,12 @@ backend_send_line_orca() {
 }
 
 backend_send_line_pane_orca() {
-  local pane="$1"
+  [ -n "$1" ] || return 1
+  local pane="$1" prc=0
   shift
-  local text="$*"
-  [ -n "$pane" ] || return 1
-  orca_type_pane "$pane" "$text"
-  sleep "${AC_SEND_SETTLE:-0.4}"
-  local prc=0
-  orca_submit_verified_pane "$pane" "$text" || prc=$?
-  [ "$prc" = 0 ] && return 0
-  [ "$prc" = 3 ] && return 1   # dialog-owned: never a focus-retry press
-  orca_focus_pane "$pane" || true
-  orca_submit_verified_pane "$pane" "$text"
+  orca_prompt_send_pane "$pane" "$*" || prc=$?
+  [ "$prc" = 3 ] && return 1
+  return "$prc"
 }
 
 orca_send_key_pane() {
@@ -621,7 +627,31 @@ backend_agent_blocked_orca() {
   jq -e '.result.terminal.agentWait != null' <<<"$out" >/dev/null 2>&1
 }
 
+orca_turn_state() {
+  # orca_turn_state <show-json> - the turn state Orca's agent hooks record
+  # for this pane, empty when it has none (probe 2026-11-17, orca 1.4.259):
+  # `worktree ps` rows are keyed by the paneKey `terminal show` reports as
+  # recordedPaneKey - never `terminal list`'s tabId/leafId, which differ for
+  # a headless pane. mainAgent is the TURN: a claude whose turn ended under
+  # a background task reads state working, mainAgent done; cursor and pi
+  # report no mainAgent, so their row's own state stands in. A row without
+  # a live PTY vouches for nothing, and neither does one in a pane where
+  # Orca identifies no agent: a row that outlived its agent would read a
+  # bare shell as idle, and harness_up would call that shell UP.
+  local key
+  key="$(jq -r 'if .result.terminal.agentIdentity == null then empty else .result.terminal.recordedPaneKey // empty end' <<<"$1" 2>/dev/null)"
+  [ -n "$key" ] || return 0
+  orca_json worktree ps 2>/dev/null | jq -r --arg k "$key" '
+    first((.result.worktrees // [])[] | (.agents // [])[] | select(.paneKey == $k and .hasLivePty == true))
+    | .mainAgent.state // .state // empty' 2>/dev/null || true
+}
+
 backend_agent_idle_pane_orca() {
+  # Orca's hook-backed turn state decides first (orca_turn_state): done is
+  # idle; working, blocked and waiting (its documented vocabulary) are not.
+  # No row, an unreadable ps or any other value falls through to the
+  # heuristics below, which predate it and still cover a pane Orca's hooks
+  # never reached.
   # `wait --for tui-idle` returns the instant the TUI is idle and times out
   # otherwise; 1000ms bounds a working-TUI poll (orca answers by observing
   # the render rather than a status field - measured ~113ms on an idle TUI).
@@ -643,6 +673,10 @@ backend_agent_idle_pane_orca() {
   [ -n "$pane" ] || return 1
   out="$(orca_json terminal show --terminal "$pane" 2>/dev/null)" || return 1
   jq -e '.result.terminal.agentWait != null' <<<"$out" >/dev/null 2>&1 && return 1
+  case "$(orca_turn_state "$out")" in
+    done) return 0 ;;
+    working|blocked|waiting) return 1 ;;
+  esac
   t="$(jq -r '.result.terminal.title // empty' <<<"$out")"
   orca_title_spinner "$t" && return 1
   case "$t" in "✳"*) return 0 ;; esac
