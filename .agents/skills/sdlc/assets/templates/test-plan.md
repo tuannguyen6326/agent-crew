@@ -2,8 +2,8 @@
 
 status: draft
 change: <change id>
-spec: ../spec.md
-plan: ../plan.md
+spec: <the spec, relative to this file>
+plan: <the plan, relative to this file>
 
 ## Profiles
 

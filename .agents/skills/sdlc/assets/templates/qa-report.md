@@ -2,7 +2,7 @@
 
 status: draft
 change: <change id>
-test_plan: test-plan.md
+test_plan: <the test plan, relative to this file>
 verdict: <pass | fail>
 round: <n>
 

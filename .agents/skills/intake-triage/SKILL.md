@@ -26,7 +26,7 @@ answers.
 
 Three flows exist; pick one for every captain order, at intake, before any
 brief is written.
-`sdlc` is the staged flow whose record leaves the fleet home: intent, spec and plan are MANDATORY stages (architecture admits on evidence as in staged), and every accepted report is also committed into the main repository as the SDLC artifact chain - intent, spec, plan, the QA test plan before build and the QA report after it - so the PR carries the code AND its record, and review is mandatory as in staged; `docs/sdlc-flow.md` owns the contract, including the SDLC clarify the intent step puts to the captain (main repository, participating repositories, feature, change slug).
+`sdlc` is the staged flow whose record leaves the fleet home: intent, spec and plan are MANDATORY stages (architecture admits on evidence as in staged), and every accepted report is also committed into the main repository as the SDLC artifact chain - intent, spec, plan, the QA test plan before build, the QA report and the release notes after it, at the paths of the fleet's layout - so the PR carries the code AND its record, and review is mandatory as in staged; `docs/sdlc-flow.md` owns the contract, including the SDLC clarify the intent step puts to the captain (main repository, participating repositories, feature, change slug).
 Pick `sdlc` on the captain's word, or when the order names a feature change whose record the main repository must keep.
 Precedence: (1) the captain's own words in the order,
 (2) `config/flow` (`direct` / `staged` / `sdlc` pin it for the whole home),
@@ -112,7 +112,7 @@ trace to requirements.md lines rather than the raw order, and the
 design brief links it under `## Inputs`. A clear order still gets the
 file - drafted straight from the order with one-word acceptance -
 cheap, and the spec anchor keeps one shape for every family.
-In the `sdlc` flow the file is `data/<family>/intent.md`, written from the `sdlc` skill's template after the SDLC clarify `docs/sdlc-flow.md` prescribes - a read-then-confirm ask: the knowledge reads above plus the feature's latest `intent.md` and `plan.md` in the main repository fill what they can, the captain confirms or corrects, and only what nothing answers is asked open - and it is the first artifact the execution crewmate commits.
+In the `sdlc` flow the file is `data/<family>/intent.md`, written from the `sdlc` skill's template after the SDLC clarify `docs/sdlc-flow.md` prescribes - a read-then-confirm ask: the fleet's `sdlc.md` layout when it exists, the knowledge reads above and the feature's latest intent and plan in the main repository fill what they can, the captain confirms or corrects, and only what nothing answers is asked open - and it is the first artifact the execution crewmate commits.
 Tells that force the test on a re-read: asking words in the order,
 two readings surviving a second read, taste-based acceptance with no
 reference, a solution named with no problem stated. Mid-flight the

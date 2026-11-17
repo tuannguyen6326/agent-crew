@@ -97,7 +97,7 @@ sdlc:    staged, plus the SDLC artifact chain committed in the main repository
 
 Direct gives the whole order to one execution crewmate.
 Staged puts one design crewmate first, which writes the admitted spec, architecture and plan reports in order and waits at every gate; implementation starts only after the pre-implement gate.
-Sdlc is staged with its record kept in the main repository: intent, spec and plan are mandatory, each accepted artifact is committed into `docs/features/<feature>/changes/<change>/` before any code, a QA test plan precedes the build and a QA report closes it ([`sdlc-flow.md`](sdlc-flow.md)).
+Sdlc is staged with its record kept in the main repository: intent, spec and plan are mandatory, each accepted artifact is committed into the change's snapshot directory (`docs/features/<feature>/changes/<change>/` by default; a fleet's `sdlc.md` sets its own layout) before any code, a QA test plan precedes the build, and a QA report and release notes close it ([`sdlc-flow.md`](sdlc-flow.md)).
 A direct task that sprouts requirement questions is upgraded to staged; the chief never downgrades on its own.
 An order with several independently-landable deliverables, or deliverables in more than one repo, is an epic and is decomposed into stories.
 

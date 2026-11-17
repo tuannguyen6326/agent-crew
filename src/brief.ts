@@ -242,7 +242,9 @@
 // a row pinned `flow:sdlc`, `Flow: sdlc` plus a `## SDLC artifact chain` block
 // in the body - the design one tells the crewmate to write each artifact
 // beside its report, the execution one to commit the accepted chain before
-// any code; the `sdlc` skill and docs/sdlc-flow.md own the detail), then
+// any code; both name the skill's `references/layout.md` for every path, and
+// `<home>/sdlc.md` - the fleet's layout override - when that file exists; the
+// `sdlc` skill and docs/sdlc-flow.md own the detail), then
 // the Escalation: line where one is due (not scout, not qa), then `Captain:`.
 // The blocks: signals (the done/blocked/needs-decision/paused lines and the
 // push `<root>/bin/ac-done.sh <id> '<the exact line you printed>'`, a crew-ship
@@ -696,6 +698,12 @@ function main(): void {
   }
   const esc = escalation === "" ? "" : `\n${escalation}`;
   const flowLine = sdlc ? "\nFlow: sdlc" : "";
+  const fleetSdlc = `${home}/sdlc.md`;
+  const sdlcLayout = isFile(fleetSdlc)
+    ? `the layout in the \`sdlc\` skill's \`references/layout.md\`, which this fleet
+overrides in \`${fleetSdlc}\` under that reference's precedence rule - read that
+file, its gotchas included, before your first artifact`
+    : `the layout in the \`sdlc\` skill's \`references/layout.md\``;
   const sdlcDesign = (): string =>
     sdlc
       ? `
@@ -713,8 +721,10 @@ sha256, so the report hash the gate binds covers the artifact. You commit
 nothing: the execution crewmate commits the accepted chain. An artifact states
 facts of the change and carries no local path, fleet path or digest command -
 the skill's check runs before you announce a report. The accepted \`intent.md\`
-linked under \`## Inputs\` names the feature, the main repository and the
-participating repositories - never infer them.`
+linked under \`## Inputs\` names the feature, the change, the main repository
+and the participating repositories - never infer them. Your working copies
+keep the skill's default names; every path and name an artifact states for the
+main repository follows ${sdlcLayout}.`
       : "";
   const sdlcExec = (): string =>
     sdlc
@@ -728,11 +738,12 @@ and order). Before any code, verify every accepted artifact linked under
 \`## Inputs\` against the sha256 its accepted report lists (a mismatch is a
 \`needs-decision:\`, never a copy) and run the skill's local-fact check on the
 snapshot (a hit is a \`needs-decision:\` for a design revision), copy it into
-\`docs/features/<feature>/changes/<change>/\` of THIS repository and commit the
-chain in order on \`${branch}\`, one commit per artifact - in a repository that
-is not the main repository, only its own \`plan.md\`. A departure from the plan updates
-\`plan.md\` in the same commit. The review round reads \`intent.md\`, \`spec.md\`
-and this repository's \`plan.md\` as the expected behavior.`
+the snapshot directory of THIS repository and commit the chain in order on
+\`${branch}\`, one commit per artifact - in a repository that is not the main
+repository, only its own plan at the layout's repository-plan path. Every path
+and file name follows ${sdlcLayout}. A departure from the plan updates the plan
+in the same commit. The review round reads the intent, the spec and this
+repository's plan as the expected behavior.`
       : "";
 
   // An unwritable data dir is reported by mkdir below in its own words, as the

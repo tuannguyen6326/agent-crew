@@ -33,23 +33,25 @@ The flow must:
 
 ## Definitions
 
-- **Feature**: a product capability with a directory of live documents in the main repository, `docs/features/<feature>/`.
-- **Change**: one unit of work on a feature, identified by `<YYYY-MM-DD>-<slug>`, which is also its backlog family id.
+- **Feature**: a product capability with a directory of live documents in the main repository, the layout's `live` directory.
+- **Change**: one unit of work on a feature, identified by its change id, which the layout's `change` key renders (`<YYYY-MM-DD>-<slug>` by default, e.g. `<record>-<slug>` in a fleet that keys changes by ticket).
+  The backlog family id is minted from the change id in the backlog's own id grammar; with the default layout the two are equal.
+- **Layout**: every path, file name and the change-id rule of this flow - the `sdlc` skill's `references/layout.md` holds the keys and their defaults, a fleet overrides them key by key in `<fleet home>/sdlc.md`, and a repository that ships its own `sdlc` skill follows that skill's layout.
 - **Main repository**: the one repository that holds the feature's live documents and every change snapshot.
   The captain names it at intake, never the chief by inference.
 - **Participating repository**: a code repository the change modifies.
   The main repository may be one of them.
 - **Single-repo product**: the main repository is the only participating repository, so the record and the code ride one branch and one PR.
 - **Multi-repo product**: the change is an epic whose stories are one record story on the main repository and one code story per participating repository.
-- **Artifact chain**: the ordered files of one change snapshot, `intent.md`, `spec.md`, `contracts/`, `plan.md`, `qa/test-plan.md`, `qa/qa-report.md`.
-- **Record branch**: the crew branch on the main repository that receives every accepted artifact of the chain: `crew/<change>` in a single-repo change, the record story's own `crew/<family>` in a multi-repo change. The change id names the snapshot directory, never a branch; every crewmate commits on the branch its brief names.
-- **Live documents**: the feature's documents that stay current across changes, beside `changes/`: the requirement documents (business and product), the technical design, the service contracts, the regression cases and the incident records. Their file names are the project's own; the layout below shows the default names the `sdlc` skill assumes, and a project's `.claude/skills/sdlc/` override may rename or drop any live document, never a snapshot file.
+- **Artifact chain**: the ordered files of one change snapshot, `intent.md`, `spec.md`, `contracts/`, `plan.md`, `qa/test-plan.md`, `qa/qa-report.md`, `release-notes.md` (the default names; the layout renames and moves them, never drops one).
+- **Record branch**: the crew branch on the main repository that receives every accepted artifact of the chain: `crew/<family>` of the change's family in a single-repo change, the record story's own `crew/<family>` in a multi-repo change. The change id names the snapshot directory, never a branch; every crewmate commits on the branch its brief names.
+- **Live documents**: the feature's documents that stay current across changes, beside `changes/`: the requirement documents (business and product), the technical design, the service contracts, the regression cases and the incident records. Their file names come from the layout; the default names are shown below.
 - **Snapshot**: the change directory, written while the change runs and never rewritten after it lands.
 - **based_on**: the earlier change a delta spec builds on, named in `intent.md`; the first change of a feature carries none and writes a full spec.
 
 ## Repository layout
 
-Main repository (the live documents carry the default names; the snapshot names are fixed):
+With the default layout, the main repository holds:
 
 ```text
 docs/features/<feature>/
@@ -67,6 +69,7 @@ docs/features/<feature>/
     plan.md                      repositories, order of work, deploy order, rollback, PR list
     qa/test-plan.md              written before build
     qa/qa-report.md              written after build
+    release-notes.md             written after the QA report passes
 ```
 
 Each participating code repository that is not the main repository:
@@ -75,7 +78,9 @@ Each participating code repository that is not the main repository:
 docs/features/<feature>/changes/<change>/plan.md
 ```
 
-A project may pin a different root than `docs/features` in its `.claude/skills/sdlc/` override; the shape below the root never changes.
+Every name above is a layout key's default: a fleet's `sdlc.md` may move the live directory, the snapshot directory and the repository plan, rename any artifact or live document, and take requirement documents by glob (e.g. `brd-*.md, prd-*.md`).
+The set of artifacts and the order of the chain never change.
+Every `flow:sdlc` brief names the fleet's `sdlc.md` when it exists.
 
 ## Core Flow
 
@@ -103,6 +108,9 @@ one execution crewmate per participating repository
 QA verifier runs qa/test-plan.md -> qa/qa-report.md committed on the record branch
         |
         v
+release-notes.md committed on the record branch
+        |
+        v
 document step syncs the live documents on the record branch -> record PR
         |
         v
@@ -116,8 +124,9 @@ The ask is read before it is asked: the chief first recalls what the fleet and t
 
 Before the ask, the chief reads:
 
+- the fleet's `sdlc.md`, when it exists, for the layout - where the feature lives and how a change id is formed;
 - `bin/ac-know.sh recall` and `bin/ac-brain.sh recall` by the feature's name and the order's subject, as every intake does;
-- in the main repository, when `docs/features/<feature>/` already exists, the latest change's `intent.md` and `plan.md`: they name the main repository, the participating repositories and the feature, and that change is the default `based_on`;
+- in the main repository, when the feature's `live` directory already exists, the latest change's intent and plan - latest by the git history of the snapshot's parent directory, never by sorting the change ids: they name the main repository, the participating repositories and the feature, and that change is the default `based_on`;
 - the order itself, for the ticket and the slug.
 
 Every item the read answers is put to the captain as a statement with its source, to confirm or correct; only an item nothing answers is an open question.
@@ -127,10 +136,10 @@ The ask names:
 
 - the main repository, by its name in `records/projects.md`;
 - every participating repository, so the chief knows whether the change is single-repo or multi-repo;
-- the feature, as the directory name under `docs/features/`;
-- the change slug, so the family id `<YYYY-MM-DD>-<slug>` is minted from the captain's word;
+- the feature, as the layout's `<feature>`;
+- the change slug, under the layout's `slug` rule, so the change id and the family id are minted from the captain's word;
 - the earlier change this one builds on, or none;
-- the external record, such as a ticket id, or none.
+- the external record, such as a ticket id, or none - when the layout's `record` is `required`, none is not an answer and the change id cannot be minted without it.
 
 The answers are recorded `DECIDED:` in the family room, each with its source (the record read or the captain's word); `intent.md` then states each one as a fact of the change, never as a quotation - the artifact contract below owns that rule.
 
@@ -197,9 +206,15 @@ Written after build by the QA verifier of the `crew-qa` skill, run against `qa/t
 The verdict, the evidence per test case and the source SHA per repository are written into the report and committed on the record branch.
 A failed case loops to the owning execution crewmate; the report is rewritten when the round passes.
 
+### release-notes.md
+
+Mandatory, written after the QA report passes, by the record story's execution crewmate, and committed on the record branch.
+Content: what the change delivers per requirement; the evidence - the QA verdict and round, and every participating repository's source SHA and PR; the deploy order and the rollback path from the plan with its departures applied; the known issues with their owning roles; and the reconciliation of every live document the change made stale.
+It is a record of the change, not a release: it authorizes no deploy, no merge and no released state, and a later QA round rewrites it with the report.
+
 ### Live document sync
 
-The `document` step of the record story updates the live documents the change makes stale: the requirement documents, the technical design, the contracts, the regression cases.
+The `document` step of the record story updates the live documents the change makes stale: every requirement document the layout's `requirements` globs match, the technical design, the contracts, the regression cases.
 The snapshot is never edited by this step.
 The record PR carries the snapshot and the live document updates together.
 
@@ -209,7 +224,7 @@ The record PR carries the snapshot and the live document updates together.
 - The design crewmate writes each artifact beside its stage report in the family dir and lists it, with its digest, in the report's `## Artifacts` section: the gate hashes only the report, so that list is what binds the artifact to the acceptance. The digest covers every byte but the `status:` line (`grep -v '^status:' <file> | shasum -a 256`), because that line is the one a later owner moves. It commits nothing, because its worktree is pooled and the family branch belongs to the execution crewmate.
 - The execution crewmate of the record branch verifies each artifact against the digest its accepted report lists and runs the local-fact check on the snapshot, sets `status: accepted`, then commits the accepted chain, one commit per artifact in chain order, before any code: the chain is in git before the first line of implementation, and each commit names the stage whose gate accepted its artifact, never the receipt's text. A digest mismatch is a `needs-decision:`, never a commit. After acceptance the only authorized edits are the `status:` line and, on `plan.md`, the `## Departures from plan` section.
 - Each execution crewmate of another participating repository commits that repository's `plan.md` first, then its code and tests, on its own crew branch.
-- The QA verifier's report is committed by the record story's execution crewmate.
+- The QA verifier's report and the release notes are committed by the record story's execution crewmate.
 - Every push and PR follows the row's mode; the captain merges.
 
 ## Gate and authority
@@ -223,7 +238,7 @@ The record PR carries the snapshot and the live document updates together.
 
 ### SDLC-AC-01: Record in the repository
 
-A landed change leaves the full artifact chain under `docs/features/<feature>/changes/<change>/` in the main repository, and a `plan.md` under the same path in every other participating repository.
+A landed change leaves the full artifact chain in the layout's snapshot directory of the main repository, and its plan at the layout's repository-plan path in every other participating repository.
 
 ### SDLC-AC-02: Clarify before intent
 
@@ -252,6 +267,14 @@ No commit after the record PR merges touches files under the change directory.
 ### SDLC-AC-08: One shape, two use cases
 
 A single-repo change and a multi-repo change produce the same artifact chain; the only difference is how many crew branches and PRs carry it.
+
+### SDLC-AC-09: Release notes after the passing round
+
+The release notes are committed on the record branch after the QA report's passing round, and name the source SHA of every participating repository that report names.
+
+### SDLC-AC-10: One flow, a fleet's layout
+
+Two fleets with different layouts run the same stages, gates and chain order; their snapshots differ only in the paths and names their layouts set.
 
 ## Assumptions
 

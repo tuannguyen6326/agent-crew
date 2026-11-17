@@ -1,7 +1,7 @@
 # Intent: <change title>
 
 status: draft
-change: <YYYY-MM-DD>-<slug>
+change: <change id, rendered from the layout's change key>
 feature: <feature>
 main_repo: <main repository name>
 repos: <participating repository>, <participating repository>

@@ -2,7 +2,7 @@
 
 status: draft
 change: <change id>
-intent: intent.md
+intent: <the intent, relative to this file>
 based_on: <earlier change id, or none - full spec when none, delta otherwise>
 
 ## Summary

@@ -2,7 +2,7 @@
 
 status: draft
 change: <change id>
-spec: spec.md
+spec: <the spec, relative to this file>
 
 ## Repositories
 

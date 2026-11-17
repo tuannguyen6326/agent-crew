@@ -2,7 +2,7 @@
 
 status: draft
 change: <change id>
-main_plan: <main repository>:docs/features/<feature>/changes/<change>/plan.md
+main_plan: <main repository>:<the main plan's repository-relative path>
 
 ## Tasks
 

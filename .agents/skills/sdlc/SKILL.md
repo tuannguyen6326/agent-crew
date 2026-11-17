@@ -1,29 +1,31 @@
 ---
 name: sdlc
-description: SDLC artifact chain: templates, paths, commit order. Use when a brief says Flow: sdlc or on /sdlc.
+description: SDLC artifact chain: templates, layout, commit order. Use when a brief says Flow: sdlc or on /sdlc.
 ---
 
 # sdlc
 
 The `sdlc` flow is the staged flow whose record leaves the fleet home: every accepted artifact of a change is committed into the main repository, so the PR carries the code AND its record.
-`docs/sdlc-flow.md` in the distro is the authoritative contract (stages, gates, who commits what, acceptance criteria); this skill owns only the templates, the paths, and the order in which a crewmate writes and commits them.
+`docs/sdlc-flow.md` in the distro is the authoritative contract (stages, gates, who commits what, acceptance criteria); this skill owns only the templates, the layout, and the order in which a crewmate writes and commits them.
 
 ## Paths
 
-The snapshot of one change lives at `docs/features/<feature>/changes/<change>/` in the main repository:
+Every path, file name and the change id come from `references/layout.md`, which a fleet overrides key by key in its own `sdlc.md`; your brief names that file when the fleet has one, and you read it, its gotchas included, before your first artifact.
+This skill names each artifact by its default file name; read each as its layout key, and write it where the layout puts it:
 
 ```text
-intent.md            what is wanted, why, for which role, for which repositories
-spec.md              requirements and design - full on the first change, a delta after
-contracts/           only the contract files this change alters, in their new form
-plan.md              repositories, order of work, deploy order, rollback, PR list
-qa/test-plan.md      written before build
-qa/qa-report.md      written after build
+intent.md            intent         what is wanted, why, for which role, for which repositories
+spec.md              spec           requirements and design - full on the first change, a delta after
+contracts/           contracts      only the contract files this change alters, in their new form
+plan.md              plan           repositories, order of work, deploy order, rollback, PR list
+qa/test-plan.md      test_plan      written before build
+qa/qa-report.md      qa_report      written after build
+release-notes.md     release_notes  written after the QA report passes
 ```
 
-Every other participating repository carries only `docs/features/<feature>/changes/<change>/plan.md`, from `templates/repo-plan.md`.
+All of them live in the layout's `snapshot` directory of the main repository; every other participating repository carries only its plan, at the layout's `repo_plan` path, from `templates/repo-plan.md`.
 `<feature>`, `<change>`, the main repository and the participating repositories come from the brief's `## Inputs`, which quote the accepted `intent.md` - never invent them.
-A project may ship its own copy of this skill at `.claude/skills/sdlc/` with other templates or another root; a repo-shipped skill wins over the seeded one, and the shape below the root never changes.
+A project may ship its own copy of this skill at `.claude/skills/sdlc/` with other templates or another layout; a repo-shipped skill wins over the seeded one and over the fleet's `sdlc.md`.
 The seeded copy sits where your harness scans skills (`.claude/skills/sdlc/` for claude, `.agents/skills/sdlc/` for codex); reach for it by name, never by path.
 
 ## Templates
@@ -45,6 +47,7 @@ The templates:
 - `assets/templates/repo-plan.md` - the plan stage, one per participating repository.
 - `assets/templates/test-plan.md` - the end of the plan stage.
 - `assets/templates/qa-report.md` - the QA verifier's verdict after build.
+- `assets/templates/release-notes.md` - the change's release record, after the QA report passes.
 
 `status:` moves `draft` -> `accepted` (gate receipt or captain acceptance) -> `implemented` (the code PR is raised) -> `verified` (the QA report passes); only the owner of that step moves it.
 
@@ -56,6 +59,8 @@ Beside it you write the ARTIFACT the report produces, from the template, with `s
 - spec stage: `data/<family>/spec/spec.md`, plus `data/<family>/spec/contracts/<file>` for every contract the change alters;
 - plan stage: `data/<family>/plan/plan.md`, one `data/<family>/plan/plan.<repository>.md` per participating repository, and `data/<family>/plan/test-plan.md`.
 
+These working names never follow the layout; the execution crewmate copies each artifact to its layout path.
+
 Write the artifact in the same pass as the report, before you announce the report ready, and end the report with an `## Artifacts` section listing every artifact as `<path relative to the stage dir> <digest>`, where the digest is `grep -v '^status:' <file> | shasum -a 256`: the gate hashes only the report, so that list is what binds each artifact to the acceptance, and the `status:` line is excluded because it is the one line a later owner moves.
 You commit nothing and push nothing: your worktree is pooled, and the execution crewmate commits the accepted chain.
 The list and the digest rule live in the report only; an artifact never carries them, and the check above runs on every artifact before the report is announced.
@@ -65,12 +70,12 @@ When the main repository is also a code repository, do not write a separate `pla
 ## Execution stage (first commits, then code)
 
 Your `## Inputs` name the accepted reports by absolute path with their `report_sha256`, and each report's `## Artifacts` section names its artifacts with their sha256; read every one before your first commit.
-Your branch is the one your brief names (`crew/<family>`): in a single-repo change that is `crew/<change>`; in a multi-repo change each story has its own family and branch, and the snapshot id `<change>` never names a branch.
+Your branch is the one your brief names (`crew/<family>`); in a multi-repo change each story has its own family and branch, and the change id `<change>` never names a branch.
 On that branch in YOUR repository, before any code:
 
 1. Verify each accepted artifact against the digest its report lists, with the same command (`grep -v '^status:' <file> | shasum -a 256`); a mismatch is a `needs-decision:` to your chief, never a copy. Then copy it into the snapshot path and set `status: accepted` - the only edit acceptance authorizes, which the digest ignores by construction.
    Run the local-fact check above on the snapshot directory; a hit means the accepted artifact is wrong at its source, so it is a `needs-decision:` to your chief for a design revision, never a silent edit.
-2. Commit them in chain order, one commit per artifact: `intent.md`, then `spec.md` with its `contracts/`, then `plan.md`, then `qa/test-plan.md`.
+2. Commit them in chain order, one commit per artifact: `intent.md`, then `spec.md` with its `contracts/`, then `plan.md`, then `qa/test-plan.md` (`qa-report.md` and `release-notes.md` follow after build).
    In a participating repository that is not the main repository, the chain is only that repository's `plan.md`.
    Commit message shape: `sdlc(<change>): <artifact> accepted at the <stage> gate` - the stage, never the receipt's or the captain's words.
    In a multi-repo change the record story's execution crewmate commits the chain first and then prints `paused: sdlc chain committed @<sha> - resumes when every code story has landed` and pushes it with `ac-done.sh`: that line is the release checkpoint the chief spawns the code stories on, so no code commit anywhere precedes the committed chain; the chief steers it back (`ac-send`) once the code has landed, for the QA report and the live-document sync.
@@ -85,7 +90,9 @@ The review round reads `intent.md`, `spec.md` and your repository's `plan.md` as
 
 The QA verifier runs `qa/test-plan.md` through the `crew-qa` skill and returns its verdict; the record story's execution crewmate writes it into `qa/qa-report.md` from the template, naming the exact `source_sha` of every participating repository, and commits it on the record branch.
 A failed case returns to IMPLEMENT; the report is rewritten on the passing round, never appended.
-The `document` step then syncs the live documents under `docs/features/<feature>/` that this change made stale - the requirement documents, the technical design, the contracts, the regression cases, under whatever names the project keeps them (the defaults are `PRD.md`, `tech/`, `contracts/`, `qa/regression.md`) - in the same branch.
+On the passing round the same crewmate writes `release-notes.md` from the template and commits it on the record branch: what the change delivers per requirement, the evidence (the QA verdict, every repository's `source_sha` and PR), the deploy order and rollback from the plan with its departures applied, the known issues, and the live-document reconciliation.
+It is a record, not a release: nobody deploys, merges or marks anything released because it exists; a later QA round rewrites it with the report.
+The `document` step then syncs the live documents under the layout's `live` directory that this change made stale - every match of `requirements`, then `tech`, `contracts_live` and `regression` - in the same branch, and the release notes' reconciliation names each update or why none was needed.
 
 ## Never
 

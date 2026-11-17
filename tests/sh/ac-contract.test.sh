@@ -190,12 +190,24 @@ assert_contains "$sdlci" "one commit per artifact" "G4b: ... binding the chain-b
 assert_contains "$sdlci" "\`sdlc\` skill seeded in this worktree" "G4b: ... pointing at the seeded skill by name, never by a harness path"
 assert_contains "$sdlci" "sha256" "G4b: ... and binding each artifact to its accepted report's digest"
 assert_contains "$sdlcd" "## Artifacts" "G4b: the design brief asks for the artifact digest list the gate binds"
+for b in "$sdlcd" "$sdlci"; do
+  assert_contains "$b" "references/layout.md" "G4b: every sdlc brief resolves its paths through the skill's layout reference"
+  case "$b" in
+    *"docs/features"*) fail "G4b: an sdlc brief hardcodes no layout path - the layout reference owns them" ;;
+    *"$AC_HOME/sdlc.md"*) fail "G4b: a fleet with no sdlc.md is pointed at none" ;;
+  esac
+done
 # G4c: the sdlc review obligation rides the ROW, not the call's layout flags -
 # the unsuffixed execution brief scaffolds with no --stage, and a cheap mode
 # must still carry Review: yes and the chain block.
+# A fleet that keeps its own sdlc.md has it named in the brief, so its layout
+# keys win over the skill's defaults.
+printf '# SDLC (fleet)\n\n## Layout\n\n- change: <record>-<slug>\n' >"$AC_HOME/sdlc.md"
 "$BIN/ac-brief.sh" g-sdlc2 gproj >/dev/null \
   || fail "G4c: a flow:sdlc pin must scaffold the default execution brief without asking"
+rm -f "$AC_HOME/sdlc.md"
 sdlc2="$(cat "$AC_HOME/data/g-sdlc2/brief.md")"
+assert_contains "$sdlc2" "\`$AC_HOME/sdlc.md\`" "G4c: a fleet's sdlc.md is named in the brief by its absolute path"
 assert_contains "$sdlc2" "Flow: sdlc" "G4c: the default execution brief states the flow"
 assert_contains "$sdlc2" "Review: yes" "G4c: ... and the mandatory review, with no --stage and a cheap mode"
 assert_contains "$sdlc2" "## SDLC artifact chain" "G4c: ... and the chain block"
