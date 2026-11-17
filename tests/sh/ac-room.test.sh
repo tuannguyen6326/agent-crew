@@ -1426,7 +1426,7 @@ rat rm -f '$H/home/state/gd-chief.meta'
 #    post's stderr or status - notify's own failures sunk. off/osascript/
 #    bell/command:/auto are the whole channel list; auto and every unknown
 #    value (a BOM-mangled "off" included) share the SAME final branch, which
-#    now delivers nothing - Orca's own agent-status hooks already notify the
+#    delivers nothing - Orca's own agent-status hooks already notify the
 #    captain - unaffected by config/backend or AC_BACKEND.
 ri=0
 for rch in osascript bell off auto 'command:exit 9' '  command:exit 0  ' 'command:' $'\357\273\277off'; do

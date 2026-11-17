@@ -70,8 +70,6 @@ export function notify(title: string, message: string, stderr: "inherit" | "igno
     }
     if (!ok) ring();
   }
-  // off, auto and any unknown value all deliver nothing: Orca's own
-  // agent-status hooks already notify the captain.
 }
 
 if (import.meta.main) {

@@ -109,9 +109,9 @@ rm -f "$NH/home/config/wedge-alarm"; nrun t m; assert_eq "$(nerr)$(nlog)" "" "8:
 mkdir -p "$NH/home/config/wedge-alarm"; nrun t m; assert_eq "$(nerr)$(nlog)" "" "8: a directory delivers nothing"
 rmdir "$NH/home/config/wedge-alarm"
 if [ "$(id -u)" != 0 ]; then
-  # nerr is left unchecked here: an unreadable file makes configReadSoft's own
-  # head(1) probe print its pre-existing, unrelated permission diagnostic -
-  # this case only proves the resulting empty channel still delivers nothing.
+  # nerr is left unchecked here: configReadSoft's head(1) probe prints its own
+  # permission diagnostic on stderr; this case proves only that the resulting
+  # empty channel delivers nothing.
   nalarm 'bell\n'; chmod 000 "$NH/home/config/wedge-alarm"
   nrun t m; assert_eq "$(nlog)" "" "8: an unreadable channel is read as auto, delivers nothing"
   chmod 644 "$NH/home/config/wedge-alarm"
