@@ -597,7 +597,7 @@ rm -f "$AC_HOME/config/remote-reply" "$AC_HOME/config/remote-mirror"
 # file, the settling DECIDED clears it - mechanically, off the room grammar,
 # no needs-decision: marker required. cmd_post's mark_wait/clear_wait calls
 # route on the AMBIENT AC_BACKEND ladder, never the target chief's own meta
-# (unlike cmd_open, which sets it from taskBackend first - src/room.ts:811) -
+# (unlike cmd_open, which sets it from taskBackend first - src/room.ts's cmdOpen) -
 # so config/backend must say orca explicitly too, not only the meta, or this
 # falls through to ac_backend()'s own orca default (same value, proving
 # nothing about the ladder). backend_mark_wait_orca only needs a recorded
@@ -1498,8 +1498,8 @@ rat rm -f '$H/date.fail-vn' '$H/home/config/remote-mirror' '$H/home/config/remot
 
 # 9. the captain-wait stamp, through the FLEET backend. cmd_post's
 #    mark_wait/clear_wait route on the ambient AC_BACKEND ladder, never the
-#    target chief's own meta (src/room.ts:811's taskBackend pin is cmd_open
-#    only) - config/backend is pinned explicitly here so the proof does not
+#    target chief's own meta (src/room.ts's cmdOpen is the only one that pins
+#    taskBackend) - config/backend is pinned explicitly here so the proof does not
 #    depend on ac_backend()'s own default happening to agree.
 rat rcfg backend orca
 rat rchief st

@@ -257,22 +257,22 @@ test("roomchiefLive answers ac_roomchief_live through backendCall: no meta no ca
   const env = { AC_HOME: home, PATH: `${fh}/bin:${process.env.PATH}` };
   const fams: [string, string, string][] = [
     ["nometa", "", ""],
-    ["live", "backend=herdr\n", "plive t\n"],
+    ["live", "backend=orca\n", "hlive t\n"],
     ["dead", "kind=roomchief\n", "pdead t\n"],
     ["nopane", "backend=herdr\n", ""],
     ["orca", "backend=orca\n", "horca t\n"],
     ["orcadead", "backend=orca\n", "hgone t\n"],
     ["tmux", "backend=tmux\n", "ptmux t\n"],
-    ["cr", "backend=herdr\r\n", "pcr t\n"],
+    ["cr", "backend=orca\r\n", "hcr t\n"],
   ];
   for (const [fam, meta, pane] of fams) {
     if (meta) writeFileSync(join(sd, `${fam}-chief.meta`), meta);
     if (pane) writeFileSync(join(sd, `.pane-${fam}-chief`), pane);
   }
-  writeFileSync(join(fh, "win-plive"), "");
+  writeFileSync(join(fh, "win-hlive"), "");
   writeFileSync(join(fh, "win-horca"), "");
   writeFileSync(join(fh, "win-ptmux"), "");
-  writeFileSync(join(fh, "win-pcr"), "");
+  writeFileSync(join(fh, "win-hcr"), "");
   for (const extra of [{}, { AC_HERDR_SESSION: "s1" }, { AC_BACKEND: "orca" }]) {
     for (const [fam] of fams) {
       rmSync(join(fh, "log"), { force: true });
@@ -305,10 +305,10 @@ test("wakeOrphanPending answers ac_wake_orphan_pending: family spools in byte or
     if (rec) writeFileSync(join(sd, `.wake-spool.${fam}`, "1.1.000000"), "x");
   };
   const chief = (fam: string, live: boolean): void => {
-    writeFileSync(join(sd, `${fam}-chief.meta`), "backend=herdr\n");
-    writeFileSync(join(sd, `.pane-${fam}-chief`), `p${fam} t\n`);
-    if (live) writeFileSync(join(fh, `win-p${fam}`), "");
-    else rmSync(join(fh, `win-p${fam}`), { force: true });
+    writeFileSync(join(sd, `${fam}-chief.meta`), "backend=orca\n");
+    writeFileSync(join(sd, `.pane-${fam}-chief`), `h${fam} t\n`);
+    if (live) writeFileSync(join(fh, `win-h${fam}`), "");
+    else rmSync(join(fh, `win-h${fam}`), { force: true });
   };
   const same = (): string => {
     rmSync(join(fh, "log"), { force: true });

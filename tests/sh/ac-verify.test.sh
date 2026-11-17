@@ -2953,8 +2953,7 @@ STUB
 chmod +x "$XS"/*
 make_fake_orca
 
-# verifyLease (src/verify.ts:2439-2446), returnLeases (src/verify.ts:683) and
-# verifyDropBranch (src/verify.ts:2455) always lease through
+# verifyLease, returnLeases and verifyDropBranch (src/verify.ts) always lease through
 # orcaWorktreeLease/orcaWorktreeRelease - the $XS/orca stub above stands in
 # for the CLI those two helpers shell out to, so every row needs backend=orca
 # pinned unless its own XE overrides it.
@@ -3206,7 +3205,7 @@ case "$(cat "$XW/log/tree.log")" in *return*) fail "a lease never taken is never
 # A lease that comes back with no worktree path reads through orcaWorktreeLease
 # (src/lib.ts) as a plain failure, not a distinct empty-path case - it already
 # cleans up via `worktree rm --worktree id:<id> --force` and returns status 1,
-# so this is the same refusal as the CLI call itself failing (verify.ts:1845).
+# so this is the same refusal as the CLI call itself failing (verifyLease's own status-1 check).
 XE="XT_LEASE=" xrefuse_late "could not lease verifier worktree for $XCID" "${XCR[@]}"
 XE="AC_BACKEND=orca FAKE_ORCA=$XW/orca" XPRE="$TMP/stubbin" XPLUS='mkdir -p "$XW/orca/terminals"' xok "${XCR[@]}"
 assert_contains "$(xfile orca/log)" "worktree rm" "an orca lease goes back through the orca CLI"

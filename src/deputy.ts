@@ -54,10 +54,9 @@
 //                   Registry and disk disagree: never routable, no recover
 //                   hint - repairing a registry line is a captain-facing act.
 //     NOT-RUNNING   no regular file at the PARENT's state/<id>.meta.
-//     else the window probe: AC_BACKEND set to taskBackend(<id>) (the
-//     meta's backend=, orca without one; an unreadable meta WARNs as
-//     ac_meta_get did and reads orca) for that one call and restored after,
-//     then backendCall("window_alive", [<id>]) (src/lib.ts, the twin of
+//     else the window probe: AC_BACKEND set to the meta's raw backend= (orca
+//     without one, or an unreadable meta) for that one call and restored
+//     after, then backendCall("window_alive", [<id>]) (src/lib.ts, the twin of
 //     bin/ac-backend.sh's driver) as the original's `( )` ran it - stdin
 //     /dev/null, stdout captured, stderr passed through. Its status: 0 LIVE,
 //     1 DOWN, anything else UNOBSERVABLE (2 an unreadable backend). A meta
@@ -261,6 +260,7 @@ import {
   awkAssign,
   backendCall,
   backendName,
+  cutNul,
   deputyParse,
   deputyRegistry,
   die,
@@ -269,6 +269,7 @@ import {
   isCrewdeputyHome,
   iso,
   ledgerLock,
+  metaGet,
   physicalDir,
   recordsBackup,
   shellStatus,
@@ -276,7 +277,6 @@ import {
   spawnShell,
   spawnShellSync,
   statusAppend,
-  taskBackend,
   taskMeta,
   wakePublish,
   warn,
@@ -408,11 +408,18 @@ function parsedRecords(file: string): Promise<{ status: number; out: Buffer }> {
 
 function deputyState(id: string, home: string): string {
   if (!isDir(fsPath(home)) || !isFile(fsPath(`${home}/.ac-crewdeputy-home`))) return "HOME-MISSING";
-  if (!isFile(taskMeta(u8(id)))) return "NOT-RUNNING";
+  const meta = taskMeta(u8(id));
+  if (!isFile(meta)) return "NOT-RUNNING";
   const saved = process.env.AC_BACKEND;
-  // taskBackend answers bytes; AC_BACKEND carries the text they spell, as the
-  // shell's export did.
-  process.env.AC_BACKEND = u8(taskBackend(u8(id)));
+  // A raw, non-validating read, like windowAliveAs's (src/lib.ts): taskBackend
+  // dies in THIS process on a bad backend=, which would kill the whole list
+  // over one stale entry. The window probe below runs in its own subshell, so
+  // a bad value dies THERE instead, read back as DOWN, never a crash here.
+  let b = "";
+  try {
+    b = cutNul(metaGet(meta, "backend"));
+  } catch {}
+  process.env.AC_BACKEND = u8(b) || "orca";
   const r = backendCall("window_alive", [u8(id)], { stdin: "ignore", stdout: "pipe", stderr: "inherit", subshell: true });
   if (saved === undefined) delete process.env.AC_BACKEND;
   else process.env.AC_BACKEND = saved;

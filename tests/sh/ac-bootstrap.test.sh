@@ -257,7 +257,7 @@ rc=0
 out="$(PATH="$TMP/orca-bin:$HEALTHY_PATH" "$BIN/ac-bootstrap.sh" --quiet)" || rc=$?
 assert_eq "$rc" "1" "an invalid backend name blocks"
 assert_contains "$out" "MISSING: config/backend names unsupported backend bogus" "the invalid name is named"
-if printf '%s\n' "$out" | grep -qE '^(OK|MISSING|BELOW-FLOOR|NO-CAPABILITY): (herdr|orca)( |$)'; then
+if grep -qE '^(OK|MISSING|BELOW-FLOOR|NO-CAPABILITY): (herdr|orca)( |$)' <<<"$out"; then
   fail "an invalid name must not silently fall back to either backend's checks: $out"
 fi
 

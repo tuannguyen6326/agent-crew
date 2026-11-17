@@ -5976,6 +5976,17 @@ export function dashboardMain(argv: string[] = process.argv) {
   // is covered without a restart.
   const fleetWatcher = watchHomes(() => { void snapshotResult.invalidate(); }, { log: slog });
   void snapshotResult.start(({ code, out }) => { if (code === 0) fleetWatcher.sync([...homePathsIn(out)]); });
+  // Bun exits on all three signals by default; the handler only logs WHY
+  // before it does, since a daemon found dead later has no terminal left to
+  // have shown it.
+  let shuttingDown = false;
+  for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const)
+    process.on(sig, () => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      slog(`shutdown: ${sig}`);
+      process.exit(sig === "SIGINT" ? 130 : 143);
+    });
   // Bun already dies on both; the handlers only make the log say why, since
   // a daemon found dead an hour later has no terminal left to have shown it.
   process.on("uncaughtException", (err) => {
