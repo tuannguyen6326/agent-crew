@@ -106,36 +106,89 @@ assert_contains "$(cat "$FAKE_ORCA/log")" "terminal read --terminal term1 --limi
 rm -f "$FAKE_ORCA/terminals/term1.screen"
 printf 'one\ntwo\nthree\n' >"$FAKE_ORCA/terminals/term1.buf"
 
-# --- send_line: type, verified submit, strand, unobservable ----------------------
+# --- send_line: Orca's prompt delivery, its receipt, the blind fallback -----------
+# One `terminal send --text --enter --wait-submit` per line: Orca bracket-pastes
+# a prompt to a recognized agent and reports whether it OBSERVED the submit
+# (probe 2026-11-17, Orca 1.4.259). A 4871-byte, 62-line message arrived whole
+# on all five harnesses this way, so nothing is chunked.
 
-: >"$FAKE_ORCA/log"
-run_backend orca 'backend_send_line o1 "hello crew"' >/dev/null
-assert_contains "$(cat "$FAKE_ORCA/log")" "--text hello crew" \
-  "text typed without submitting"
-assert_contains "$(cat "$FAKE_ORCA/terminals/term1.buf")" "hello crew" \
-  "the verified Enter landed the composer into the transcript"
+sends() { grep -c 'terminal send' "$FAKE_ORCA/log" || true; }
 
-# A LARGE payload is typed in chunks and must reassemble byte-identically:
-# one big --text write measurably lost its first ~4KB (a ~4.7KB kickoff
-# arrived as its last 723 bytes - live, 2026-08-26).
 big="$(printf 'chunkpayload-%03d ' $(seq 1 80))"
+printf 'claude\n' >"$FAKE_ORCA/terminals/term1.agent"
 : >"$FAKE_ORCA/log"
-run_backend orca "backend_send_line o1 \"$big\"" >/dev/null
-sends="$(grep -c -- '--text .*chunkpayload' "$FAKE_ORCA/log" || true)"
-[ "$sends" -ge 2 ] || fail "a >512B payload must be typed in more than one chunk (got $sends)"
+run_backend orca "backend_send_line o1 \"$big\"" >/dev/null \
+  || fail "an observed prompt (supported, turn_started) is sent"
+assert_eq "$(sends)" "1" "one prompt send per line - no chunks, no separate Enter"
+assert_contains "$(cat "$FAKE_ORCA/log")" "terminal send --terminal term1 --text $big --enter --wait-submit 10 --json" \
+  "the whole text rides one send carrying --enter and --wait-submit"
 assert_contains "$(cat "$FAKE_ORCA/terminals/term1.buf")" "$big" \
-  "the chunked payload reassembles byte-identically in the transcript"
+  "the payload lands byte-identically in the transcript"
 case "$(cat "$FAKE_ORCA/log")" in
-  *"terminal switch"*) fail "an acked first submit must not focus-steal" ;;
+  *"terminal read"*|*"terminal switch"*) fail "an observed prompt needs no screen read and no focus" ;;
 esac
+
+# Mid-turn, Orca accepts the prompt and QUEUES it - input_accepted alone, the
+# text still showing - and delivers it after the turn (probe 2026-11-17): a
+# supported observation is a sent line, never a strand to re-press.
+printf '{"ok":true,"result":{"send":{"prompt":{"stages":["input_accepted"],"provider":"claude","observation":"supported"}}}}\n' \
+  >"$FAKE_ORCA/terminals/term1.receipt"
+printf '1\n' >"$FAKE_ORCA/terminals/term1.drop-enters"
+: >"$FAKE_ORCA/log"
+run_backend orca 'backend_send_line o1 "queued steer"' >/dev/null \
+  || fail "input_accepted with a supported observation is sent"
+assert_eq "$(sends)" "1" "a queued prompt is never re-pressed"
+rm -f "$FAKE_ORCA/terminals/term1.receipt" "$FAKE_ORCA/terminals/term1.drop-enters" "$FAKE_ORCA/terminals/term1.agent"
+: >"$FAKE_ORCA/terminals/term1.in"
+
+# Unsupported observation (a shell, opencode, pi, cursor): Orca typed and
+# pressed Enter but cannot see the submit - only a text PROVEN pending in the
+# composer buys the bounded retry Enter; the text is never typed twice.
+: >"$FAKE_ORCA/log"
+run_backend orca 'backend_send_line o1 "hello crew"' >/dev/null \
+  || fail "an unobserved send whose text left the composer is sent"
+assert_contains "$(cat "$FAKE_ORCA/terminals/term1.buf")" "hello crew" "the text reached the transcript"
+assert_eq "$(sends)" "1" "a text not pending earns no retry Enter"
+
+printf '1\n' >"$FAKE_ORCA/terminals/term1.drop-enters"
+: >"$FAKE_ORCA/log"
+run_backend orca 'backend_send_line o1 "pending once"' >/dev/null \
+  || fail "the retry Enter lands a text proven pending"
+assert_eq "$(grep -c -- '--text' "$FAKE_ORCA/log")" "1" "the retry presses Enter only - the text is never retyped"
+assert_contains "$(cat "$FAKE_ORCA/log")" "terminal send --terminal term1 --enter --json" "the retry is a bare Enter"
+assert_contains "$(cat "$FAKE_ORCA/terminals/term1.buf")" "pending once" "the retried text reached the transcript"
+rm -f "$FAKE_ORCA/terminals/term1.drop-enters"
 
 : >"$FAKE_ORCA/log"
 printf '99\n' >"$FAKE_ORCA/terminals/term1.drop-enters"
-rc=0; run_backend orca 'backend_send_line o1 "stranded text"' 2>/dev/null || rc=$?
-assert_eq "$rc" "1" "a swallowed Enter is a STRAND after the one focused retry"
-assert_contains "$(cat "$FAKE_ORCA/log")" "terminal switch --terminal term1" \
-  "the strand retry focuses first"
+rc=0; err="$(run_backend orca 'backend_send_line o1 "stranded text"' 2>&1 1>/dev/null)" || rc=$?
+assert_eq "$rc" "1" "a text still pending after the bounded retries is a STRAND"
+assert_contains "$err" "not acknowledged" "the strand says so"
+assert_eq "$(sends)" "3" "the prompt send plus two retry Enters, no more"
 rm -f "$FAKE_ORCA/terminals/term1.drop-enters"
+: >"$FAKE_ORCA/terminals/term1.in"
+
+# Orca refuses a prompt into a permission/trust prompt (agent_prompt_blocked,
+# nothing typed - probe 2026-11-17): the dialog verdict, nothing else pressed.
+touch "$FAKE_ORCA/terminals/term1.prompt-blocked"
+: >"$FAKE_ORCA/log"
+rc=0; err="$(run_backend orca 'backend_send_line o1 "into a trust prompt"' 2>&1 1>/dev/null)" || rc=$?
+assert_eq "$rc" "1" "a refused prompt is the dialog verdict"
+assert_contains "$err" "DIALOG" "the refusal names the dialog"
+assert_eq "$(sends)" "1" "nothing is pressed after the refusal"
+assert_eq "$(cat "$FAKE_ORCA/terminals/term1.in")" "" "nothing was typed"
+rc=0; run_backend orca 'backend_send_line_pane term1 "raw into a trust prompt"' 2>/dev/null || rc=$?
+assert_eq "$rc" "1" "the raw-pane send answers the same dialog verdict"
+rm -f "$FAKE_ORCA/terminals/term1.prompt-blocked"
+
+# No parseable envelope: a transport failure is UNVERIFIED and never resent.
+printf 'garbage\n' >"$FAKE_ORCA/terminals/term1.receipt"
+: >"$FAKE_ORCA/log"
+rc=0; err="$(run_backend orca 'backend_send_line o1 "lost in transit"' 2>&1 1>/dev/null)" || rc=$?
+assert_eq "$rc" "2" "an unparseable receipt is UNVERIFIED"
+assert_contains "$err" "UNVERIFIED" "the stderr says unverified"
+assert_eq "$(sends)" "1" "an unverified send is never resent"
+rm -f "$FAKE_ORCA/terminals/term1.receipt"
 : >"$FAKE_ORCA/terminals/term1.in"
 
 # A swallowed Enter that still CHANGES the render (a popup closing, an

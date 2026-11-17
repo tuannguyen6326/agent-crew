@@ -1606,7 +1606,7 @@ async function run(args: string[]): Promise<never> {
     const kick = `Read and follow the instructions in ${PF}. Do NOT print your final message to the terminal: WRITE it to the file ${VERDICT} - that file's entire contents are your final message, and nothing else goes in it. Once it is written, announce your own completion by running this exact command: touch '${MARKER}'`;
     const sent = backendSendLinePane(P, kick, { stderr: "inherit" });
     if (sent.exited) process.exit(sent.status);
-    if (sent.status === 2) emit('{"event":"note","path":"prompt delivery UNVERIFIED - the pane could not be read, so the submit is neither confirmed nor refuted"}');
+    if (sent.status === 2) emit('{"event":"note","path":"prompt delivery UNVERIFIED - the backend gave no delivery receipt, so the submit is neither confirmed nor refuted"}');
     else if (sent.status !== 0)
       fail(`the verification prompt was NOT accepted by the pane: it sits unsubmitted in the composer of '${HARNESS}', so no turn will ever start - REFUSED rather than waited out`);
   }

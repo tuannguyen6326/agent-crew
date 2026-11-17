@@ -20,9 +20,7 @@ import {
   lockRelease,
   orcaAgentIdle,
   orcaJson,
-  orcaSubmitVerified,
-  orcaType,
-  settle,
+  orcaPromptSend,
   sleepOne,
   spins,
   stage,
@@ -165,22 +163,13 @@ export function backendCapturePane(pane: string, lines: string, io: { stdin?: "i
 }
 
 // backend_send_line_pane's twin, routed per call over a raw pane id, silent:
-// no pane 1; types <text> in chunks, settles and verifies the Enter with
-// <text> - a dialog-owned pane (3) answers 1 with no retry, any other
-// failure gets a terminal switch and one more verify whose verdict, 3
-// included, is the answer.
+// no pane 1; one orcaPromptSend of <text>, a dialog (3) answering 1.
 export function backendSendLinePane(pane: string, text: string, io: SpawnIo): Ended {
   const b = backendRoute(io.stderr);
   if (b === null) return { status: 1, exited: true };
   if (pane === "") return { status: 1, exited: false };
-  const top = io.stdin ?? "inherit";
-  orcaType(pane, text, top, io.stderr);
-  settle(io.stderr);
-  const rc = orcaSubmitVerified(pane, text, top, io.stderr);
-  if (rc === 0) return { status: 0, exited: false };
-  if (rc === 3) return { status: 1, exited: false };
-  orcaJson(["terminal", "switch", "--terminal", pane], top);
-  return { status: orcaSubmitVerified(pane, text, top, io.stderr), exited: false };
+  const rc = orcaPromptSend(pane, text, io.stdin ?? "inherit", io.stderr);
+  return { status: rc === 3 ? 1 : rc, exited: false };
 }
 
 // backend_agent_status_pane's twin, routed per call over a raw pane id: the

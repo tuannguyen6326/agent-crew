@@ -521,6 +521,13 @@ make_fake_orca() {
   #                   <h>.dialog-next when present - a digit key dismisses
   #                   the real dialogs the same way
   #   <h>.drop-enters "<count>" - swallow N `--enter` submits (strand knob)
+  #   <h>.receipt     content = the envelope a `--text --enter` prompt send
+  #                   answers; absent = Orca's measured receipt (probe
+  #                   2026-11-17): observation "supported" for a claude/codex
+  #                   <h>.agent, "unsupported" for anything else
+  #   <h>.prompt-blocked  present = a `--text --enter` send is refused with
+  #                   error.code agent_prompt_blocked and types nothing (probe
+  #                   2026-11-17: an agent parked on a trust prompt)
   #   <h>.popup-once  one-shot: the next `--enter` on a non-empty composer is
   #                   CONSUMED by a popup (render changes, composer keeps its
   #                   text) - the false-success class the pending check closes
@@ -779,6 +786,9 @@ case "${2:-}" in
       fi
       printf '{"ok":true,"result":{}}\n'; exit 0
     fi
+    if [ "$has_text" = 1 ] && [ "$enter" = 1 ] && [ -e "$d/terminals/$term.prompt-blocked" ]; then
+      printf '{"ok":false,"error":{"code":"agent_prompt_blocked","message":"The agent is showing a permission or trust prompt"}}\n'; exit 1
+    fi
     if [ "$has_text" = 1 ]; then
       dropped=0
       if [ -f "$d/terminals/$term.delay-ready-secs" ] && [ -f "$d/terminals/$term.ready-start" ]; then
@@ -793,25 +803,29 @@ case "${2:-}" in
       fi
     fi
     if [ "$enter" = 1 ]; then
+      cnt="$(cat "$d/terminals/$term.drop-enters" 2>/dev/null)"
       if [ -e "$d/terminals/$term.popup-once" ] && [ -s "$d/terminals/$term.in" ]; then
         rm -f "$d/terminals/$term.popup-once"
         printf 'argument hint filled\n' >>"$d/terminals/$term.buf"
-        printf '{"ok":true,"result":{}}\n'; exit 0
-      fi
-      if [ -f "$d/terminals/$term.drop-enters" ]; then
-        cnt="$(cat "$d/terminals/$term.drop-enters")"
-        if [ "${cnt:-0}" -gt 0 ] 2>/dev/null; then
-          printf '%s\n' "$((cnt - 1))" >"$d/terminals/$term.drop-enters"
-          printf '{"ok":true,"result":{}}\n'; exit 0
-        fi
-      fi
-      if [ -s "$d/terminals/$term.in" ]; then
+      elif [ "${cnt:-0}" -gt 0 ] 2>/dev/null; then
+        printf '%s\n' "$((cnt - 1))" >"$d/terminals/$term.drop-enters"
+      elif [ -s "$d/terminals/$term.in" ]; then
         cat "$d/terminals/$term.in" >>"$d/terminals/$term.buf"
         printf '\n' >>"$d/terminals/$term.buf"
         : >"$d/terminals/$term.in"
       else
         printf '\n' >>"$d/terminals/$term.buf"
       fi
+    fi
+    if [ "$has_text" = 1 ] && [ "$enter" = 1 ]; then
+      if [ -s "$d/terminals/$term.receipt" ]; then cat "$d/terminals/$term.receipt"; exit 0; fi
+      case "$(head -1 "$d/terminals/$term.agent" 2>/dev/null)" in
+        claude|codex)
+          printf '{"ok":true,"result":{"send":{"prompt":{"stages":["input_accepted","turn_started"],"provider":"%s","observation":"supported"}}}}\n' \
+            "$(head -1 "$d/terminals/$term.agent")" ;;
+        *) printf '{"ok":true,"result":{"send":{"prompt":{"stages":["input_accepted"],"provider":"unsupported","observation":"unsupported"}}}}\n' ;;
+      esac
+      exit 0
     fi
     printf '{"ok":true,"result":{}}\n'; exit 0 ;;
   wait)

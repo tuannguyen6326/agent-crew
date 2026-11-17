@@ -1059,10 +1059,11 @@ suite_task_clear
 rm -f "$suite_rec"
 # Orca's drop-enters knob is count-only (no pattern match, unlike fake
 # herdr's) - see tests/sh/ac-roomchief.test.sh's orphan-window case (1) for
-# the traced count: a worktree-arm create presses up to 3 enters (the typed
-# `cd`, the first submit, the focus-and-retry submit) before giving up.
+# the traced count: a worktree-arm create presses up to 4 enters (the typed
+# `cd`, the prompt send's, and the two retry Enters a text still pending in
+# the composer earns) before giving up.
 n="$(cat "$FAKE_ORCA/.n" 2>/dev/null || printf 0)"; snext="term$((n + 1))"
-printf '3\n' >"$FAKE_ORCA/terminals/$snext.drop-enters"
+printf '4\n' >"$FAKE_ORCA/terminals/$snext.drop-enters"
 out="$("$BIN/ac-learn.sh" autoroom 2>&1)" || fail "a held autoroom must still exit 0: $out"
 assert_contains "$out" "could not be started" "an unacknowledged send is reported, not assumed delivered"
 assert_eq "$(suite_tasks | wc -l | tr -d ' ')" "0" \

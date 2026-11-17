@@ -465,15 +465,15 @@ assert_eq "$(find "$AC_HOME/state/.wake-spool.famE" -type f | wc -l | tr -d ' ')
 # (1) the launch line strands: the spawn dies, and takes its own window with it.
 # Orca's drop-enters knob is count-only (no pattern match), so it drops
 # whichever --enter sends come first; a HOME-ARM create for a new
-# family presses exactly three before a strand is given up on - orca_type_cd's
-# `cd '<dir>'` enter, then backend_send_line_pane_orca's own press, then its
-# one focus-and-retry press (bin/ac-backend-orca.sh orca_submit_verified_pane)
-# - so dropping 3 strands the launch line for real (the cd's drop is inert:
-# orca_type_cd never verifies it landed). The handle is predicted the
-# ac-spawn-teardown.test.sh way - the chiefs workspace already exists here,
-# so the next handle is the next id.
+# family presses exactly four before a strand is given up on - orca_type_cd's
+# `cd '<dir>'` enter, then the prompt send's, then the two retry Enters a text
+# still pending in the composer earns (bin/ac-backend-orca.sh
+# orca_prompt_send_pane) - so dropping 4 strands the launch line for real
+# (the cd's drop is inert: orca_type_cd never verifies it landed). The
+# handle is predicted the ac-spawn-teardown.test.sh way - the chiefs
+# workspace already exists here, so the next handle is the next id.
 n="$(cat "$FAKE_ORCA/.n" 2>/dev/null || printf 0)"; onext="term$((n + 1))"
-printf '3\n' >"$FAKE_ORCA/terminals/$onext.drop-enters"
+printf '4\n' >"$FAKE_ORCA/terminals/$onext.drop-enters"
 : >"$FAKE_ORCA/log"
 room_seed orph1
 assert_fails "$BIN/ac-spawn.sh" --roomchief orph1 --harness fake

@@ -1820,6 +1820,8 @@ export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$TMP/xgitconfig" \
 # turn (the transcript written, the Stop hook's marker touched), `enter` flushes
 # the composer and, for a crewmate's typed line, writes the verdict where told
 # and touches the announced marker - each step skipped by its fault file.
+# `ruled` frames a pending composer between two rules, the shape orca's
+# pending check reads (bin/ac-backend-orca.sh orca_composer_pending).
 cat >"$XSTUBS/xsim" <<'STUB'
 #!/usr/bin/env bash
 d="$XSTUB"
@@ -1846,7 +1848,7 @@ case "$1" in
   render)
     if [ -e "$d/render.n" ]; then n=$(($(cat "$d/render.n") + 1)); echo "$n" >"$d/render.n"; echo "boot $n"; exit 0; fi
     echo 'composer ready'; cat "$d/buf" 2>/dev/null
-    [ ! -s "$d/in" ] || { printf '> '; cat "$d/in"; echo; } ;;
+    [ ! -s "$d/in" ] || { [ ! -e "$d/ruled" ] || echo '────────────'; printf '> '; cat "$d/in"; echo; [ ! -e "$d/ruled" ] || echo '────────────'; } ;;
 esac
 STUB
 # herdr: every call logged with its argv bracketed and the HERDR_SESSION it
@@ -2225,7 +2227,7 @@ xone 'xcrew; xs terminal-show.2.out "{\"ok\":true,\"result\":{\"terminal\":{\"co
 xrc 0; xhas '"source":"file"'; xwhas 'orca [terminal] [send] [--terminal] [h1] [--text] [2] [--json]'
 xone 'xcrew; xs render.n 0' 'xrun --harness codex --timeout 8'
 xrc 1; xhas "\"error\":\"harness 'codex' came up but its input surface did not become ready within 7s - no prompt was delivered\""
-xone 'xcrew; xs strand' 'xrun --harness codex'
+xone 'xcrew; xs strand; xs ruled' 'xrun --harness codex'
 xrc 1; xhas "\"error\":\"the verification prompt was NOT accepted by the pane: it sits unsubmitted in the composer of 'codex', so no turn will ever start - REFUSED rather than waited out\""
 xone 'xcrew; xs empty-verdict' 'xrun --harness opencode'
 xrc 1; xhas "\"error\":\"verification agent 'opencode' produced no verdict: the agent announced its turn but left no verdict at $XW/st/.pane-agent-tmp/ac-pane-verdict.cwd.PID1\""

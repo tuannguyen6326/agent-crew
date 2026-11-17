@@ -136,13 +136,13 @@ assert_contains "$out" "delivered (arrival unverified) to" "--force overrides th
 # orca) - unlike herdr, where the pre-check and the submit's render-change
 # verification are independent signals.
 
-# --- one dropped Enter: focused retry lands, success stays honest -------------------
+# --- one dropped Enter: the retry Enter lands, success stays honest ------------------
 
 mk_crewmate s2 pA2
 printf '1\n' >"$FAKE_ORCA/terminals/pA2.drop-enters"
 out="$("$BIN/ac-send.sh" s2 'retry me')"
 assert_contains "$out" "delivered (arrival unverified) to" "recovered strand still reports success"
-assert_contains "$(cat "$FAKE_ORCA/log")" "terminal switch --terminal pA2" "strand focuses the tab before the retry"
+assert_contains "$(cat "$FAKE_ORCA/log")" "terminal send --terminal pA2 --enter --json" "a text left pending earns a bare retry Enter"
 assert_contains "$(cat "$FAKE_ORCA/terminals/pA2.buf")" "retry me" "retried text delivered"
 
 # --- strand never resolved: visible FAILURE, never a false "sent" -------------------
@@ -357,8 +357,8 @@ mk_claude_crewmate() {
   # arrival check itself (ac-lib.ts claude transcript arrival check) reads
   # the META's harness=/session_id=, backend-neutral; herdr's own COMPOSER
   # PROOF (keep-tail/draft/nbsp/read-fails below) is a SEPARATE, herdr-only
-  # mechanism with no orca counterpart (orca_submit_verified_pane has no
-  # composer-content check at all) - this file's own composer-proof section
+  # mechanism with no orca counterpart (orca_prompt_send_pane proves no
+  # composer content before Enter) - this file's own composer-proof section
   # stays herdr-pinned for that reason, reported as a gap, not ported.
   mk_crewmate "$1" "$2" "$3"
   printf 'harness=claude\nsession_id=%s\n' "$4" >>"$AC_HOME/state/$1.meta"
@@ -469,7 +469,7 @@ assert_contains "$err" "arrival REFUTED" "only a command-shaped first word skips
 
 # herdr's composer-proof-before-Enter mechanism (keep-tail/draft/nbsp/
 # read-fails knobs, AC_SEND_UNPROVEN) has no orca equivalent: ac-backend-orca.sh's
-# backend_send_line_orca/orca_submit_verified_pane carries no keep-tail, draft
+# backend_send_line_orca/orca_prompt_send_pane carries no keep-tail, draft
 # or composer-visibility check before submitting. This whole cluster is a
 # herdr-only gap with no orca-shaped test to migrate it to; tracked in report.md.
 
@@ -660,14 +660,12 @@ srun c1 --force; assert_eq "$SN_RC:$(serr)" "1:ERROR: refusing to send an empty 
 #    first-seen order, a token at a line's end; the verb list is the live
 #    AC_CAPTAIN_RE's, an unparseable one reports nothing, and one off its
 #    text (an uppercase verb) reports nothing under C and under UTF-8 alike.
-#    The herdr suite's TAB/CR-after-the-colon cases do not port: a raw
-#    control byte sitting UNSUBMITTED in the composer is read back by orca's
-#    pre-submit capture (orca_submit_verified_pane's `pre=`, before Enter is
-#    pressed) through fake orca's JSON tail (helpers.sh tail_json, out of
-#    this suite's write set), and jq -e rejects an unescaped control
-#    character in a JSON string (verified: jq itself errors "control
-#    characters ... must be escaped" on one) - every such send comes back
-#    UNVERIFIED, never the clean warn-and-deliver the herdr fixture gave it.
+#    The herdr suite's TAB/CR-after-the-colon cases are not ported: fake
+#    orca serves the composer through a JSON tail (helpers.sh tail_json, out
+#    of this suite's write set) that jq rejects once it holds a raw control
+#    byte (verified: jq itself errors "control characters ... must be
+#    escaped" on one), so orca's pending check (orca_composer_pending) would
+#    read nothing there and the case would pass without exercising it.
 #    The marker-guard parse itself is already proven by the cases above.
 srun c1 'blocked: x and done: y then done: z'; assert_eq "$SN_RC:$(sout):$(serr)" "0:$SDEL:${SWARN1}blocked: done:$SWARN2" "4: tokens deduped in first-seen order"
 srun c1 $'line one\nfailed:'; assert_eq "$(serr)" "${SWARN1}failed:$SWARN2" "4: a token at a line's end"
@@ -728,12 +726,9 @@ assert_eq "$SN_RC:$(cat "$H/orca/terminals/pD7.buf")" "0:[chief-order home=$H/ho
 #    stamp standing and skips the arrival check (on a claude pane a REFUTED
 #    line is the check running); /Compact, a path, and an uppercase
 #    subcommand are no command. The herdr suite's "a CR right after the
-#    word" case does not port, for the same reason section 4 dropped two of
-#    its own: send.ts only reaches the stamp-clearing step once backendCall
-#    returns status 0, and a raw CR landing in the UNSUBMITTED composer
-#    fails orca's pre-submit capture the same way a TAB or ESC does (section
-#    4's note above) - the send comes back UNVERIFIED before the stamp
-#    decision is ever reached.
+#    word" case is not ported, for the reason section 4 dropped two of its
+#    own: a raw CR in the composer is unreadable through fake orca's JSON
+#    tail (section 4's note above).
 sclaude cs pCS SIDS
 sturn SIDS "the captain's last typed line"
 for st in /compact '/compact now' '/a:b x'; do
@@ -792,7 +787,7 @@ SENV=(AC_CLAUDE_TRANSCRIPT_ROOT= HOME=@H/fakehome)
 srun ca 'from home'; assert_eq "$SN_RC:$(sout)" "0:sent to orca:pCA" "8: ... then to HOME"
 SENV=(AC_SEND_SETTLE=0.01)
 rm -f "$H/sleep.log"
-srun ca 'paced'; assert_eq "$(grep -c 'sleep 0.01' "$H/sleep.log")" 8 "8: the pause after typing, the one submit probe, then six arrival reads a settle apart"
+srun ca 'paced'; assert_eq "$(grep -c 'sleep 0.01' "$H/sleep.log")" 6 "8: a send whose text left the composer pauses nowhere, then six arrival reads a settle apart"
 SENV=()
 
 # 9. the status record: `steered: <text, LFs as spaces>`, stamped by date(1)
@@ -802,8 +797,9 @@ assert_eq "$(tail -n 1 "$H/home/data/c1/timeline.log")" "2026-01-02T03:04:05Z st
 
 # 10. orca: keys; a text delivered to orca:<handle>, past an agent_blocked
 #     whose jq -e failed (status 5 is not blocked); agentWait blocks text,
-#     and --force reaches the send's dialog guard - typed, no Enter, NOT
-#     confirmed (V16); a shell title is a bare shell; an endless strand; an
+#     and --force reaches the send's dialog guard - nothing typed, no Enter,
+#     NOT confirmed (V16); a shell title is a bare shell; an endless strand on
+#     a pane Orca cannot observe (an observed one is Orca's to deliver); an
 #     exited terminal is gone; an unreachable runtime is the BACKEND line.
 sorca o1 term1
 for sk in Enter Escape C-c x; do
@@ -822,7 +818,7 @@ rm -f "$H/orca/terminals/term1.agentwait"
 sput orca/terminals/term1.in ''
 printf 'zsh\n' >"$H/orca/terminals/term1.title"; rm -f "$H/orca/terminals/term1.agent"
 srun o1 'ls'; assert_contains "$(serr)" "ERROR: o1's pane is a BARE SHELL" "10: a shell title is a bare shell"
-sorca o1 term1
+sorca o1 term1; rm -f "$H/orca/terminals/term1.agent"
 sput orca/terminals/term1.drop-enters $'99\n'
 srun o1 'stuck'; assert_eq "$SN_RC:$(slast)" "1:ERROR: delivery NOT confirmed for o1 - the text likely sits stranded in the composer (see stderr above)" "10: an endless strand"
 rm -f "$H/orca/terminals/term1.drop-enters"
@@ -860,21 +856,16 @@ assert_contains "$(cat "$H/orca/log")" "orca terminal send --terminal pC1 --ente
 
 # 12. stdin, bytes, the home, and bun.
 # - STDIN BY POSITION: the submit check's `terminal read` reads /dev/null,
-#   never the caller's stdin - three reads for a plain text send (the
-#   pre-capture, the settle loop's confirming read, and the composer-pending
-#   check after it; orca's extra read past herdr's two, per orcaSubmitVerified
-#   above), with or without the harness probe.
+#   never the caller's stdin - one read for a plain text send Orca cannot
+#   observe (the composer-pending check after the prompt send, per
+#   orcaPromptSend), with or without the harness probe.
 printf 'caller bytes\n' >"$TMP/sstdin.in"
 touch "$H/stdin-terminal-read"
 SSTDIN="$TMP/sstdin.in"
 srun c1 'with stdin'; assert_eq "$SN_RC:$(sout)" "0:$SDEL" "12: a send with stdin attached delivers"
-assert_eq "$(cat "$H/stdin.log")" "orca terminal read stdin=[]
-orca terminal read stdin=[]
-orca terminal read stdin=[]" "12: its pane reads take /dev/null"
+assert_eq "$(cat "$H/stdin.log")" "orca terminal read stdin=[]" "12: its pane reads take /dev/null"
 rm -f "$H/stdin.log"
-srun c1 --force 'forced with stdin'; assert_eq "$SN_RC:$(cat "$H/stdin.log")" "0:orca terminal read stdin=[]
-orca terminal read stdin=[]
-orca terminal read stdin=[]" "12: without the probe too"
+srun c1 --force 'forced with stdin'; assert_eq "$SN_RC:$(cat "$H/stdin.log")" "0:orca terminal read stdin=[]" "12: without the probe too"
 SSTDIN=/dev/null
 rm -f "$H/stdin.log" "$H/stdin-terminal-read"
 # - argv arrives decoded: a byte that is not UTF-8 in the id is U+FFFD in the

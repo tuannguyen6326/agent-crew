@@ -52,8 +52,10 @@ writeFileSync(join(SLEEPS, "sleep"), `#!/bin/sh\nprintf 'sleep %s\\n' "$*" >>"$S
 // the last --limit lines of the screen - the transcript, a popup row while
 // popups counts, the composer (ocmp-<h>, its first row behind ❯) between two
 // rules, a status row - as JSON the host's jq builds. `send --text` appends
-// the chunk to the composer (keep-head bytes of it at most; text-fails
-// refuses it); `send --enter` submits it into the transcript unless the pane
+// the text to the composer (keep-head bytes of it at most; text-fails
+// refuses it; prompt-blocked refuses a `--text --enter` send untyped, as
+// agent_prompt_blocked); an `--enter`, alone or after the text, submits it
+// into the transcript unless the pane
 // is unfocused (`terminal switch` focuses it), drop-enters still counts, or a
 // popup eats it (the render changes, the text stays); late, norules, onerule,
 // ticker and read-fails-from all count `terminal read`s.
@@ -103,22 +105,23 @@ case "$1 $2" in
   "terminal switch") [ ! -e "$d/switch-fails" ] || exit 1; rm -f "$d/unfocused"; printf '{"ok":true}\\n' ;;
   "terminal send")
     [ ! -e "$d/send-fails" ] || exit 1
+    if [ -e "$d/prompt-blocked" ] && [ "$5 $7" = "--text --enter" ]; then printf '{"ok":false,"error":{"code":"agent_prompt_blocked"}}\\n'; exit 1; fi
     if [ -e "$d/oui-$4" ]; then
-      case "$5" in
-        --text)
-          [ ! -e "$d/text-fails" ] || exit 1
-          printf '%s' "$6" >>"$d/ocmp-$4"
-          if [ -e "$d/keep-head" ]; then head -c "$(cat "$d/keep-head")" "$d/ocmp-$4" >"$d/cmp.new"; mv "$d/cmp.new" "$d/ocmp-$4"; fi ;;
-        --enter)
-          if [ -e "$d/unfocused" ]; then :
-          elif [ "$(cat "$d/drop-enters" 2>/dev/null || echo 0)" -gt 0 ]; then echo $(($(cat "$d/drop-enters") - 1)) >"$d/drop-enters"
-          elif [ "$(cat "$d/popups" 2>/dev/null || echo 0)" -gt 0 ]; then echo $(($(cat "$d/popups") - 1)) >"$d/popups"
-          else
-            { cat "$d/oui-$4"; printf '> %s\\n' "$(LC_ALL=C tr -d '\\n' <"$d/ocmp-$4")"; } >"$d/next-ui"
-            : >"$d/next-cmp"
-            if [ -e "$d/late" ]; then mv "$d/late" "$d/lag"; else mv "$d/next-ui" "$d/oui-$4"; mv "$d/next-cmp" "$d/ocmp-$4"; fi
-          fi ;;
-      esac
+      if [ "$5" = --text ]; then
+        [ ! -e "$d/text-fails" ] || exit 1
+        printf '%s' "$6" >>"$d/ocmp-$4"
+        if [ -e "$d/keep-head" ]; then head -c "$(cat "$d/keep-head")" "$d/ocmp-$4" >"$d/cmp.new"; mv "$d/cmp.new" "$d/ocmp-$4"; fi
+      fi
+      if [ "$5" = --enter ] || [ "$7" = --enter ]; then
+        if [ -e "$d/unfocused" ]; then :
+        elif [ "$(cat "$d/drop-enters" 2>/dev/null || echo 0)" -gt 0 ]; then echo $(($(cat "$d/drop-enters") - 1)) >"$d/drop-enters"
+        elif [ "$(cat "$d/popups" 2>/dev/null || echo 0)" -gt 0 ]; then echo $(($(cat "$d/popups") - 1)) >"$d/popups"
+        else
+          { cat "$d/oui-$4"; printf '> %s\\n' "$(LC_ALL=C tr -d '\\n' <"$d/ocmp-$4")"; } >"$d/next-ui"
+          : >"$d/next-cmp"
+          if [ -e "$d/late" ]; then mv "$d/late" "$d/lag"; else mv "$d/next-ui" "$d/oui-$4"; mv "$d/next-cmp" "$d/ocmp-$4"; fi
+        fi
+      fi
     fi
     if [ -e "$d/send" ]; then cat "$d/send"; else printf '{"ok":true}\\n'; fi ;;
   *) exit 2 ;;
@@ -692,75 +695,70 @@ function SL(label: string, rc: number, want: { err?: string; log?: string }, row
 const OUI = (s: string): void => (pane(s, "x", "h1 tab1\n"), sent(s, "oui-h1", "> earlier turn\n"), sent(s, "ocmp-h1"));
 const OQUICK = { ...ORCA_, AC_SEND_SETTLE: "0" };
 const L1 = (t: string): string => Buffer.from(t).toString("latin1");
-const OTYPE = (t = TEXT, h = "h1"): string => `orca terminal send --terminal ${h} --text ${t} --json\n`;
 const OSHOW = (h = "h1"): string => `orca terminal show --terminal ${h} --json\n`;
 const OREAD = (h = "h1"): string => `orca terminal read --terminal ${h} --limit 15 --screen --json\n`;
 const OENTER = (h = "h1"): string => `orca terminal send --terminal ${h} --enter --json\n`;
-const OSWITCH = (h = "h1"): string => `orca terminal switch --terminal ${h} --json\n`;
-const CHUNKED = SLEPT("0.05");
-// The orca verifier: the dialog check, a render read, the Enter, then <k> probes.
-const OVERIFY = (k: number, v = "0", h = "h1"): string => OSHOW(h) + OREAD(h) + OENTER(h) + (SLEPT(v) + OREAD(h)).repeat(k);
+// The dialog guard, then the one prompt send.
+const OSENT = (t = TEXT, h = "h1"): string => OSHOW(h) + `orca terminal send --terminal ${h} --text ${t} --enter --wait-submit 10 --json\n`;
 // A pending check's read that finds the text still in the composer, then the
 // dialog check, the retry Enter and its settle.
 const PENDING = (v = "0"): string => OREAD() + OSHOW() + OENTER() + SLEPT(v);
 const OSAYS = {
   dialog:
-    "ac-backend: a DIALOG owns the pane of orca:h1 - the text sits in the composer and no Enter was pressed (an Enter would ACCEPT the highlighted option). Peek it (ac-peek.sh x) and answer deliberately with ac-send.sh x --key <key>\n",
-  unverified: "ac-backend: could not read the pane of orca:h1 - submit UNVERIFIED, so the text may or may not have gone through (peek it: ac-peek.sh x)\n",
+    "ac-backend: a DIALOG owns the pane of orca:h1 - the text was not submitted and no Enter was pressed into the dialog (an Enter would ACCEPT the highlighted option). Peek it (ac-peek.sh x) and answer deliberately with ac-send.sh x --key <key>\n",
+  unverified: "ac-backend: no delivery receipt from orca:h1 - submit UNVERIFIED, so the text may or may not have gone through (peek it: ac-peek.sh x)\n",
   stranded: "ac-backend: submit not acknowledged by orca:h1 - text likely stranded unsubmitted in the composer (peek, then resubmit: ac-send.sh x --key Enter)\n",
 };
 const OSL = (label: string, rc: number, want: { err?: string; log?: string }, row: Partial<Row> = {}) => SL(label, rc, want, { env: OQUICK, seed: OUI, ...row });
 const WAITING = '{"ok":true,"result":{"terminal":{"connected":true,"agentWait":{"reason":"permission"}}}}\n';
 const NO_WAIT = '{"ok":true,"result":{"terminal":{"connected":true,"agentWait":null}}}\n';
+// Orca's receipts (probe 2026-11-17): an idle agent's observed turn, a busy
+// one's queued prompt.
+const RECEIPT = (stages: string): string => `{"ok":true,"result":{"send":{"prompt":{"stages":${stages},"provider":"claude","observation":"supported"}}}}\n`;
+const SEEN = RECEIPT('["input_accepted","turn_started"]');
+const QUEUED = RECEIPT('["input_accepted"]');
 
-test("23. send_line orca: the text typed, the settle, then the verified Enter and the pending check - a strand switches to the terminal and verifies ONE retry; 0 accepted, 1 stranded", () => {
-  const typed = OTYPE() + SLEPT();
-  const ok = OSL("delivered first try", 0, { err: "", log: typed + OVERIFY(1) + OREAD() });
-  expect({ cmp: ok.ocmp, ui: ok.oui }).toEqual({ cmp: "", ui: "> earlier turn\n> hello world\n" });
-  OSL("several arguments: joined by one space", 0, { log: OTYPE("a  b c") + SLEPT() + OVERIFY(1) + OREAD() }, { args: ["x", "a ", "b", "c"] });
-  const none = OSL("an empty message: nothing typed, the Enter verified, no pending check", 0, { log: SLEPT() + OVERIFY(1) }, { args: ["x", ""] });
+test("23. send_line orca: one prompt send behind the dialog guard - an observed receipt 0, a refused prompt the dialog's 1, no receipt 2, an unobserved one the pending check", () => {
+  const seen = OSL("observed, the turn started", 0, { err: "", log: OSENT() }, { seed: and(OUI, (s) => sent(s, "send", SEEN)) });
+  expect({ cmp: seen.ocmp, ui: seen.oui }).toEqual({ cmp: "", ui: "> earlier turn\n> hello world\n" });
+  const queued = OSL("observed, queued mid-turn: sent, never re-pressed", 0, { err: "", log: OSENT() }, { seed: and(OUI, (s) => sent(s, "send", QUEUED), (s) => sent(s, "drop-enters", "99")) });
+  expect(queued.ocmp).toBe("hello world");
+  const blind = OSL("unobserved, the text left the composer: sent", 0, { err: "", log: OSENT() + OREAD() });
+  expect(blind.oui).toBe("> earlier turn\n> hello world\n");
+  OSL("several arguments: joined by one space", 0, { log: OSENT("a  b c") + OREAD() }, { args: ["x", "a ", "b", "c"] });
+  const none = OSL("an empty message: an empty prompt, never pending", 0, { log: OSENT("") + OREAD() }, { args: ["x", ""] });
   expect(none.oui).toBe("> earlier turn\n> \n");
-  OSL("no text argument at all: the same", 0, { log: SLEPT() + OVERIFY(1) }, { args: ["x"] });
-  const retry = OSL("an Enter dropped on an unfocused pane: seven probes, the switch, then the verified retry", 0, { err: "", log: typed + OVERIFY(7) + OSWITCH() + OVERIFY(1) + OREAD() }, { seed: and(OUI, (s) => sent(s, "unfocused")) });
-  expect(retry.oui).toBe("> earlier turn\n> hello world\n");
-  const lost = OSL("every Enter dropped: NOT confirmed, the text left in the composer", 1, { err: OSAYS.stranded, log: typed + OVERIFY(7) + OSWITCH() + OVERIFY(7) }, { seed: and(OUI, (s) => sent(s, "drop-enters", "99")) });
+  OSL("no text argument at all: the same", 0, { log: OSENT("") + OREAD() }, { args: ["x"] });
+  const lost = OSL("unobserved, every Enter dropped: two retry Enters, then NOT confirmed", 1, { err: OSAYS.stranded, log: OSENT() + PENDING().repeat(2) + OREAD() }, { seed: and(OUI, (s) => sent(s, "drop-enters", "99")) });
   expect({ cmp: lost.ocmp, ui: lost.oui }).toEqual({ cmp: "hello world", ui: "> earlier turn\n" });
   OSL("the stranded line, the caller's stderr dropped: silent", 1, { err: "" }, { seed: and(OUI, (s) => sent(s, "drop-enters", "99")), io: { stdout: "inherit", stderr: "ignore" } });
-  OSL("the redraw shows on the third probe: accepted there", 0, { log: typed + OVERIFY(3) + OREAD() }, { seed: and(OUI, (s) => sent(s, "late", "3")) });
-  const twice = OSL("named: a redraw later than the seven probes - the retry's Enter submits the emptied composer", 0, { log: typed + OVERIFY(7) + OSWITCH() + OVERIFY(1) + OREAD() }, { seed: and(OUI, (s) => sent(s, "late", "8")) });
-  expect(twice.oui).toBe("> earlier turn\n> hello world\n> \n");
-  OSL("the switch fails: its status ignored, the retry verified all the same", 1, { err: OSAYS.stranded, log: typed + OVERIFY(7) + OSWITCH() + OVERIFY(7) }, { seed: and(OUI, (s) => sent(s, "unfocused"), (s) => sent(s, "switch-fails")) });
-  OSL("every send fails: the chunk's and the Enters' statuses ignored, a strand", 1, { err: OSAYS.stranded, log: typed + OVERIFY(7) + OSWITCH() + OVERIFY(7) }, { seed: and(OUI, (s) => sent(s, "send-fails")) });
-  OSL("every send answers ok:false: ignored, the render decides - accepted", 0, { log: typed + OVERIFY(1) + OREAD() }, { seed: and(OUI, (s) => sent(s, "send", '{"ok":false}\n')) });
-  const blank = OSL("named (V6): the chunk refused, its status ignored - the Enter submits the empty composer and reads accepted", 0, { log: typed + OVERIFY(1) + OREAD() }, { seed: and(OUI, (s) => sent(s, "text-fails")) });
-  expect(blank.oui).toBe("> earlier turn\n> \n");
-  const scroll = (s: string): void => sent(s, "oui-h1", Array.from({ length: 20 }, (_, i) => `> turn ${i}\n`).join(""));
-  OSL("a ticker above the render's last 15 lines: a dropped Enter still reads stranded", 1, { err: OSAYS.stranded, log: typed + OVERIFY(7) + OSWITCH() + OVERIFY(7) }, { seed: and(OUI, scroll, (s) => sent(s, "ticker"), (s) => sent(s, "drop-enters", "99")) });
-  const caught = OVERIFY(1) + PENDING().repeat(2) + OREAD();
-  OSL("a ticker inside them: every probe reads changed - the pending check catches the dropped Enter, two retries per verify, stranded", 1, { err: OSAYS.stranded, log: typed + caught + OSWITCH() + caught }, {
-    seed: and(OUI, (s) => sent(s, "ticker"), (s) => sent(s, "drop-enters", "99")),
-  });
-  const draft = OSL("a claude meta and a draft: the orca arm proves no composer - typed after the draft", 0, { log: typed + OVERIFY(1) + OREAD() }, { seed: and(OUI, CLAUDE, (s) => sent(s, "ocmp-h1", "old draft")) });
+  const refused = OSL("agent_prompt_blocked: the dialog's verdict, nothing typed or pressed", 1, { err: OSAYS.dialog, log: OSENT() }, { seed: and(OUI, (s) => sent(s, "prompt-blocked")) });
+  expect({ cmp: refused.ocmp, ui: refused.oui }).toEqual({ cmp: "", ui: "> earlier turn\n" });
+  const guarded = OSL("a dialog at the guard: refused before the send", 1, { err: OSAYS.dialog, log: OSHOW() }, { seed: and(OUI, (s) => sent(s, "show", WAITING)) });
+  expect(guarded.ocmp).toBe("");
+  OSL("the dialog, the caller's stderr dropped: silent", 1, { err: "" }, { seed: and(OUI, (s) => sent(s, "show", WAITING)), io: { stdout: "inherit", stderr: "ignore" } });
+  for (const [label, seed] of [
+    ["the send fails silently", (s: string) => sent(s, "send-fails")],
+    ["the text refused", (s: string) => sent(s, "text-fails")],
+    ["ok:false with no code", (s: string) => sent(s, "send", '{"ok":false}\n')],
+    ["another error code", (s: string) => sent(s, "send", '{"ok":false,"error":{"code":"terminal_not_writable"}}\n')],
+    ["not JSON", (s: string) => sent(s, "send", "garbage\n")],
+    ["named: two documents, two verdicts - neither stands alone", (s: string) => sent(s, "send", `{"ok":false}${SEEN}`)],
+  ] as const)
+    OSL(`no receipt (${label}): UNVERIFIED, never resent`, 2, { err: OSAYS.unverified, log: OSENT() }, { seed: and(OUI, seed) });
+  OSL("no receipt, the caller's stderr dropped: silent", 2, { err: "" }, { seed: and(OUI, (s) => sent(s, "send-fails")), io: { stdout: "inherit", stderr: "ignore" } });
+  const draft = OSL("a claude meta and a draft: the text lands after the draft", 0, { log: OSENT() + OREAD() }, { seed: and(OUI, CLAUDE, (s) => sent(s, "ocmp-h1", "old draft")) });
   expect(draft.oui).toBe("> earlier turn\n> old drafthello world\n");
 }, 120000);
 
-test("24. send_line orca: a changed render is checked for the text still pending between the composer's rules - up to two retry Enters, each behind the dialog guard; a dialog refuses, 1", () => {
-  const typed = OTYPE() + SLEPT();
+test("24. send_line orca: an unobserved text is checked pending between the composer's rules - up to two retry Enters, each behind the dialog guard; a dialog refuses, 1", () => {
   const popups = (n: string) => and(OUI, (s) => sent(s, "popups", n));
-  const once = OSL("a popup eats the Enter: pending, one retry Enter, accepted", 0, { err: "", log: typed + OVERIFY(1) + PENDING() + OREAD() }, { seed: popups("1") });
+  const once = OSL("a popup eats the Enter: pending, one retry Enter, sent", 0, { err: "", log: OSENT() + PENDING() + OREAD() }, { seed: popups("1") });
   expect(once.oui).toBe("> earlier turn\n> hello world\n");
-  OSL("two popups: two retries, accepted", 0, { log: typed + OVERIFY(1) + PENDING().repeat(2) + OREAD() }, { seed: popups("2") });
-  const capped = OVERIFY(1) + PENDING().repeat(2) + OREAD();
-  OSL("three popups: still pending after two retries - the switch, and the second verify submits", 0, { log: typed + capped + OSWITCH() + OVERIFY(1) + OREAD() }, { seed: popups("3") });
-  const stuck = OSL("popups without end: stranded", 1, { err: OSAYS.stranded, log: typed + capped + OSWITCH() + capped }, { seed: popups("99") });
+  OSL("two popups: two retries, sent", 0, { log: OSENT() + PENDING().repeat(2) + OREAD() }, { seed: popups("2") });
+  const stuck = OSL("three popups: still pending after two retries - stranded", 1, { err: OSAYS.stranded, log: OSENT() + PENDING().repeat(2) + OREAD() }, { seed: popups("3") });
   expect(stuck.ocmp).toBe("hello world");
-  const d = OSL("named (V16): a dialog owns the pane - typed first, then refused before any Enter: 1, no switch", 1, { err: OSAYS.dialog, log: typed + OSHOW() }, { seed: and(OUI, (s) => sent(s, "show", WAITING)) });
-  expect({ cmp: d.ocmp, ui: d.oui }).toEqual({ cmp: "hello world", ui: "> earlier turn\n" });
-  OSL("the dialog, the caller's stderr dropped: silent", 1, { err: "" }, { seed: and(OUI, (s) => sent(s, "show", WAITING)), io: { stdout: "inherit", stderr: "ignore" } });
-  OSL("a dialog that appears at the retry's guard: 1, no switch", 1, { err: OSAYS.dialog, log: typed + OVERIFY(1) + OREAD() + OSHOW() }, { seed: and(popups("1"), (s) => sent(s, "show", NO_WAIT), (s) => sent(s, "show-next", WAITING)) });
-  OSL("a dialog that appears for the second verify: 1", 1, { err: OSAYS.dialog, log: typed + OVERIFY(7) + OSWITCH() + OSHOW() }, {
-    seed: and(OUI, (s) => sent(s, "drop-enters", "99"), (s) => sent(s, "show", NO_WAIT), (s) => sent(s, "show-next", WAITING)),
-  });
+  OSL("a dialog that appears at the retry's guard: 1", 1, { err: OSAYS.dialog, log: OSENT() + OREAD() + OSHOW() }, { seed: and(popups("1"), (s) => sent(s, "show", NO_WAIT), (s) => sent(s, "show-next", WAITING)) });
   for (const [label, show, rc] of [
     ["agentWait false is not null: a dialog", '{"ok":true,"result":{"terminal":{"agentWait":false}}}\n', 1],
     ["agentWait null: no dialog", NO_WAIT, 0],
@@ -770,93 +768,54 @@ test("24. send_line orca: a changed render is checked for the text still pending
     ["the last document decides", WAITING + NO_WAIT, 0],
     ["not JSON: no dialog", "garbage\n", 0],
   ] as const)
-    OSL(label, rc, { err: rc ? OSAYS.dialog : "", log: rc ? typed + OSHOW() : typed + OVERIFY(1) + OREAD() }, { seed: and(OUI, (s) => sent(s, "show", show)) });
-  OSL("the show fails: no dialog", 0, { log: typed + OVERIFY(1) + OREAD() }, { seed: and(OUI, (s) => sent(s, "show-fails")) });
-  const left = OSL("no rules on screen: pending is never claimed - the popup's change reads accepted, the text left", 0, { log: typed + OVERIFY(1) + OREAD() }, { seed: and(popups("1"), (s) => sent(s, "norules")) });
+    OSL(label, rc, { err: rc ? OSAYS.dialog : "", log: rc ? OSHOW() : OSENT() + OREAD() }, { seed: and(OUI, (s) => sent(s, "show", show)) });
+  OSL("the show fails: no dialog", 0, { log: OSENT() + OREAD() }, { seed: and(OUI, (s) => sent(s, "show-fails")) });
+  const left = OSL("no rules on screen: pending is never claimed - sent, the text left", 0, { log: OSENT() + OREAD() }, { seed: and(popups("1"), (s) => sent(s, "norules")) });
   expect(left.ocmp).toBe("hello world");
-  OSL("one rule: the same", 0, { log: typed + OVERIFY(1) + OREAD() }, { seed: and(popups("1"), (s) => sent(s, "onerule")) });
+  OSL("one rule: the same", 0, { log: OSENT() + OREAD() }, { seed: and(popups("1"), (s) => sent(s, "onerule")) });
   const R = L1(RULE);
-  OSL("one rule holding the text: the same", 0, { log: typed + OVERIFY(1) + OREAD() }, { seed: and(popups("1"), (s) => sent(s, "norules"), (s) => sent(s, "oui-h1", `> earlier turn\n${R} hello world\n`)) });
-  OSL("named: two adjacent rules - sed's reversed range prints the second rule, not pending", 0, { log: typed + OVERIFY(1) + OREAD() }, {
+  OSL("one rule holding the text: the same", 0, { log: OSENT() + OREAD() }, { seed: and(popups("1"), (s) => sent(s, "norules"), (s) => sent(s, "oui-h1", `> earlier turn\n${R} hello world\n`)) });
+  OSL("named: two adjacent rules - sed's reversed range prints the second rule, not pending", 0, { log: OSENT() + OREAD() }, {
     seed: and(popups("1"), (s) => sent(s, "norules"), (s) => sent(s, "oui-h1", `> earlier turn\n${R}\n${R}\n`)),
   });
   OSL("named: the same, the second rule holding the text - pending, and so on every read after: stranded", 1, { err: OSAYS.stranded }, {
     seed: and(popups("1"), (s) => sent(s, "norules"), (s) => sent(s, "oui-h1", `> earlier turn\n${R}\n${R} hello world\n`)),
   });
   const framed = (turns: number) => (s: string): void => sent(s, "oui-h1", `${R}\n${Array.from({ length: turns }, (_, i) => `> turn ${i}\n`).join("")}`);
-  OSL("a transcript rule beyond the last 15 lines is cut: one rule, not pending", 0, { log: typed + OVERIFY(1) + OREAD() }, { seed: and(popups("1"), (s) => sent(s, "onerule"), framed(20)) });
+  OSL("a transcript rule beyond the last 15 lines is cut: one rule, not pending", 0, { log: OSENT() + OREAD() }, { seed: and(popups("1"), (s) => sent(s, "onerule"), framed(20)) });
   const echo = OSL("named: a transcript rule within them frames the echo of the submitted line - it reads pending, stranded though delivered", 1, { err: OSAYS.stranded }, { seed: and(popups("1"), (s) => sent(s, "onerule"), framed(2)) });
-  expect(echo.oui).toBe(`${R}\n> turn 0\n> turn 1\n> hello world\n> \n> \n> \n> \n`);
+  expect(echo.oui).toBe(`${R}\n> turn 0\n> turn 1\n> hello world\n> \n`);
   const long = "y".repeat(100);
-  OSL("the text's first 60 characters on screen: pending, the retry", 0, { log: OTYPE(long) + SLEPT() + OVERIFY(1) + PENDING() + OREAD() }, { args: ["x", long], seed: and(popups("1"), (s) => sent(s, "keep-head", "60")) });
-  OSL("59 on screen: not pending", 0, { log: OTYPE(long) + SLEPT() + OVERIFY(1) + OREAD() }, { args: ["x", long], seed: and(popups("1"), (s) => sent(s, "keep-head", "59")) });
-  OSL("LFs and space runs squeezed on both sides: pending", 0, { log: OTYPE("a  b\nc") + SLEPT() + OVERIFY(1) + PENDING() + OREAD() }, { args: ["x", "a  b\nc"], seed: popups("1") });
+  OSL("the text's first 60 characters on screen: pending, the retry", 0, { log: OSENT(long) + PENDING() + OREAD() }, { args: ["x", long], seed: and(popups("1"), (s) => sent(s, "keep-head", "60")) });
+  OSL("59 on screen: not pending", 0, { log: OSENT(long) + OREAD() }, { args: ["x", long], seed: and(popups("1"), (s) => sent(s, "keep-head", "59")) });
+  OSL("LFs and space runs squeezed on both sides: pending", 0, { log: OSENT("a  b\nc") + PENDING() + OREAD() }, { args: ["x", "a  b\nc"], seed: popups("1") });
   const e = "é".repeat(70);
   for (const [lc, pending] of [["C", true], ["en_US.UTF-8", false]] as const)
-    OSL(`70 x é, 30 on screen, under ${lc}: the 60-${lc === "C" ? "byte head is" : "character head is not"} pending`, 0, { log: OTYPE(L1(e)) + SLEPT() + OVERIFY(1) + (pending ? PENDING() : "") + OREAD() }, {
+    OSL(`70 x é, 30 on screen, under ${lc}: the 60-${lc === "C" ? "byte head is" : "character head is not"} pending`, 0, { log: OSENT(L1(e)) + (pending ? PENDING() : "") + OREAD() }, {
       args: ["x", e],
       lc,
       seed: and(popups("1"), (s) => sent(s, "keep-head", "60")),
     });
-  OSL("the pending check's read fails: not pending, accepted", 0, { log: typed + OVERIFY(1) + OREAD() }, { seed: and(popups("1"), (s) => sent(s, "read-fails-from", "3")) });
+  OSL("the pending check's read fails: not pending, sent", 0, { log: OSENT() + OREAD() }, { seed: and(popups("1"), (s) => sent(s, "read-fails-from", "1")) });
 }, 180000);
 
-test("25. send_line orca: chunks of 512 characters under a UTF-8 locale, 512 bytes under any other, `sleep 0.05` between them", () => {
+test("25. send_line orca: one send whatever the size or the locale - no chunks", () => {
   const x = (n: number): string => "x".repeat(n);
-  for (const n of [1, 511, 512, 513, 1024, 1025]) {
-    const chunks: string[] = [];
-    for (let off = 0; off < n; off += 512) chunks.push(OTYPE(x(Math.min(512, n - off))));
-    const p = OSL(`${n} characters: ${chunks.length} chunk(s)`, 0, { log: chunks.join(CHUNKED) + SLEPT() + OVERIFY(1) + OREAD() }, { args: ["x", x(n)] });
+  for (const n of [512, 513, 4871]) {
+    const p = OSL(`${n} characters: one send`, 0, { log: OSENT(x(n)) + OREAD() }, { args: ["x", x(n)] });
     expect(p.oui).toBe(`> earlier turn\n> ${x(n)}\n`);
   }
-  const e = "é".repeat(300);
-  OSL("300 x é under UTF-8: one chunk", 0, { log: OTYPE(L1(e)) + SLEPT() + OVERIFY(1) + OREAD() }, { args: ["x", e], lc: "en_US.UTF-8" });
-  OSL("300 x é under C: 600 bytes, two chunks cut between characters", 0, { log: OTYPE(L1("é".repeat(256))) + CHUNKED + OTYPE(L1("é".repeat(44))) + SLEPT() + OVERIFY(1) + OREAD() }, { args: ["x", e] });
-  const two = OTYPE(L1("é".repeat(256))) + CHUNKED + OTYPE(L1("é".repeat(44))) + SLEPT() + OVERIFY(1) + OREAD();
-  for (const [label, env, log] of [
-    ["LC_ALL empty, LC_CTYPE UTF-8: characters", { LC_CTYPE: "en_US.UTF-8", LANG: "C" }, OTYPE(L1(e)) + SLEPT() + OVERIFY(1) + OREAD()],
-    ["LC_ALL empty, LC_CTYPE C over LANG UTF-8: bytes", { LC_CTYPE: "C", LANG: "en_US.UTF-8" }, two],
-    ["LC_ALL empty, LC_CTYPE empty, LANG UTF-8: characters", { LC_CTYPE: "", LANG: "en_US.UTF-8" }, OTYPE(L1(e)) + SLEPT() + OVERIFY(1) + OREAD()],
-  ] as const)
-    OSL(`300 x é, ${label}`, 0, { log }, { args: ["x", e], lc: "", env: { ...OQUICK, ...env } });
-  OSL("600 x é under UTF-8: 512 + 88 characters", 0, { log: OTYPE(L1("é".repeat(512))) + CHUNKED + OTYPE(L1("é".repeat(88))) + SLEPT() + OVERIFY(1) + OREAD() }, { args: ["x", "é".repeat(600)], lc: "en_US.UTF-8" });
-  const g = "😀".repeat(200);
-  OSL("200 x a 4-byte character under UTF-8: one chunk", 0, { log: OTYPE(L1(g)) + SLEPT() + OVERIFY(1) + OREAD() }, { args: ["x", g], lc: "en_US.UTF-8" });
-  OSL("the same under C: 800 bytes, two chunks", 0, { log: OTYPE(L1("😀".repeat(128))) + CHUNKED + OTYPE(L1("😀".repeat(72))) + SLEPT() + OVERIFY(1) + OREAD() }, { args: ["x", g] });
-  OSL("a text holding LFs: chunked as any byte", 0, { log: OTYPE(`${x(510)}\n\n${x(3)}`.slice(0, 512)) + CHUNKED + OTYPE(x(3)) + SLEPT() + OVERIFY(1) + OREAD() }, { args: ["x", `${x(510)}\n\n${x(3)}`] });
-  // Named (V3): under C the 512th byte can cut a character - the bash typed
-  // its two halves as they were, the twin U+FFFD for each half (an argv
-  // carries no partial sequence).
-  const odd = `a${e}`;
-  const n = pair({ fn: "send_line", args: ["x", odd], env: OQUICK, seed: OUI });
-  const head = L1(`a${"é".repeat(255)}`);
-  const tail = L1("é".repeat(44));
-  const rest = SLEPT() + OVERIFY(1) + OREAD();
-  expect({ out: n.t.out, err: n.t.err, o: n.o.log, t: n.t.log }).toEqual({
-    out: n.o.out,
-    err: n.o.err,
-    o: OTYPE(`${head}\xc3`) + CHUNKED + OTYPE(`\xa9${tail}`) + rest,
-    t: OTYPE(`${head}\xef\xbf\xbd`) + CHUNKED + OTYPE(`\xef\xbf\xbd${tail}`) + rest,
-  });
-  expect(n.t.out).toBe("|rc=0");
-}, 120000);
+  const e = "é".repeat(600);
+  for (const lc of ["C", "en_US.UTF-8"]) OSL(`600 x é under ${lc}: one send`, 0, { log: OSENT(L1(e)) + OREAD() }, { args: ["x", e], lc });
+  const lines = Array.from({ length: 62 }, (_, i) => `line ${i}`).join("\n");
+  OSL("62 lines: one send", 0, { log: OSENT(lines) + OREAD() }, { args: ["x", lines] });
+}, 60000);
 
-test("26. send_line orca: reads that fail (2, UNVERIFIED), no handle, the caller's stdin for every orca call, homeless, orca or jq absent", () => {
-  const typed = OTYPE() + SLEPT();
-  const blind = OSHOW() + OREAD() + OENTER();
-  OSL("the verifier's first read fails: the Enter pressed all the same, twice - UNVERIFIED", 2, { err: OSAYS.unverified, log: typed + blind + OSWITCH() + blind }, { seed: and(OUI, (s) => sent(s, "read-fails-from", "1")) });
-  OSL("a probe's read fails: 2 at once, then the retry's", 2, { err: OSAYS.unverified, log: typed + blind + SLEPT() + OREAD() + OSWITCH() + blind }, { seed: and(OUI, (s) => sent(s, "read-fails-from", "2")) });
-  OSL("the stderr dropped: silent", 2, { err: "" }, { seed: and(OUI, (s) => sent(s, "read-fails-from", "1")), io: { stdout: "inherit", stderr: "ignore" } });
+test("26. send_line orca: no handle, the caller's stdin for every send, homeless, orca or jq absent", () => {
   const H = (s: string): void => pane(s, "x", "h1 tab1\n");
-  const oread = (body: string) => (s: string): void => (H(s), sent(s, "oread", body));
-  OSL("a screen jq cannot iterate: unreadable, 2", 2, { err: OSAYS.unverified, log: typed + blind + OSWITCH() + blind }, { seed: oread('{"ok":true,"result":"x"}\n') });
-  OSL("a screen read ok:false: unreadable, 2", 2, { err: OSAYS.unverified, log: typed + blind + OSWITCH() + blind }, { seed: oread('{"ok":false,"result":{"terminal":{"tail":["a"]}}}\n') });
-  OSL("a screen whose tail is no array: an empty render that never changes, 1", 1, { err: OSAYS.stranded, log: typed + OVERIFY(7) + OSWITCH() + OVERIFY(7) }, { seed: oread('{"ok":true,"result":{"terminal":{"tail":"abc"}}}\n') });
-  OSL("a NUL and trailing LFs dropped as $( ) drops them: the same render, 1", 1, { err: OSAYS.stranded }, {
-    seed: (s) => (oread('{"ok":true,"result":{"terminal":{"tail":["a\\u0000b","",""]}}}\n')(s), sent(s, "oread-next", '{"ok":true,"result":{"terminal":{"tail":["ab"]}}}\n')),
-  });
-  OSL("no handle: every call with --terminal '', the reads never issued - UNVERIFIED", 2, { err: OSAYS.unverified.replace("orca:h1", "orca:"), log: OTYPE(TEXT, "") + SLEPT() + OSHOW("") + OENTER("") + OSWITCH("") + OSHOW("") + OENTER("") }, { seed: () => {} });
-  OSL("one field: the handle alone", 0, { log: typed + OVERIFY(1) + OREAD() }, { seed: and(OUI, (s) => pane(s, "x", "h1\n")) });
+  OSL("a screen jq cannot iterate: not pending, sent", 0, { log: OSENT() + OREAD() }, { seed: (s) => (H(s), sent(s, "oread", '{"ok":true,"result":"x"}\n')) });
+  OSL("no handle: every call with --terminal '', the runtime's refusal UNVERIFIED", 2, { err: OSAYS.unverified.replace("orca:h1", "orca:"), log: OSENT(TEXT, "") }, { seed: (s) => sent(s, "send", '{"ok":false}\n') });
+  OSL("one field: the handle alone", 0, { log: OSENT() + OREAD() }, { seed: and(OUI, (s) => pane(s, "x", "h1\n")) });
   for (const [label, io, top] of [
     ["top level: every SEND call reads the caller's stdin, the reads stay /dev/null", { stdout: "inherit", stderr: "inherit" }, true],
     ["in a subshell: the same", { stdout: "inherit", stderr: "inherit", subshell: true }, true],
@@ -867,45 +826,38 @@ test("26. send_line orca: reads that fail (2, UNVERIFIED), no handle, the caller
     // orcaScreen/orcaDialog (OSHOW/OREAD) hardcode "ignore" regardless of the
     // caller's stdin (the note above orcaScreen, src/lib.ts) - the read still
     // runs under the suite's own .readline sentinel, so it still logs an
-    // EMPTY bracket, never an absent one. Only the two SEND calls (OTYPE,
-    // OENTER) ever draw from the real stream, so they are the only ones
-    // whose bracket can hold a line and the only ones that advance its
-    // position.
-    OSL(`readline, ${label}`, 0, { log: at(OTYPE(), 1) + SLEPT() + ig(OSHOW()) + ig(OREAD()) + at(OENTER(), 2) + SLEPT() + ig(OREAD()) + ig(OREAD()) }, {
+    // EMPTY bracket, never an absent one. Only the SEND calls ever draw from
+    // the real stream, so they are the only ones whose bracket can hold a
+    // line and the only ones that advance its position.
+    OSL(`readline, ${label}`, 0, { log: ig(OSHOW()) + at(OSENT().slice(OSHOW().length), 1) + ig(OREAD()) + ig(OSHOW()) + at(OENTER(), 2) + SLEPT() + ig(OREAD()) }, {
       io,
       input: "l1\nl2\nl3\nl4\nl5\nl6\nl7\n",
-      seed: and(OUI, (s) => sent(s, "readline")),
+      seed: and(OUI, (s) => sent(s, "readline"), (s) => sent(s, "popups", "1")),
     });
   }
-  const hl = OSL("homeless: an empty handle, the refusal per handle read", 2, {}, { homeless: true });
-  expect(hl.t.err.split("\n").filter((l) => l.startsWith("ERROR: AC_HOME is not set")).length).toBe(5);
-  OSL("homeless, the caller's stderr dropped: silent", 2, { err: "" }, { homeless: true, io: { stdout: "inherit", stderr: "ignore" } });
-  OSL("orca absent: every call fails - UNVERIFIED", 2, { err: OSAYS.unverified, log: SLEPT() }, { path: "noorca" });
-  const nojq = OSL("jq absent: every envelope unread, the sends still land - UNVERIFIED", 2, { err: OSAYS.unverified, log: typed + blind + OSWITCH() + blind }, { path: "nojq" });
-  expect(nojq.oui).toBe("> earlier turn\n> hello world\n> \n");
-  OSL("the noisy jq: every jq's stderr dropped", 0, { err: "", log: typed + OVERIFY(1) + OREAD() }, { path: "noisyjq" });
+  const hl = OSL("homeless: an empty handle, the refusal per handle read", 2, {}, { homeless: true, seed: (s) => sent(s, "send", '{"ok":false}\n') });
+  expect(hl.t.err.split("\n").filter((l) => l.startsWith("ERROR: AC_HOME is not set")).length).toBe(2);
+  OSL("homeless, the caller's stderr dropped: silent", 2, { err: "" }, { homeless: true, io: { stdout: "inherit", stderr: "ignore" }, seed: (s) => sent(s, "send", '{"ok":false}\n') });
+  OSL("orca absent: no receipt - UNVERIFIED", 2, { err: OSAYS.unverified, log: "" }, { path: "noorca" });
+  const nojq = OSL("jq absent: the receipt unread, the send still lands - UNVERIFIED", 2, { err: OSAYS.unverified, log: OSENT() }, { path: "nojq" });
+  expect(nojq.oui).toBe("> earlier turn\n> hello world\n");
+  OSL("the noisy jq: every jq's stderr dropped", 0, { err: "", log: OSENT() + OREAD() }, { path: "noisyjq" });
   for (const id of ["", "�"]) {
-    OSL(`the id ${JSON.stringify(id)}`, 0, { log: typed + OVERIFY(1) + OREAD() }, { args: [id, TEXT], seed: and(OUI, (s) => pane(s, id, "h1 tab1\n")) });
+    OSL(`the id ${JSON.stringify(id)}`, 0, { log: OSENT() + OREAD() }, { args: [id, TEXT], seed: and(OUI, (s) => pane(s, id, "h1 tab1\n")) });
     OSL(`the id ${JSON.stringify(id)} in the stranded line`, 1, {}, { args: [id, TEXT], seed: and(OUI, (s) => pane(s, id, "h1 tab1\n"), (s) => sent(s, "drop-enters", "99")) });
   }
 }, 120000);
 
-test("27. send_line orca: AC_SEND_SETTLE is the pause after typing, between probes and after a retry Enter, read per pause; the chunks' 0.05 is fixed", () => {
-  const d = OSL("unset: 0.4 s", 0, { log: OTYPE() + SLEPT("0.4") + OVERIFY(1, "0.4") + OREAD() }, { env: ORCA_ });
-  for (const x of [d.o, d.t]) expect(x.ms).toBeGreaterThan(750);
-  OSL("empty: 0.4 s", 0, { log: OTYPE() + SLEPT("0.4") + OVERIFY(1, "0.4") + OREAD() }, { env: { ...ORCA_, AC_SEND_SETTLE: "" } });
-  const tenth = OSL("0.1 across a strand: nine pauses", 0, { log: OTYPE() + SLEPT("0.1") + OVERIFY(7, "0.1") + OSWITCH() + OVERIFY(1, "0.1") + OREAD() }, {
-    env: { ...ORCA_, AC_SEND_SETTLE: "0.1" },
-    seed: and(OUI, (s) => sent(s, "unfocused")),
-  });
-  for (const x of [tenth.o, tenth.t]) expect(x.ms).toBeGreaterThan(850);
-  OSL("0.1 after a retry Enter", 0, { log: OTYPE() + SLEPT("0.1") + OVERIFY(1, "0.1") + PENDING("0.1") + OREAD() }, { env: { ...ORCA_, AC_SEND_SETTLE: "0.1" }, seed: and(OUI, (s) => sent(s, "popups", "1")) });
-  const x = "x".repeat(600);
-  const bad = OSL("abc: sleep refuses every settle on the caller's stderr, the probes spin; the chunks' 0.05 still sleeps", 1, { log: OTYPE("x".repeat(512)) + CHUNKED + OTYPE("x".repeat(88)) + SLEPT("abc") + OVERIFY(7, "abc") + OSWITCH() + OVERIFY(7, "abc") }, {
-    args: ["x", x],
+test("27. send_line orca: AC_SEND_SETTLE is the pause after a retry Enter, read per pause", () => {
+  const d = OSL("unset: 0.4 s", 0, { log: OSENT() + PENDING("0.4") + OREAD() }, { env: ORCA_, seed: and(OUI, (s) => sent(s, "popups", "1")) });
+  for (const x of [d.o, d.t]) expect(x.ms).toBeGreaterThan(350);
+  OSL("empty: 0.4 s", 0, { log: OSENT() + PENDING("0.4") + OREAD() }, { env: { ...ORCA_, AC_SEND_SETTLE: "" }, seed: and(OUI, (s) => sent(s, "popups", "1")) });
+  OSL("0.1 after each retry Enter", 1, { log: OSENT() + PENDING("0.1").repeat(2) + OREAD() }, { env: { ...ORCA_, AC_SEND_SETTLE: "0.1" }, seed: and(OUI, (s) => sent(s, "drop-enters", "99")) });
+  OSL("an observed send: no pause at all", 0, { log: OSENT() }, { env: ORCA_, seed: and(OUI, (s) => sent(s, "send", SEEN)) });
+  const bad = OSL("abc: sleep refuses every settle on the caller's stderr", 1, { log: OSENT() + PENDING("abc").repeat(2) + OREAD() }, {
     env: { ...ORCA_, AC_SEND_SETTLE: "abc" },
     seed: and(OUI, (s) => sent(s, "drop-enters", "99")),
   });
-  expect(bad.t.err.split("\n").filter((l) => l.startsWith("sleep: invalid time interval")).length).toBe(15);
+  expect(bad.t.err.split("\n").filter((l) => l.startsWith("sleep: invalid time interval")).length).toBe(2);
   OSL("abc and a strand, the caller's stderr dropped: silent", 1, { err: "" }, { env: { ...ORCA_, AC_SEND_SETTLE: "abc" }, seed: and(OUI, (s) => sent(s, "drop-enters", "99")), io: { stdout: "inherit", stderr: "ignore" } });
 }, 60000);

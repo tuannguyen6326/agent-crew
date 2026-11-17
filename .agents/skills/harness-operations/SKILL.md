@@ -40,7 +40,7 @@ Load before a harness-specific spawn, trust-dialog response, skill invocation, i
 
 ## Backend-general facts (every harness)
 
-- Send a literal line with `bin/ac-send.sh <id> '<text>'`: it types, then submits VERIFIED (a render-change probe with one focused retry). A send whose submit is never acknowledged exits non-zero with the strand on stderr - that is NOT a landed operation.
+- Send a literal line with `bin/ac-send.sh <id> '<text>'`: it hands the text and its Enter to Orca as one prompt, submit VERIFIED (Orca's delivery receipt, or for a harness Orca cannot observe, a composer-pending check with at most two retry Enters). A send whose submit is never acknowledged exits non-zero with the strand on stderr - that is NOT a landed operation.
 - After a strand, resubmit with `bin/ac-send.sh <id> --key Enter`; never re-type the line (a re-type appends to the composer and garbles it). Confirm the resubmit landed by peeking - the key path is not probed (below), so its output is not evidence.
 - A pane whose agent status is `blocked` sits on a real interactive dialog only a human can answer. `bin/ac-send.sh` REFUSES ordinary text into it (its trailing Enter would accept the highlighted option, up to a permanent grant). Peek first, then answer with `--key`, or pass `--force` deliberately.
 - Read busy vs idle with `bin/ac-crew-state.sh <id>` (deterministic one-line state; `gone` once the window dies, `unobservable: ...` when the backend itself could not be read - never a death) and `bin/ac-peek.sh <id>` (bounded pane tail, each line prefixed `peek| ` so a crewmate's own captain marker cannot false-wake whichever pane is peeking).

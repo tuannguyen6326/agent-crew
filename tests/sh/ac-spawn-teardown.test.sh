@@ -391,11 +391,11 @@ assert_file "$AC_HOME/state/archive/t22/meta"
 # always submits untouched while the knob strands the kickoff step alone.
 # make_fake_orca's `.drop-enters` (tests/sh/helpers.sh) takes no such
 # pattern - it drops the terminal's NEXT N `--enter` calls unconditionally,
-# whichever text they carry. Measured directly against this fixture: the
-# launch line's own send has a hard two-attempt verified-submit ceiling of
-# its own (count 1-2 before the kickoff step still lands on its first try;
-# count 3 already exhausts the launch line's own retry and fails the whole
-# spawn before kickoff is ever reached). There is no count that reaches the
+# whichever text they carry. The launch line's own send has a hard Enter
+# ceiling of its own - the prompt send's and its two retry Enters (a count
+# within it still lands the kickoff step on its first try; one more exhausts
+# the launch line's retries and fails the whole spawn before kickoff is ever
+# reached). There is no count that reaches the
 # kickoff step with the launch line intact, so neither "recovers after a few
 # drops" nor "never acknowledged while the launch succeeded" has an orca
 # equivalent under this fixture - documented gap, not silently dropped.

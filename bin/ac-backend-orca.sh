@@ -492,46 +492,55 @@ orca_pane_dialog() {
 
 backend_submit_verified_orca() { orca_submit_verified_pane "$(orca_pane "$1")" "${2:-}"; }
 
-orca_type_pane() {
-  # Type WITHOUT submitting (`--text` with no `--enter` stays in the
-  # composer - measured). CHUNKED at 512 chars: one large --text write
-  # measurably lost its head (a ~4.7KB kickoff arrived as its last 723
-  # bytes - live, 2026-08-26). Best-effort per chunk: the verified submit
-  # is the real check.
-  local pane="$1" text="$2" off=0 len
-  len=${#text}
-  while [ "$off" -lt "$len" ]; do
-    orca_json terminal send --terminal "$pane" --text "${text:$off:512}" >/dev/null 2>&1 || true
-    off=$((off + 512))
-    [ "$off" -lt "$len" ] && sleep 0.05
+orca_focus_pane() { orca_json terminal switch --terminal "$1" >/dev/null 2>&1; }
+
+orca_prompt_send_pane() {
+  # One Orca prompt delivery (probe 2026-11-17, Orca 1.4.259): a recognized
+  # agent gets the text bracket-pasted with Enter and a receipt saying
+  # whether Orca OBSERVED the submit; anything else gets the text and Enter
+  # raw. 0 sent, 1 stranded, 2 no receipt (never resent - a resend could
+  # deliver twice), 3 a dialog owns the pane.
+  # The agentWait guard stays ahead of Orca's own agent_prompt_blocked
+  # refusal: that refusal was measured on a trust prompt only, and an Enter
+  # into any other dialog answers it.
+  local pane="$1" text="$2" out verdict retries=0
+  orca_pane_dialog "$pane" && return 3
+  out="$(orca terminal send --terminal "$pane" --text "$text" --enter --wait-submit 10 --json 2>/dev/null)" || true
+  verdict="$(jq -r 'if .ok == true then (if .result.send.prompt.observation == "supported" then "seen" else "blind" end)
+    elif .error.code == "agent_prompt_blocked" then "blocked" else "failed" end' <<<"$out" 2>/dev/null)" || true
+  case "$verdict" in
+    seen) return 0 ;;
+    blocked) return 3 ;;
+    blind) ;;
+    *) return 2 ;;
+  esac
+  # "seen" holds at input_accepted alone: mid-turn, Orca queues the prompt
+  # and delivers it after the turn (probe 2026-11-17). Only an unobserved
+  # send is checked here, and only a text PROVEN pending buys a retry Enter -
+  # never a retype.
+  while orca_composer_pending "$pane" "$text"; do
+    [ "$retries" -lt 2 ] || return 1
+    orca_pane_dialog "$pane" && return 3
+    orca_submit_pane "$pane" || true
+    sleep "${AC_SEND_SETTLE:-0.4}"
+    retries=$((retries + 1))
   done
   return 0
 }
-
-orca_focus_pane() { orca_json terminal switch --terminal "$1" >/dev/null 2>&1; }
 
 backend_send_line_orca() {
   local id="$1"
   shift
   local text="$*" rc=0
-  orca_type_pane "$(orca_pane "$id")" "$text"
-  sleep "${AC_SEND_SETTLE:-0.4}"
-  rc=0
-  orca_submit_verified_pane "$(orca_pane "$id")" "$text" || rc=$?
-  [ "$rc" = 0 ] && return 0
-  if [ "$rc" != 3 ]; then
-    backend_focus_orca "$id" || true
-    rc=0
-    orca_submit_verified_pane "$(orca_pane "$id")" "$text" || rc=$?
-  fi
+  orca_prompt_send_pane "$(orca_pane "$id")" "$text" || rc=$?
   [ "$rc" = 0 ] && return 0
   if [ "$rc" = 3 ]; then
-    printf 'ac-backend: a DIALOG owns the pane of %s - the text sits in the composer and no Enter was pressed (an Enter would ACCEPT the highlighted option). Peek it (ac-peek.sh %s) and answer deliberately with ac-send.sh %s --key <key>\n' \
+    printf 'ac-backend: a DIALOG owns the pane of %s - the text was not submitted and no Enter was pressed into the dialog (an Enter would ACCEPT the highlighted option). Peek it (ac-peek.sh %s) and answer deliberately with ac-send.sh %s --key <key>\n' \
       "$(backend_target_orca "$id")" "$id" "$id" >&2
     return 1
   fi
   if [ "$rc" = 2 ]; then
-    printf 'ac-backend: could not read the pane of %s - submit UNVERIFIED, so the text may or may not have gone through (peek it: ac-peek.sh %s)\n' \
+    printf 'ac-backend: no delivery receipt from %s - submit UNVERIFIED, so the text may or may not have gone through (peek it: ac-peek.sh %s)\n' \
       "$(backend_target_orca "$id")" "$id" >&2
     return 2
   fi
@@ -541,18 +550,12 @@ backend_send_line_orca() {
 }
 
 backend_send_line_pane_orca() {
-  local pane="$1"
+  [ -n "$1" ] || return 1
+  local pane="$1" prc=0
   shift
-  local text="$*"
-  [ -n "$pane" ] || return 1
-  orca_type_pane "$pane" "$text"
-  sleep "${AC_SEND_SETTLE:-0.4}"
-  local prc=0
-  orca_submit_verified_pane "$pane" "$text" || prc=$?
-  [ "$prc" = 0 ] && return 0
-  [ "$prc" = 3 ] && return 1   # dialog-owned: never a focus-retry press
-  orca_focus_pane "$pane" || true
-  orca_submit_verified_pane "$pane" "$text"
+  orca_prompt_send_pane "$pane" "$*" || prc=$?
+  [ "$prc" = 3 ] && return 1
+  return "$prc"
 }
 
 orca_send_key_pane() {
