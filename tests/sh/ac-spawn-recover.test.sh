@@ -149,4 +149,24 @@ assert_contains "$cbuf" "claude --permission-mode auto --resume $csid" "the room
 assert_contains "$cbuf" 'AC_WATCH_ONLY=$(bin/ac-ready.sh watch-set famr)' "the roomchief is told to re-arm its family watcher, which died with the tab"
 assert_contains "$(tail -n 1 "$AC_HOME/state/famr-chief.status")" "recovered:" "the roomchief status log gains a recovered: line"
 
+# --- claude-teams: a claude crewmate launched through `orca claude-teams` ------------
+
+"$BIN/ac-brief.sh" t1 proj --mode local-only >/dev/null
+printf 'fleet layer\n' >"$AC_HOME/CREWMATE.md"
+"$BIN/ac-spawn.sh" t1 "$repo" --harness claude-teams --model opus --mode local-only >/dev/null 2>&1 \
+  || fail "a claude-teams crewmate must spawn"
+tmeta="$AC_HOME/state/t1.meta"
+tsid="$(meta_field "$tmeta" session_id)"
+[ -n "$tsid" ] || fail "a claude-teams spawn pins a claude session id"
+assert_contains "$(cat "$(fake_orca_buf t1)")" "orca claude-teams --permission-mode auto --session-id $tsid --model opus" \
+  "the crewmate launches through orca claude-teams"
+assert_eq "$(meta_field "$tmeta" harness)" "claude" "every later step treats it as claude"
+assert_eq "$(meta_field "$tmeta" launch)" "claude-teams" "the meta records the teams launch"
+[ -f "$(meta_field "$tmeta" worktree)/.claude/CLAUDE.md" ] || fail "the claude instruction file is seeded"
+
+kill_pane t1
+"$BIN/ac-spawn.sh" t1 "$repo" --recover >/dev/null 2>&1 || fail "a gone claude-teams pane must recover"
+assert_contains "$(cat "$(fake_orca_buf t1)")" "orca claude-teams --permission-mode auto --resume $tsid" \
+  "recovery resumes through orca claude-teams"
+
 pass

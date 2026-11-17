@@ -146,6 +146,9 @@ export function configRead(name: string, dflt = ""): string {
 export const HARNESSES = ["claude", "codex", "opencode", "pi", "cursor"] as const;
 export const ONESHOT_ONLY_HARNESSES = ["agy"] as const;
 const BUILT_IN: readonly string[] = [...HARNESSES, ...ONESHOT_ONLY_HARNESSES];
+// Not a harness: a crew dispatch profile meaning claude launched through
+// `orca claude-teams`, which src/spawn.ts turns back into claude.
+export const CLAUDE_TEAMS = "claude-teams";
 
 // A name some arm can launch: a registry or one-shot-only harness, or one the
 // home gives a template ac-spawn.sh would take (`[ -f config/launch-<h> ]`).

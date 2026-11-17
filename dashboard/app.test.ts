@@ -2056,6 +2056,20 @@ test("applyDispatchWrite refuses a harness no arm can launch, as the resolver do
   }
 });
 
+test("applyDispatchWrite takes claude-teams on a crew rule or default, never on a pane", () => {
+  const home = tmpHome();
+  try {
+    const crew = { rules: [{ when: "x", use: { harness: "claude-teams" } }], default: { harness: "claude-teams" } };
+    expect(applyDispatchWrite(home, JSON.stringify(crew)).status).toBe(200);
+    const pane = { rules: [{ when: "x", use: { harness: "claude" } }], panes: { learning: { harness: "claude-teams" } } };
+    const res = applyDispatchWrite(home, JSON.stringify(pane));
+    expect(res.status).toBe(400);
+    expect(String((res.body as any).error)).toContain("harness 'claude-teams'");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("applyDispatchWrite accepts a lanes pane and holds the same rules the resolver does", () => {
   const home = mkdtempSync(`${tmpdir()}/dash-lanes-`);
   try {

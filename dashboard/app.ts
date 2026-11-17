@@ -98,7 +98,7 @@ import {
 } from "./lib.ts";
 export * from "./lib.ts";
 import { PAGE } from "./page.ts";
-import { HARNESSES, bunChild, die, enterCaller, harnessLaunchable } from "../src/lib.ts";
+import { CLAUDE_TEAMS, HARNESSES, bunChild, die, enterCaller, harnessLaunchable } from "../src/lib.ts";
 import { watchHomes } from "./watch.ts";
 // ---------------------------------------------------------------------------
 // Records ledgers (dash-records): the fleet's records/ markdown ledgers, read
@@ -1610,8 +1610,8 @@ export function applyDispatchWrite(homePath: string, raw: string): ConfigWriteRe
     return { status: 400, body: { error: "top level must be a JSON object" } };
   if (!Array.isArray(parsed.rules) || parsed.rules.length === 0)
     return { status: 400, body: { error: "`rules` must be a non-empty array" } };
-  const unlaunchable = (h: string, label: string): string | null =>
-    harnessLaunchable(homePath, h) ? null
+  const unlaunchable = (h: string, label: string, crew = false): string | null =>
+    (crew && h === CLAUDE_TEAMS) || harnessLaunchable(homePath, h) ? null
       : `${label} harness '${h}' is neither a registry nor a one-shot harness, and config/launch-${h} is no launch template`;
   for (let i = 0; i < parsed.rules.length; i++) {
     const r = parsed.rules[i];
@@ -1625,11 +1625,11 @@ export function applyDispatchWrite(homePath: string, raw: string): ConfigWriteRe
     for (const u of uses) {
       if (!u || typeof u !== "object" || typeof u.harness !== "string" || !u.harness.trim())
         return { status: 400, body: { error: `rule ${i + 1} \`use\` needs a harness` } };
-      const bad = unlaunchable(u.harness, `rule ${i + 1} \`use\``);
+      const bad = unlaunchable(u.harness, `rule ${i + 1} \`use\``, true);
       if (bad) return { status: 400, body: { error: bad } };
     }
   }
-  const profileError = (value: any, label: string): string | null => {
+  const profileError = (value: any, label: string, crew = false): string | null => {
     if (!value || typeof value !== "object" || Array.isArray(value)
         || typeof value.harness !== "string" || !value.harness.trim())
       return `${label} needs a harness`;
@@ -1637,10 +1637,10 @@ export function applyDispatchWrite(homePath: string, raw: string): ConfigWriteRe
       return `${label} model must be a string`;
     if ("effort" in value && typeof value.effort !== "string")
       return `${label} effort must be a string`;
-    return unlaunchable(value.harness, label);
+    return unlaunchable(value.harness, label, crew);
   };
   if ("default" in parsed) {
-    const err = profileError(parsed.default, "default");
+    const err = profileError(parsed.default, "default", true);
     if (err) return { status: 400, body: { error: err } };
   }
   if ("panes" in parsed) {

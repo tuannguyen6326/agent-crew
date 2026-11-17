@@ -55,6 +55,8 @@
 // different rules. --receipt returns the same selection as durable JSON and is
 // QA-ONLY (its frozen routing receipt has no consumer for the other kinds);
 // `use` remains one atomic harness/model/effort object.
+// A crew rule or the top-level default may name claude-teams, which no pane
+// arm can launch (the src/spawn.ts header owns it).
 // ABSENT is not an error and must stay distinguishable from one: no config
 // file, no `panes` block, or no entry for that kind all print NOTHING and exit
 // 0 - that is the fall-through to the pane agent's own ladder, i.e. the
@@ -114,7 +116,7 @@ import { createHash } from "node:crypto";
 import { constants } from "node:os";
 import { existsSync, readFileSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
-import { HARNESSES, ONESHOT_ONLY_HARNESSES, configRead, die, enterCaller, envHome, harnessLaunchable, spawnShellSync, stateDir } from "./lib.ts";
+import { CLAUDE_TEAMS, HARNESSES, ONESHOT_ONLY_HARNESSES, configRead, die, enterCaller, envHome, harnessLaunchable, spawnShellSync, stateDir } from "./lib.ts";
 
 type Json = any;
 
@@ -278,10 +280,10 @@ function main(args: string[]): void {
     return refuse(`invalid JSON: ${cfg}`);
   };
   const usage = (msg: string) => refuse(`usage: ${msg}`);
-  const resolve = (p: Json): string => {
+  const resolve = (p: Json, crew = false): string => {
     const line = profileLine(p);
     const h = captured(p.harness);
-    if (!harnessLaunchable(home, h))
+    if (!(crew && h === CLAUDE_TEAMS) && !harnessLaunchable(home, h))
       refuse(`dispatch profile harness '${h}' is neither a registry harness (${HARNESSES.join("|")}) nor a one-shot one (${ONESHOT_ONLY_HARNESSES.join("|")}), and ${home}/config/launch-${h} is no launch template`);
     return line;
   };
@@ -318,14 +320,14 @@ function main(args: string[]): void {
       if (!isFile(cfg)) refuse(`no dispatch config at ${cfg}`);
       const rule = alt(nth(field(load(false), "rules"), n - 1), null) ?? refuse(`no rule ${a2} in ${cfg}`);
       const use = field(rule, "use");
-      if (!Array.isArray(use)) return void say(resolve(use));
+      if (!Array.isArray(use)) return void say(resolve(use, true));
       if (use.length === 0) refuse(`rule ${a2} has an empty use list`);
       const rr = join(stateDir(), `.dispatch-rr-${a2}`);
       let count = 0;
       try {
         count = counterValue(readFileSync(rr, "utf8"));
       } catch {}
-      say(resolve(rrPick(use, count)));
+      say(resolve(rrPick(use, count), true));
       writeFileSync(rr, `${count + 1}\n`);
       return;
     }
@@ -397,7 +399,7 @@ function main(args: string[]): void {
     }
     case "": {
       const d = isFile(cfg) ? alt(field(load(false), "default"), null) : null;
-      say(d !== null ? resolve(d) : `harness=${configRead("crew-harness", "claude")}\tmodel=\teffort=`);
+      say(d !== null ? resolve(d, true) : `harness=${configRead("crew-harness", "claude")}\tmodel=\teffort=`);
       return;
     }
     case "--propose": {
