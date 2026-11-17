@@ -840,7 +840,7 @@ case "$(orca terminal read --terminal "$oh4" --json)" in
   *) fail "a send issued once the delay has elapsed must land normally, not keep dropping forever" ;;
 esac
 
-# --- 24. fake_orca_buf resolves a task's orca terminal buffer (fake_pane_buf's orca sibling) -
+# --- 24. fake_orca_buf resolves a task's orca terminal buffer ----------------
 
 make_home
 oh5="$(orca_handle "$(orca terminal create --json)")"
@@ -848,7 +848,7 @@ oh5="$(orca_handle "$(orca terminal create --json)")"
 printf '%s tabX\n' "$oh5" >"$AC_HOME/state/.pane-otask1"
 printf 'orca transcript line\n' >"$FAKE_ORCA/terminals/$oh5.buf"
 assert_eq "$(fake_orca_buf otask1)" "$FAKE_ORCA/terminals/$oh5.buf" \
-  "fake_orca_buf resolves the same 2-field .pane-<id> grammar fake_pane_buf does, into the orca terminal dir"
+  "fake_orca_buf resolves the task's .pane-<id> handle into the orca terminal dir"
 assert_contains "$(cat "$(fake_orca_buf otask1)")" "orca transcript line" \
   "the resolved path is the task's actual terminal transcript"
 

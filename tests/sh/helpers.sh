@@ -49,7 +49,7 @@ export AC_HOME="$TMP/home"
 export AC_SHIP_WATCH=off
 export AC_GATE_WATCH=off
 # Verified sends (ac-backend.sh) settle AC_SEND_SETTLE seconds around each
-# Enter before probing; the fake herdr is synchronous, so the suite skips them.
+# Enter before probing; the fake orca is synchronous, so the suite skips them.
 export AC_SEND_SETTLE=0
 # The startup-dialog sequence polls an UNOBSERVABLE pane to its budget; a
 # fake backend that models neither identity nor dialog must not cost 15s.
@@ -147,9 +147,10 @@ unset AC_SCOPE AC_WATCH_ONLY AC_WATCH_SKIP AC_FLEET_MODEL AC_FLEET_EFFORT \
 # A value the code under test sets for its own children is pinned by reading it
 # back in a stub, so an inherited copy passes that pin vacuously or reds a row
 # asserting its absence: Claude Code exports GIT_TERMINAL_PROMPT=0, which
-# ac-ship's push sets beside GIT_OPTIONAL_LOCKS=0; a configured herdr session
-# rides every herdr call as HERDR_SESSION; a chief running under its own
-# CLAUDE_CONFIG_DIR passes it on in every launch line.
+# ac-ship's push sets beside GIT_OPTIONAL_LOCKS=0; a chief running under its
+# own CLAUDE_CONFIG_DIR passes it on in every launch line. HERDR_SESSION is a
+# retired knob name kept here only as an isolation-hygiene example, read by
+# nothing now.
 unset GIT_TERMINAL_PROMPT GIT_OPTIONAL_LOCKS HERDR_SESSION CLAUDE_CONFIG_DIR
 # The double key for the two arbitrary-exec test hooks (audit-f8): production
 # code runs AC_CURATE_SNAPSHOT_HOOK / AC_QA_PROFILE_RECHECK_HOOK only when
@@ -487,444 +488,9 @@ hold_close() {
   [ "$rc" = 0 ] || fail "hold gate '$1' expired after ${AC_HOLD_TTL}s: its block outran the stand-in, so everything asserted after that judged a DEAD pid"
 }
 
-# --- fake herdr backend --------------------------------------------------------
-#
-# AUTHORITATIVE for how tests drive the herdr backend (the fleet's only one).
-# A file-backed fake CLI - panes are files, no processes, nothing to orphan:
-#   $FAKE_HERDR/tabs/<tab>        holds the tab's pane id (presence = alive)
-#   $FAKE_HERDR/panes/<p>.buf     the pane transcript: enter submits the
-#                                 composer into it (newline-terminated)
-#   $FAKE_HERDR/panes/<p>.tab     the pane's own tab id, as `pane get` reports
-#                                 it - what a RAW-pane caller focuses through
-#                                 when it holds no state/.pane-<id> handle
-#   $FAKE_HERDR/panes/<p>.label   the pane label (`pane rename` writes it);
-#                                 `pane get` and `pane list` report it back,
-#                                 which is how a pane agent's stable handle
-#                                 resolves and proves itself
-#   $FAKE_HERDR/panes/<p>.in      the composer: send-text appends here and
-#                                 never auto-submits; `pane read` prints the
-#                                 transcript, then a non-empty composer
-#                                 rendered as "> <input>" (a TUI input box)
-#   $FAKE_HERDR/panes/<p>.claude-composer  render the composer the way claude
-#                                 does (measured on 2.1.283): the input between
-#                                 two horizontal rules after a `❯` glyph, and an
-#                                 EMPTY composer showing a dim (SGR 2) hint that
-#                                 is not input - styled only under --ansi. A
-#                                 pane whose transcript holds a submitted
-#                                 `claude --...` launch line renders it too, so
-#                                 a spawned claude crewmate shows its composer
-#   $FAKE_HERDR/panes/<p>.nbsp-empty  draw that EMPTY composer as claude 2.1.299
-#                                 does with no hint: `❯`, one NBSP, CR under
-#                                 --ansi, the bare `❯` in a plain read
-#   $FAKE_HERDR/panes/<p>.keep-tail  "<n>" - send-text keeps only the LAST <n>
-#                                 characters, the tail a long send into claude
-#                                 leaves in its composer (measured live)
-#   `pane send-keys <p> ctrl+u` clears the composer
-#   $FAKE_HERDR/panes/<p>.read-fails  `pane read` of this pane fails outright
-#   $FAKE_HERDR/panes/<p>.drop-enters  strand knob: "<count> [<pattern>]" -
-#                                 the next <count> enters whose composer
-#                                 matches <pattern> (default: any) are
-#                                 dropped SILENTLY, exit 0 - herdr's
-#                                 unfocused send-keys no-op
-#   $FAKE_HERDR/panes/<p>.dead    the harness EXITED and the pane fell back to
-#                                 its shell: `pane process-info` then reports a
-#                                 bare `-zsh` in the foreground instead of the
-#                                 harness (the dead-pane signature ac-spawn.sh
-#                                 refuses on). $FAKE_HERDR/.spawn-dead marks
-#                                 EVERY pane created from then on, which is how
-#                                 a test kills a harness at launch time - before
-#                                 the spawn it is racing has a handle to write
-#   $FAKE_HERDR/.die-on-text      "<pattern>" - the harness EXITS when text
-#                                 matching <pattern> is typed into it, marking
-#                                 that pane `.dead`. This is the pane that is
-#                                 ALIVE at the came-up gate and DEAD after the
-#                                 kickoff, which no `.dead` written up front can
-#                                 express: codex's startup trust dialog reads an
-#                                 `n` or a `2` in the prompt as "2. No, quit"
-#   $FAKE_HERDR/.die-on-bare-enter  the harness EXITS on an Enter typed into an
-#                                 EMPTY composer, marking that pane `.dead` -
-#                                 the keystroke that ANSWERS a startup dialog
-#                                 ending the process instead. Only a BARE Enter,
-#                                 so a launch line's own submit is untouched and
-#                                 the death lands exactly where the dialog
-#                                 answer is typed
-#   $FAKE_HERDR/.probe-unreadable makes `pane process-info` fail outright, the
-#                                 third (unobservable) verdict of that probe
-#   $FAKE_HERDR/.hang             the backend is WEDGED: every call blocks
-#                                 instead of answering, which is what a herdr
-#                                 CLI does against a server that accepts and
-#                                 never replies (measured: still blocked at
-#                                 20.7s, killed by the prober). Distinct from
-#                                 .unreachable, which ANSWERS "I cannot" - a
-#                                 failed call and a call that never returns are
-#                                 different faults, and only the second one can
-#                                 freeze a caller. The call forks `sleep 97` and
-#                                 waits on it, so a reap that takes the pid
-#                                 alone leaves that child alive under ppid=1 and
-#                                 a test can tell the two reaps apart. That
-#                                 child's pid is appended to
-#                                 $FAKE_HERDR/hang-children, which is how a test
-#                                 judges the reap - never by scanning the host
-#                                 process table, which would match and kill a
-#                                 concurrent test file's child under --jobs.
-#                                 Both sleeps end on their own: a test that
-#                                 spawns hanging processes caps them itself
-#   $FAKE_HERDR/.unreachable      the BACKEND itself cannot answer: EVERY call
-#                                 exits 1 with herdr's own error envelope on
-#                                 stderr, the shape a client/server protocol
-#                                 mismatch produced live (2026-07-25: brew
-#                                 upgraded the CLI to protocol 17 against a
-#                                 running protocol-16 server and every socket
-#                                 call returned protocol_mismatch exit 1). This
-#                                 is what tells an unreadable backend apart from
-#                                 a pane that is really gone - a pane whose
-#                                 files are simply removed
-#   $FAKE_HERDR/.pane-api-down  a PARTIAL outage: `pane get` and `pane list`
-#                                 both fail with herdr's error envelope while
-#                                 every other verb answers normally. That is the
-#                                 shape WINDOW LIVENESS cannot see through (both
-#                                 of its calls are gone, so the verdict is
-#                                 UNOBSERVABLE) on a backend that can still
-#                                 CREATE a tab - i.e. the one where proceeding
-#                                 past a window-collision guard really does open
-#                                 a second window
-#   $FAKE_HERDR/panes/<p>.explain  "<state> [<rule-id>]" - what `agent explain
-#                                 --json` reports for this pane: herdr 0.9.1's
-#                                 own screen classifier, which NAMES the
-#                                 detection rule that matched (matched_rule.id,
-#                                 e.g. codex's `startup_update`). Absent means
-#                                 herdr knows no agent in that pane, and the
-#                                 call then FAILS with its agent_not_found
-#                                 envelope on stderr, exit 1 - measured against
-#                                 herdr 0.9.1 on a bare shell pane. A binary
-#                                 too old to carry the verb fails too (usage
-#                                 error), which the driver reads the same way
-#   $FAKE_HERDR/panes/<p>.status  agent_status served by `pane get`
-#                                 (tests write `blocked` to simulate an ask)
-#   $FAKE_HERDR/.pane-idle-by-default  seeds EVERY new pane's `.status` with
-#                                 `idle` at `tab create` time - opt-in, for a
-#                                 suite whose panes must clear the
-#                                 composer-ready observation (bin/ac-spawn.sh
-#                                 kickoff_wait_input_ready: agent_status=idle
-#                                 AND a stable render) without hand-writing
-#                                 `.status` per predicted pane id
-#   $FAKE_HERDR/panes/<p>.delay-ready-secs  "<n>" - a PER-PANE knob (write it
-#                                 before the pane exists, at the predicted
-#                                 p$((n+1)), the same convention `.drop-enters`
-#                                 uses): the clock starts on this pane's FIRST
-#                                 `pane process-info` read (never on its
-#                                 launch-line send-text, which always precedes
-#                                 it) and reports `agent_status=working` and
-#                                 DROPS any `pane send-text` until <n> real
-#                                 seconds have elapsed, then flips to `idle`
-#                                 and stops dropping. A dropped send-text still
-#                                 lets a bare Enter append a newline to the
-#                                 render - the "unrelated redraw" that fools a
-#                                 naive render-diff submit verifier into
-#                                 reporting ACCEPTED even though the text never
-#                                 landed (the fault bin/ac-spawn.sh's composer-
-#                                 ready observation exists to close). Logs
-#                                 `dropped-before-ready` per drop.
-#   $FAKE_HERDR/panes/<p>.reported  externally reported state (`pane
-#                                 report-agent` writes it, `release-agent`
-#                                 removes it); MASKS .status in `pane get`,
-#                                 mirroring real herdr (verified 2026-07-17)
-#   $FAKE_HERDR/focused           tab id of the last `tab focus`
-#   $FAKE_HERDR/log               one line per CLI call, for call-shape asserts
-#   $FAKE_HERDR/.n                the TAB/PANE counter, and nothing else's: the
-#                                 nth `tab create` mints tab t<n> and pane p<n>,
-#                                 so a test that must arm a knob on a pane BEFORE
-#                                 it exists (`.drop-enters`, which has to be in
-#                                 place before the spawn opens the tab) predicts
-#                                 it as p$((n + 1)) (or t$((n + 1))). Seven call
-#                                 sites in four test files do. Any verb that
-#                                 draws from THIS counter silently shifts
-#                                 that prediction and reds them somewhere else
-#                                 entirely - one workspace-per-family create did
-#                                 exactly that (d74b7d6), and by a CONDITIONAL
-#                                 offset (2 when the family workspace is created,
-#                                 1 when an existing one is adopted), so no
-#                                 constant fixes it. A new id-minting verb gets
-#                                 its own counter file, like `workspace create`
-#                                 below.
-#   $FAKE_HERDR/.wn               the workspace counter, deliberately separate
-# A spawned launch line therefore sits VERBATIM in the buffer (nothing
-# executes it) - assert launch-line content against the buffer, and inject
-# crewmate output (done:/blocked: markers) by appending lines to the buffer.
-
-make_fake_herdr() {
-  export FAKE_HERDR="$TMP/fake-herdr"
-  mkdir -p "$FAKE_HERDR/panes" "$FAKE_HERDR/tabs" "$TMP/stubbin"
-  cat >"$TMP/stubbin/herdr" <<'FAKE'
-#!/usr/bin/env bash
-d="$FAKE_HERDR"
-printf 'herdr %s\n' "$*" >>"$d/log"
-# Real herdr takes --session either before the subcommand or after it;
-# ac-backend.sh appends it, ac-pane-agent.sh puts it first. Strip the leading
-# form so both callers reach the same fake.
-[ "${1:-}" = --session ] && shift 2
-[ "${1:-}" = --version ] && { printf 'herdr 0.8.0\n'; exit 0; }
-if [ -f "$d/.hang" ]; then
-  # The child ignores TERM deliberately - SIG_IGN survives the exec into
-  # `sleep`, so a bound whose TERM is its last word leaves it behind.
-  ( trap '' TERM; sleep 97 ) &
-  printf '%s\n' "$!" >>"$d/hang-children"
-  wait
-  exit 0
-fi
-if [ -f "$d/.unreachable" ]; then
-  printf '{"error":{"code":"protocol_mismatch","message":"client protocol 17 server protocol 16"},"id":"cli:%s"}\n' \
-    "${1:-}:${2:-}" >&2
-  exit 1
-fi
-if [ -f "$d/.pane-api-down" ]; then
-  case "${1:-} ${2:-}" in
-    "pane get"|"pane list")
-      printf '{"error":{"code":"internal_error","message":"pane api unavailable"},"id":"cli:%s"}\n' \
-        "${1:-}:${2:-}" >&2
-      exit 1 ;;
-  esac
-fi
-if [ -f "$d/.server-stopped" ]; then
-  # No server behind the socket: the client answers `status server` on its own
-  # (rc 0, running:false - real herdr 0.8.0 against an absent session socket),
-  # and every other call fails to connect.
-  case "${1:-} ${2:-}" in
-    "status server")
-      printf '{"status":"not_running","running":false,"version":null,"protocol":null,"socket":"%s/herdr.sock","session":null}\n' "$d"
-      exit 0 ;;
-  esac
-  printf '{"error":{"code":"server_not_running","message":"no herdr server is running at %s/herdr.sock"},"id":"cli:%s"}\n' \
-    "$d" "${1:-}:${2:-}" >&2
-  exit 1
-fi
-next() { local f="$d/.${1:-n}" n; n="$(cat "$f" 2>/dev/null || printf 0)"; n=$((n + 1)); printf '%s\n' "$n" >"$f"; printf '%s\n' "$n"; }
-case "${1:-} ${2:-}" in
-  "status server")
-    printf '{"status":"running","running":true,"version":"0.8.0","protocol":19,"compatible":true,"socket":"%s/herdr.sock","session":null}\n' "$d"
-    exit 0 ;;
-  "workspace get")
-    # ws.<id> holds the workspace's LABEL (empty file = unlabelled) - real herdr
-    # reports it under result.workspace.label, which ac_herdr_agents_workspace
-    # now checks so a knob can only place a fleet's panes in ITS OWN group.
-    [ -e "$d/ws.$3" ] || exit 1
-    printf '{"result":{"workspace":{"workspace_id":"%s","label":"%s"}}}\n' \
-      "$3" "$(cat "$d/ws.$3" 2>/dev/null || true)"; exit 0 ;;
-  "workspace create")
-    n="$(next wn)"; lbl=""; shift 2
-    while [ $# -gt 0 ]; do case "$1" in --label) lbl="${2:-}"; shift ;; esac; shift; done
-    printf '%s' "$lbl" >"$d/ws.w$n"
-    printf '{"result":{"workspace":{"workspace_id":"w%s"}}}\n' "$n"; exit 0 ;;
-  "workspace list")
-    sep=""; printf '{"result":{"workspaces":['
-    for f in "$d"/ws.*; do
-      [ -e "$f" ] || continue
-      printf '%s{"workspace_id":"%s","label":"%s","tab_count":0}' \
-        "$sep" "${f##*/ws.}" "$(cat "$f" 2>/dev/null || true)"; sep=","
-    done
-    printf ']}}\n'; exit 0 ;;
-  "workspace close") rm -f "$d/ws.$3"; exit 0 ;;
-  "tab create")
-    # tabs/<tab> holds "<pane_id> [<label>]" - the label is what tab get
-    # reports back, so an ownership check can prove a tab is still its task's.
-    n="$(next)"; lbl=""; shift 2
-    while [ $# -gt 0 ]; do case "$1" in --label) lbl="${2:-}"; shift ;; esac; shift; done
-    printf 'p%s %s\n' "$n" "$lbl" >"$d/tabs/t$n"
-    : >"$d/panes/p$n.buf"
-    [ -f "$d/.spawn-dead" ] && : >"$d/panes/p$n.dead"
-    [ -f "$d/.pane-idle-by-default" ] && printf 'idle\n' >"$d/panes/p$n.status"
-    printf 't%s\n' "$n" >"$d/panes/p$n.tab"
-    printf '{"result":{"tab":{"tab_id":"t%s"},"root_pane":{"pane_id":"p%s"}}}\n' "$n" "$n"; exit 0 ;;
-  "tab get")
-    [ -f "$d/tabs/$3" ] || exit 1
-    read -r _ lbl <"$d/tabs/$3"
-    printf '{"result":{"tab":{"tab_id":"%s","label":"%s"}}}\n' "$3" "$lbl"; exit 0 ;;
-  "tab close")
-    # Fault injection: `.kill-caller-on-tab-close` makes this close END its
-    # caller, the way the real pane-kill step has ended ac-teardown.sh on
-    # record (exit 144, no output). SIGKILL because the killer behind those
-    # incidents is undiagnosed - a test may not assume it is catchable.
-    [ -f "$d/.kill-caller-on-tab-close" ] && kill -s KILL "$PPID"
-    # Fault injection: `.tab-close-fails` makes the close FAIL and leave the
-    # tab in place - the shape a proven-owned tab meets on a refused or
-    # timed-out close.
-    [ -f "$d/.tab-close-fails" ] && exit 1
-    p=""; [ -f "$d/tabs/$3" ] && read -r p _ <"$d/tabs/$3"
-    [ -n "$p" ] && rm -f "$d/panes/$p".*
-    rm -f "$d/tabs/$3"; exit 0 ;;
-  "tab focus") printf '%s\n' "$3" >"$d/focused"; exit 0 ;;
-  "tab list") exit 0 ;;
-  "pane get")
-    [ -f "$d/panes/$3.buf" ] || exit 1
-    if [ -f "$d/panes/$3.reported" ]; then st="$(cat "$d/panes/$3.reported")"
-    elif [ -f "$d/panes/$3.delay-ready-secs" ] && [ -f "$d/panes/$3.ready-start" ]; then
-      n="$(cat "$d/panes/$3.delay-ready-secs")"; start="$(cat "$d/panes/$3.ready-start")"
-      if [ $(( $(date +%s) - start )) -ge "$n" ]; then st=idle; else st=working; fi
-    else st="$(cat "$d/panes/$3.status" 2>/dev/null || printf 'unknown')"; fi
-    printf '{"result":{"pane":{"pane_id":"%s","tab_id":"%s","label":"%s","agent_status":"%s"}}}\n' \
-      "$3" "$(cat "$d/panes/$3.tab" 2>/dev/null || true)" \
-      "$(cat "$d/panes/$3.label" 2>/dev/null || true)" "$st"; exit 0 ;;
-  "pane process-info")
-    # Addressed as `--pane <id>` (the real CLI's form - it takes no positional
-    # pane). A `.dead` pane reports its shell in the foreground, a live one the
-    # harness; `.probe-unreadable` fails the read, the unobservable verdict.
-    # `name` != `argv0` on a live pane - verified against real herdr 2026-07-21
-    # (`herdr pane process-info`): argv0 is the launched command ("claude"),
-    # name is the harness's OWN version string ("2.1.216"), never its argv0.
-    # backend_harness_up (ac-backend.sh) reads argv0 first for exactly this
-    # reason; a fixture that echoed argv0 into name too would stay green
-    # under a future `.name`-trusting simplification while going blind in
-    # production, where `.name` is never a process/harness name.
-    p=""; shift 2
-    while [ $# -gt 0 ]; do case "$1" in --pane) p="${2:-}"; shift 2 ;; *) shift ;; esac; done
-    [ -f "$d/panes/$p.buf" ] || exit 1
-    [ -f "$d/.probe-unreadable" ] && exit 1
-    if [ -f "$d/panes/$p.delay-ready-secs" ] && [ ! -f "$d/panes/$p.ready-start" ]; then
-      date +%s >"$d/panes/$p.ready-start"
-    fi
-    fg=claude; nm=9.9.9-fixture
-    [ -f "$d/panes/$p.dead" ] && { fg=-zsh; nm=-zsh; }
-    printf '{"result":{"process_info":{"pane_id":"%s","shell_pid":100,"foreground_processes":[{"argv0":"%s","name":"%s","pid":101}]}}}\n' \
-      "$p" "$fg" "$nm"; exit 0 ;;
-  "pane list")
-    # Every live pane, with the label `pane rename` gave it - real herdr omits
-    # the field on an unnamed pane, so an empty one is reported as "".
-    sep=""
-    printf '{"result":{"panes":['
-    for f in "$d"/panes/*.buf; do
-      [ -e "$f" ] || continue
-      p="$(basename "$f" .buf)"
-      printf '%s{"pane_id":"%s","tab_id":"%s","label":"%s"}' "$sep" "$p" \
-        "$(cat "$d/panes/$p.tab" 2>/dev/null || true)" \
-        "$(cat "$d/panes/$p.label" 2>/dev/null || true)"
-      sep=","
-    done
-    printf ']}}\n'; exit 0 ;;
-  "pane rename")
-    [ -f "$d/panes/$3.buf" ] || exit 1
-    printf '%s\n' "${4:-}" >"$d/panes/$3.label"; exit 0 ;;
-  "pane report-agent")
-    p="$3"; [ -f "$d/panes/$p.buf" ] || exit 1
-    # Fault injection: an executable `.hook-report-agent` runs ONCE here (it is
-    # renamed before it runs, so a second call is inert). This CLI call is what
-    # ac-watch.sh's marker branch makes BETWEEN stamping .seen-<id> and
-    # publishing its wake, so a hook is how a test lands a concurrent write
-    # inside that window deterministically - no sleeps, no racing processes.
-    if [ -x "$d/.hook-report-agent" ]; then
-      mv "$d/.hook-report-agent" "$d/.hook-report-agent.used"
-      "$d/.hook-report-agent.used" || true
-    fi
-    shift 3; state=unknown
-    while [ $# -gt 0 ]; do
-      case "$1" in --state) state="${2:-unknown}"; shift 2 ;; *) shift ;; esac
-    done
-    printf '%s\n' "$state" >"$d/panes/$p.reported"; exit 0 ;;
-  "pane release-agent")
-    rm -f "$d/panes/$3.reported"; exit 0 ;;
-  "pane read")
-    [ -f "$d/panes/$3.buf" ] || exit 1
-    [ -f "$d/panes/$3.read-fails" ] && exit 1
-    cat "$d/panes/$3.buf"
-    if [ -f "$d/panes/$3.claude-composer" ] || grep -q 'claude --' "$d/panes/$3.buf" 2>/dev/null; then
-      rule='────────────────────────────────'
-      printf '%s\n❯' "$rule"
-      if [ -s "$d/panes/$3.in" ]; then printf ' '; cat "$d/panes/$3.in"
-      elif [ -f "$d/panes/$3.nbsp-empty" ]; then case "$*" in *--ansi*) printf '\302\240\r' ;; esac
-      else case "$*" in *--ansi*) printf ' \033[2mTry "how does <filepath> work?"\033[0m' ;; *) printf ' Try "how does <filepath> work?"' ;; esac
-      fi
-      printf '\n%s\n  ? for shortcuts\n' "$rule"
-    elif [ -s "$d/panes/$3.in" ]; then printf '> '; cat "$d/panes/$3.in"; printf '\n'; fi
-    exit 0 ;;
-  "pane send-text")
-    p="$3"; shift 3
-    [ -f "$d/panes/$p.buf" ] || exit 1
-    if [ -f "$d/panes/$p.delay-ready-secs" ] && [ -f "$d/panes/$p.ready-start" ]; then
-      n="$(cat "$d/panes/$p.delay-ready-secs")"; start="$(cat "$d/panes/$p.ready-start")"
-      if [ $(( $(date +%s) - start )) -lt "$n" ]; then
-        printf 'dropped-before-ready\n' >>"$d/log"
-        exit 0
-      fi
-    fi
-    if [ -f "$d/panes/$p.keep-tail" ]; then
-      t="$*"; n="$(cat "$d/panes/$p.keep-tail")"
-      [ "${#t}" -le "$n" ] || t="${t:$(( ${#t} - n ))}"
-      printf '%s' "$t" >>"$d/panes/$p.in"
-    else
-      printf '%s' "$*" >>"$d/panes/$p.in"
-    fi
-    if [ -f "$d/.die-on-text" ]; then
-      pat="$(cat "$d/.die-on-text")"
-      case "$*" in *"$pat"*) : >"$d/panes/$p.dead" ;; esac
-    fi
-    exit 0 ;;
-  "pane send-keys")
-    p="$3"
-    [ "${4:-}" != ctrl+u ] || { : >"$d/panes/$p.in"; exit 0; }
-    if [ "${4:-}" = enter ] && [ -f "$d/panes/$p.buf" ]; then
-      if [ -f "$d/panes/$p.drop-enters" ]; then
-        read -r cnt pat <"$d/panes/$p.drop-enters" || true
-        if [ "${cnt:-0}" -gt 0 ] 2>/dev/null \
-           && { [ -z "${pat:-}" ] || grep -q -- "$pat" "$d/panes/$p.in" 2>/dev/null; }; then
-          printf '%s %s\n' "$((cnt - 1))" "${pat:-}" >"$d/panes/$p.drop-enters"
-          exit 0
-        fi
-      fi
-      if [ -s "$d/panes/$p.in" ]; then
-        cat "$d/panes/$p.in" >>"$d/panes/$p.buf"
-        printf '\n' >>"$d/panes/$p.buf"
-        : >"$d/panes/$p.in"
-      else
-        printf '\n' >>"$d/panes/$p.buf"
-        [ -f "$d/.die-on-bare-enter" ] && : >"$d/panes/$p.dead"
-      fi
-    fi
-    exit 0 ;;
-  "agent explain")
-    p="$3"
-    [ -f "$d/panes/$p.explain" ] || {
-      printf '{"error":{"code":"agent_not_found","message":"agent target %s not found"},"id":"cli:agent:explain"}\n' \
-        "$p" >&2
-      exit 1; }
-    read -r st rule <"$d/panes/$p.explain" || true
-    if [ -n "${rule:-}" ]; then
-      printf '{"state":"%s","matched_rule":{"id":"%s","priority":950,"region":"bottom_non_empty_lines(20)","state":"%s"},"fallback_reason":null}\n' \
-        "$st" "$rule" "$st"
-    else
-      printf '{"state":"%s","matched_rule":null,"fallback_reason":"default_known_agent_idle_fallback"}\n' "$st"
-    fi
-    exit 0 ;;
-esac
-printf 'fake-herdr: unmodeled verb %s\n' "$*" >&2
-exit 2
-FAKE
-  chmod +x "$TMP/stubbin/herdr"
-  case ":$PATH:" in *":$TMP/stubbin:"*) ;; *) export PATH="$TMP/stubbin:$PATH" ;; esac
-}
-
-make_loadfail_bin() {
-  # make_loadfail_bin - a scratch copy of bin/ with the herdr window-alive
-  # DRIVER function renamed out from under ac_backend_route's dynamic dispatch
-  # ("backend_${fn}_herdr"). Running a target script from $LOADFAIL_BIN drives
-  # backend_window_alive to a REAL bash 127 (command not found) - the
-  # production failure mode (a driver file that failed to load) - rather than
-  # a hand-picked sentinel return code. src/ rides along because bin/ac-bun.sh
-  # starts every TypeScript module - the backlog parser included - from
-  # <bin>/../src.
-  LOADFAIL_BIN="$TMP/loadfail/bin"
-  [ -d "$LOADFAIL_BIN" ] && return 0
-  mkdir -p "$TMP/loadfail"
-  cp -R "$BIN" "$LOADFAIL_BIN"
-  cp -R "$ROOT/src" "$TMP/loadfail/src"
-  chmod -R u+w "$LOADFAIL_BIN"
-  sed -i.bak 's/^backend_window_alive_herdr() {/backend_window_alive_herdr_MISSING_DRIVER() {/' \
-    "$LOADFAIL_BIN/ac-backend.sh"
-  rm -f "$LOADFAIL_BIN/ac-backend.sh.bak"
-  export LOADFAIL_BIN
-}
-
 make_fake_orca() {
-  # File-backed fake `orca` CLI - the orca driver's test double, sibling of
-  # make_fake_herdr above. Terminals are files under $FAKE_ORCA/terminals:
+  # File-backed fake `orca` CLI - the orca driver's test double. Terminals
+  # are files under $FAKE_ORCA/terminals:
   #   <h>.buf         transcript; `terminal read` serves its tail as lines
   #   <h>.in          composer - `send --text` appends, only `--enter` submits
   #   <h>.tab         the tabId minted with the terminal
@@ -959,8 +525,7 @@ make_fake_orca() {
   #                   CONSUMED by a popup (render changes, composer keeps its
   #                   text) - the false-success class the pending check closes
   #   <h>.read-fails  `terminal read` of this terminal fails outright while
-  #                   `terminal show` still answers - the orca twin of fake
-  #                   herdr's per-pane `.read-fails`: an unreadable composer,
+  #                   `terminal show` still answers: an unreadable composer,
   #                   never a gone terminal (ac-send.sh/ac-peek.sh's UNVERIFIED
   #                   case, distinct from "terminal_not_found")
   #   <h>.delay-ready-secs  "<n>" - id-scoped, like `.drop-enters`: before <n>
@@ -969,30 +534,26 @@ make_fake_orca() {
   #                   never read, and send only DROPS, below), `show` reports
   #                   a SPINNER title (harnessUp: up via the spinner match;
   #                   agentIdle: not idle, same match) and `send --text`
-  #                   drops silently (logs `dropped-before-ready`, like fake
-  #                   herdr's own pane send-text) - without the drop, a send
-  #                   issued before the clock's read counterpart EVER checks
+  #                   drops silently (logs `dropped-before-ready`) - without
+  #                   the drop, a send issued before the clock's read counterpart EVER checks
   #                   it would still land, so a ported readiness-gate test
   #                   could not tell "waited" from "typed blind and got
   #                   lucky". At or after <n> seconds `show` reports the idle
   #                   glyph title and sends stop dropping. While this knob is
   #                   armed it OVERRIDES <h>.title outright (`terminal list`
   #                   still reports the real file, untouched - nothing reads
-  #                   a title from `list`). The orca twin of fake herdr's
-  #                   per-pane `.delay-ready-secs`: the delay signal itself is
-  #                   narrower (title alone - kickoffWaitInputReady in
-  #                   src/spawn.ts also reads backendDialogAnswer and a
-  #                   stable render, neither of which is timing-gated here),
-  #                   but the drop-while-not-ready half is ported whole.
+  #                   a title from `list`). The delay signal itself is
+  #                   narrower than the real readiness gate (title alone -
+  #                   kickoffWaitInputReady in src/spawn.ts also reads
+  #                   backendDialogAnswer and a stable render, neither of
+  #                   which is timing-gated here).
   # Root knobs: .unreachable (every call fails with an error envelope),
-  # .terminal-api-down - the orca twin of fake herdr's `.pane-api-down` (a
-  # window-collision guard must stay blind-safe, never read "unobservable" as
-  # license to create a second window); see the in-heredoc comment at its
-  # check for the exact call set,
-  # .default-title (title newly created terminals report - this is ALSO the
-  # orca twin of fake herdr's `.pane-idle-by-default`: writing the idle glyph
-  # here before `make_fake_orca` creates/splits seeds every pane idle the same
-  # way, with no separate knob needed - precedent:
+  # .terminal-api-down - a PARTIAL outage: a window-collision guard must stay
+  # blind-safe, never read "unobservable" as license to create a second
+  # window; see the in-heredoc comment at its check for the exact call set,
+  # .default-title (title newly created terminals report - writing the idle
+  # glyph here before `make_fake_orca` creates/splits seeds every pane idle
+  # the same way, with no separate knob needed - precedent:
   # tests/sh/ac-spawn-teardown.test.sh's orca block),
   # .require-repo-reg (worktree create and repo show resolve a path only when
   # $FAKE_ORCA/repos lists it; repo add registers - and fails runtime_error on
@@ -1011,8 +572,8 @@ if [ -f "$d/.unreachable" ]; then
   printf '{"ok":false,"error":{"message":"runtime unreachable"}}\n'; exit 1
 fi
 if [ -f "$d/.terminal-api-down" ]; then
-  # Partial outage, the orca twin of fake herdr's `.pane-api-down`: window
-  # liveness is blind while window CREATION stays healthy - the shape that
+  # Partial outage: window liveness is blind while window CREATION stays
+  # healthy - the shape that
   # makes an unguarded window-collision guard actually open a second window.
   # `status` MUST fail alongside `terminal show`/`list`, not just the two:
   # backend_window_alive_orca (bin/ac-backend-orca.sh) falls back to a plain
@@ -1173,8 +734,7 @@ case "${2:-}" in
       # kickoffWaitInputReady (src/spawn.ts) proves UP and IDLE off the title
       # alone (harnessUp's spinner/✳ checks, agentIdle's same two) - so the
       # delay lives in the TITLE this `show` reports, clocked from THIS
-      # terminal's FIRST show (the only "up" probe orca has): the fake herdr
-      # twin starts its own clock on the first `pane process-info` likewise.
+      # terminal's FIRST show (the only "up" probe orca has).
       # ONE `date +%s` read for both the write and the compare below - two
       # separate reads straddling a second boundary let elapsed read >= n on
       # the very first show (measured: ~3 in 400 runs at n=1), reporting idle
@@ -1311,18 +871,11 @@ fake_pane() {
   awk '{print $1; exit}' "$AC_HOME/state/.pane-$1"
 }
 
-fake_pane_buf() {
-  # fake_pane_buf <task-id> - path of that task's pane buffer.
-  printf '%s/panes/%s.buf\n' "$FAKE_HERDR" "$(fake_pane "$1")"
-}
-
 fake_orca_buf() {
-  # fake_orca_buf <task-id> - path of that task's fake-orca terminal buffer,
-  # the orca sibling of fake_pane_buf above. fake_pane already works
-  # unchanged for an orca task too: backend_window_new_orca records
-  # "<handle> <tab>" into the same 2-field state/.pane-<id> grammar herdr
-  # does, so only the directory layout below it differs (terminals/, not
-  # panes/).
+  # fake_orca_buf <task-id> - path of that task's fake-orca terminal buffer.
+  # backend_window_new_orca records "<handle> <tab>" into the same 2-field
+  # state/.pane-<id> grammar fake_pane already reads, so only the directory
+  # layout below it differs (terminals/, not panes/).
   printf '%s/terminals/%s.buf\n' "$FAKE_ORCA" "$(fake_pane "$1")"
 }
 
