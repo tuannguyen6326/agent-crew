@@ -320,6 +320,14 @@
 // does not short-circuit, since nothing else can ask for a retire alone.
 // A crewmate candidate's own optional `retire:` header pairs the SAME cut and
 // archive with a land instead (prepareCandidatePlan's crewmate case).
+// ENFORCE. A lesson broken by a crew that had it loaded is evidence its prose
+// did not hold, so the scout proposes `enforce <slug> - violated: <pointers> -
+// check: <check>` instead of a reinforce. A complete run (ok report + retro)
+// mints each such line of the report's `## Always-loaded staleness` section as
+// the Queued row `enforce-<slug>` [src:learn] through `ac-task.sh add`
+// (mintEnforceRows): idempotent by id, never for a slug the live layer does not
+// hold (a WARN) or a `judgment-only` check (reported, it stays prose), and a
+// refused add is a WARN - the run's exit and cadence never depend on it.
 //
 // PREAMBLE AND EXIT. Before any verb the fleet backend is resolved as
 // sourcing ac-backend.sh resolved it (backendName): an unsupported name in
@@ -448,7 +456,8 @@
 // seed (CREWMATE-learned.md, skills/), the watcher (the verify-learning and
 // verify-suite identities, the wake spool), src/curate.ts (the ledger's
 // pointers, learnings-archive/, skills/, the journals), src/gate.ts (plans,
-// manifests, receipts) and the dashboard (pointer rows).
+// manifests, receipts), the dashboard (pointer rows) and every backlog reader
+// (the `enforce-<slug>` rows `run` adds through ac-task.sh).
 
 import { accessSync, appendFileSync, closeSync, constants as fsConstants, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { acDoneline, records } from "./backlog.ts";
@@ -901,8 +910,8 @@ Pass 2 reads its output.
   Rank the check by what makes the mistake impossible - a structure that
   removes it, then a type, then a guard or lint whose refusal names the fix,
   then a test - and name only a check that would have refused the REAL past
-  instance. The chief mints each check as an ordinary backlog row; a
-  judgment-only entry stays prose.
+  instance. The run mints each concrete check as the Queued backlog row
+  \`enforce-<slug>\` for the chief to triage; a judgment-only entry stays prose.
 - \`sources/scenes.md\` - the fleet's L2 SCENE store index (one line per scene:
   slug, heat, updated, summary), plus its count against \`config/scene-max\`. A
   scene is a consolidated TOPIC file a reader opens on purpose - the layer
@@ -1573,6 +1582,7 @@ async function cmdRun(): Promise<void> {
       warnB("one or more Learning subjects could not reach a settled receipt/apply state; cadence remains due");
     }
   } else out("AUTO-MAINTENANCE WITHHELD: a complete ok report + retro is required before gating or apply.\n");
+  if (scoutComplete) mintEnforceRows(rundir);
 
   await checkpoint();
   curateTick();
@@ -1591,6 +1601,34 @@ async function cmdRun(): Promise<void> {
     else if (r !== 0) warnB("Learning completed, but a newer cadence generation exists; late debriefs remain due instead of being erased");
   } else if (scoutComplete) warnB(`a maintenance gate could not judge one or more subjects - the DISTILL cycle is NOT consumed and the retro window is PRESERVED (still due; re-run after inspecting ${rundir})`);
   else warnB(`the scout did not produce a complete ok report + retro - the DISTILL cycle is NOT consumed and the retro window is PRESERVED (still due; re-run after inspecting ${rundir})`);
+}
+
+function mintEnforceRows(rundir: string): void {
+  const live = `${home()}/CREWMATE-learned.md`;
+  const slugs = isFile(live) ? learnedSlugs(live) : [];
+  let inSection = false;
+  for (const line of readLines(read(`${rundir}/report.md`) ?? "")) {
+    if (line.startsWith("## ")) {
+      inSection = line.trimEnd() === "## Always-loaded staleness";
+      continue;
+    }
+    const m = inSection ? /^\s*(?:[-*]\s+)?`?enforce (\S+) - violated: (.+?) - check: (.+?)`?\s*$/.exec(line) : null;
+    if (m === null) continue;
+    const [, slug = "", violated = "", check = ""] = m;
+    if (!slugs.includes(slug)) {
+      warnB(`enforce proposal names '${slug}', which is not an always-loaded entry - nothing minted`);
+      continue;
+    }
+    if (check.trim() === "judgment-only") {
+      out(`  enforce ${slug}: judgment-only - stays prose\n`);
+      continue;
+    }
+    const text = `Enforce the always-loaded lesson '${slug}' as a check: ${check} - violated: ${violated} (learning run ${basename(rundir)})`;
+    const add = [`${b8(STARTED_BIN)}/ac-task.sh`, "add", `enforce-${slug}`, text, "--contract", "src:learn"];
+    const r = run(add, { stdout: "pipe" });
+    if (r.status === 0) out(`  enforce ${slug}: ${subst(r.out)}\n`);
+    else warnB(`enforce ${slug}: ac-task.sh add refused - mint it by hand once the cause is fixed: ac-task.sh add enforce-${slug} '<the check>' --contract src:learn`);
+  }
 }
 
 // `<cmd> >file 2>/dev/null`: the status, 1 when the file cannot be opened.

@@ -1295,8 +1295,8 @@ cat >"$LSTUBS/sleep" <<'STUB'
 STUB
 # The scout: `run` writes the early pane file (LPANE_ID, default `pL tL`, or
 # none when LPANE_NOPANE is set), copies the identity it finds live into the
-# stub dir, writes report.md and retro.md unless LPANE_NOREPORT /
-# LPANE_NORETRO, copies every candidate-*.md under LPANE_CANDS, then prints its
+# stub dir, writes report.md (a copy of LPANE_REPORT when set) and retro.md
+# unless LPANE_NOREPORT / LPANE_NORETRO, copies every candidate-*.md under LPANE_CANDS, then prints its
 # events naming that pane (no done event under LPANE_NODONE, a line that is no
 # JSON under LPANE_JUNK) with LPANE_STATUS; `reap-pane` answers closed unless
 # LPANE_OPEN names the pane.
@@ -1327,7 +1327,8 @@ done
 set -- "$AC_HOME"/state/verify-learning-*
 for f in "$@" "$AC_HOME"/state/.pane-verify-learning-*; do [ ! -e "$f" ] || cp "$f" "$STUB_DIR/seen.${f##*/}"; done
 [ -z "${LPANE_HOLD:-}" ] || /bin/sleep "$LPANE_HOLD"
-[ -n "${LPANE_NOREPORT:-}" ] || printf '# report\nstatus: ok\n' >"$cwd/report.md"
+if [ -n "${LPANE_REPORT:-}" ]; then cp "$LPANE_REPORT" "$cwd/report.md"
+elif [ -z "${LPANE_NOREPORT:-}" ]; then printf '# report\nstatus: ok\n' >"$cwd/report.md"; fi
 [ -n "${LPANE_NORETRO:-}" ] || printf '# retro\n' >"$cwd/retro.md"
 [ -z "${LPANE_CANDS:-}" ] || cp "$LPANE_CANDS"/candidate-*.md "$cwd/"
 lpane="${LPANE_ID:-pL tL}"
@@ -1828,5 +1829,29 @@ LENV=()
 assert_eq "$LSIG_RC" "143" "TERM inside a gate capture ends 143 once the gate returns"
 assert_contains "$(cat "$H/stub/pane.log")" "reap-pane --pane pL" "the armed ledger's reap ran on TERM"
 assert_no_file "$H/home/skills/newskill" "nothing past the signalled gate applied"
+
+
+# 9. enforce: a complete run mints one Queued `enforce-<slug>` row per
+#    `enforce` proposal of its report's always-loaded staleness section whose
+#    slug is a live entry and whose check is concrete - through ac-task.sh, so
+#    a re-run finds the row and adds none; judgment-only stays prose, an
+#    unknown slug and a line outside the section mint nothing.
+lrunhome
+lput home/CREWMATE-learned.md $'# Fleet-learned crewmate lessons\n\n## pin-the-tree\n\nBind every path to an absolute tree.\n\n(learned 2025-12-01)\n\n## prove-tests-bite\n\nProve each assertion bites.\n\n(learned 2025-12-01)\n\n## Odd_Slug\n\nA head no backlog id can carry.\n\n(learned 2025-12-01)\n'
+lput enf/report.md $'# report\nstatus: ok\n\n## Always-loaded staleness\n\n- `enforce pin-the-tree - violated: data/s1/room.md:3 - check: a guard in ac-spawn.sh refusing a relative cwd`\n- `enforce prove-tests-bite - violated: data/s1/room.md:5 - check: judgment-only`\n- `enforce no-such-entry - violated: data/s1/room.md:7 - check: a lint`\n- `enforce Odd_Slug - violated: data/s1/room.md:8 - check: a lint`\n- `reinforce prove-tests-bite - evidence: data/s1/room.md:9`\n\n## Next\n\n- `enforce prove-tests-bite - violated: outside - check: a lint outside the section`\n'
+LENV=("LPANE_REPORT=@H/enf/report.md"); lrun run; LENV=()
+assert_eq "$LN_RC" "0" "enforce: the run still ends 0"
+enf_row="- [ ] enforce-pin-the-tree [src:learn] - Enforce the always-loaded lesson 'pin-the-tree' as a check: a guard in ac-spawn.sh refusing a relative cwd - violated: data/s1/room.md:3 (learning run learning-1767225600)"
+assert_contains "$(cat "$H/home/records/backlog.md")" "$enf_row" "enforce: a concrete check is minted as a Queued src:learn row"
+assert_contains "$(lout)" "enforce pin-the-tree: ok: added enforce-pin-the-tree to Queued" "enforce: the run summary carries ac-task's receipt"
+assert_contains "$(lout)" "enforce prove-tests-bite: judgment-only - stays prose" "enforce: a judgment-only entry is reported, not minted"
+assert_contains "$(lerr)" "WARN: enforce proposal names 'no-such-entry', which is not an always-loaded entry - nothing minted" "enforce: an unknown slug is refused out loud"
+assert_contains "$(lerr)" "WARN: enforce Odd_Slug: ac-task.sh add refused - mint it by hand" "enforce: a refused add is a WARN naming the hand command, never a failed run"
+case "$(cat "$H/home/records/backlog.md")" in
+  *enforce-prove-tests-bite*|*enforce-no-such-entry*) fail "enforce: only the concrete proposal on a live entry inside the section is minted" ;;
+esac
+LENV=("LPANE_REPORT=@H/enf/report.md"); lrun run; LENV=()
+assert_contains "$(lout)" "enforce pin-the-tree: already: enforce-pin-the-tree exists in queued" "enforce: a re-run finds the row"
+assert_eq "$(grep -c 'enforce-pin-the-tree' "$H/home/records/backlog.md")" "1" "enforce: ... and adds none"
 
 pass

@@ -95,7 +95,7 @@ WARNs on violations - display and judgment, never a scheduling condition; the
 enforcement point is `ac-brief.sh`'s escalation
 gate (section 5). `src` values: `cap` (captain order), `chief`
 (chief-minted), `mon` (monitor), `gh` (github), `crew` (routed up),
-`learn` (Learning/Curate). A heavy token (`flow:staged`, `flow:sdlc`,
+`learn` (Learning/Curate, e.g. a run's `enforce-<slug>` rows). A heavy token (`flow:staged`, `flow:sdlc`,
 `mode:crew-ship`, `rev:yes`, `qa:yes`) on a row is the captain's PIN - writing one without
 the captain's word is exactly the drift this grammar exists to stop.
 
