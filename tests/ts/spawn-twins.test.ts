@@ -651,7 +651,7 @@ test("backendAgentIdle and its raw-pane form read idle as the drivers did", () =
     env: ORCA_,
     seed: (s) => (O(s), put(s, "stub/terminal-show.out", OSHOW('{"connected":true,"agentIdentity":"codex","title":"repo"}')), put(s, "stub/terminal-read.out", '{"ok":true,"result":{"terminal":{"tail":["a","b"]}}}\n'), put(s, "stub/terminal-wait.out", '{"ok":false,"error":{"code":"timeout"}}\n')),
   });
-  const keyed = (title: string): string => lat(OSHOW(`{"connected":true,"title":"${title}","recordedPaneKey":"k1"}`));
+  const keyed = (title: string, ident = '"claude"'): string => lat(OSHOW(`{"connected":true,"title":"${title}","agentIdentity":${ident},"recordedPaneKey":"k1"}`));
   const ps = (agent: string): string => `{"ok":true,"result":{"worktrees":[{"agents":[{"paneKey":"k0","state":"done","hasLivePty":true},${agent}]}]}}\n`;
   for (const [name, title, agent] of [
     ["a done row under a spinner", "◐ working", '{"paneKey":"k1","state":"done","hasLivePty":true}'],
@@ -661,6 +661,7 @@ test("backendAgentIdle and its raw-pane form read idle as the drivers did", () =
     ["a state outside the vocabulary", "◐ working", '{"paneKey":"k1","state":"idle","mainAgent":null,"hasLivePty":true}'],
   ])
     same(`orca: ${name}`, { ...id, env: ORCA_, seed: (s) => (O(s), put(s, "stub/terminal-show.out", keyed(title)), put(s, "stub/worktree-ps.out", lat(ps(agent)))) });
+  same("orca: a done row in a pane with no agent identified", { ...id, env: ORCA_, seed: (s) => (O(s), put(s, "stub/terminal-show.out", keyed("◐ working", "null")), put(s, "stub/worktree-ps.out", lat(ps('{"paneKey":"k1","state":"done","hasLivePty":true}')))) });
   same("orca: ps fails", { ...id, env: ORCA_, seed: (s) => (O(s), put(s, "stub/terminal-show.out", keyed("✳ Claude Code")), put(s, "stub/worktree-ps.rc", "1\n")) });
   same("orca raw: no pane", { ...raw, args: [""], env: ORCA_ });
 }, 180000);

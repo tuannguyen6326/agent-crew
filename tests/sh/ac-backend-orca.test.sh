@@ -385,6 +385,12 @@ glyph='\342\234\263 Claude Code\n'
 row() { printf '%s\n' "$1" >"$FAKE_ORCA/terminals/term1.agentrow"; }
 printf "$spin" >"$FAKE_ORCA/terminals/term1.title"
 row '{"state":"done","mainAgent":{"state":"done"},"hasLivePty":true}'
+# A row may outlive its agent: with no agent identified in the pane a false
+# idle would read a bare shell as a harness that came up, and a kickoff typed
+# into it runs as commands.
+rc=0; run_backend orca 'backend_agent_idle o1' || rc=$?
+assert_eq "$rc" "1" "a done row in a pane Orca identifies no agent in falls through to the spinner"
+printf 'claude\n' >"$FAKE_ORCA/terminals/term1.agent"
 run_backend orca 'backend_agent_idle o1' || fail "a done row is idle even under a spinner title"
 assert_eq "$(run_backend orca 'backend_agent_status_pane term1')" "idle" "status follows the done row"
 row '{"state":"working","workingMode":"monitoring","mainAgent":{"state":"done","stateStartedAt":1},"hasLivePty":true}'
@@ -421,7 +427,7 @@ row '{"state":"working","hasLivePty":true}'
 printf "$glyph" >"$FAKE_ORCA/terminals/term1.title"
 touch "$FAKE_ORCA/.ps-fails"
 run_backend orca 'backend_agent_idle o1' || fail "an unreadable ps falls through to the idle glyph"
-rm -f "$FAKE_ORCA/.ps-fails" "$FAKE_ORCA/terminals/term1.agentrow"
+rm -f "$FAKE_ORCA/.ps-fails" "$FAKE_ORCA/terminals/term1.agentrow" "$FAKE_ORCA/terminals/term1.agent"
 printf 'zsh\n' >"$FAKE_ORCA/terminals/term1.title"
 
 # --- startup dialogs answered BY NAME ---------------------------------------------

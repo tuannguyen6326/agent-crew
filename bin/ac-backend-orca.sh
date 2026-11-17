@@ -635,9 +635,11 @@ orca_turn_state() {
   # a headless pane. mainAgent is the TURN: a claude whose turn ended under
   # a background task reads state working, mainAgent done; cursor and pi
   # report no mainAgent, so their row's own state stands in. A row without
-  # a live PTY vouches for nothing.
+  # a live PTY vouches for nothing, and neither does one in a pane where
+  # Orca identifies no agent: a row that outlived its agent would read a
+  # bare shell as idle, and harness_up would call that shell UP.
   local key
-  key="$(jq -r '.result.terminal.recordedPaneKey // empty' <<<"$1" 2>/dev/null)"
+  key="$(jq -r 'if .result.terminal.agentIdentity == null then empty else .result.terminal.recordedPaneKey // empty end' <<<"$1" 2>/dev/null)"
   [ -n "$key" ] || return 0
   orca_json worktree ps 2>/dev/null | jq -r --arg k "$key" '
     first((.result.worktrees // [])[] | (.agents // [])[] | select(.paneKey == $k and .hasLivePty == true))

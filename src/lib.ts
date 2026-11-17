@@ -2757,10 +2757,10 @@ export function orcaSubmitVerified(h: string, text: string, stdin: "inherit" | "
 const TURN_STATE = `first((.result.worktrees // [])[] | (.agents // [])[] | select(.paneKey == $k and .hasLivePty == true))
     | .mainAgent.state // .state // empty`;
 
-// orca_turn_state's twin: "" for a show with no recordedPaneKey (no ps
-// call), a failed ps or no live-PTY row keyed by it.
+// orca_turn_state's twin: "" for a show with no agentIdentity or no
+// recordedPaneKey (no ps call), a failed ps or no live-PTY row keyed by it.
 function orcaTurnState(show: string, stdin: "inherit" | "ignore"): string {
-  const key = capturedText(jqOver(["-r", ".result.terminal.recordedPaneKey // empty"], show, "pipe", "ignore").out);
+  const key = capturedText(jqOver(["-r", "if .result.terminal.agentIdentity == null then empty else .result.terminal.recordedPaneKey // empty end"], show, "pipe", "ignore").out);
   if (key === "") return "";
   const ps = orcaJson(["worktree", "ps"], stdin);
   return ps === null ? "" : capturedText(jqOver(["-r", "--arg", "k", key, TURN_STATE], ps, "pipe", "ignore").out);
