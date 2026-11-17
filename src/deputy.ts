@@ -413,8 +413,8 @@ function deputyState(id: string, home: string): string {
   const saved = process.env.AC_BACKEND;
   // A raw, non-validating read, like windowAliveAs's (src/lib.ts): taskBackend
   // dies in THIS process on a bad backend=, which would kill the whole list
-  // over one stale entry. The window probe below runs in its own subshell, so
-  // a bad value dies THERE instead, read back as DOWN, never a crash here.
+  // over one stale entry. backendCall's own route only returns a refused
+  // status (never exits), so a bad value here reads back as DOWN instead.
   let b = "";
   try {
     b = cutNul(metaGet(meta, "backend"));

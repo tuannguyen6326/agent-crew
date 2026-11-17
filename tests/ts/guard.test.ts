@@ -259,7 +259,7 @@ test("roomchiefLive answers ac_roomchief_live through backendCall: no meta no ca
     ["nometa", "", ""],
     ["live", "backend=orca\n", "hlive t\n"],
     ["dead", "kind=roomchief\n", "pdead t\n"],
-    ["nopane", "backend=herdr\n", ""],
+    ["nopane", "backend=orca\n", ""],
     ["orca", "backend=orca\n", "horca t\n"],
     ["orcadead", "backend=orca\n", "hgone t\n"],
     ["tmux", "backend=tmux\n", "ptmux t\n"],

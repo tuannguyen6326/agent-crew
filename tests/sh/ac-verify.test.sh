@@ -3205,7 +3205,7 @@ case "$(cat "$XW/log/tree.log")" in *return*) fail "a lease never taken is never
 # A lease that comes back with no worktree path reads through orcaWorktreeLease
 # (src/lib.ts) as a plain failure, not a distinct empty-path case - it already
 # cleans up via `worktree rm --worktree id:<id> --force` and returns status 1,
-# so this is the same refusal as the CLI call itself failing (verifyLease's own status-1 check).
+# so this is the same refusal as the CLI call itself failing (main()'s own check of verifyLease's status).
 XE="XT_LEASE=" xrefuse_late "could not lease verifier worktree for $XCID" "${XCR[@]}"
 XE="AC_BACKEND=orca FAKE_ORCA=$XW/orca" XPRE="$TMP/stubbin" XPLUS='mkdir -p "$XW/orca/terminals"' xok "${XCR[@]}"
 assert_contains "$(xfile orca/log)" "worktree rm" "an orca lease goes back through the orca CLI"
