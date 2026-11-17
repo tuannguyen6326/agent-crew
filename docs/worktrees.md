@@ -3,11 +3,11 @@
 Every task works in its own isolated checkout, never in the project's primary checkout.
 Every task leases one Orca-managed worktree per task, created and removed through the Orca CLI (`orca_worktree_lease` / `orca_worktree_release` in `bin/ac-backend-orca.sh`), so each task tree is its own node in the Orca sidebar.
 
-An earlier in-repo worktree POOL (`bin/ac-tree.sh`, the header of `src/tree.ts`) remains in the tree as a standalone utility: no spawn, self-task or verifier lease reaches it anymore, but `bin/ac-teardown.sh` still returns a lease recorded in an older task meta's `leases=`/`lease_ids=` field, and `bin/ac-pool-health.sh` still reports on any slot left over from before the fleet moved to Orca.
-The rest of this page documents that pool for exactly that purpose, and the Orca lease that replaced it.
+`bin/ac-tree.sh` (the header of `src/tree.ts`) manages an in-repo worktree pool that no task lease uses; `bin/ac-teardown.sh` returns a pool lease a task meta records in `leases=`/`lease_ids=`, and `bin/ac-pool-health.sh` reports leftover slots.
+The rest of this page documents that pool, and the Orca lease.
 See also [concepts.md](concepts.md), [architecture.md](architecture.md) and [scripts.md](scripts.md).
 
-## The pool (no longer leased by any task)
+## The in-repo pool
 
 ### Layout
 
@@ -36,7 +36,7 @@ The pool cap is `AC_MAX_TREES`, else `max_trees=` in `.crew/config`, else 8.
 | `prune --repo <p> [--yes]` | Remove idle, clean, merged, process-free slots; a dry run without `--yes`. |
 | `remove <path> [--force] [--include-leased]` | Deliberately remove one slot. |
 
-Nothing currently calls `get`: `ac-spawn.sh`, `ac-self-task.sh` and a verifier round all lease an Orca-managed worktree instead (see "Orca leases" below).
+No task lease calls `get`: `ac-spawn.sh`, `ac-self-task.sh` and a verifier round all lease an Orca-managed worktree instead (see "Orca leases" below).
 `get`'s own `--prefer` flag exists for a spawn that resumes an earlier session on the pool, because claude keys sessions by working directory; if that slot is not available, `get` leases another one and prints one `prefer:` warning line.
 
 ### What `get` does

@@ -131,7 +131,7 @@ Ship tasks deliver a project change AND a `report.md` handback note next to thei
 ## Worktrees (section 6)
 
 Every task leases an Orca-managed worktree (step 3 above), released rather than returned at teardown.
-`bin/ac-tree.sh` pools detached-HEAD worktrees inside each project repo under `.crew/worktrees/<n>`, auto-gitignored, but no spawn, self-task or verifier lease reaches it anymore - it stands as a standalone utility: `ac-teardown.sh` still returns through it a lease recorded in an older task meta's `leases=`/`lease_ids=` field, and `ac-pool-health.sh` still reports leftover slots through it from before the cutover.
+`bin/ac-tree.sh` pools detached-HEAD worktrees inside each project repo under `.crew/worktrees/<n>`, auto-gitignored; no spawn, self-task or verifier lease uses it - it stands as a standalone utility: `ac-teardown.sh` returns through it a lease a task meta records in `leases=`/`lease_ids=`, and `ac-pool-health.sh` reports leftover slots through it.
 Pool worktrees are reused, not deleted: `return` resets to the freshest default branch and releases; ignored caches survive. Leases live in `.crew/slots/<n>.meta`, are durable, and survive restarts.
 An available-but-dirty slot is never silently reset: acquire and prune skip it, and only `remove --force` discards it.
 `bin/ac-session-start.sh` surfaces any such stuck slot in a `-- pool (worktree health) --` block (via `bin/ac-pool-health.sh`), naming the exact `remove --force <path>` to reclaim it; the block is silent when every pool is healthy.

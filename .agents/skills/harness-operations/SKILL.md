@@ -19,7 +19,7 @@ Covers only the harnesses Agent Crew currently supports through `bin/ac-spawn.sh
 - `cursor` (registered 2026-08-14; the agent CLI is `cursor-agent`, never bare `cursor`; instruction file LIVE-PROBED: AGENTS.md + root CLAUDE.md, never .claude/CLAUDE.md - the references file owns the boundary);
 - a captain-provided custom launch command (`config/launch-<harness>`), which stays unverified unless separately validated.
 
-`orca` is the fleet's one session backend, and every per-harness pane fact below was verified on it.
+`orca` is the fleet's one session backend. The per-harness facts below describe each harness's own behavior; a pane mechanic not marked as verified on orca is unverified there (`references/harness-facts.md` owns each fact's own provenance).
 
 Measured, because each changes how a steer lands: a pane's agent starts WITH the pane (its launch command IS the pane's command), so nothing is typed into a booting surface; typed text is chunked, because one large write lost its head; the came-up probe reads the terminal TITLE, so a harness that sets no title stays UNOBSERVABLE and delivery proceeds fail-open; and a closed terminal still serves its retained scrollback, so a successful read is never proof of life. `bin/ac-backend-orca.sh` owns those mechanics - reach for them when a steer or probe behaves unexpectedly, and treat it as the driver's, not the harness's.
 
