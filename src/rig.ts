@@ -332,8 +332,7 @@ function checkConfig(manifest: string, home: string): void {
   }
 
   // Direction B - CLOSURE. Without it the manifest is a partial list that can
-  // never notice what appeared beside it, which is how config/ grew three
-  // retired herdr-workspace* knobs nothing reads.
+  // never notice what appeared beside it, such as a retired knob nothing reads.
   let entries: string[] = [];
   try {
     entries = readdirSync(join(home, "config"));

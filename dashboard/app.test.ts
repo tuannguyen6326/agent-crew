@@ -1097,23 +1097,6 @@ test("the System One knobs are editable, constrained, and placed in a config sec
   for (const name of EDITABLE_CONFIG) expect(sections.includes(`'${name}'`)).toBe(true);
 });
 
-// --- herdr refused fleet-wide: orca is the sole backend ---------------------
-
-test("the editable backend knob offers only orca now - herdr is refused fleet-wide", () => {
-  expect(CONFIG_KNOB_META["backend"].options).toEqual(["orca"]);
-  const home = tmpHome();
-  try {
-    const rejected = applyConfigWrite(home, "backend", "herdr");
-    expect(rejected.status).toBe(400);
-    expect(existsSync(`${home}/config/backend`)).toBe(false); // rejected write touches nothing
-    const accepted = applyConfigWrite(home, "backend", "orca");
-    expect(accepted.status).toBe(200);
-    expect(readFileSync(`${home}/config/backend`, "utf8").trim()).toBe("orca");
-  } finally {
-    rmSync(home, { recursive: true, force: true });
-  }
-});
-
 test("termStatusBody always gives the Orca affordance - no config/backend branch left to vary it", () => {
   expect(termStatusBody()).toEqual({
     enabled: false, running: false, why: "this fleet runs on the Orca app", orca: true,
@@ -3192,8 +3175,6 @@ test("reviewWakeText names the legal poll channel and never the session file (ca
 
 test("orcaWindowOf: backend=orca meta yields the terminal handle, anything else null", () => {
   expect(orcaWindowOf("backend=orca\nwindow=orca:term_ab12-cd\nkind=crewdeputy\n")).toBe("term_ab12-cd");
-  // a herdr task never routes to the Orca focus jump
-  expect(orcaWindowOf("backend=herdr\nwindow=herdr:pane-w1D:p3F\n")).toBeNull();
   expect(orcaWindowOf("backend=orca\n")).toBeNull(); // no window recorded
   expect(orcaWindowOf("window=orca:term_x\n")).toBeNull(); // backend not declared orca
 });

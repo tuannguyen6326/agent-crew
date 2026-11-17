@@ -411,9 +411,7 @@ ac_config_read() {
   # ac_home fails closed with no AC_HOME, but a HOMELESS READER is legitimate -
   # every crewmate pane is one, and ac-pane-agent.sh reads its session and
   # model/effort knobs from one on every invocation. No home means no knob file,
-  # so the default answers, which is the same value a homeless read already got:
-  # the only knob the phantom checkout ever grew is config/herdr-workspace, a
-  # retired knob read by nothing.
+  # so the default answers, and a homeless read is never refused.
   # ac_home_resolve is THE homeless ladder - one copy on purpose. The
   # TypeScript twin, src/lib.ts's configRead, is pinned to this function by
   # a differential test (tests/ts/lib.test.ts).
