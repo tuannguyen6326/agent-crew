@@ -24,10 +24,9 @@ Every component either writes durable state under the fleet home (`$AC_HOME`) or
     |                                         |
     +------------------+----------------------+
                        v
- session backend: bin/ac-backend.sh (herdr driver) | bin/ac-backend-orca.sh (orca driver)
+ session backend: bin/ac-backend.sh (shared contract) -> bin/ac-backend-orca.sh (orca driver)
                        v
- worktrees: herdr fleets -> pooled <repo>/.crew/worktrees/<n> (bin/ac-tree.sh)
-            orca fleets  -> one Orca-managed worktree per task
+ worktrees: one Orca-managed worktree per task
 
  back-channel:
  panes --poll--> bin/ac-watch.sh --publish--> state/.wake-spool[.<family>]/ --> bin/ac-wake-drain.sh --> chief
@@ -70,28 +69,24 @@ Its satellites are sourced directly by the callers that need them:
 
 ## Session backends
 
-The backend is one contract with two drivers: herdr (`bin/ac-backend.sh`, the reference implementation) and orca (`bin/ac-backend-orca.sh`).
-Both expose the same `backend_*` verbs keyed by task id - window create, liveness, verified send, key, capture, kill, wait stamp, startup dialogs - with the same return codes; the `bin/ac-backend.sh` header lists the surface.
+The backend is one contract, implemented by the Orca driver (`bin/ac-backend-orca.sh`), routed per call at the end of `bin/ac-backend.sh`: window create, liveness, verified send, key, capture, kill, wait stamp, startup dialogs, with fixed three-state return codes; the `bin/ac-backend.sh` header lists the surface.
 
-`ac_backend` resolves the driver per call: `AC_BACKEND` (exported from the task meta's `backend=`) > `$AC_HOME/config/backend` > the fleet config found through `AC_FLEET_STATE` > herdr, refusing any other value.
-Per-call resolution lets one teardown, send or watch process serve tasks of both kinds.
+`ac_backend` resolves the backend per call: `AC_BACKEND` (exported from the task meta's `backend=`) > `$AC_HOME/config/backend` > the fleet config found through `AC_FLEET_STATE` > `orca`, refusing any other value before anything runs.
 The `AC_FLEET_STATE` rung exists because a crewmate pane carries no `AC_HOME`, only the `AC_FLEET_*` variables on its launch line.
 
 The `bin/ac-backend.sh` header owns these contracts:
 - WINDOW LIVENESS - alive, gone or unobservable, and only a definite answer from a reachable backend may become `gone`.
 - HARNESS CAME-UP PROBE - did a harness take the pane's foreground, or did it fall back to a shell.
 - CAPTAIN-WAIT STAMP, KILL OWNERSHIP PROOF, LAST-TAB FALLBACK and HUNG RPC.
-- FAMILY WORKSPACE GROUPING - a family's panes share one herdr workspace `<fleet> · <family>`, fleet-level panes the root `<fleet>` one.
+- FAMILY WORKSPACE GROUPING - a family's panes share one Orca sidebar node `<fleet> · <family>`, fleet-level panes the root `<fleet>` one.
 
-The orca driver states each divergence at its function (`bin/ac-backend-orca.sh` header): panes group under Orca sidebar nodes instead of workspaces, the captain-wait stamp is the file alone, the came-up probe reads Orca's own agent detection and the terminal title, startup dialogs are answered by name, and liveness comes from `terminal show`'s `.connected` because a closed terminal still serves scrollback.
+The orca driver (`bin/ac-backend-orca.sh` header) implements each: panes group under Orca sidebar nodes, the captain-wait stamp is the file alone, the came-up probe reads Orca's own agent detection and the terminal title, startup dialogs are answered by name, and liveness comes from `terminal show`'s `.connected` because a closed terminal still serves scrollback.
 
 `bin/ac-backend.sh` also owns the launch line every mechanism types into a pane (`ac_build_launch`) and the crew-dispatch profile resolution behind it (`ac_resolve_profile`).
-Tests drive the herdr driver through a fake `herdr` CLI shipped in `tests/sh/helpers.sh`.
+Tests drive the driver through a fake `orca` CLI shipped in `tests/sh/helpers.sh`.
 
-A task's primary tree is leased by the fleet's backend.
-A herdr fleet leases a pooled detached-HEAD worktree (`<repo>/.crew/worktrees/<n>`, slot leases in `<repo>/.crew/slots/`) through `bin/ac-tree.sh`; slots are reused and returned, never deleted ([`worktrees.md`](worktrees.md)).
-An orca fleet leases one Orca-managed worktree per task on `crew/<id>`, which teardown removes rather than returns (the meta's `worktree_backend=orca`).
-The exact-ref verifier lease follows the same fork (`verifyLease` in `src/verify.ts`).
+A task's primary tree is one Orca-managed worktree per task on `crew/<id>`, leased through `orca_worktree_lease` and removed at teardown through `orca_worktree_release` rather than returned (the meta's `worktree_backend=orca`; [`worktrees.md`](worktrees.md)).
+The exact-ref verifier lease follows the same path (`verifyLease` in `src/verify.ts`).
 
 ## Spawn and instruction seeding
 
@@ -218,7 +213,7 @@ The backlog-twin differential in `dashboard/app.test.ts` holds them to it over g
 - `bin/ac-ready.sh` - the read-only scheduler primitive: READY/STUCK/HELD, `queued`, `watch-set`, `validate <epic>`, and `overlap`.
 - `bin/ac-ledger-guard.sh` - keeps scoped sessions out of the fleet ledgers, so only the crewchief moves rows.
 
-Integration branches keep their own records: `data/<epic>/branches` (`bin/ac-epic-branch.sh`, exit through `bin/ac-epic-ship.sh`) and `data/<feature>/branches` (`bin/ac-feature.sh`), fenced at lease time by `ac-tree.sh get` on herdr fleets and by `orca_worktree_lease` on orca fleets.
+Integration branches keep their own records: `data/<epic>/branches` (`bin/ac-epic-branch.sh`, exit through `bin/ac-epic-ship.sh`) and `data/<feature>/branches` (`bin/ac-feature.sh`), fenced at lease time by `orca_worktree_lease`.
 
 ## The delivery engines
 
@@ -306,7 +301,6 @@ The entry is `src/dashboard.ts`: the foreground serves `dashboard/app.ts` in its
 | `dashboard/lib.ts` | The pure layer - parsers, theme tokens, board joiners - with no IO and no imports. |
 | `dashboard/page.ts` | The SPA shell, one template of inline CSS and vanilla JS that interpolates `lib.ts` functions so the browser runs tested code. |
 | `dashboard/watch.ts` | File watchers on `state/`, `records/backlog.md` and room files that drop the snapshot memo early. |
-| `dashboard/assets/` | Vendored xterm.js. |
 
 Its data layer shells out only to fixed survey scripts (`ac-fleets.sh --json`, `ac-room.sh list|show`, `ac_domain_tally`) and never re-derives a count.
 Its writes are the ones its header names: one allowlisted config knob, the fixed-name dispatch table, whiteboard scenes and their Notify-crew wake, review sessions, and the fast-forward-only project pull through `bin/ac-repo-pull.sh`.

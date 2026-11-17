@@ -1,15 +1,13 @@
 # Worktrees
 
 Every task works in its own isolated checkout, never in the project's primary checkout.
-How that checkout is leased depends on the fleet's session backend (`config/backend`, see [configuration.md](configuration.md)):
+Every task leases one Orca-managed worktree per task, created and removed through the Orca CLI (`orca_worktree_lease` / `orca_worktree_release` in `bin/ac-backend-orca.sh`), so each task tree is its own node in the Orca sidebar.
 
-- **herdr fleets** lease from the in-repo worktree POOL: reusable detached-HEAD worktrees inside the project repo, returned rather than deleted, so dependency and build caches survive between tasks.
-- **orca fleets** lease one Orca-managed worktree per task, created and removed through the Orca CLI, so each task tree is its own node in the Orca sidebar.
-
-This page is a map; the specs are the header of `src/tree.ts` (the pool, started by `bin/ac-tree.sh`) and `orca_worktree_lease` / `orca_worktree_release` in `bin/ac-backend-orca.sh`.
+An earlier in-repo worktree POOL (`bin/ac-tree.sh`, the header of `src/tree.ts`) remains in the tree as a standalone utility: no spawn, self-task or verifier lease reaches it anymore, but `bin/ac-teardown.sh` still returns a lease recorded in an older task meta's `leases=`/`lease_ids=` field, and `bin/ac-pool-health.sh` still reports on any slot left over from before the fleet moved to Orca.
+The rest of this page documents that pool for exactly that purpose, and the Orca lease that replaced it.
 See also [concepts.md](concepts.md), [architecture.md](architecture.md) and [scripts.md](scripts.md).
 
-## The pool (herdr fleets)
+## The pool (no longer leased by any task)
 
 ### Layout
 
@@ -38,8 +36,8 @@ The pool cap is `AC_MAX_TREES`, else `max_trees=` in `.crew/config`, else 8.
 | `prune --repo <p> [--yes]` | Remove idle, clean, merged, process-free slots; a dry run without `--yes`. |
 | `remove <path> [--force] [--include-leased]` | Deliberately remove one slot. |
 
-`ac-spawn.sh` leases with `get --id <id> --holder crew:<id> --mode <mode>`, `ac-self-task.sh` with `--holder self:<id> --mode <mode>`, and a herdr verifier round with `--holder verify`.
-A spawn that resumes an earlier session passes `--prefer` with the old slot, because claude keys sessions by working directory; if that slot is not available, `get` leases another one and prints one `prefer:` warning line.
+Nothing currently calls `get`: `ac-spawn.sh`, `ac-self-task.sh` and a verifier round all lease an Orca-managed worktree instead (see "Orca leases" below).
+`get`'s own `--prefer` flag exists for a spawn that resumes an earlier session on the pool, because claude keys sessions by working directory; if that slot is not available, `get` leases another one and prints one `prefer:` warning line.
 
 ### What `get` does
 
@@ -86,13 +84,13 @@ Open the generated `<repo>/.crew/<repo>.code-workspace` in VSCode or Cursor: it 
 It is regenerated after every slot mutation; never hand-edit it.
 `ac-tree.sh` does not control a live editor window, so reload the workspace if your editor does not pick up external changes.
 
-## Orca leases (orca fleets)
+## Orca leases
 
 `orca_worktree_lease <id> <repo> [<base-branch>]` creates one worktree per task through `orca worktree create` with repo setup hooks run and no lineage parent, then:
 
 - cuts it from the repo's LIVE CHECKOUT branch at its freshest tip (`ac_freshest_ref`, local vs origin), or from HEAD's exact commit when the checkout is detached;
 - lets an explicit `--base-branch` (from `ac-spawn.sh` or `ac-self-task.sh start`) name the branch instead, still resolved to its freshest tip;
-- takes the recorded integration branch as that base itself when the task id belongs to an epic or feature that records one for this repo (the epic-branch fence, held in the lease so every orca caller rides it, as `ac-tree.sh get` holds it on herdr), and refuses before creating anything when the branch is missing (the same existence rule as `ac-tree.sh get`, judged after the same best-effort fetch of origin, which only a fenced lease makes), when the ledger cannot be read, or when an explicit `--base-branch` names another branch;
+- takes the recorded integration branch as that base itself when the task id belongs to an epic or feature that records one for this repo (the epic-branch fence, held in the lease so every caller rides it), and refuses before creating anything when the branch is missing, when the ledger cannot be read, or when an explicit `--base-branch` names another branch;
 - switches the checkout to the task's crew branch, `crew/<family>` (adopting an existing one on a respawn or a revision), and deletes the branch name the CLI minted - a switch git refuses gives the new worktree back;
 - copies the primary checkout's `node_modules` into the worktree (a clone where the filesystem supports it, never a symlink) when setup did not produce one.
 
@@ -100,15 +98,15 @@ It is regenerated after every slot mutation; never hand-edit it.
 
 ## The lease install
 
-When the project's `$AC_HOME/projects/<name>.yaml` declares `commands.install`, `ac-spawn.sh` (crew spawns, not scouts) and `ac-self-task.sh start` run it in the fresh lease on either backend, before the agent starts, so a task does not begin on missing or stale dependencies.
+When the project's `$AC_HOME/projects/<name>.yaml` declares `commands.install`, `ac-spawn.sh` (crew spawns, not scouts) and `ac-self-task.sh start` run it in the fresh lease, before the agent starts, so a task does not begin on missing or stale dependencies.
 The task meta records `deps=ok` or `deps=failed`; a failure never refuses the lease, and the distro restores nothing the command dirtied.
 The contract is THE LEASE INSTALL in the header of `src/spawn.ts`; the key is documented in [configuration.md](configuration.md).
 
 ## Verifier rounds
 
-`ac-verify.sh` codereview and qa rounds lease their isolated checkout the same way the fleet's crew does: from the pool with holder `verify` on herdr, or an Orca-managed worktree on orca.
-The round then detaches to its exact ref, and on orca drops the `crew/<id>` branch at once, because a verifier branch is never a deliverable.
-The lease is returned (herdr, `return --force`) or released (orca) when the round is harvested.
+`ac-verify.sh` codereview and qa rounds lease their isolated checkout the same way the fleet's crew does: one Orca-managed worktree through `orca_worktree_lease`.
+The round then detaches to its exact ref and drops the `crew/<id>` branch at once, because a verifier branch is never a deliverable.
+The lease is released (`orca_worktree_release`) when the round is harvested.
 A verifier lease runs no `commands.install`.
 
 ## For contributors

@@ -516,17 +516,12 @@
 
 <section id="backends">
   <h2>Backends &amp; harnesses</h2>
-  <p class="sub">One pane contract, two drivers. The backend is chosen per fleet (<code>config/backend</code>) and recorded per task at spawn.</p>
+  <p class="sub">One pane contract, one driver: Orca. <code>config/backend</code> resolves to <code>orca</code>, the only value accepted, and is recorded per task at spawn.</p>
   <div class="cards">
     <div class="card">
-      <span class="tag">default backend</span>
-      <h4>herdr</h4>
-      <p>Worktrees come from the in-repo pool. Every pane of one task family — chief, crewmates, verifier panes, watch tabs — shares the workspace <code>&lt;fleet&gt; · &lt;family&gt;</code>; fleet-level panes share the root <code>&lt;fleet&gt;</code>.</p>
-    </div>
-    <div class="card">
-      <span class="tag">second backend</span>
+      <span class="tag">backend</span>
       <h4>orca</h4>
-      <p>Each task leases an Orca-managed worktree on <code>crew/&lt;id&gt;</code>, cut from the freshest tip of the repo's live checkout branch (or of the recorded integration branch, for an epic or feature story) and removed at teardown. Chief-kind panes sit under the home's node, worker panes under their worktree's node.</p>
+      <p>Each task leases an Orca-managed worktree on <code>crew/&lt;id&gt;</code>, cut from the freshest tip of the repo's live checkout branch (or of the recorded integration branch, for an epic or feature story) and removed at teardown. Chief-kind panes sit under the home's node, worker panes under their worktree's node; every pane of one task family — chief, crewmates, verifier panes, watch tabs — shares one Orca sidebar node.</p>
     </div>
   </div>
   <p>A backend that cannot be read reports <code>unobservable</code>, never a death — a pane whose liveness is unknown is never torn down.</p>
@@ -543,7 +538,7 @@
 
 <section id="worktrees">
   <h2>In-repo worktree pool</h2>
-  <p class="sub">A herdr fleet's lease mechanism: pooled, reusable detached-HEAD worktrees inside the project itself.</p>
+  <p class="sub">A standalone pool of reusable detached-HEAD worktrees inside the project itself; no current spawn, self-task or verifier lease reaches it, but teardown and pool-health still read it for a lease recorded before the fleet moved to Orca.</p>
   <pre>&lt;project&gt;/.crew/
   worktrees/&lt;n&gt;/     <span class="c"># worktree slots (the crewmate's cwd)</span>
   slots/&lt;n&gt;.meta     <span class="c"># per-slot lease state (key=value)</span>

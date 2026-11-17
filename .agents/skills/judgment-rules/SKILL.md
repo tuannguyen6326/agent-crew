@@ -13,7 +13,7 @@ description: Full text of the four fleet judgment rules: finding-authority, evid
   WRITTEN, not when a fix is decided. Every defect statement names the
   AUTHORITY for its EXPECTED behavior, and the author has read it.
   (a) A finding whose expected behavior is something an actor OUTSIDE
-  this repository does - `herdr`, the `claude` CLI, `git`, `tmux`, a
+  this repository does - `orca`, the `claude` CLI, `git`, `tmux`, a
   partner, a database, a client library's runtime, the network - cites
   a citable authority (in-repo docs, including `docs/bmad/**`, a spec,
   or a captain ruling; a stale doc is a doc bug, never a licence to

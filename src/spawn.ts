@@ -680,7 +680,7 @@
 // skills) reading the `spawned`/`recovered` line and the status; bin/ac-learn.sh
 // autoroom (`--roomchief learning --system-initiated <ref>` inside an `if`, a
 // non-zero read softly). What it writes is read by bin/ac-watch.sh,
-// src/teardown.ts, ac-send, ac-peek, ac-crew-state, ac-relocate, ac-wake-drain,
+// src/teardown.ts, ac-send, ac-peek, ac-crew-state, ac-wake-drain,
 // the fleet views, the guards, ac-self-task (family ownership) and the
 // dashboard (state/<id>.meta, its status, state/.pane-<id>, the claims, the wake
 // spool, kickoff.md, the room posts); the launch-line env is read crewmate-side

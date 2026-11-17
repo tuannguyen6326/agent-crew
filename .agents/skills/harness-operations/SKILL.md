@@ -19,9 +19,9 @@ Covers only the harnesses Agent Crew currently supports through `bin/ac-spawn.sh
 - `cursor` (registered 2026-08-14; the agent CLI is `cursor-agent`, never bare `cursor`; instruction file LIVE-PROBED: AGENTS.md + root CLAUDE.md, never .claude/CLAUDE.md - the references file owns the boundary);
 - a captain-provided custom launch command (`config/launch-<harness>`), which stays unverified unless separately validated.
 
-The herdr session backend is the DEFAULT backend, and every per-harness pane fact below was verified on it; a fleet pinned to a non-default `config/backend` keeps the same `backend_*` contract, but these harness facts have not been re-verified there.
+`orca` is the fleet's one session backend, and every per-harness pane fact below was verified on it.
 
-What DOES differ on the orca driver, measured rather than assumed, because it changes how a steer lands: a pane's agent starts WITH the pane (its launch command IS the pane's command), so nothing is typed into a booting surface; typed text is chunked, because one large write lost its head; the came-up probe reads the terminal TITLE, so a harness that sets no title stays UNOBSERVABLE and delivery proceeds fail-open; and a closed terminal still serves its retained scrollback, so a successful read is never proof of life. `bin/ac-backend-orca.sh` owns those mechanics - reach for them when a steer or probe behaves differently from the herdr fact below, and treat the difference as the driver's, not the harness's.
+Measured, because each changes how a steer lands: a pane's agent starts WITH the pane (its launch command IS the pane's command), so nothing is typed into a booting surface; typed text is chunked, because one large write lost its head; the came-up probe reads the terminal TITLE, so a harness that sets no title stays UNOBSERVABLE and delivery proceeds fail-open; and a closed terminal still serves its retained scrollback, so a successful read is never proof of life. `bin/ac-backend-orca.sh` owns those mechanics - reach for them when a steer or probe behaves unexpectedly, and treat it as the driver's, not the harness's.
 
 ## When to load
 
@@ -30,7 +30,7 @@ Load before a harness-specific spawn, trust-dialog response, skill invocation, i
 ## Source-of-truth split - do not restate the mechanics
 
 - `src/spawn.ts` (started by `bin/ac-spawn.sh`) owns launch-command construction, model and effort flags, session metadata, kickoff delivery, and the supported harness names.
-- `bin/ac-backend.sh` owns the herdr composer, submit-verification, focus, blocked-pane detection, and backend lifecycle.
+- `bin/ac-backend.sh` owns the composer, submit-verification, focus, blocked-pane detection, and backend lifecycle, implemented by the orca driver (`bin/ac-backend-orca.sh`).
 - This skill owns only the verified crewchief-facing facts: busy vs idle evidence; trust and permission dialogs; safe interrupt behavior; exit behavior; resume support and limits; skill-invocation form; known popup or submit hazards; and the evidence required before claiming an operation landed.
 
 ## Two rules that apply to every harness
@@ -38,7 +38,7 @@ Load before a harness-specific spawn, trust-dialog response, skill invocation, i
 1. Read the target harness from the task meta (`harness=` in `state/<id>.meta`); never guess from your own harness - the crewchief and the crewmate may run different ones.
 2. Unknown or custom harness behavior fails closed to natural-language steering or explicit validation, never borrowed keystrokes from another harness.
 
-## Backend-general facts (herdr, every harness)
+## Backend-general facts (every harness)
 
 - Send a literal line with `bin/ac-send.sh <id> '<text>'`: it types, then submits VERIFIED (a render-change probe with one focused retry). A send whose submit is never acknowledged exits non-zero with the strand on stderr - that is NOT a landed operation.
 - After a strand, resubmit with `bin/ac-send.sh <id> --key Enter`; never re-type the line (a re-type appends to the composer and garbles it). Confirm the resubmit landed by peeking - the key path is not probed (below), so its output is not evidence.

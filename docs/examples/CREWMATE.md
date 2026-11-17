@@ -98,7 +98,7 @@ you have read it.**
 
 - **(a)** If the expected behavior describes what an actor OUTSIDE this repository
   does - a partner, a broker, a database, a client library's runtime, the
-  network, `herdr`, `git`, the `claude` CLI - the finding cites a document, an
+  network, `orca`, `git`, the `claude` CLI - the finding cites a document, an
   in-repo spec, or a prior captain ruling, or it is filed `needs-decision:` /
   `ask-user`, never as a defect. A stale cited doc is a doc bug, never a licence
   to ignore it, and a citation that CONTRADICTS the finding is that finding's

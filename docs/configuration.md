@@ -54,12 +54,10 @@ A dispatched `panes.gate` profile outranks `gate-agent`/`gate-model`/`gate-effor
 
 | File | Controls |
 | --- | --- |
-| `config/backend` | Session backend for new tasks: `herdr` (default) or `orca`. Recorded per task at spawn, so changing it never re-routes an in-flight task. Resolution ladder: `AC_BACKEND` row below. |
-| `config/herdr-session` | herdr only: the named herdr session to talk to; absent = no `--session` flag (the ship/qa/gate watch openers pass `default`). |
-| `config/herdr-rpc-timeout` | herdr only: seconds one herdr RPC may run before it is killed with its process group; default 2, and anything that is not a positive integer falls back to 2. A killed RPC reads as unobservable, never as a dead pane. Owner: HUNG RPC in the `bin/ac-backend.sh` header. |
-| `config/orca-node` | Orca only: the full Orca worktree selector (`id:<repo-id>::<path>[::workspace:<id>]` or `path:<path>`) that chief-kind home panes attach to; absent = auto-pinned when a family tab is created, from the Orca entry at the home's nearest registered ancestor whose display name ends with the fleet name as its own token (`ac lab` for the fleet lab, `ac lab/ops` for its deputy ops), else that ancestor's `path:` selector with a WARN naming the candidates when several entries share the path. Owner: `bin/ac-backend-orca.sh`. |
+| `config/backend` | Session backend for new tasks: `orca`, the only value `ac_backend` accepts; absent also resolves to `orca`. Any other value refuses with the named error before anything runs. Recorded per task at spawn, so changing it never re-routes an in-flight task. Resolution ladder: `AC_BACKEND` row below. |
+| `config/orca-node` | The full Orca worktree selector (`id:<repo-id>::<path>[::workspace:<id>]` or `path:<path>`) that chief-kind home panes attach to; absent = auto-pinned when a family tab is created, from the Orca entry at the home's nearest registered ancestor whose display name ends with the fleet name as its own token (`ac lab` for the fleet lab, `ac lab/ops` for its deputy ops), else that ancestor's `path:` selector with a WARN naming the candidates when several entries share the path. Owner: `bin/ac-backend-orca.sh`. |
 
-The former `config/herdr-workspace`, `herdr-workspace-agents` and `herdr-workspace-chiefs` pins are retired and read by nothing; herdr tabs now group by family (FAMILY WORKSPACE GROUPING in the `bin/ac-backend.sh` header).
+Operator cleanup: a fleet home created before the sole-Orca cutover may still carry the config files `config/herdr-workspace`, `config/herdr-workspace-chiefs`, `config/herdr-workspace-agents` and `config/herdr-session`, and a shell profile may still export the environment variables `HERDR_SESSION` and `AC_HERDR_RPC_TIMEOUT` - leftover files and variables you may delete, read by nothing now that panes group by family (FAMILY WORKSPACE GROUPING in the `bin/ac-backend.sh` header) and the orca driver carries no RPC ceiling (HUNG RPC in the same header). No distro code removes or unsets them for you.
 
 ### Learning, curation and knowledge
 
@@ -106,7 +104,7 @@ The former `config/herdr-workspace`, `herdr-workspace-agents` and `herdr-workspa
 | `config/remote-poll-timeout` | Seconds one remote poll may run before the watcher kills it; default 120, non-positive values fall back to 120. Keep it plus `AC_POLL` under `AC_GUARD_GRACE`. Owner: HUNG POLL in the `src/watch.ts` header. |
 | `config/remote-mirror` | Task-thread narrative: `off` (default), `chief` (the owning chief posts its own thread narrative via `ac-remote.sh thread-post`) or `on` (every room post and spawn announce is mirrored automatically). |
 | `config/slack-channel`, `config/slack-captain-id` | Slack transport only: control channel id, and the captain member id(s) one per line (also used for `<@id>` pings). Read by the example hooks in `docs/examples/slack-remote/` and the dashboard; setup guide in that directory's README. |
-| `config/wedge-alarm` | Captain notification when a room gate or ask is pending on them: `off`, `auto` (default: herdr when herdr is the backend and installed, else osascript, else bell), `herdr`, `osascript`, `bell` or `command:<cmd>` (receives `AC_NOTIFY_TITLE` and `AC_NOTIFY_MESSAGE`). Owner: the `src/notify.ts` header. |
+| `config/wedge-alarm` | Captain notification when a room gate or ask is pending on them: `off`, `auto` (default: osascript when it is on PATH, else bell), `osascript`, `bell` or `command:<cmd>` (receives `AC_NOTIFY_TITLE` and `AC_NOTIFY_MESSAGE`). Owner: the `src/notify.ts` header. |
 
 ### Misc
 
@@ -284,10 +282,8 @@ Variables marked "launch line" are set by `ac-spawn.sh` on a crewmate's launch l
 | `AC_SCOPE` | unset | Session identity of a roomchief: its family. Scopes the watcher, drain and guards. |
 | `AC_DOMAIN` | unset | Session identity of a domainchief: its crewdomain, derived from the family row's `domain:<name>` token at promote. Consumers resolve it through `ac_domain_binding` (`bin/ac-lib.sh`). |
 | `AC_SOLO` | unset | `1` marks a solo session (`ac <fleet> --solo`). `ac-session-start.sh` runs read-only (no lock, no drain); `ac-wake-drain.sh`, `ac-watch.sh`, `ac-spawn.sh` and `ac-send.sh` refuse; `ac-watch-autoarm.sh` stands down; the turn-end guard only gives a notice about uncommitted slice worktrees; the delegation guard exempts it; `ac-compact-advise.sh` (under `config/jev=on`) and `ac-prompt-recall.sh` still act on it. Contract: the `solo-session` skill. |
-| `AC_BACKEND` | `config/backend`, else the `config/backend` beside `AC_FLEET_STATE`, else `herdr` | Session backend (`herdr` or `orca`), resolved per call by `ac_backend`. Scripts export it from the task meta so a task stays on its recorded backend. |
-| `AC_HERDR_SESSION` | `config/herdr-session`, else none | herdr session name every herdr-touching script uses. Refused under the orca backend. |
-| `AC_HERDR_RPC_TIMEOUT` | `config/herdr-rpc-timeout`, else 2 | Seconds one herdr RPC may run before its process group is killed. |
-| `AC_WINDOW_FAMILY` | unset | herdr family-workspace routing: non-empty = that family's workspace, empty = the fleet root workspace, unset = derived from the task id. Set by the scripts that open panes. |
+| `AC_BACKEND` | `config/backend`, else the `config/backend` beside `AC_FLEET_STATE`, else `orca` | Session backend - `orca` is the only accepted value, resolved per call by `ac_backend`; any other name refuses before anything runs. Scripts export it from the task meta so a task stays on its recorded backend. |
+| `AC_WINDOW_FAMILY` | unset | Family-workspace routing: non-empty = that family's workspace, empty = the fleet root workspace, unset = derived from the task id. Set by the scripts that open panes. |
 | `AC_STARTUP_DIALOG_BUDGET` | 15 | Seconds the startup-dialog sequence keeps polling a pane that is still unobservable (`bin/ac-backend.sh`). |
 | `AC_SEND_SETTLE` | 0.4 | Seconds between the submit-verify probes after typing into a pane, and the pace of arrival re-reads. Owner: delivery verification in the `bin/ac-backend.sh` header. |
 | `AC_SPAWN_SETTLE` | 8 | Seconds `ac-spawn.sh` waits after the launch line before typing the kickoff prompt; also the window of its came-up gate. Do not pin it to 0 outside tests. |
@@ -330,7 +326,7 @@ Variables marked "launch line" are set by `ac-spawn.sh` on a crewmate's launch l
 | `AC_SHIP_WATCH_IDLE` | 1800 | Idle seconds before the ship board closes itself. |
 | `AC_QA_WATCH` | `auto` | `off` disables the live qa board `ac-qa.sh start` opens; an orca fleet opens none. |
 | `AC_QA_WATCH_IDLE` | 1800 | Idle seconds before the qa board closes itself. |
-| `AC_GATE_WATCH` | `auto` | `off` disables the gate watch board `ac-gate.sh` opens on a herdr fleet (an orca fleet opens none). |
+| `AC_GATE_WATCH` | `auto` | `off` disables the gate watch board `ac-gate.sh` opens; an orca fleet opens none. |
 | `AC_GATE_WATCH_IDLE` | 1800 | Idle seconds before the gate board closes itself. |
 | `AC_GATE_AGENT` | `config/gate-agent`, else `codex` | Per-call gate engine override; it also outranks a `panes.gate` profile's harness. |
 | `AC_GATE_MODEL` | `config/gate-model`, else engine default | Per-call gate model override. |
@@ -393,14 +389,13 @@ Internal wire variables and test seams take no row; they are declared with a one
 
 `bin/ac-bootstrap.sh` audits the toolchain and prints one line per check (`OK:`, `MISSING:`, `BELOW-FLOOR:`, `NO-CAPABILITY:`, `OPTIONAL:`, ...); a `MISSING:` exits 1.
 
-- Required: `git`, `jq`, `bun` (the TypeScript under `src/` runs on it: the ported `bin/` entries and the helpers other `bin/` scripts start), `gh` (authenticated for PR and CI steps), and the backend `config/backend` names: `herdr` with its server running, or `orca` with its runtime ready.
+- Required: `git`, `jq`, `bun` (the TypeScript under `src/` runs on it: the ported `bin/` entries and the helpers other `bin/` scripts start), `gh` (authenticated for PR and CI steps), and the Orca runtime ready (the only `config/backend` value).
 - Optional: `node` (npx-driven helpers), `shellcheck` (`bin/ac-lint.sh`), `docker` (QA infra).
 
 Version floors, each tied to a call the fleet makes (FLOOR TABLE in the `bin/ac-bootstrap.sh` header):
 
 | Tool | Floor | Why |
 | --- | --- | --- |
-| `herdr` | 0.8.0 | `status server --json` reporting `.running`, which `bin/ac-backend.sh` reads. |
 | `git` | 2.15.0 | `git interpret-trailers --parse`, used by the commit-msg guard `bin/ac-tree.sh` installs. |
 | `jq` | 1.6 | `--args` / `$ARGS`, used by `bin/ac-brief.sh`. |
 | `bun` | 1.4.4 | The fixed brotli decoder (CVE-2026-111497); `Bun.Terminal`, the dashboard's native terminal; `bun:sqlite`, the brain engine. |

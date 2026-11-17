@@ -29,7 +29,7 @@ It prints one line per tool:
 | `INERT:` | A newer copy sits later on `PATH` than the one that answers; diagnostic only. |
 | `CHECK-FAILED:` | The copy on `PATH` did not report a parseable version; diagnostic only. |
 
-Required: `git` (floor 2.15.0), `jq` (floor 1.6), `bun` (floor 1.4.4; the TypeScript under `src/` runs on it - the ported `bin/` entries and the helpers other `bin/` scripts start), `gh`, and the CLI of the fleet's configured session backend - `herdr` (floor 0.8.0, the default) or `orca`.
+Required: `git` (floor 2.15.0), `jq` (floor 1.6), `bun` (floor 1.4.4; the TypeScript under `src/` runs on it - the ported `bin/` entries and the helpers other `bin/` scripts start), `gh`, and the Orca CLI (the fleet's one session backend).
 Optional: `node`, `docker`, `shellcheck`.
 Pass `--quiet` to print problems only.
 
@@ -43,9 +43,8 @@ bin/ac-setup.sh
 It runs, in order:
 
 1. the toolchain doctor;
-2. an offer to install `herdr` and `wezterm` when they are absent (every install defaults to no);
-3. the homes container, default `~/Work/ac-homes` (or `$AC_HOMES_CONTAINER`);
-4. the `ac` launcher, copied from `docs/examples/ac.zsh` to a path you choose (default `~/.config/zsh/ac.zsh`).
+2. the homes container, default `~/Work/ac-homes` (or `$AC_HOMES_CONTAINER`);
+3. the `ac` launcher, copied from `docs/examples/ac.zsh` to a path you choose (default `~/.config/zsh/ac.zsh`).
 
 It never edits your dotfiles.
 Add the printed `source` line to `~/.zshrc` yourself, then `exec zsh`.
@@ -74,7 +73,7 @@ An empty answer writes no file, and the reader's default applies:
 | `flow` | Task flow: `auto`, `direct`, or `staged` (`sdlc` is written into `config/flow` by hand; see [configuration.md](configuration.md)). | `auto` |
 
 It also asks whether to seed a per-fleet `CREWMATE.md` from `docs/examples/CREWMATE.md`.
-It writes `config/backend` as `herdr`; set it to `orca` to run the fleet on Orca instead.
+It writes `config/backend` as `orca`, unasked - the only backend there is.
 It seeds empty `records/projects.md` and `records/backlog.md`, and symlinks `bin/`, `AGENTS.md`, `CLAUDE.md`, and `.claude/` from the checkout into the home.
 Every knob and its full meaning is in [configuration.md](configuration.md).
 
@@ -87,10 +86,7 @@ Without it the tooling refuses by name, so fleet state never lands in the checko
 ac lab
 ```
 
-The launcher runs your harness with its working directory set to the home and `AC_HOME` exported:
-
-- On a `herdr` fleet it starts the herdr server if needed, opens the chief in a herdr tab, and attaches the herdr UI.
-- On an `orca` fleet, or when you are already inside herdr, it runs the chief inline in the current terminal.
+The launcher runs your harness with its working directory set to the home and `AC_HOME` exported, inline in the current terminal (Orca-native when launched from an Orca terminal).
 
 Useful launcher forms:
 
@@ -161,7 +157,7 @@ What the crewchief does, in order:
 6. **Brief.**
    `bin/ac-brief.sh` scaffolds the brief with the task, constraints, acceptance criteria, and recorded mode.
 7. **Spawn.**
-   `bin/ac-spawn.sh` leases a worktree (`<repo>/.crew/worktrees/<n>` on herdr, an Orca-managed worktree on orca) and launches the crewmate harness on the brief in its own pane.
+   `bin/ac-spawn.sh` leases an Orca-managed worktree and launches the crewmate harness on the brief in its own pane.
 8. **Supervise.**
    `bin/ac-watch.sh` runs as a background task of the harness, polls panes in bash, and wakes the chief only for actionable events; on Claude Code a Stop hook keeps it armed.
    A finished crewmate announces itself with `bin/ac-done.sh`.
@@ -173,7 +169,7 @@ To pin a flow yourself, use `/order-direct`, `/order-staged`, or `/order-design`
 | Where | What you see |
 |---|---|
 | Your chief thread | Receipts, questions, and outcomes in chat. |
-| The herdr sidebar | One workspace per task family, labelled `<fleet> · <family>`, holding its chief, crewmates, and verifier panes. |
+| The Orca sidebar | One tab per task family, labelled `<fleet> · <family>`, holding its chief, crewmates, and verifier panes. |
 | `bin/ac-room.sh list` | Every room; `PENDING` rooms hold a gate or ask waiting on you. |
 | `bin/ac-room.sh show <family>` | The family's full narrative. |
 | `bin/ac-fleets.sh` | A read-only survey of every fleet under the homes container. |

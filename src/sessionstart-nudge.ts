@@ -84,14 +84,15 @@
 //      ac-pane-agent.sh's ENVPIN, which pins the fleet NAME exactly when the
 //      caller had no home to pin) are set nowhere else. AC_SCOPE is deliberately
 //      NOT on this list: a roomchief is given AC_HOME *and* AC_SCOPE together, so
-//      a scope with no home is a roomchief that LOST one - ac-relocate.sh resumes
-//      one with AC_SCOPE and no AC_HOME, which is this very defect and must be
-//      spoken to, not silenced.
+//      a scope with no home is a roomchief that LOST one - a resumed roomchief
+//      session can carry AC_SCOPE off its own launch line while AC_HOME never
+//      gets re-exported, which is this very defect and must be spoken to, not
+//      silenced.
 //   2. A LINKED WORKTREE is a crewmate checkout - the geometry the sibling hooks
 //      use, asked of the CWD here because there is no home to ask about:
 //      `git -C <cwd> rev-parse --path-format=absolute` --git-dir against
-//      --git-common-dir. It is not redundant with gate 1: ac-relocate.sh
-//      resumes a crewmate with NO scalars at all, and only the geometry still
+//      --git-common-dir. It is not redundant with gate 1: a resumed crewmate
+//      can carry NO scalars at all, and only the geometry still
 //      identifies it. It also covers a captain reading a leased worktree.
 //      --path-format=absolute is load-bearing: from a SUBDIRECTORY of a primary
 //      checkout the bare form answers an absolute --git-dir against a relative

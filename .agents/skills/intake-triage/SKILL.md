@@ -264,7 +264,7 @@ two-line cross-repo rename not worth two stories) - the captain vetoes the
 receipt, never discovers serial-by-accident after the fact. A BRANCH-RECORDED epic (epic-branch-mech) additionally
 integrates each repo's stories on one recorded branch: `data/<epic>/branches`
 is the captain-worded record, `bin/ac-epic-branch.sh` owns
-create/verify/show/retire, the lease fence lives in `ac-tree.sh get` (herdr) and `orca_worktree_lease` (orca)
+create/verify/show/retire, the lease fence lives in `orca_worktree_lease`
 (fail-closed on a missing branch), landings ride `ac-merge-local.sh`/`ac-ship
 --target` into the branch, per-story review/QA derive per the `delivery-review`
 skill's epic exception, and `bin/ac-epic-ship.sh` is the gated 2-PR exit (stories

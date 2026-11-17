@@ -168,10 +168,9 @@ homeless "$chief" AC_FLEET_NAME=drydock
 # (e) AC_SCOPE is deliberately NOT a silencing badge, and this is the case that
 #     decides it: bin/ac-spawn.sh gives a roomchief AC_HOME *and* AC_SCOPE
 #     together, so a scope with NO home is a roomchief that LOST one - which is
-#     this defect, not an exemption from it. bin/ac-relocate.sh builds exactly
-#     that resume line (AC_SCOPE=<fam> claude --resume <sid>, no AC_HOME; its
-#     crewdeputy arm does pass AC_HOME, and tests/sh/ac-relocate.test.sh pins the
-#     asymmetry), so the class is real, not hypothetical.
+#     this defect, not an exemption from it. A resume line can build exactly
+#     that shape (AC_SCOPE=<fam> claude --resume <sid>, no AC_HOME re-exported),
+#     so the class is real, not hypothetical.
 homeless "$chief" AC_SCOPE=greet2
 assert_contains "$out" "$sig" "a relocated roomchief lost its home and must be told, not silenced"
 

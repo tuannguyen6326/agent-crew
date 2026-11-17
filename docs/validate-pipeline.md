@@ -221,9 +221,8 @@ Step statuses: `pending`, `running`, `fixing`, `awaiting_approval`, `completed`,
 
 ## Live dashboard
 
-`start` auto-opens `bin/ac-ship-watch.sh` in a herdr tab labelled `ac-ship-watch` in the family's workspace (`AC_SHIP_WATCH=off` disables).
-It shows the active step, fix rounds, findings and the run-log tail, and closes when the run finishes or idles (`AC_SHIP_WATCH_IDLE`, default 1800s).
-Without herdr, run `ac-ship-watch.sh` in any terminal.
+Nothing opens `bin/ac-ship-watch.sh` automatically; run it in any terminal to watch a run.
+It shows the active step, fix rounds, findings and the run-log tail, and exits when the run finishes or idles (`AC_SHIP_WATCH_IDLE`, default 1800s).
 
 ## Config
 

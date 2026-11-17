@@ -92,9 +92,9 @@ assert_eq "$(homeless_hook "$AC_HOME" Task)" "2" \
   "a homeless chief at a fleet home is fenced"
 assert_eq "$(homeless_hook "$primary" Task)" "2" \
   "a homeless chief on a repo-hosted fleet is fenced"
-# The incident's own shape: ac-relocate.sh resumes a roomchief with AC_SCOPE
-# and no AC_HOME, so a scope with no home is a chief that LOST one - never a
-# badge, and never a reason to stand down.
+# The incident's own shape: a resumed roomchief session can carry AC_SCOPE
+# off its own launch line with no AC_HOME, so a scope with no home is a chief
+# that LOST one - never a badge, and never a reason to stand down.
 assert_eq "$(homeless_hook "$AC_HOME" Task AC_SCOPE=fam)" "2" \
   "AC_SCOPE is not a crew badge"
 assert_eq "$(homeless_hook "$AC_HOME" Read)" "0" \
@@ -104,8 +104,8 @@ assert_eq "$(homeless_hook "$AC_HOME" Task AC_ALLOW_DELEGATION=1)" "0" \
 
 # C3, the three classes that are homeless BY DESIGN - each must stay at 0.
 # 1. a crewmate, by either gate on its own: the badge it is launched with, and
-#    the worktree geometry that still identifies it when ac-relocate.sh resumes
-#    it with no scalars at all.
+#    the worktree geometry that still identifies it when a resume carries it
+#    with no scalars at all.
 assert_eq "$(homeless_hook "$linked" Task AC_CREW_ID=dg1)" "0" \
   "a crewmate is never fenced - badge and geometry"
 assert_eq "$(homeless_hook "$linked" Task)" "0" \

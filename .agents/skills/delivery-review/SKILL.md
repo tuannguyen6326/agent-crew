@@ -110,11 +110,9 @@ description: Execution role and review obligation: what an execution crewmate ow
   path. The older `pane-agent-as-crewmate-redesign` map (§2.5) describes ac-done
   completion, same-pane reuse, teardown-swept retirement and leaseless
   verifiers; the code follows the rules here, so a mismatch against that map is
-  the map's history, never a defect. The lease follows the fleet backend the
-    same way the crew lease does: a herdr fleet leases from the crew-tree pool,
-    an orca fleet leases an Orca-managed worktree released at harvest with no
-    crew/<id> branch left behind (`src/verify.ts` verifyLease owns the
-    contract).
+  the map's history, never a defect. The lease follows the crew lease: one
+    Orca-managed worktree, released at harvest with no crew/<id> branch left
+    behind (`src/verify.ts` verifyLease owns the contract).
 
 ## Verdict routing
 
