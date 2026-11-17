@@ -324,11 +324,8 @@ Variables marked "launch line" are set by `ac-spawn.sh` on a crewmate's launch l
 | `AC_REMOTE_ACK_TIMEOUT` | 20 | Seconds one `config/remote-ack` call may run. |
 | `AC_REMOTE_ACK_BUDGET` | 30 | Total seconds one `ac-remote.sh` run may spend in `config/remote-ack`; further calls are skipped with one warning. |
 | `AC_DASH_PORT` | `config/dash-port`, else 8787 | Port `ac-review.sh` reaches the dashboard on. |
-| `AC_SHIP_WATCH` | `auto` | `off` disables the live ship board `ac-ship.sh start` opens; an orca fleet opens none. |
 | `AC_SHIP_WATCH_IDLE` | 1800 | Idle seconds before the ship board closes itself. |
-| `AC_QA_WATCH` | `auto` | `off` disables the live qa board `ac-qa.sh start` opens; an orca fleet opens none. |
 | `AC_QA_WATCH_IDLE` | 1800 | Idle seconds before the qa board closes itself. |
-| `AC_GATE_WATCH` | `auto` | `off` disables the gate watch board `ac-gate.sh` opens; an orca fleet opens none. |
 | `AC_GATE_WATCH_IDLE` | 1800 | Idle seconds before the gate board closes itself. |
 | `AC_GATE_AGENT` | `config/gate-agent`, else `codex` | Per-call gate engine override; it also outranks a `panes.gate` profile's harness. |
 | `AC_GATE_MODEL` | `config/gate-model`, else engine default | Per-call gate model override. |
