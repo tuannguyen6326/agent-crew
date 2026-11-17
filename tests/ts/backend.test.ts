@@ -699,7 +699,7 @@ const OSHOW = (h = "h1"): string => `orca terminal show --terminal ${h} --json\n
 const OREAD = (h = "h1"): string => `orca terminal read --terminal ${h} --limit 15 --screen --json\n`;
 const OENTER = (h = "h1"): string => `orca terminal send --terminal ${h} --enter --json\n`;
 // The dialog guard, then the one prompt send.
-const OSENT = (t = TEXT, h = "h1"): string => OSHOW(h) + `orca terminal send --terminal ${h} --text ${t} --enter --wait-submit 10 --json\n`;
+const OSENT = (t = TEXT, h = "h1"): string => OSHOW(h) + `orca terminal send --terminal ${h} --text ${t} --enter --wait-submit 3 --json\n`;
 // A pending check's read that finds the text still in the composer, then the
 // dialog check, the retry Enter and its settle.
 const PENDING = (v = "0"): string => OREAD() + OSHOW() + OENTER() + SLEPT(v);

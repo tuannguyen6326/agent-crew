@@ -120,7 +120,7 @@ printf 'claude\n' >"$FAKE_ORCA/terminals/term1.agent"
 run_backend orca "backend_send_line o1 \"$big\"" >/dev/null \
   || fail "an observed prompt (supported, turn_started) is sent"
 assert_eq "$(sends)" "1" "one prompt send per line - no chunks, no separate Enter"
-assert_contains "$(cat "$FAKE_ORCA/log")" "terminal send --terminal term1 --text $big --enter --wait-submit 10 --json" \
+assert_contains "$(cat "$FAKE_ORCA/log")" "terminal send --terminal term1 --text $big --enter --wait-submit 3 --json" \
   "the whole text rides one send carrying --enter and --wait-submit"
 assert_contains "$(cat "$FAKE_ORCA/terminals/term1.buf")" "$big" \
   "the payload lands byte-identically in the transcript"

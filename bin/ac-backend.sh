@@ -190,7 +190,7 @@
 # wait stamp) are swept either way.
 #
 # Delivery verification: send_line hands the text and its Enter to Orca as
-# ONE prompt (`terminal send --text --enter --wait-submit 10`; probe
+# ONE prompt (`terminal send --text --enter --wait-submit 3`; probe
 # 2026-11-17, Orca 1.4.259): a recognized agent gets it bracket-pasted - a
 # 4871-byte, 62-line message arrived whole on claude, codex, opencode, pi and
 # cursor - and the receipt's observation "supported" (claude, codex) is the

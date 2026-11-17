@@ -1608,7 +1608,7 @@ async function run(args: string[]): Promise<never> {
     if (sent.exited) process.exit(sent.status);
     if (sent.status === 2) emit('{"event":"note","path":"prompt delivery UNVERIFIED - the backend gave no delivery receipt, so the submit is neither confirmed nor refuted"}');
     else if (sent.status !== 0)
-      fail(`the verification prompt was NOT accepted by the pane: it sits unsubmitted in the composer of '${HARNESS}', so no turn will ever start - REFUSED rather than waited out`);
+      fail(`the verification prompt was NOT accepted by the pane of '${HARNESS}' (stranded in its composer, or a dialog owns the pane), so no turn will ever start - REFUSED rather than waited out`);
   }
 
   let TRANSCRIPT = "";

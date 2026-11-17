@@ -2663,13 +2663,13 @@ const PROMPT_VERDICT =
   'if .ok == true then (if .result.send.prompt.observation == "supported" then "seen" else "blind" end) elif .error.code == "agent_prompt_blocked" then "blocked" else "failed" end';
 
 // orca_prompt_send_pane's twin: the dialog guard (3), then ONE `terminal send
-// --text --enter --wait-submit 10` whose envelope is read whatever orca's
+// --text --enter --wait-submit 3` whose envelope is read whatever orca's
 // status - seen 0, blocked 3, anything but blind 2 - and for blind, while the
 // text sits pending, up to two retry Enters, each behind the dialog guard and
 // followed by a settle; still pending after both, 1.
 export function orcaPromptSend(h: string, text: string, stdin: "inherit" | "ignore", stderr: "inherit" | "ignore"): number {
   if (orcaDialog(h)) return 3;
-  const out = capturedText(stage(["orca", "terminal", "send", "--terminal", h, "--text", text, "--enter", "--wait-submit", "10", "--json"], stdin, "pipe", "ignore").out);
+  const out = capturedText(stage(["orca", "terminal", "send", "--terminal", h, "--text", text, "--enter", "--wait-submit", "3", "--json"], stdin, "pipe", "ignore").out);
   const verdict = capturedText(jqOver(["-r", PROMPT_VERDICT], out, "pipe", "ignore").out);
   if (verdict === "seen") return 0;
   if (verdict === "blocked") return 3;

@@ -505,7 +505,7 @@ orca_prompt_send_pane() {
   # into any other dialog answers it.
   local pane="$1" text="$2" out verdict retries=0
   orca_pane_dialog "$pane" && return 3
-  out="$(orca terminal send --terminal "$pane" --text "$text" --enter --wait-submit 10 --json 2>/dev/null)" || true
+  out="$(orca terminal send --terminal "$pane" --text "$text" --enter --wait-submit 3 --json 2>/dev/null)" || true
   verdict="$(jq -r 'if .ok == true then (if .result.send.prompt.observation == "supported" then "seen" else "blind" end)
     elif .error.code == "agent_prompt_blocked" then "blocked" else "failed" end' <<<"$out" 2>/dev/null)" || true
   case "$verdict" in

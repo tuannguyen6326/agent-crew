@@ -2228,7 +2228,7 @@ xrc 0; xhas '"source":"file"'; xwhas 'orca [terminal] [send] [--terminal] [h1] [
 xone 'xcrew; xs render.n 0' 'xrun --harness codex --timeout 8'
 xrc 1; xhas "\"error\":\"harness 'codex' came up but its input surface did not become ready within 7s - no prompt was delivered\""
 xone 'xcrew; xs strand; xs ruled' 'xrun --harness codex'
-xrc 1; xhas "\"error\":\"the verification prompt was NOT accepted by the pane: it sits unsubmitted in the composer of 'codex', so no turn will ever start - REFUSED rather than waited out\""
+xrc 1; xhas "\"error\":\"the verification prompt was NOT accepted by the pane of 'codex' (stranded in its composer, or a dialog owns the pane), so no turn will ever start - REFUSED rather than waited out\""
 xone 'xcrew; xs empty-verdict' 'xrun --harness opencode'
 xrc 1; xhas "\"error\":\"verification agent 'opencode' produced no verdict: the agent announced its turn but left no verdict at $XW/st/.pane-agent-tmp/ac-pane-verdict.cwd.PID1\""
 xone 'xcrew; xs terminal-show.out "{\"ok\":true,\"result\":{\"terminal\":{\"connected\":true,\"title\":\"codex\",\"agentIdentity\":\"codex\",\"agentWait\":{\"reason\":\"other\"}}}}\n"' 'xrun --harness codex --timeout 20'
