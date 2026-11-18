@@ -2215,6 +2215,49 @@ assert_file "${corr_round_dir}correction.meta" "the round records the correction
 assert_file "${corr_round_dir}verdict.rejected" "the rejected first payload is retired, not deleted"
 assert_file "${corr_round_dir}correction-transcript.jsonl" "the correction turn's transcript is durable"
 
+# --- REPO KNOWLEDGE THE DIFF TOUCHES -------------------------------------------
+# A repo fact cites the file it was verified in, so a diff changing that file
+# hands its reviewer a ready-made question. Facts about untouched files,
+# command provenance and superseded history stay out; past the cap the hottest
+# facts win and the rest are counted, not dropped silently.
+kn_repo="$(make_repo verify-knowledge)"
+printf 'one\n' >"$kn_repo/channel.txt"
+git -C "$kn_repo" add channel.txt
+git -C "$kn_repo" commit -qm base
+kn_base="$(git -C "$kn_repo" rev-parse HEAD)"
+printf 'two\n' >"$kn_repo/channel.txt"
+git -C "$kn_repo" commit -qam target
+kn_target="$(git -C "$kn_repo" rev-parse HEAD)"
+kn_lease="$TMP/kn-lease"
+git clone -q "$kn_repo" "$kn_lease"
+kn_record="$AC_HOME/records/repo-knowledge/verify-knowledge.md"
+mkdir -p "$(dirname "$kn_record")"
+{
+  printf '# Repo knowledge: verify-knowledge\n\n'
+  printf -- '- fact channel.txt must stay one word, the loader splits on spaces | src: file:channel.txt:1 | at: %s 2026-11-01 | heat: 5 | by: kn-a\n' "$kn_base"
+  printf -- '- fact file.txt is read by nothing at runtime | src: file:file.txt:1 | at: %s 2026-11-01 | by: kn-b\n' "$kn_base"
+  printf -- '- fact the loader opens channel.txt first | src: cmd:grep -n channel.txt loader.sh | at: %s 2026-11-01 | by: kn-c\n' "$kn_base"
+  for i in 01 02 03 04 05 06 07 08 09 10 11 12; do
+    printf -- '- fact channel.txt filler %s | src: file:channel.txt:1 | at: %s 2026-11-02 | by: kn-f\n' "$i" "$kn_base"
+  done
+  printf '\n## Superseded\n\n'
+  printf -- '- fact channel.txt was once JSON | src: file:channel.txt:1 | at: %s 2026-10-01 | by: kn-d\n' "$kn_base"
+} >"$kn_record"
+kn_caller=kn-family-implement
+VERIFY_EXPECT_ID="$kn_caller-verify-codereview" VERIFY_WORKTREE="$kn_lease" VERIFY_REF="$kn_target" \
+  "$BIN/ac-verify.sh" codereview --repo "$kn_repo" --ref "$kn_target" --base "$kn_base" \
+  --family kn-family --caller "$kn_caller" --intent "$intent" --output "$TMP/kn-review.json" >/dev/null
+kn_prompt="$(cat "$VERIFY_PROMPT_CAPTURE")"
+assert_contains "$kn_prompt" "-----BEGIN REPO KNOWLEDGE-----" "facts about the changed files reach the reviewer as a delimited payload"
+assert_contains "$kn_prompt" "channel.txt must stay one word" "the hottest fact survives the cap although it is the oldest"
+assert_contains "$kn_prompt" "channel.txt filler 12" "the newest facts fill the rest of the cap"
+case "$kn_prompt" in *"channel.txt filler 01 "*) fail "past the cap the oldest cold fact is cut" ;; esac
+assert_contains "$kn_prompt" "(+1 cut at the cap of 12 - the full set is in $kn_record)" "the cut is counted and the record named"
+case "$kn_prompt" in *"file.txt is read by nothing"*) fail "a fact about an unchanged file stays out of the prompt" ;; esac
+case "$kn_prompt" in *"opens channel.txt first"*) fail "a command-provenance fact names no file to match the diff against" ;; esac
+case "$kn_prompt" in *"was once JSON"*) fail "superseded history is never offered as knowledge" ;; esac
+rm -f "$kn_record"
+
 # --- Story 3: dual-ref (separate E2E repo) lease + cleanup -------------------
 # A qa profile carrying an e2e block makes the facade lease a SECOND worktree
 # at the exact E2E SHA, record BOTH under the plural lease grammar, name the

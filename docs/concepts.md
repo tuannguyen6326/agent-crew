@@ -205,7 +205,7 @@ Owners: [`AGENTS.md`](../AGENTS.md) section 2, `src/brief.ts` header, [`docs/bac
 ## The knowledge loop
 
 Learning happens at landing, never deferred to a manual debrief.
-- Repo knowledge: a fact verified about a codebase goes to `records/repo-knowledge/<project>.md` via `bin/ac-know.sh add`, with provenance, so the next family reads it instead of re-deriving it.
+- Repo knowledge: a fact verified about a codebase goes to `records/repo-knowledge/<project>.md` via `bin/ac-know.sh add`, with provenance, so the next family reads it instead of re-deriving it, and a code review of a diff changing the cited file is handed it.
 - Learnings ledger: a method lesson goes under `## Pending` in `records/learnings.md` via `bin/ac-learn.sh note`; crewmate `## Lessons` lines are folded verbatim.
 - Learning DISTILL: a keyed `bin/ac-learn.sh tick` per landing advances a cadence, and at the `config/learn-every` crossing a Learning run distills Pending lessons into the always-loaded `CREWMATE-learned.md` layer or learned skills.
 - Scenes: `bin/ac-scene.sh` keeps one consolidated topic file per subject between raw facts and the always-loaded layer, so a topic restores in one read.
