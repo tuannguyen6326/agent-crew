@@ -34,6 +34,7 @@ Write the investigation brief so the crewmate cannot return a plausible guess. R
    - the visible symptom (what the report actually observed).
 4. Compare the failing path against a proven path where the intended behavior works, and inspect the earliest meaningful divergence in input, state, timing, dependency, or control flow.
 5. Inspect relevant history, blame, migrations, or prior implementations when they can explain the intended invariant.
+   Answer from the record: quote what the authors wrote in the introducing commit, its PR discussion and each later change, label your own inference as inference, and say so when the record never states why - a silent record is a finding, not a gap to fill with a plausible story.
 6. Name a leading causal explanation as the smallest practical counterfactual - the minimal change that would have prevented the symptom.
 7. Seek disconfirming evidence for that explanation and retain contradictory results rather than discarding them.
 
@@ -44,7 +45,7 @@ Accept a diagnosis as implementation-ready only when it:
 - carries reproduction evidence (or the representative-path substitute with its stated limits);
 - keeps trigger, masking-or-exposing condition, and symptom distinct;
 - shows the failing-versus-proven-path comparison and the earliest divergence;
-- cites the relevant history that fixes the intended invariant;
+- cites the relevant history that fixes the intended invariant, quoting the authors' own words or stating that the record is silent;
 - states the counterfactual and the falsification check it survived;
 - distinguishes observed facts, supported inference, hypotheses, and unresolved uncertainty.
 
