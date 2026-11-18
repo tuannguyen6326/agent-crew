@@ -101,7 +101,7 @@ test("arrivalWait spawns ac_claude_last_typed_turn's jq program byte for byte", 
 const turn = (content: unknown): string =>
   `${JSON.stringify({ type: "user", promptSource: "typed", origin: { kind: "human" }, message: { role: "user", content } })}\n`;
 
-test("arrivalWait is ac_arrival_wait: its verdict, the arrived text it hands back, and the reads it paces, on every transcript shape", () => {
+test("arrivalWait is ac_arrival_wait: its verdict, the arrived text it hands back, and the reads it paces, on every transcript shape this row set exercises (the mid-turn queue-operation carve-out has no bash twin to differ against - tests/sh/ac-send.test.sh's own section 8b owns it)", () => {
   const root = dir("root");
   const at = (p: string, body: string): void => {
     mkdirSync(join(root, p, ".."), { recursive: true });
