@@ -268,6 +268,14 @@ case "$(cat "$FAKE_ORCA/terminals/term1.in")" in
 esac
 : >"$FAKE_ORCA/terminals/term1.in"
 
+run_backend orca 'backend_send_key o1 Down' >/dev/null
+down="$(printf '\033[B')"
+case "$(cat "$FAKE_ORCA/terminals/term1.in")" in
+  *"$down"*) ;;
+  *) fail "Down must reach the composer as the raw down-arrow escape, never the literal characters D-o-w-n" ;;
+esac
+: >"$FAKE_ORCA/terminals/term1.in"
+
 run_backend orca 'backend_send_key_pane term1 Enter' >/dev/null
 assert_fails run_backend orca 'backend_send_key_pane "" Enter'
 
@@ -479,6 +487,21 @@ printf 'codex-trust-prompt\n' >"$FAKE_ORCA/terminals/term1.dialog"
 : >"$FAKE_ORCA/log"
 run_backend orca 'backend_startup_dialogs o1 codex'
 assert_eq "$(grep -c -- '--enter' "$FAKE_ORCA/log")" "1" "an unnamed dialog gets the blind Enter once"
+# claude's own startup trust dialog (a brand-new project's own untrusted
+# worktree) has no `.reason` orca can name - agentWait carries no reason at
+# all, unlike codex's prompts - so it reads as the SAME "unnamed" case 2, and
+# the registry's two-key answer (Down then Enter: the default option is
+# "No, exit", the WRONG one) must both be pressed, in order, exactly once.
+touch "$FAKE_ORCA/terminals/term1.agentwait"
+: >"$FAKE_ORCA/log"
+run_backend orca 'backend_startup_dialogs o1 claude'
+down="$(printf '\033[B')"
+case "$(cat "$FAKE_ORCA/log")" in
+  *"--text $down"*"--enter"*) ;;
+  *) fail "claude's unnamed trust dialog must get a raw Down-arrow escape, THEN Enter (got: $(cat "$FAKE_ORCA/log"))" ;;
+esac
+assert_eq "$(grep -c -- '--enter' "$FAKE_ORCA/log")" "1" "...and only one Enter, not a second blind press"
+rm -f "$FAKE_ORCA/terminals/term1.agentwait"
 # A harness with no registry key and nothing pending types nothing.
 : >"$FAKE_ORCA/log"
 run_backend orca 'backend_startup_dialogs o1 claude'

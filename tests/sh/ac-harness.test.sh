@@ -54,9 +54,9 @@ assert_eq "$(lib "ac_harness_pane_arm codex")" "crewmate" "codex arms through th
 assert_eq "$(lib "ac_harness_pane_arm opencode")" "crewmate" "opencode arms through the crewmate contract"
 lib "ac_harness_pane_arm fake" 2>/dev/null && fail "an unverified harness gets no interactive arm"
 
-# --- startup key: codex's dialog Enter, nothing anywhere else ----------------
+# --- startup key: codex's dialog Enter, claude's Down+Enter, nothing else ----
 assert_eq "$(lib "ac_harness_startup_key codex")" "Enter" "codex's startup dialog takes a bare Enter"
-assert_eq "$(lib "ac_harness_startup_key claude")" "" "claude has no startup dialog"
+assert_eq "$(lib "ac_harness_startup_key claude")" "Down Enter" "claude's trust dialog defaults to the wrong option - Down then Enter picks 'Yes, I trust this folder'"
 assert_eq "$(lib "ac_harness_startup_key opencode")" "" "opencode has no startup dialog"
 assert_eq "$(lib "ac_harness_startup_key someharness")" "" "an unknown harness gets no blind keypress"
 

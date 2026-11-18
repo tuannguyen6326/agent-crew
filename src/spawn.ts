@@ -416,11 +416,49 @@
 // consequences the fleet
 // owns: answering PERSISTS `[projects."<repo-root>"] trust_level = "trusted"`
 // into the host's ~/.codex/config.toml (so the fleet auto-trusts the repo it
-// spawned into - the same posture as claude's --permission-mode auto), and a
-// green codex spawn on a host that already carries that entry proves nothing
-// about a fresh one. `-c projects."<root>".trust_level="trusted"` was tried
-// first and REFUTED: codex's trust gate does not consult -c in either direction
-// (evidence: .agents/skills/harness-operations/references/harness-facts.md).
+// spawned into), and a green codex spawn on a host that already carries that
+// entry proves nothing about a fresh one. `-c projects."<root>".trust_level="trusted"`
+// was tried first and REFUTED: codex's trust gate does not consult -c in
+// either direction (evidence: .agents/skills/harness-operations/references/harness-facts.md).
+//
+// THE CLAUDE STARTUP-DIALOG ANSWER (the authoritative contract; evidence:
+// data/claude-spawn-trust-dialog-new-folder/probe-evidence.md, a bounded live
+// probe, and harness-facts.md's claude STARTUP TRUST DIALOG bullet). claude's
+// `--permission-mode auto` (the built-in launch flag above) answers routine
+// per-TOOL permission prompts only - it does NOT cover the SEPARATE, one-time
+// WORKSPACE trust dialog ("Quick safety check: Is this a project you created
+// or one you trust?", options "No, exit" / "Yes, I trust this folder") that a
+// never-before-trusted project's first claude launch opens on, before its
+// composer exists, exactly like codex's own trust dialog - so the comment
+// above this one no longer claims `--permission-mode auto` as a reason claude
+// needs nothing here; it does not reach this dialog at all. Unlike codex's,
+// claude's default-highlighted option is the WRONG one - a bare Enter confirms
+// "No, exit" and the process quits - so `ac_harness_startup_key("claude")`
+// answers TWO presses, `Down` then `Enter`, moving the highlight to "Yes, I
+// trust this folder" before confirming it. Under the orca backend this
+// dialog's `agentWait` carries NO `.reason` (unlike codex's named update/hooks
+// prompts), so `backend_dialog_answer_pane_orca` already classifies it as the
+// SAME "a dialog the driver cannot name" case codex's own unnamed dialogs
+// take - no new classification was added, only the registry's answer for
+// `claude` and a raw down-arrow escape case in `orca_send_key_pane` (a bare
+// `Down` as literal text would do nothing; a bare Enter would be the WRONG
+// choice here, the opposite of codex). `ac_startup_dialogs`/`startupDialogs`
+// send a registry key's space-separated tokens in order, one call each, with
+// no delay required between them (measured). TRUST PERSISTS PER REPOSITORY,
+// not per worktree (the opposite of codex's exact-path keying, also probed
+// live): answering it writes `<CLAUDE_CONFIG_DIR>/.claude.json`'s
+// `projects["<repo-root>"].hasTrustDialogAccepted = true`, keyed to the git
+// repository's root rather than the literal cwd, so EVERY worktree (and the
+// main checkout) of that repository inherits the same answer forever once any
+// ONE of them answers it - this dialog is a one-time hazard per brand-new
+// PROJECT, not a recurring one per worktree, which is exactly why pooled or
+// previously-spawned-into projects never hit it. Sending the two keys
+// unconditionally on every built-in claude launch is still correct (mirrors
+// the codex precedent): on an already-trusted project they land on an empty,
+// already-ready composer and are a no-op (measured - neither key types a
+// character nor submits a blank line). A CUSTOM config/launch-claude template
+// gets NEITHER key: its TUI is unknown, the same rule codex's Enter and the
+// '/effort ultracode' line already follow.
 //
 // THE COMPOSER-READY OBSERVATION (the authoritative contract). Between the
 // came-up gate above and the FIRST thing typed after it (the '/effort

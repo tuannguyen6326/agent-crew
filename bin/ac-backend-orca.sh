@@ -569,11 +569,16 @@ backend_send_line_pane_orca() {
 orca_send_key_pane() {
   # Key delivery goes straight to the PTY, no focus step. Enter is the bare
   # `--enter` flag (measured: submits the composer, empty or not); Escape is
-  # the raw ESC byte as text (measured); C-c is `--interrupt` (measured).
+  # the raw ESC byte as text (measured); C-c is `--interrupt` (measured);
+  # Down is the raw ANSI down-arrow escape as text (measured: moves claude's
+  # trust-dialog highlight - harness-facts.md, claude STARTUP TRUST DIALOG) -
+  # every other name falls to the default and is typed as literal characters,
+  # which a named arrow key must never do.
   local pane="$1" key="$2"
   case "$key" in
     Enter|enter) orca_json terminal send --terminal "$pane" --enter ;;
     Escape|escape|Esc|esc) orca_json terminal send --terminal "$pane" --text "$(printf '\033')" ;;
+    Down|down) orca_json terminal send --terminal "$pane" --text "$(printf '\033[B')" ;;
     C-c|c-c|ctrl+c|Ctrl+C) orca_json terminal send --terminal "$pane" --interrupt ;;
     *) orca_json terminal send --terminal "$pane" --text "$key" ;;
   esac >/dev/null 2>&1
