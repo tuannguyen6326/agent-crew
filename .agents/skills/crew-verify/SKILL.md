@@ -50,6 +50,12 @@ TARGET_REF=<the recorded base sha or ref>
 its own command line; `AC_CREW_ID` is set in a crewmate's session, and a solo
 session passes its slice id as `--caller` instead.)
 
+Add `--repro` when the brief or the captain asks for reproduced review: the
+reviewer then runs one minimal reproduction per runtime finding, and a
+correctness/regression/data-loss fix it could not reproduce arrives as an
+advisory marked `repro_floored` instead of a fix.
+Pass it on EVERY round of that family, or the next round reviews without it.
+
 FOREGROUND is not a style preference.
 A harness's `run_in_background` shell is the harness's to kill - Claude Code
 kills one under host memory pressure with the words "stopped because the

@@ -6,12 +6,22 @@
 // Usage:
 //   ac-verify.sh codereview --repo DIR --ref REF --family ID --caller ID
 //     --base REF --intent FILE --output FILE [--history FILE] [--owner ID]
-//     [--harness H [--model M] [--effort E]]
+//     [--harness H [--model M] [--effort E]] [--repro]
 //   ac-verify.sh qa --repo DIR --ref REF --family ID --caller ID
 //     --brief FILE --output FILE --evidence-dir DIR --report ABS
 //     [--history FILE] [--owner ID] [--profile FILE]
 //     [--harness H [--model M] [--effort E]]
-// Every flag refuses an absent or empty value (`<flag> needs a value`), and
+// --repro (codereview only, the one flag that takes no value): only a
+// reproduced runtime defect blocks. The prompt trades "run nothing" for one
+// minimal reproduction per correctness/regression/data-loss finding, written
+// under the lease's gitignored .crew/repro/, and after the shared normalizer
+// such a fix finding without a non-empty repro.command and repro.observed is
+// floored to no-op with `repro_floored: true` - a static reading the reviewer
+// could not make fail stays visible as an advisory but buys no fix round.
+// Security and requirement findings are exempt: neither is reliably shown by
+// one small run. The caller passes it on every round of a family it chose
+// it for, since a round's prompt and floor read only this flag.
+// Every other flag refuses an absent or empty value (`<flag> needs a value`), and
 // AC_VERIFY_TIMEOUT, AC_VERIFY_START_TIMEOUT, AC_VERIFY_CORRECTION_TIMEOUT and
 // AC_VERIFY_SCOUT_TIMEOUT must be non-negative integers without leading zeros,
 // both refused before anything is leased.
@@ -1338,6 +1348,14 @@ const REJECT_WHY_JQ = `
       `;
 const CITE_JQ = `.findings[] | select(.action == "fix") | select((.file // "") != "")
                         | "\\(.id // "unknown")\\u001f\\(.file)\\u001f\\(.line // "")"`;
+const REPRO_FLOOR_JQ = `map(((.class // "") | tostring) as $c
+     | if .action == "fix"
+         and (["correctness","regression","data-loss"] | index($c)) != null
+         and ((.repro | type) != "object"
+              or ((.repro.command // "") | tostring | test("\\\\S") | not)
+              or ((.repro.observed // "") | tostring | test("\\\\S") | not))
+       then .action = "no-op" | .repro_floored = true
+       else . end)`;
 const RESULT_JQ = `
       .findings = $findings[0]
       | .reviewed_ref = $ref
@@ -1384,7 +1402,15 @@ Validation errors: ${v.why}
 ${v.text}
 -----END REJECTED VERDICT-----
 `;
-const codereviewPrompt = (v: { mainRepo: string; sha: string; baseSha: string; roomSnapshot: string; roomRulings: string; evidence: string; scopeReview: string; scopeDuty: string; intentText: string }): string => `You are an INDEPENDENT adversarial code reviewer. Review only; never edit,
+const NO_RUN_DUTY = "do not run tests, lint, builds, or type checks.";
+const REPRO_DUTY = `do not run the test suite, lint, builds, or type checks. REPRO MODE: for each
+correctness, regression or data-loss finding, write and run ONE minimal
+reproduction at this exact ref - files only under .crew/repro/ in this
+worktree, never a tracked path - and attach it to the finding as
+repro={"command":"<what you ran>","observed":"<the failure you saw>"}. Such a
+fix finding without a repro is floored to an advisory no-op: what you could
+not reproduce does not block.`;
+const codereviewPrompt = (v: { mainRepo: string; sha: string; baseSha: string; roomSnapshot: string; roomRulings: string; evidence: string; scopeReview: string; scopeDuty: string; intentText: string; runDuty: string }): string => `You are an INDEPENDENT adversarial code reviewer. Review only; never edit,
 commit, push, call ac-done, or access production.
 Search only this worktree and the repository it was cut from: \`find /\`,
 \`mdfind /\` and any host-wide search are forbidden, and -maxdepth/-xdev does
@@ -1414,7 +1440,7 @@ ${v.scopeDuty}
 Assess risky-behavior coverage, counting only tests whose expected values come
 from the brief, a spec or a worked example - never recomputed by the code under
 test or checked against its own mocks;
-do not run tests, lint, builds, or type checks.
+${v.runDuty}
 Ignore pending test/document/lint/push/PR/CI
 outcomes; later gates own them.
 Read the task brief and named artifacts above - the accepted requirements and
@@ -1627,6 +1653,10 @@ async function main(argv: string[]): Promise<void> {
   const FLAGS = ["--repo", "--ref", "--family", "--caller", "--owner", "--output", "--history", "--base", "--intent", "--brief", "--evidence-dir", "--profile", "--report", "--harness", "--model", "--effort"];
   for (let i = 1; i < argv.length; i++) {
     const a = b8(argv[i]!);
+    if (a === "--repro") {
+      v.repro = "1";
+      continue;
+    }
     if (!FLAGS.includes(a)) fail(`unknown argument: ${a}`);
     const val = argv[i + 1] === undefined ? "" : b8(argv[i + 1]!);
     if (val === "") fail(`${a} needs a value`);
@@ -1652,6 +1682,7 @@ async function main(argv: string[]): Promise<void> {
   const harness = get("harness");
   const model = get("model");
   const effort = get("effort");
+  const repro = get("repro") !== "";
   S.ref = ref;
   S.output = output0;
   S.report = report;
@@ -1671,7 +1702,7 @@ async function main(argv: string[]): Promise<void> {
   } else {
     if (!(isFile(brief) && evidenceDir !== "" && report !== "")) fail("qa requires an existing --brief FILE, --evidence-dir DIR, and --report ABS");
     if (!report.startsWith("/")) fail(`qa --report must be an absolute path: ${report}`);
-    if (base !== "" || intent !== "") fail("qa does not accept codereview-only options");
+    if (base !== "" || intent !== "" || repro) fail("qa does not accept codereview-only options");
     if ((model !== "" || effort !== "") && harness === "") fail("qa --model/--effort require the routed atomic --harness profile");
     if (profile !== "" && !isFile(profile)) fail(`qa --profile names a file that does not exist: ${profile}`);
   }
@@ -1821,7 +1852,7 @@ correctness/security/data-loss bomb. Never review HEAD, the working tree, or a
 three-dot range. Still check every accepted requirement and gate decision the
 fix delta touches.`;
     }
-    let p = codereviewPrompt({ mainRepo: S.mainRepo, sha, baseSha, roomSnapshot, roomRulings, evidence, scopeReview, scopeDuty, intentText });
+    let p = codereviewPrompt({ mainRepo: S.mainRepo, sha, baseSha, roomSnapshot, roomRulings, evidence, scopeReview, scopeDuty, intentText, runDuty: repro ? REPRO_DUTY : NO_RUN_DUTY });
     if (history !== "") {
       p += historyBlock({ historyText: subst(readText(history) ?? "") });
       const ids = jqStr(["-r", 'join(" ")'], priorOpen, "ignore");
@@ -2285,7 +2316,12 @@ fix delta touches.`;
     }
     const findings = `${roundDir}/findings.json`;
     const fj = jqStr(["-c", ".findings"], json);
-    const norm = findingsNormalize(findings, fsPath(fj.out));
+    let norm = findingsNormalize(findings, fsPath(fj.out));
+    if (repro && fj.status === 0 && norm === 0) {
+      const floored = jqFile(["-c", REPRO_FLOOR_JQ, findings]);
+      norm = floored.status;
+      if (norm === 0) writeOrExit(findings, floored.out);
+    }
     if (fj.status !== 0 || norm !== 0) {
       rmSync(fsPath(S.outputTmp), { force: true });
       dieReaped(`verifier ${id} findings could not be normalized; inspect ${roundDir}`);
