@@ -355,6 +355,49 @@ assert_contains "$out" "FLAG afterp: registered but projects/afterp is absent" \
   "every registry line after an invalid UTF-8 byte is audited"
 printf '%s\n' "$proj_before" >"$records/projects.md"
 
+# --- knowledge: facts citing a vanished file (PROPOSE ONLY) ------------------
+# A fact whose cited file was deleted after it was recorded can never match a
+# diff again, so it only costs whoever reads the record; Curate surfaces it
+# with a retire line that runs as printed, and retires nothing itself.
+kp="$AC_HOME/projects/kp"
+git init -q -b main "$kp"
+git -C "$kp" config user.email t@t
+git -C "$kp" config user.name t
+printf 'kept\n' >"$kp/kept.txt"
+printf 'gone\n' >"$kp/gone.txt"
+git -C "$kp" add -A
+git -C "$kp" commit -qm base
+kp_at="$(git -C "$kp" rev-parse HEAD)"
+git -C "$kp" rm -q gone.txt
+printf 'kept, edited\n' >"$kp/kept.txt"
+git -C "$kp" commit -qam "drop gone.txt"
+mkdir -p "$records/repo-knowledge"
+cat >"$records/repo-knowledge/kp.md" <<KREC
+# Repo knowledge: kp
+
+- fact gone.txt's loader trims trailing spaces | src: file:gone.txt:1 | at: $kp_at 2026-11-01 | by: kfam
+- fact kept.txt is read once at boot | src: file:kept.txt:1 | at: $kp_at 2026-11-01 | by: kfam
+
+## Superseded
+
+KREC
+printf '# Projects\n\n- kp [local-only] - knowledge fixture (added 2026-11-01)\n' >"$records/projects.md"
+krec_before="$(cat "$records/repo-knowledge/kp.md")"
+out="$("$BIN/ac-curate.sh" knowledge --apply)"
+assert_eq "$(cat "$records/repo-knowledge/kp.md")" "$krec_before" "the knowledge audit is propose-only (byte-identical even with --apply)"
+assert_contains "$out" "FLAG kp: - fact gone.txt's loader trims trailing spaces" "a fact whose cited file was deleted is surfaced"
+case "$out" in *"FLAG kp: - fact kept.txt"*) fail "a fact whose file merely changed is never proposed for retirement" ;; esac
+retire_line="$(printf '%s\n' "$out" | sed -n 's/^ *retire: //p')"
+[ -n "$retire_line" ] || fail "the flag carries a retire line"
+(cd "$kp" && eval "$retire_line") >/dev/null || fail "the printed retire line runs as printed: $retire_line"
+case "$(sed -n '/^## Superseded/,$p' "$records/repo-knowledge/kp.md")" in
+  *"gone.txt's loader trims trailing spaces"*) ;;
+  *) fail "running the retire line moves the fact under Superseded" ;;
+esac
+assert_contains "$("$BIN/ac-curate.sh" knowledge)" "ok: no live fact cites a vanished file" "a pruned record reads clean"
+rm -rf "$kp" "$records/repo-knowledge"
+printf '%s\n' "$proj_before" >"$records/projects.md"
+
 # --- run: automatic by default; --dry-run is byte-identical ------------------
 
 gate_stub="$TMP/curate-gate"
@@ -1058,7 +1101,7 @@ xwithout() {  # xwithout <tool> - the leg's PATH with every dir holding <tool> m
   done
   printf '%s\n' "$XSTUBS:$out"
 }
-XUSAGE='ERROR: usage: ac-curate.sh learnings|captain [--apply]|backlog [--apply]|projects|skills-audit|skills-consolidate [--apply]|run [--dry-run]'
+XUSAGE='ERROR: usage: ac-curate.sh learnings|captain [--apply]|backlog [--apply]|projects|knowledge|skills-audit|skills-consolidate [--apply]|run [--dry-run]'
 XNOHOME='ERROR: AC_HOME is not set - set AC_HOME=<fleet home> (the directory holding state/ data/ records/ config/ projects/); the distro checkout is not one'
 XCAP='# Captain notes
 

@@ -273,7 +273,7 @@ Learning (`src/learn.ts`, started by `bin/ac-learn.sh`):
 - `run` snapshots the retro window into `data/learning-<epoch>/` and launches a fresh `panes.learning` scout that proposes and never mutates.
 - Each candidate becomes an immutable plan plus input manifest, and only a validated maintenance-gate `continue` authorizes its apply.
 
-Each complete Learning run ticks Curate, and at `config/curate-every` (default 5) Learning runs `bin/ac-curate.sh run`, which archives retired captain rules and old Done rows verbatim and gates anything non-deterministic.
+Each complete Learning run ticks Curate, and at `config/curate-every` (default 5) Learning runs `bin/ac-curate.sh run`, which archives retired captain rules and old Done rows verbatim, flags repo-knowledge facts whose cited file was deleted, and gates anything non-deterministic.
 Neither has a cron or daemon.
 Both mutate knowledge only through the maintenance transaction (`maintenanceApply` in `src/lib-curate.ts`) - a fleet lock, a pre-write backup, a closed schema, staged hashes, atomic replacement and a journal under `state/.maintenance-transactions/` - and the receipt boundary (`receiptValidate` in `src/maintenance-receipt.ts`) re-derives every hash rather than trust a writer.
 `ac-learn.sh maintenance status|resume|abandon` settles a held transaction.

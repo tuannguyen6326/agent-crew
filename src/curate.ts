@@ -7,6 +7,7 @@
 //   ac-curate.sh captain [--apply]      # compatibility targeted mutation
 //   ac-curate.sh backlog [--apply]      # compatibility targeted mutation
 //   ac-curate.sh projects               # correctness-audit (PROPOSE ONLY)
+//   ac-curate.sh knowledge              # facts citing a vanished file (PROPOSE ONLY)
 //   ac-curate.sh skills-audit           # skill overlap + stale (PROPOSE ONLY)
 //   ac-curate.sh skills-consolidate [--apply]  # diagnostic; --apply refuses
 //   ac-curate.sh run [--dry-run]        # automatic policy + gated maintenance
@@ -78,7 +79,7 @@
 // AC_TEST_HOOKS=1 AND an executable AC_CURATE_SNAPSHOT_HOOK, the hook gets
 // the records dir (its status ignored) - double-keyed, so one inherited
 // variable cannot make a production run exec a file. Then the learnings,
-// projects and skills-audit passes on the live home, and the captain and
+// projects, knowledge and skills-audit passes on the live home, and the captain and
 // backlog passes (apply, no backup line) on the shadow into report.md, whose
 // shadow paths are rewritten to the live records (NULs dropped, one trailing
 // LF) and printed. Each shadow file that differs from its live record is
@@ -94,6 +95,18 @@
 // room through <this bin>/ac-room.sh. Unresolved, the run ends `== curate pass
 // open ... ==`; else the cadence resets (a newer generation or a busy lock is
 // the run's WARN) and it ends `== curate pass complete ... ==`.
+//
+// `knowledge` runs `<this bin>/ac-know.sh verify` over every registered
+// project that is a git repo and FLAGs each live fact verify reads `SUSPECT
+// (<path> no longer exists)` - a cited file deleted after the fact was recorded,
+// which can never match a diff again (src/verify.ts REPO KNOWLEDGE THE DIFF
+// TOUCHES). Each FLAG carries a `retire:` line that runs as printed (family
+// `curate`, the `git ls-tree HEAD -- <path>` absence as provenance, the
+// subject's first 60 characters as the quote). It retires nothing: a fact about
+// a file that merely moved may still hold, so retiring stays a chief call. A
+// file that only CHANGED is never flagged. verify refreshes its own
+// state/.know-verify-<name>.meta stamp, which is why `run --dry-run` skips this
+// pass.
 //
 // `learnings` validates each canonical `- [distilled -> <name>]` row against the
 // body its OWN first link names, resolved relative to the ledger's directory -
@@ -831,6 +844,33 @@ function curateProjects(): void {
   }
   if (flags === 0) out("  ok: every registered project line verified against reality (no mismatches)\n");
   else out(`  ${flags} mismatch(es) proposed with evidence - NO mutation (projects.md audit is propose-only)\n`);
+}
+
+// --- knowledge: facts citing a vanished file ----------------------------------
+
+const sq = (s: string): string => `'${s.replace(/'/g, "'\\''")}'`;
+
+function curateKnowledge(): void {
+  const h = liveHome();
+  const know = b8(`${STARTED_BIN}/ac-know.sh`);
+  out("== repo-knowledge: facts citing a vanished file (propose-only; retiring stays a chief call) ==\n");
+  let flags = 0;
+  for (const wire of registryLines(h)) {
+    const name = tabFields(wire, 3)[1]!;
+    const pd = `${sub(h, "projects")}/${name}`;
+    if (spawn(["git", "-C", pd, "rev-parse", "--git-dir"], "ignore", "ignore").status !== 0) continue;
+    for (const l of spawn([know, "verify", "--home", h, "--repo", pd], "pipe", "ignore").out.split("\n")) {
+      const m = /^SUSPECT (- fact (.*?) \| src: .*) {2}\((.+) no longer exists\)$/.exec(l);
+      if (m === null) continue;
+      const [, line = "", subject = "", path = ""] = m;
+      const quote = b8(u8(subject).slice(0, 60));
+      flags++;
+      out(`  FLAG ${name}: ${line}  (${path} no longer exists)\n`);
+      out(`    retire: ${know} retire --home ${sq(h)} --repo ${sq(pd)} --family curate --src-cmd ${sq(`git ls-tree HEAD -- ${path}`)} --quote ${sq(quote)} --why ${sq(`${path} no longer exists at HEAD`)}\n`);
+    }
+  }
+  if (flags === 0) out("  ok: no live fact cites a vanished file\n");
+  else out(`  ${flags} fact(s) cite a vanished file - NO mutation (retiring is a chief call)\n`);
 }
 
 // --- skills: the learned store, its frontmatter, staleness ---------------------
@@ -1763,6 +1803,7 @@ function cmdRun(dryRun: boolean): void {
   out("== records-wide CURATE pass (automatic deterministic apply) ==\n");
   curateLearnings();
   curateProjects();
+  curateKnowledge();
   curateSkillsAudit();
   let fd: number;
   try {
@@ -1863,7 +1904,7 @@ function executable(p: string): boolean {
 
 // --- dispatch ----------------------------------------------------------------------
 
-const USAGE = "usage: ac-curate.sh learnings|captain [--apply]|backlog [--apply]|projects|skills-audit|skills-consolidate [--apply]|run [--dry-run]";
+const USAGE = "usage: ac-curate.sh learnings|captain [--apply]|backlog [--apply]|projects|knowledge|skills-audit|skills-consolidate [--apply]|run [--dry-run]";
 
 function main(args: string[]): number {
   const [cmd = "", ...flags] = args;
@@ -1886,6 +1927,9 @@ function main(args: string[]): number {
       return 0;
     case "projects":
       curateProjects();
+      return 0;
+    case "knowledge":
+      curateKnowledge();
       return 0;
     case "skills-audit":
       curateSkillsAudit();
