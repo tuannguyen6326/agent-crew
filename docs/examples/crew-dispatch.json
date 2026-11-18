@@ -9,6 +9,11 @@
       "when": "The task is a big or ambiguous multi-file feature, a risky refactor, or work holding many moving parts.",
       "use": { "harness": "claude", "model": "claude-sonnet-5" },
       "why": "Strong coding profile for broad design and implementation work."
+    },
+    {
+      "when": "A read-only fan-out inside one task: several independent angles on the same code (multi-angle review, parallel research) with no file edits by the parallel workers.",
+      "use": { "harness": "claude-teams", "model": "opus" },
+      "why": "Agent Teams teammates share the crewmate's worktree and get no AC_* env, so they suit read-only angles while the leader keeps every write."
     }
   ],
   "default": { "harness": "claude" },
