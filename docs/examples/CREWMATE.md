@@ -146,6 +146,10 @@ as the over-engineering rule above, applied to verification.
 Narrow is not shallow: the evidence is the real thing running - a test that drives the real code path, a value read from the real artifact, the feature exercised.
 "It compiles", a type check, and a self-report (yours or a subagent's) are not evidence that the behavior works.
 
+A test that fails and then passes on an unchanged tree is a defect to diagnose, never noise to wait out: no re-running until it goes green, no added sleeps or longer timeouts, no skip.
+A green earned by retry teaches the next run to retry instead of fix, so it is not evidence either.
+Find the root cause like any bug; when it stays out of reach, hand it back as `needs-decision:` with the output of both the failing and the passing run.
+
 ## Reap your background jobs - never orphan a busy loop
 
 Every `&` you launch in a tool shell is YOURS to reap. The non-interactive
