@@ -589,6 +589,21 @@ test("backendWindowNew orca: worktree panes under their node, home panes in thei
   same("a home pane at one node not named after the fleet", { ...HOMEPANE, seed: (s) => put(s, "stub/worktree-list.out", nodes(["r::@S/home", "ac homely"])) });
   same("a home pane whose node list fails", { ...HOMEPANE, seed: (s) => put(s, "stub/worktree-list.rc", "1\n") });
   same("a home pane, UTF-8 node names", { ...HOMEPANE, lc: "en_US.UTF-8", seed: (s) => put(s, "stub/worktree-list.out", nodes(["r::@S/home", "ac caf\xc3\xa9"], ["r::@S/home::workspace:w2", "caf\xc3\xa9/home"])) });
+  // The home itself resolves nothing (default), but its OWN parent is
+  // shared by several Orca entries (selector_ambiguous, measured on the
+  // real CLI) - that still counts as a registered ancestor, so the walk
+  // stops there instead of overshooting past it to an outer ancestor that
+  // only "resolves" because nothing claimed it either.
+  const ambigAnc = same("a home whose ancestor is ambiguous resolves to it, pinning the node named after the fleet", {
+    ...HOMEPANE,
+    seed: (s) => (
+      put(s, "stub/worktree-show.2.out", '{"ok":false,"error":{"code":"selector_ambiguous","message":"selector_ambiguous"}}\n'),
+      put(s, "stub/worktree-show.2.rc", "1\n"),
+      put(s, "stub/worktree-list.out", '{"ok":true,"result":{"worktrees":[{"id":"r::@S","path":"@S","displayName":"ac other"},{"id":"r::@S::workspace:w2","path":"@S","displayName":"ac other/home"}]}}\n')
+    ),
+  });
+  expect(ambigAnc.o.err).toContain("orca-node: pinned id:r::S::workspace:w2 (ac other/home)\n");
+  expect(ambigAnc.o.world).toContain('home/config/orca-node 644 = "id:r::S::workspace:w2\\n"');
   same("a home pane joins its family tab by split", { ...HOMEPANE, seed: famTab });
   same("a family tab with no live handle is created afresh", { ...HOMEPANE, seed: (s) => put(s, "home/state/.orca-fam-fam", "tabGone\n") });
   same("a split that fails", { ...HOMEPANE, seed: (s) => (famTab(s), put(s, "stub/terminal-split.rc", "1\n")) });

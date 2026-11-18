@@ -3586,9 +3586,17 @@ export function harnessStartupKey(h: string): string {
 }
 
 // orca_resolve_group's twin: the nearest ancestor of <path> (itself first)
-// that `orca worktree show --worktree path:<p>` resolves, else <path>.
+// that `orca worktree show --worktree path:<p>` resolves OR reports
+// selector_ambiguous for (several entries share it - still a registered
+// ancestor, so the walk stops there instead of overshooting to the next
+// one, also unresolvable, on its way to a selector_not_found that names the
+// wrong fix). Any other failure keeps walking. Falls back to <path> when
+// nothing matches.
 function orcaResolveGroup(path: string): string {
-  for (let p = path; p !== "" && p !== "/"; p = dirname(p)) if (orcaJson(["worktree", "show", "--worktree", `path:${p}`], "inherit") !== null) return p;
+  for (let p = path; p !== "" && p !== "/"; p = dirname(p)) {
+    const out = capturedText(stage(["orca", "worktree", "show", "--worktree", `path:${p}`, "--json"], "inherit", "pipe", "ignore").out);
+    if (jqOver(["-e", '.ok == true or .error.code == "selector_ambiguous"'], out, "ignore", "ignore").status === 0) return p;
+  }
   return path;
 }
 

@@ -637,6 +637,22 @@ assert_eq "$err" "" "one entry at the path is no ambiguity - nothing warned"
 run_backend orca 'backend_kill_window fc-chief'
 rm -f "$FAKE_ORCA/worktree-list.json"
 
+# A registered ancestor can itself be the shared path (a workspace-scoped
+# entry rides the same path as the main one - the file's own top comment):
+# `worktree show` on it fails selector_ambiguous on the real CLI, which must
+# still count as registered so the walk stops there instead of overshooting
+# past it to an outer ancestor that only "resolves" because nothing claimed
+# it either.
+printf '%s\n' "$home_p" >"$FAKE_ORCA/worktree-show-ambiguous"
+wt_list "r::$home_p" "ac other" "r::$home_p::workspace:w2" "ac other/home"
+err="$(run_backend orca 'export AC_WINDOW_FAMILY=famd; backend_window_new fd-chief "$AC_HOME"' 2>&1 >/dev/null)"
+assert_eq "$(cat "$AC_HOME/config/orca-node" 2>/dev/null)" "id:r::$home_p::workspace:w2" \
+  "an ambiguous ancestor still counts as registered - the walk stops there and pins its fleet-named entry"
+assert_contains "$(cat "$FAKE_ORCA/log")" "terminal create --worktree id:r::$home_p::workspace:w2 --title crew:home/fd-chief" \
+  "the auto-pinned selector places the pane"
+run_backend orca 'backend_kill_window fd-chief'
+rm -f "$AC_HOME/config/orca-node" "$FAKE_ORCA/worktree-list.json" "$FAKE_ORCA/worktree-show-ambiguous"
+
 # A second same-family pane AT THE HOME splits into the room tab.
 run_backend orca '
   export AC_WINDOW_FAMILY=famx

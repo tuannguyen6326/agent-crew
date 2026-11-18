@@ -572,6 +572,8 @@ make_fake_orca() {
   # partial-create shape whose leak the lease must release by id).
   # worktree-list.json (the envelope `worktree list` serves; absent = no entries).
   # .ps-fails (`worktree ps` fails with an error envelope).
+  # worktree-show-ambiguous (paths, one per line, whose `worktree show`
+  # fails selector_ambiguous instead of resolving).
   # Every call appends one line to $FAKE_ORCA/log.
   export FAKE_ORCA="$TMP/fake-orca"
   mkdir -p "$FAKE_ORCA/terminals" "$TMP/stubbin"
@@ -638,11 +640,19 @@ case "${1:-}" in
     printf '{"ok":true,"result":{"runtime":{"state":"ready","reachable":true}}}\n'; exit 0 ;;
   worktree)
     # `worktree show` is the driver's cheap selector probe (every path
-    # resolves); `worktree create`/`rm` mint and remove REAL git worktrees so
-    # the orca-fleet lease flow runs end to end in tests. create mirrors the
+    # resolves, unless worktree-show-ambiguous lists it - the real CLI's
+    # selector_ambiguous when several entries share a path, measured);
+    # `worktree create`/`rm` mint and remove REAL git worktrees so the
+    # orca-fleet lease flow runs end to end in tests. create mirrors the
     # real CLI (measured): path under a workspaces dir, branch named
     # fakeuser/<name>, base ref honored.
     case "${2:-}" in
+      show)
+        wpath="${wt#path:}"
+        if [ -n "$wpath" ] && [ -f "$d/worktree-show-ambiguous" ] && grep -qxF "$wpath" "$d/worktree-show-ambiguous" 2>/dev/null; then
+          printf '{"ok":false,"error":{"code":"selector_ambiguous","message":"selector_ambiguous"}}\n'; exit 1
+        fi
+        printf '{"ok":true,"result":{"worktree":{}}}\n'; exit 0 ;;
       create)
         wrepo="" wname="" wbase=""
         j=0
