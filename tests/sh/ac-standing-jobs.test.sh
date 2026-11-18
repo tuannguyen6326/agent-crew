@@ -19,7 +19,7 @@ assert_contains "$out" "records/standing-jobs.md" "names the missing declaration
 #    cross-fleet monitor ON at :07/:37, the Slack STATUS job OFF with
 #    a dated disable note.
 cat >"$AC_HOME/records/standing-jobs.md" <<'EOF'
-- cross-fleet-monitor [on] cadence::07/:37 recreate:CronCreate a job at :07 and :37 past each hour running the cross-fleet sweep (bin/ac-fleets.sh), queueing findings into drydock's backlog
+- cross-fleet-monitor [on] cadence::07/:37 recreate:CronCreate a job at :07 and :37 past each hour running the cross-fleet sweep (bin/ac-fleets.sh), queueing findings into example-fleet's backlog
 - slack-status-30min [off] cadence:every 30 minutes recreate:CronCreate a 30-min job posting fleet STATUS to Slack (disabled 2026-07-22 - do not re-create unless TN asks again)
 EOF
 out="$("$BIN/ac-standing-jobs.sh")"
@@ -28,7 +28,7 @@ out="$("$BIN/ac-standing-jobs.sh")"
 # honest disk-unverifiable caveat all appear.
 assert_contains "$out" "cross-fleet-monitor: declared ON" "ON job reported"
 assert_contains "$out" ":07/:37" "ON job cadence reported"
-assert_contains "$out" "CronCreate a job at :07 and :37 past each hour running the cross-fleet sweep (bin/ac-fleets.sh), queueing findings into drydock's backlog" "ON job's exact re-create action reported verbatim"
+assert_contains "$out" "CronCreate a job at :07 and :37 past each hour running the cross-fleet sweep (bin/ac-fleets.sh), queueing findings into example-fleet's backlog" "ON job's exact re-create action reported verbatim"
 assert_contains "$out" "unverifiable from disk" "ON job liveness caveat is honest, not a false PRESENT claim"
 assert_contains "$out" "run CronList to confirm" "ON job tells the chief how to verify"
 

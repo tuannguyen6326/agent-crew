@@ -909,7 +909,7 @@ export interface PoolSlot {
 /**
  * Worktree pool for a home (§2.4): each projects/<repo>/.crew/slots/<n>.meta,
  * joined to state/<task>.meta `worktree=`. The projects/<repo> entry may be a
- * SYMLINK out of the container (drydock/projects/agent-crew -> ~/Work/agent-crew),
+ * SYMLINK out of the container (example-fleet/projects/agent-crew -> ~/Work/agent-crew),
  * so the real repo root is resolved before reading .crew/slots.
  */
 /** Every LOCAL branch across the home's project clones: the crew/* subset is

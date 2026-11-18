@@ -65,7 +65,7 @@
 // auto-arm, the prompt recall and this nudge - swallow that refusal into exit 0
 // before doing anything; the trace that would have shown the silence is written
 // under the home it cannot resolve, so it cannot record its own absence. A
-// drydock crewchief ran three days like that: 822 hook firings, 160 supervision
+// crewchief ran three days like that: 822 hook firings, 160 supervision
 // verdicts, every one swallowed, and the ONE loud detector left
 // (bin/ac-session-start.sh) dies on this same predicate - reminder and detector
 // fail together. Every predicate of this arm is an environment read or a git

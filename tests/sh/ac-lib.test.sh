@@ -570,8 +570,8 @@ assert_eq "$(env -u AC_HOME bash -c "set -euo pipefail; . '$nohome_root/bin/ac-l
 # BETWEEN those two rungs: a homeless caller that was told its fleet answers it,
 # so the observation tabs a crewmate opens land in ITS fleet's workspace instead
 # of the one fallback group every fleet on the box shares.
-assert_eq "$(env -u AC_HOME AC_FLEET_NAME=drydock bash -c "set -euo pipefail; . '$nohome_root/bin/ac-lib.sh'; ac_fleet_name")" \
-  "drydock" "no AC_HOME: the threaded fleet name answers"
+assert_eq "$(env -u AC_HOME AC_FLEET_NAME=example-fleet bash -c "set -euo pipefail; . '$nohome_root/bin/ac-lib.sh'; ac_fleet_name")" \
+  "example-fleet" "no AC_HOME: the threaded fleet name answers"
 assert_eq "$(env -u AC_HOME AC_FLEET_NAME= bash -c "set -euo pipefail; . '$nohome_root/bin/ac-lib.sh'; ac_fleet_name")" \
   "agent-crew" "an EMPTY threaded name is no name: the fallback still answers"
 # Zero-writes guard, scoped to the three dirs this defect class can create:

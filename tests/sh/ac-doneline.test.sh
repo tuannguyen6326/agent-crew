@@ -33,7 +33,7 @@ parse_blockers() {
   ' "$1"
 }
 
-# Real Done lines, grepped verbatim from the drydock ledger + archive (the awkward
+# Real Done lines, grepped verbatim from a fleet's ledger + archive (the awkward
 # ones), plus one section-9 Queued line to exercise epic + blocked-by extraction.
 FX="$TMP/doneshapes.md"
 cat >"$FX" <<'EOF'

@@ -690,9 +690,9 @@ esac
 # shares: the qa agent's tab in the fleet's group, the qa-watch tab it opens in
 # the shared one. What the caller cannot DERIVE it can still have been TOLD.
 : >"$HDLOG"
-env -u AC_HOME AC_FLEET_NAME=drydock PATH="$stub:$PATH" HOME="$FAKEHOME" \
+env -u AC_HOME AC_FLEET_NAME=example-fleet PATH="$stub:$PATH" HOME="$FAKEHOME" \
   "$fake/bin/ac-pane-agent.sh" run --cwd "$repo" --prompt-file "$pf" --label told >/dev/null
-assert_contains "$(cat "$HDLOG")" "AC_FLEET_NAME=drydock" \
+assert_contains "$(cat "$HDLOG")" "AC_FLEET_NAME=example-fleet" \
   "homeless but told: the name is passed on, so the pane's own tabs group there too"
 case "$(cat "$HDLOG")" in
   *"AC_HOME="*) fail "a told name must not smuggle in a fabricated home" ;;
@@ -1044,7 +1044,7 @@ assert_contains "$(cat "$XLOG")" "codex exec -s read-only --skip-git-repo-check"
 # ac-pane-agent composes and runs the form from such a cwd without erroring on
 # its own account - the stub does not run codex's real trust-check, so that
 # it also PASSES codex itself is proven separately, by a real gate run
-# (data/gate-codex-rung-broken-by-cwd/spec/ in the drydock fleet).
+# (data/gate-codex-rung-broken-by-cwd/spec/).
 nongit="$TMP/nongit-cwd"; mkdir -p "$nongit"
 : >"$HDLOG"; : >"$HDLOG.cmd"; : >"$XLOG"
 out="$(PATH="$xstub:$PATH" HOME="$FAKEHOME" "$BIN/ac-pane-agent.sh" run --cwd "$nongit" --prompt-file "$pf" --exec --harness codex --kind gate --label g1b)"
@@ -1137,7 +1137,7 @@ assert_contains "$agy_cmd" "--model Gemini 3.8 Flash (Low)" "the model name reac
 # agy's print mode has its OWN wait ceiling (--print-timeout, default 5m0s)
 # that ran out under the rung's 900s budget: the CLI then exits 0 with an
 # EMPTY stdout, and the rung reads that as "printed nothing" - 11 of 36 agy
-# lanes across the lab home died that way. The rung's timeout is the one
+# lanes across one fleet home died that way. The rung's timeout is the one
 # ceiling, so it is handed to agy in the duration form the CLI reads.
 assert_contains "$agy_cmd" "--print-timeout 900s" "agy's print-mode ceiling is the rung's own timeout, never the CLI's 5m default"
 # The stub logs every argument EXCEPT the last, which is the prompt - so a

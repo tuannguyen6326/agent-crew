@@ -43,8 +43,8 @@ git clone https://github.com/tuannguyen6326/agent-crew.git ~/Work/agent-crew
 cd ~/Work/agent-crew
 bin/ac-setup.sh          # toolchain doctor, homes container, the `ac` launcher (asks before it writes)
 source ~/.config/zsh/ac.zsh   # or the path you chose; add it to ~/.zshrc yourself
-bin/ac-fleet-new.sh lab  # asks one line per config knob, creates ~/Work/ac-homes/lab
-ac lab                   # opens the crewchief on the lab fleet
+bin/ac-fleet-new.sh example-fleet  # asks one line per config knob, creates ~/Work/ac-homes/example-fleet
+ac example-fleet                   # opens the crewchief on example-fleet
 ```
 
 Then tell the crewchief what to do, for example "add project myapp from <git url>" and then "fix the login bug in myapp".

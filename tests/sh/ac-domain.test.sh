@@ -501,8 +501,8 @@ for tok in '[mode]' '[crew-ship]' '[local-only]' '[feature-pr]'; do
   assert_contains "$out" "delivery-mode token" "R2-CR-005: $tok is caught as a delivery-mode token"
 done
 
-# R2-CR-006, REVISED by captain ruling (select at the lab session,
-# recorded in ac-homes/drydock/data/domain-view-symlinked-clones/room.md):
+# R2-CR-006, REVISED by captain ruling (recorded in a fleet's
+# data/domain-view-symlinked-clones/room.md):
 # resolution now STOPS at the fleet-clone level. A view link into
 # $AC_HOME/projects/<p> is trusted the instant it lands there, even when <p>
 # is ITSELF a symlink out to a captain checkout - the same trust ac-spawn.sh,

@@ -151,7 +151,7 @@ assert_contains "$out" "$sig" "a primary checkout carries no crew scalars, so it
 homeless "$chief" AC_CREW_ID=greet2
 assert_eq "$rc" 0 "homeless crewmate: exit 0"
 [ -z "$out" ] || fail "a crewmate is LEGITIMATELY homeless and must never be signalled (got: $out)"
-homeless "$chief" AC_FLEET_NAME=drydock AC_CREW_ID=greet2 AC_FLEET_STATE="$chief/state"
+homeless "$chief" AC_FLEET_NAME=example-fleet AC_CREW_ID=greet2 AC_FLEET_STATE="$chief/state"
 [ -z "$out" ] || fail "a fully-dressed crewmate must never be signalled (got: $out)"
 
 # (d) ...and by GEOMETRY, independently of the badge: a linked worktree is a
@@ -162,7 +162,7 @@ assert_eq "$rc" 0 "homeless linked worktree: exit 0"
 [ -z "$out" ] || fail "a linked worktree is a crewmate checkout and must never be signalled (got: $out)"
 
 #     A verification pane carries the NAME alone (ENVPIN) and no crew id.
-homeless "$chief" AC_FLEET_NAME=drydock
+homeless "$chief" AC_FLEET_NAME=example-fleet
 [ -z "$out" ] || fail "a pane given the fleet NAME instead of a home must never be signalled (got: $out)"
 
 # (e) AC_SCOPE is deliberately NOT a silencing badge, and this is the case that

@@ -564,7 +564,7 @@ delta=$(( fifty > one ? fifty - one : one - fifty ))
 
 
 # --- CITE: the mechanical usage counter (repo-knowledge-has-no-usage-signal) --
-# Measured before the verb existed: 415 of the drydock record's 487 facts
+# Measured before the verb existed: 415 of a real record's 487 facts
 # graded SUSPECT with NO signal for which to re-verify or retire first - both
 # decisions were re-argued from scratch every time. `cite` is the increment
 # path intake uses instead of bare grep: it PRINTS the entry (the read) and
@@ -653,7 +653,7 @@ assert_contains "$out" 'the pattern \d+ matches a run of digits in the parser | 
 # families verified it - the normal case for a record whose purpose is that the
 # next family does not re-derive what an earlier one proved. The guard is
 # MECHANICAL (distinctive-token overlap over the subject text, scored against
-# the SHORTER subject), calibrated on the real 454-entry drydock record where
+# the SHORTER subject), calibrated on a real 454-entry record where
 # it flags 10 entries - the shape that actually recurs, not every fact about
 # one file.
 drepo="$(make_repo duprepo)"
@@ -946,7 +946,7 @@ assert_contains "$out7" "no hit in any layer" "R6: a real miss under a zero budg
 
 # R7: the cite hand-over's phrase survives the shell. An apostrophe in the
 # subject closed the single-quoted phrase early and the line did not parse -
-# 87 of drydock's 681 live entries on 2026-09-28.
+# 87 of a real record's 681 live entries on 2026-09-28.
 radd2 "the chief's watcher beacon grace is three hundred seconds"
 hand="$(recall "chief's watcher beacon grace" | awk '/^    cite: / && /chief/ { l = $0 } END { print l }')"
 out8="$(cd "$rrepo2" && env -u AC_HOME bash -c "${hand#    cite: }" 2>&1)" \

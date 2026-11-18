@@ -55,7 +55,7 @@ room_seed() {
 # and the generated kickoff tells the new chief "Read the room first" - but
 # NOTHING checked the room actually held the order, so promote-then-ac-send left
 # a roomchief orienting on nothing and re-triaging when the order finally landed:
-# two sources of truth for one task (measured 2026-07-30 on the drydock fleet -
+# two sources of truth for one task (measured 2026-07-30 on a real fleet -
 # 54 of 272 rooms carrying a PROMOTED entry had it as their FIRST entry line).
 # Fail-CLOSED: refusing costs one command, an orderless roomchief costs a wrong
 # triage.

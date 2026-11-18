@@ -879,7 +879,7 @@ assert_contains "$out" "Curate maintenance transaction could not apply or resume
 # The passes write the report naming the shadow copy, and run rewrites it to
 # the live records. bash 3.2's ${body//pat/rep} took 140 s under C on a 226 KB
 # report and never finished under UTF-8, so Curate stalled every DISTILL that
-# called it; a drydock-size report must settle under UTF-8 well inside 60 s.
+# called it; a production-size report must settle under UTF-8 well inside 60 s.
 # Its rows name paths as real Done rows do: every `/` was a place the old
 # substitution tried every end of the body (measured: 47 KB took 29 s under
 # C with paths in its rows, 0.14 s without). A home of its own, so no
@@ -900,11 +900,11 @@ i=0
 while [ ! -e "$TMP/big.rc" ] && [ "$i" -lt 600 ]; do sleep 0.1; i=$((i + 1)); done
 if [ ! -e "$TMP/big.rc" ]; then
   kill -KILL -- "-$bigpid" 2>/dev/null || true
-  fail "a drydock-size Curate run did not finish within 60 s under en_US.UTF-8"
+  fail "a production-size Curate run did not finish within 60 s under en_US.UTF-8"
 fi
-assert_eq "$(cat "$TMP/big.rc")" "0" "the drydock-size run settles: $(tail -n 3 "$TMP/big.out")"
+assert_eq "$(cat "$TMP/big.rc")" "0" "the production-size run settles: $(tail -n 3 "$TMP/big.out")"
 bigreport="$(ls "$bighome"/data/curate-*/report.md)"
-[ "$(wc -c <"$bigreport" | tr -d ' ')" -gt 200000 ] || fail "the row's report is drydock-size (got $(wc -c <"$bigreport") bytes)"
+[ "$(wc -c <"$bigreport" | tr -d ' ')" -gt 200000 ] || fail "the row's report is production-size (got $(wc -c <"$bigreport") bytes)"
 assert_contains "$(cat "$bigreport")" "to $bighome/records/backlog-archive.md" "the big report names the live archive"
 case "$(cat "$bigreport")" in */shadow/*) fail "the big report still names the shadow copy" ;; esac
 

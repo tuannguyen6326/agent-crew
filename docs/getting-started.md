@@ -56,7 +56,7 @@ A fleet home is the directory `AC_HOME` points at: its `state/`, `data/`, `recor
 Run one fleet per domain of work.
 
 ```bash
-bin/ac-fleet-new.sh lab
+bin/ac-fleet-new.sh example-fleet
 ```
 
 It refuses to overwrite an existing home, then asks one line per knob.
@@ -83,7 +83,7 @@ Without it the tooling refuses by name, so fleet state never lands in the checko
 ## 4. Start the crewchief
 
 ```bash
-ac lab
+ac example-fleet
 ```
 
 The launcher runs your harness with its working directory set to the home and `AC_HOME` exported, inline in the current terminal (Orca-native when launched from an Orca terminal).
@@ -93,15 +93,15 @@ Useful launcher forms:
 | Command | Effect |
 |---|---|
 | `ac` | Prints usage with your fleet names. |
-| `ac lab --harness=codex` | Runs a different harness (default `claude`). |
-| `ac lab --backend=orca` | Overrides the home's `config/backend` for where the chief opens. |
-| `ac lab --solo` | Opens a solo session (section 10). |
+| `ac example-fleet --harness=codex` | Runs a different harness (default `claude`). |
+| `ac example-fleet --backend=orca` | Overrides the home's `config/backend` for where the chief opens. |
+| `ac example-fleet --solo` | Opens a solo session (section 10). |
 | `ac dashboard` | Runs the web dashboard. |
 
 Without the launcher, the equivalent is:
 
 ```bash
-cd ~/Work/ac-homes/lab && AC_HOME="$PWD" claude
+cd ~/Work/ac-homes/example-fleet && AC_HOME="$PWD" claude
 ```
 
 ## 5. Run the session-start digest
@@ -209,7 +209,7 @@ At landing the chief also records the run's lessons (`bin/ac-learn.sh note`) and
 When you want to write code yourself alongside an agent, open a solo session beside the chief:
 
 ```bash
-ac lab --solo
+ac example-fleet --solo
 ```
 
 It runs in the current terminal with `AC_SOLO=1`, never takes the chief's session lock, and runs the session-start digest read-only.

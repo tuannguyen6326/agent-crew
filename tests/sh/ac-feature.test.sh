@@ -314,7 +314,7 @@ PYEOF
 out="$("$FT" ship checkoutux proj2 --dry-run 2>&1 || true)"
 assert_contains "$out" "behind its target" "a drifted feature refuses the ship with the rebase advice"
 
-# --- feature-ship-single-pr-slot (lab-measured defect): the PR record is ONE
+# --- feature-ship-single-pr-slot (a measured defect): the PR record is ONE
 # SLOT PER REPO. Repo one's recorded url short-circuited repo two's ship into
 # "PR already recorded: <repo ONE's url>" + rc 0 - a silent success that opened
 # nothing. The record key is now pr_url_<repo>; a pre-fix bare pr_url= is dead

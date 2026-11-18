@@ -293,7 +293,7 @@ printf '%s\n' "$cml_before" >"$cml"
 printf '## 2026-07-22 - fam (chief)\n- LESSON: rebases need the pin dance.\n' >"$AC_HOME/records/learnings.md"
 # The pointer is the candidate's short `trigger:`, never its description: the
 # description is the SKILL.md's, and a full one in an always-loaded line spent
-# the 4096-byte budget (lab, 4092/4096) and read "when When ...".
+# the 4096-byte budget (measured, 4092/4096) and read "when When ...".
 pin_cand() {  # pin_cand <trigger header line or empty>
   {
     printf 'kind: skill\n'
@@ -716,7 +716,7 @@ STUB
     # F1: a real annotated shape - the date is NOT the last thing in the
     # parenthetical, AND the parenthetical is not the last thing on the line
     # either (both are the dominant real-ledger forms, per the review's
-    # frequency census of ac-homes/{drydock,lab} backlog.md).
+    # frequency census of real fleets' backlog.md files).
     printf -- '- [x] fam-annotated - real annotated shape - local main @abc1234 (merged 2026-07-16; sequential). Queue finding: n/a\n'
     # F1b: a Done line whose date group carries no verb at all must be tagged
     # `unknown`, never an invented `merged`.
@@ -2001,7 +2001,7 @@ evi_candidate() {
 evi_candidate >"$TMP/cand-evi.md"
 
 # INHERITED OFFSET: the archive declares 2 sources while the pointer claims 5 -
-# the shape every pointer with pre-frame history is in (drydock 2026-08-17: 10
+# the shape every pointer with pre-frame history is in (a real fleet, 2026-08-17: 10
 # of its 11 archived pointers). The transaction adds one source to each, so the
 # offset is untouched and the land is honest - it must PUBLISH. Asserting the
 # TOTALS instead refused this, which is what made those ten unpatchable.
@@ -2101,7 +2101,7 @@ grep -qF -- '- [distilled -> evi-skill] sources=3 updated=2026-07-19' "$AC_HOME/
 
 # NO ARCHIVE: an archive that does not exist yet declares 0, so the FIRST land
 # reconciles against it like any other - the inherited count is carried forward
-# untouched and the transaction proceeds. This is the shape six of drydock's
+# untouched and the transaction proceeds. This is the shape six of a real fleet's
 # pointers are in (2026-08-17: no archive, a claim inherited from pre-frame
 # rows), and the second land below is the trap they must not walk into.
 rm -f "$AC_HOME/records/learnings-archive/noarch-skill.md"

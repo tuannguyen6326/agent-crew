@@ -737,7 +737,7 @@ fi
 ac_lock_release "$rot_lock"
 cmp -s "$TMP/rot-locked-before" "$LEDGER" || fail "R6: a refused rotation leaves the ledger byte-unchanged"
 
-# R7: the REAL ledger shape (found live, drydock 2026-08-09: 1295 indented
+# R7: the REAL ledger shape (found live, 2026-08-09: 1295 indented
 # continuation lines, 194 `### <date>` headings, legacy title prose) - a
 # bullet-only walk archived ALL 1677 bullets while stranding 135KB of orphaned
 # context ABOVE budget. Rotation must move the oldest PREFIX verbatim -
@@ -781,7 +781,7 @@ esac
 # R8: a candidate the last examined run did NOT apply (revise, ask-captain, an
 # unjudged gate) left its sources in Pending so the next cycle can reconsider
 # it - and those sources are the OLDEST bullets by construction, exactly what a
-# prefix rotation takes first (drydock 2026-09-22: 12 sources of three revised
+# prefix rotation takes first (2026-09-22: 12 sources of three revised
 # candidates left Pending in the next run's rotation). They survive ONE more
 # rotation with their continuation and their date heading; an older run's
 # sources do not, and a run dir with no report.md (the run being staged right

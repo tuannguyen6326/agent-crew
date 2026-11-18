@@ -954,7 +954,7 @@ cat >"$AC_HOME/data/byteid-blocked/room.md" <<'EOF'
 - [2026-01-01T00:00:00Z] crewchief> spawned byteid-blocked (direct)
 EOF
 touch "$AC_HOME/state/.ask-byteid-blocked-chief"
-# Real drydock room text is Vietnamese and runs well past 120 bytes: `cut
+# Real room text is Vietnamese and runs well past 120 bytes: `cut
 # -c1-120` (the original truncation) is CHARACTER-aware in a UTF-8 locale and
 # diverges from this system awk's `substr()`, which is byte-aware - verified
 # empirically before writing this fixture. The batched replacement must keep

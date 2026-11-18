@@ -75,7 +75,7 @@ assert_eq "$rc" "0" "the deliberate override works at the home too"
 # --- scope: a chief whose session LOST its AC_HOME ---------------------------
 # The home arm has nothing to compare against when AC_HOME is absent, and a
 # live fleet home is not a git checkout at all - so the fence dropped for every
-# homeless chief (a drydock chief ran three days like that). The discriminator
+# homeless chief (a chief ran three days like that). The discriminator
 # is ac-sessionstart-nudge.sh's: the badges a session is given INSTEAD of a
 # home, then linked-worktree geometry on the cwd.
 
@@ -112,7 +112,7 @@ assert_eq "$(homeless_hook "$linked" Task)" "0" \
   "geometry alone still identifies a crewmate"
 assert_eq "$(homeless_hook "$AC_HOME" Task AC_CREW_ID=dg1)" "0" \
   "the crew badge alone stands the fence down"
-assert_eq "$(homeless_hook "$AC_HOME" Task AC_FLEET_NAME=drydock)" "0" \
+assert_eq "$(homeless_hook "$AC_HOME" Task AC_FLEET_NAME=example-fleet)" "0" \
   "so does the pinned fleet name"
 # 2. a solo session - worker-shaped, carved out above every arm.
 assert_eq "$(homeless_hook "$AC_HOME" Task AC_SOLO=1)" "0" \
@@ -124,7 +124,7 @@ assert_eq "$(homeless_hook "$AC_HOME" Task AC_SOLO=1)" "0" \
 # exported string and no worker is ever AT a primary checkout - both lease a
 # LINKED worktree - so honouring one there would re-open this very cell while
 # buying nothing. The primary denied before arm 3 existed and still does.
-assert_eq "$(homeless_hook "$primary" Task AC_FLEET_NAME=drydock)" "2" \
+assert_eq "$(homeless_hook "$primary" Task AC_FLEET_NAME=example-fleet)" "2" \
   "a badge never stands the fence down at a primary checkout"
 assert_eq "$(homeless_hook "$primary" Task AC_CREW_ID=dg1)" "2" \
   "nor does the crew badge"
