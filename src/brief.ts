@@ -252,7 +252,10 @@
 // primary-checkout accident; the pool rule (scratch under <task dir>/); the
 // repo knowledge, only when the project resolves to a repo - its ask, cite,
 // full, re-check and record lines, baking <root>/bin/ac-know.sh, --home <home>
-// and --family <family> unquoted, and the record (knowledgeFile, src/lib.ts);
+// and --family <family> unquoted, and the record (knowledgeFile, src/lib.ts),
+// then the ask to record a root cause that shipped in landed code as a fact at
+// the line it lived in, since codereview hands such facts to the next diff
+// touching that file (src/verify.ts);
 // the design report contract (<root>/docs/staged-design-flow-spec.md - spec,
 // architecture, plan and design only); the FLEET STANDING RULES - first the
 // distro's own hard rules, every `- HARD RULE - ` line of <root>/AGENTS.md
@@ -820,7 +823,11 @@ your pane cannot resolve:
 
 \`--repo "$(git rev-parse --show-toplevel)"\` binds YOUR OWN tree's ROOT,
 resolved by your shell when you run the command - never the primary clone,
-and not your cwd's subdirectory either.`;
+and not your cwd's subdirectory either.
+
+A bug whose root cause shipped in landed code is a fact too: record it with
+--src-file at the line it lived in, worded as the question the next change
+there must answer - a code review of a diff touching that file is handed it.`;
   };
 
   const designContract = (): string => `

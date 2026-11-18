@@ -399,6 +399,11 @@ assert_contains "$kb" "$ROOT/bin/ac-know.sh verify --home $AC_HOME --repo \"\$(g
   "the re-check line is runnable, carries --home, and binds the crewmate's own tree ROOT"
 assert_contains "$kb" "$ROOT/bin/ac-know.sh add --home $AC_HOME --repo \"\$(git rev-parse --show-toplevel)\" --family ktask" \
   "the record line is runnable, carries --home, is attributed to the family, and binds the crewmate's own tree ROOT"
+# A defect that got past every check is the knowledge a codereview of the next
+# diff touching its file is handed (src/verify.ts REPO KNOWLEDGE THE DIFF
+# TOUCHES), so the brief asks for it at the line it lived in.
+assert_contains "$kb" "A bug whose root cause shipped in landed code is a fact too" \
+  "the brief asks for an escaped defect as a repo fact anchored where it lived"
 
 # (brief-recall) The PULL verb leads the block: the chief's intake recall is a
 # discipline link, so the worker gets the same tiered read baked - ranked and
