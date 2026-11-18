@@ -381,10 +381,8 @@ elif [ "$kind" = codereview ]; then
     payload="$(jq -cn --arg ref "$VERIFY_REF" '{findings:[{id:"A2",severity:"warning",action:"ask-user",description:"Choose behavior",question:"Which behavior should ship?",options:["strict","compatible"],tradeoffs:["safer but breaking","compatible but broader"],recommendation:"strict",axis:"product",decider:"product owner",impact:["existing integrations stop until they migrate","nothing changes for anyone today"]},{id:"A3",severity:"warning",action:"ask-user",description:"Malformed decider shape",question:"Q?",options:["a","b"],tradeoffs:["t","u"],recommendation:"a",axis:"vibes",decider:"   ",impact:["only one"]}],summary:"decision",risk_level:"medium",risk_rationale:"captain input",reviewed_ref:$ref}')"
   elif [ -n "${VERIFY_FIX_FILE:-}" ]; then
     payload="$(jq -cn --arg ref "$VERIFY_REF" --arg f "$VERIFY_FIX_FILE" --arg l "${VERIFY_FIX_LINE:-}" --arg id "${VERIFY_FIX_ID-F1}" \
-      --arg cls "${VERIFY_FIX_CLASS:-correctness}" --arg repro "${VERIFY_FIX_REPRO:-}" \
-      '{findings:[{id:$id,severity:"error",action:"fix",class:$cls,description:"real bug",authority_class:"internal",authority:"spec",evidence:"seen",file:$f}
-                  | if $l != "" then .line = ($l | tonumber) else . end
-                  | if $repro != "" then .repro = {command:$repro,observed:"exit 1: expected 2, got 3"} else . end],summary:"one fix",risk_level:"medium",risk_rationale:"fix owed",reviewed_ref:$ref}')"
+      '{findings:[{id:$id,severity:"error",action:"fix",class:"correctness",description:"real bug",authority_class:"internal",authority:"spec",evidence:"seen",file:$f}
+                  | if $l != "" then .line = ($l | tonumber) else . end],summary:"one fix",risk_level:"medium",risk_rationale:"fix owed",reviewed_ref:$ref}')"
   else
     # THE REVIEWER TRIGGERS THE LANES and collects them; the facade runs them.
     # `skip` is a reviewer that never triggers - the fan-out the round paid for
@@ -2483,31 +2481,6 @@ rc=0; VERIFY_FIX_ID= VERIFY_FIX_FILE=ghost.txt "$BIN/ac-verify.sh" codereview --
 [ "$rc" -ne 0 ] || fail "a fix finding with an empty id citing a file absent at the ref must be rejected"
 rej="$(cat "$(ls -d "$AC_HOME/data/$family/verify/codereview"/*/ 2>/dev/null | newest_round_dir)rejection.log" 2>/dev/null || true)"
 assert_contains "$rej" "fix-citation-not-at-ref: (ghost.txt not at ref)" "the rejection names the missing file"
-
-# --- --repro: a runtime fix finding blocks only with a reproduction it ran ---
-repro_out="$TMP/repro.json"
-export VERIFY_PROMPT_CAPTURE="$TMP/repro-prompt.capture"
-repro_run() {
-  local err
-  err="$("$BIN/ac-verify.sh" codereview --repro --repo "$repo" --ref "$target" \
-    --family "$family" --caller "$caller" --base "$base" --intent "$intent" --output "$repro_out" 2>&1 >/dev/null)" \
-    || fail "a --repro round must succeed: $1: $err"
-}
-VERIFY_FIX_FILE=file.txt VERIFY_FIX_LINE=1 repro_run "unreproduced correctness fix"
-assert_eq "$(jq -r .verdict "$repro_out")" "pass" "--repro: a correctness fix carrying no repro no longer blocks delivery"
-assert_eq "$(jq -c '[.findings[0].action, .findings[0].repro_floored]' "$repro_out")" '["no-op",true]' \
-  "...it rides as an advisory marked repro_floored"
-assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "REPRO MODE: for each" \
-  "--repro: the prompt hands the reviewer the reproduction duty"
-assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "files only under .crew/repro/" \
-  "...confined to the lease's gitignored scratch dir"
-case "$(cat "$VERIFY_PROMPT_CAPTURE")" in *"do not run tests, lint, builds, or type checks"*) \
-  fail "--repro: the prompt must not also forbid running the reproduction" ;; esac
-VERIFY_FIX_FILE=file.txt VERIFY_FIX_LINE=1 VERIFY_FIX_REPRO='bun test repro.test.ts' repro_run "reproduced fix"
-assert_eq "$(jq -r '[.verdict, (.findings[0].repro_floored // false)] | join(" ")' "$repro_out")" "fix false" \
-  "--repro: a fix carrying its reproduction keeps blocking"
-VERIFY_FIX_FILE=file.txt VERIFY_FIX_LINE=1 VERIFY_FIX_CLASS=security repro_run "security fix"
-assert_eq "$(jq -r .verdict "$repro_out")" "fix" "--repro: a security fix is not held to a reproduction"
 # A last line with no newline is still a line, and a committed symlink's blob
 # - its target, no newline - is one: counted as newlines, a finding on that last
 # line read as past the end, and every symlink as 0 lines long.
@@ -3145,7 +3118,6 @@ xrefuse "codereview --model/--effort require an explicit --harness" "${XCR[@]}" 
 xrefuse "qa requires an existing --brief FILE, --evidence-dir DIR, and --report ABS" qa --repo "$XW/repo" --ref HEAD --family fam --caller fam-impl --output "$XW/out/qa.json"
 xrefuse "qa --report must be an absolute path: rel.md" qa --repo "$XW/repo" --ref HEAD --family fam --caller fam-impl --brief "$XW/brief.md" --evidence-dir "$XW/out/evidence" --report rel.md --output "$XW/out/qa.json"
 xrefuse "qa does not accept codereview-only options" "${XQA[@]}" --base HEAD~1
-xrefuse "qa does not accept codereview-only options" "${XQA[@]}" --repro
 xrefuse "qa --model/--effort require the routed atomic --harness profile" "${XQA[@]}" --effort high
 xrefuse "qa --profile names a file that does not exist: $XW/nope.json" "${XQA[@]}" --profile "$XW/nope.json"
 XE="AC_VERIFY_CORRECTION_TIMEOUT=01" xrefuse "AC_VERIFY_CORRECTION_TIMEOUT must be a non-negative integer without leading zeros: 01" "${XCR[@]}"
