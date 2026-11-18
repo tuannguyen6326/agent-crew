@@ -1,6 +1,9 @@
 // lib-send.ts - the send twins src/lib.ts's fanout rule keeps beside their port
 // (its header): the TypeScript twins at most two ports import, each keeping its
-// bash original's observable contract as every twin in src/lib.ts does.
+// bash original's observable contract as every twin in src/lib.ts does - except
+// arrivalWait's mid-turn queue-operation carve-out (its own header), which has
+// no bash twin to keep contract with: ac_arrival_wait/ac_claude_last_typed_turn
+// in bin/ac-lib.sh have no live caller left.
 
 import { existsSync, readdirSync } from "node:fs";
 import {
@@ -29,12 +32,31 @@ export function bareMarkerVerbs(text: string): string | null {
 }
 
 // ac_claude_last_typed_turn's jq program, byte for byte (tests/ts/send.test.ts
-// lifts it out of bin/ac-lib.sh, whose function stays live for ac-spawn).
+// lifts it out of bin/ac-lib.sh; that bash function and ac_arrival_wait have
+// no live caller any more - every live caller runs this TS twin instead).
 const LAST_TYPED_TURN = `
     [.[] | select(.type == "user" and .promptSource == "typed"
                   and .origin.kind == "human"
                   and (.message.content | type) == "string")]
     | last | .message.content // empty
+  `;
+
+// A message typed while claude is mid-turn is never a typed turn at all: a
+// live transcript (2026-11-16) shows it ONLY as a queue-operation pair
+// (enqueue, then remove reason="absorbed_mid_turn") - claude folds it into the
+// turn already running instead of starting a new one. ORDER matters, not just
+// presence: the content of the chronologically LAST entry that is either a
+// typed turn or a queue-operation, kept ONLY when that last entry is the
+// queue-operation. A typed turn landing AFTER an absorbed queue entry for
+// some earlier, unrelated send with the same text is a genuine new (and
+// possibly wrong) arrival, and must still be judged on its own - a queue
+// entry anywhere in the window, regardless of order, would wrongly mask that.
+const LAST_QUEUED_IF_NEWEST = `
+    [.[] | select((.type == "user" and .promptSource == "typed"
+                   and .origin.kind == "human"
+                   and (.message.content | type) == "string")
+               or (.type == "queue-operation" and (.content | type) == "string"))]
+    | last | select(.type == "queue-operation") | .content // empty
   `;
 
 // ac_claude_transcript_path's twin: the one `<root>/*/<sid>.jsonl` that
@@ -70,28 +92,49 @@ function claudeLastTypedTurn(path: string): string | null {
   return out === "" ? null : out;
 }
 
-// ac_arrival_wait's twin (ac-lib.sh's claude transcript arrival check; the
-// bash stays live for ac-spawn): did <text>, its trailing LFs cut as the
-// transcript reader cuts the arrived turn's, ARRIVE as the session's last
-// typed human turn? Up to seven reads a settle apart (PATH's sleep, as the
-// bash ran it), returning at the first match: 0 CONFIRMED; 1 REFUTED - some
-// turn was read and none matched, `last` the last one read (the bash's
-// AC_ARRIVAL_LAST); 2 UNOBSERVABLE - no <sid> (bytes, latin1), no single
-// transcript, or no turn read at all.
+// Same tail, LAST_QUEUED_IF_NEWEST's jq program: null on any failure or an
+// empty answer (no queue-operation, or a typed turn supersedes it).
+function claudeLastQueuedIfNewest(path: string): string | null {
+  const tail = stage(["tail", "-n", "200", argvOf(path)], "ignore", "pipe", "ignore");
+  const queued = stage(["jq", "-rs", LAST_QUEUED_IF_NEWEST], tail.out, "pipe", "ignore");
+  if (tail.status !== 0 || queued.status !== 0) return null;
+  const out = capturedText(queued.out);
+  return out === "" ? null : out;
+}
+
+// ac_arrival_wait's twin (ac-lib.sh's claude transcript arrival check): did
+// <text>, its trailing LFs cut as the transcript reader cuts the arrived
+// turn's, ARRIVE as the session's last typed human turn? Up to seven reads a
+// settle apart (PATH's sleep, as the bash ran it), returning at the first
+// match: 0 CONFIRMED; 1 REFUTED - some turn was read and none matched, `last`
+// the last one read (the bash's AC_ARRIVAL_LAST), UNLESS <text> is the newest
+// queue-operation entry's content with no typed turn superseding it
+// (LAST_QUEUED_IF_NEWEST's header: a mid-turn queued steer, never a typed
+// turn - that reads 2 UNOBSERVABLE, not a refutation); 2 UNOBSERVABLE - no
+// <sid> (bytes, latin1), no single transcript, or no turn read at all. This
+// carve-out has NO bash twin: ac_arrival_wait/ac_claude_last_typed_turn in
+// bin/ac-lib.sh have no live caller any more (only their own and the
+// differential tests) - every live caller, ac-send.sh's steer AND
+// ac-spawn.sh's kickoff alike, already runs this one function.
 export function arrivalWait(sid: string, text: string): { status: number; last: string } {
   const expected = lat(text).replace(/\n+$/, "");
   if (sid === "") return { status: 2, last: "" };
   const path = claudeTranscriptPath(sid);
   if (path === null) return { status: 2, last: "" };
   let last = "";
+  let queued = false;
   for (let reads = 1; ; reads++) {
     const cur = claudeLastTypedTurn(path);
     if (cur !== null) {
       last = cur;
       if (last === expected) return { status: 0, last: "" };
     }
+    const q = claudeLastQueuedIfNewest(path);
+    if (q !== null) queued = q === expected;
     if (reads >= 7) break;
     settle("inherit");
   }
-  return { status: last === "" ? 2 : 1, last };
+  if (last === "") return { status: 2, last: "" };
+  if (queued) return { status: 2, last: "" };
+  return { status: 1, last };
 }

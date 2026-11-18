@@ -183,10 +183,16 @@
 //     instead of resubmitting` when the arrived turn is a non-empty suffix of
 //     that text, else `a DIFFERENT text is in the composer, not a cut one -
 //     peek it (bin/ac-peek.sh <id>) before resubmitting, since the composer
-//     already accepted SOMETHING`. Any other harness, or a slash command:
-//     `delivered (arrival unverified) to`. A transcript with one malformed
-//     line in its last 200 makes jq fail every read: unobservable after the
-//     whole budget (W8).
+//     already accepted SOMETHING` - UNLESS the text sent is itself the last
+//     queue-operation entry's content (arrivalWait, src/lib-send.ts): a steer
+//     typed while claude is mid-turn is never recorded as a typed turn at
+//     all, only as that queue-operation pair (claude folds it into the turn
+//     already running), so the last typed turn stays whatever it was before
+//     the send through the whole budget - 2 `delivered (arrival unverified)
+//     to`, never 1, for that shape (measured 2026-11-16). Any other harness,
+//     or a slash command: `delivered (arrival unverified) to`. A transcript
+//     with one malformed line in its last 200 makes jq fail every read:
+//     unobservable after the whole budget (W8).
 //     Then the record, the chief's durable index of what it asked (so a
 //     restart is not amnesia): statusAppend (src/lib.ts) of `routed: <text>`
 //     for a marked order, else `steered: <text>`, the ORIGINAL text with every

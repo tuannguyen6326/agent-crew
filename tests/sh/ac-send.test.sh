@@ -790,6 +790,51 @@ rm -f "$H/sleep.log"
 srun ca 'paced'; assert_eq "$(grep -c 'sleep 0.01' "$H/sleep.log")" 6 "8: a send whose text left the composer pauses nowhere, then six arrival reads a settle apart"
 SENV=()
 
+# 8b. a mid-turn QUEUED steer: a live transcript (2026-11-16) shows this as a
+# queue-operation pair (enqueue, then remove reason="absorbed_mid_turn"), never
+# as a typed turn - claude folds it into the turn already running. The last
+# TYPED turn stays the one from before the send (here, an older watcher nudge)
+# through the whole read budget; that must read as unverified, never as the
+# false REFUTED this family exists to kill.
+sid_q="99999999-9999-9999-9999-999999999999"
+sclaude cq pCQ "$sid_q"
+sturn "$sid_q" "an older watcher nudge"
+cat >>"$H/claude/proj/$sid_q.jsonl" <<JSONL
+{"type":"queue-operation","operation":"enqueue","timestamp":"2026-01-02T03:04:05Z","sessionId":"$sid_q","content":"the queued steer text"}
+{"type":"queue-operation","operation":"remove","timestamp":"2026-01-02T03:04:06Z","sessionId":"$sid_q","content":"the queued steer text","reason":"absorbed_mid_turn"}
+JSONL
+srun cq 'the queued steer text'
+assert_eq "$SN_RC:$(sout)" "0:delivered (arrival unverified) to orca:pCQ" "8b: a queued-but-intact mid-turn steer reads unverified, never REFUTED"
+case "$(serr)" in *REFUTED*) fail "8b: a queued steer must never print REFUTED: $(serr)" ;; esac
+
+# 8c. a STALE queue-operation must not mask a genuine wrong arrival: an
+# earlier absorbed steer sharing the sent text, superseded by a NEWER typed
+# turn that differs, is a real mismatch - ORDER inside the window decides,
+# not mere presence of a matching queue entry anywhere in it.
+sid_stale="88888888-8888-8888-8888-888888888888"
+sclaude cstale pCSTALE "$sid_stale"
+cat >"$H/claude/proj/$sid_stale.jsonl" <<JSONL
+{"type":"queue-operation","operation":"enqueue","timestamp":"2026-01-02T03:00:00Z","sessionId":"$sid_stale","content":"status?"}
+{"type":"queue-operation","operation":"remove","timestamp":"2026-01-02T03:00:01Z","sessionId":"$sid_stale","content":"status?","reason":"absorbed_mid_turn"}
+{"type":"user","promptSource":"typed","origin":{"kind":"human"},"message":{"role":"user","content":"junkstatus?"}}
+JSONL
+srun cstale 'status?'
+assert_eq "$SN_RC:$(sout)" "1:" "8c: a stale absorbed queue entry does not mask a newer, wrong typed turn"
+assert_contains "$(serr)" "ERROR: arrival REFUTED for cstale - " "8c: ...it still refutes"
+
+# 8d. a queue-operation entry for a DIFFERENT text must not stand down a
+# genuine refutation either - only an exact content match does.
+sid_diffq="77777777-7777-7777-7777-777777777777"
+sclaude cdiffq pCDQ "$sid_diffq"
+sturn "$sid_diffq" "an older watcher nudge"
+cat >>"$H/claude/proj/$sid_diffq.jsonl" <<JSONL
+{"type":"queue-operation","operation":"enqueue","timestamp":"2026-01-02T03:04:05Z","sessionId":"$sid_diffq","content":"a totally different queued text"}
+{"type":"queue-operation","operation":"remove","timestamp":"2026-01-02T03:04:06Z","sessionId":"$sid_diffq","content":"a totally different queued text","reason":"absorbed_mid_turn"}
+JSONL
+srun cdiffq 'the queued steer text'
+assert_eq "$SN_RC:$(sout)" "1:" "8d: a queue entry for a DIFFERENT text does not stand down a genuine refutation"
+assert_contains "$(serr)" "ERROR: arrival REFUTED for cdiffq - " "8d: ...it still refutes"
+
 # 9. the status record: `steered: <text, LFs as spaces>`, stamped by date(1)
 #    and mirrored to the task's timeline.
 srun c1 $'two\nlines'; assert_eq "$(tail -n 1 "$H/home/state/c1.status")" "2026-01-02T03:04:05Z steered: two lines" "9: one record per send"
