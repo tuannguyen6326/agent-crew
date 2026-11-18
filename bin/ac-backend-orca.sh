@@ -69,13 +69,17 @@ orca_tab_handles() {
 
 orca_resolve_group() {
   # orca_resolve_group <path> - nearest ANCESTOR (self included) that Orca's
-  # path selector resolves, probed cheaply via `worktree show` (a create with
-  # an unmatched path fails selector_not_found - measured after a repo
-  # registration was removed). Falls back to the path itself when nothing
+  # path selector resolves OR that `worktree show` reports selector_ambiguous
+  # for (several entries share it - still a registered ancestor, so the walk
+  # stops there instead of overshooting to the next one, also unresolvable,
+  # on its way to a selector_not_found that names the wrong fix). Any other
+  # failure (selector_not_found: measured after a repo registration was
+  # removed) keeps walking. Falls back to the path itself when nothing
   # matches, so the create's own error stays the one that names the fix.
-  local p="$1"
+  local p="$1" out
   while [ -n "$p" ] && [ "$p" != "/" ]; do
-    if orca_json worktree show --worktree "path:$p" >/dev/null 2>&1; then
+    out="$(orca worktree show --worktree "path:$p" --json 2>/dev/null)"
+    if jq -e '.ok == true or .error.code == "selector_ambiguous"' <<<"$out" >/dev/null 2>&1; then
       printf '%s\n' "$p"
       return 0
     fi
