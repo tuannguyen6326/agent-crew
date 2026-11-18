@@ -176,7 +176,7 @@ ac_maintenance_incomplete() {
 # 7 significant characters. Below it: the shortest genuine content line a
 # generated manifest emits, measured across the real ones - a curate subject
 # manifest's `"path": "projects/<name>",` at 13 for a one-character name, 15 for
-# `projects/lab`, 21 for `records/projects.md`. A floor of 24 sat above that
+# `projects/api`, 21 for `records/projects.md`. A floor of 24 sat above that
 # lower edge and rejected the very lines the prompt tells the judge to pick.
 #
 # THE FLOOR THAT PAYLOAD CAN BEAR IS NOT ALWAYS 12, and that is measured, not

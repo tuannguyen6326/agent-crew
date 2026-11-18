@@ -12,12 +12,12 @@ Wire từng fleet một - config nằm theo từng home, nên hai fleet dùng ha
 ## Điều kiện trước
 
 - Một Slack workspace bạn quản trị (hoặc được phép cài app vào).
-- Fleet home bạn định wire (ví dụ bên dưới dùng `~/Work/ac-homes/drydock`).
+- Fleet home bạn định wire (ví dụ bên dưới dùng `~/Work/ac-homes/example-fleet`).
 - Máy có `curl` và `jq` (toolchain của distro vốn đã yêu cầu).
 
 ## Các bước phía Slack (một lần cho mỗi fleet)
 
-1. Tạo app: https://api.slack.com/apps -> Create New App -> From scratch -> đặt tên theo fleet (ví dụ `ac-drydock`) -> chọn workspace.
+1. Tạo app: https://api.slack.com/apps -> Create New App -> From scratch -> đặt tên theo fleet (ví dụ `ac-example-fleet`) -> chọn workspace.
 2. Cấp scope và cài đặt: OAuth & Permissions -> Bot Token Scopes -> thêm `channels:history`, `groups:history`, `chat:write`, `reactions:write` (cho biên nhận đã-đọc) -> Install to Workspace -> copy bot token (`xoxb-...`).
 3. Channel điều khiển: tạo hoặc chọn một channel (private cũng được - scope `groups:history` là để cho trường hợp đó) và mời bot vào: `/invite @<tên-app>`.
 4. Lấy hai loại id:
@@ -31,7 +31,7 @@ Wire từng fleet một - config nằm theo từng home, nên hai fleet dùng ha
 5. Ghi config (token nằm ngoài git - `.env` đã được gitignore):
 
 ```bash
-cd ~/Work/ac-homes/drydock
+cd ~/Work/ac-homes/example-fleet
 printf 'SLACK_BOT_TOKEN=xoxb-...\n' >> .env && chmod 600 .env
 printf 'C0XXXXXXX\n' > config/slack-channel
 printf 'U0XXXXXXX\n' > config/slack-captain-id           # mỗi dòng một id; thêm dòng cho đồng-captain
@@ -42,15 +42,15 @@ printf 'U0XXXXXXX\n' > config/slack-captain-id           # mỗi dòng một id;
 ```bash
 cd ~/Work/agent-crew
 cp docs/examples/slack-remote/remote-poll docs/examples/slack-remote/remote-reply \
-   docs/examples/slack-remote/remote-ack ~/Work/ac-homes/drydock/config/
-chmod +x ~/Work/ac-homes/drydock/config/remote-poll ~/Work/ac-homes/drydock/config/remote-reply \
-         ~/Work/ac-homes/drydock/config/remote-ack
+   docs/examples/slack-remote/remote-ack ~/Work/ac-homes/example-fleet/config/
+chmod +x ~/Work/ac-homes/example-fleet/config/remote-poll ~/Work/ac-homes/example-fleet/config/remote-reply \
+         ~/Work/ac-homes/example-fleet/config/remote-ack
 ```
 
 7. Kiểm tra đầu-cuối: post một message thử vào channel (từ một tài khoản captain trong danh sách), rồi chạy:
 
 ```bash
-cd ~/Work/agent-crew && AC_HOME=~/Work/ac-homes/drydock bin/ac-remote.sh poll
+cd ~/Work/agent-crew && AC_HOME=~/Work/ac-homes/example-fleet bin/ac-remote.sh poll
 ```
 
 Thấy một dòng `remote-order sl-C...-...` nghĩa là đường ống đã thông.

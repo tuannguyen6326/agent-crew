@@ -11,12 +11,12 @@ Wire one fleet at a time - config lives per home, so two fleets use two channels
 ## Prerequisites
 
 - A Slack workspace you administer (or can install apps into).
-- The fleet home you are wiring (examples below use `~/Work/ac-homes/drydock`).
+- The fleet home you are wiring (examples below use `~/Work/ac-homes/example-fleet`).
 - `curl` and `jq` on the machine (already required by the distro toolchain).
 
 ## Slack-side steps (once per fleet)
 
-1. Create the app: https://api.slack.com/apps -> Create New App -> From scratch -> name it after the fleet (e.g. `ac-drydock`) -> pick your workspace.
+1. Create the app: https://api.slack.com/apps -> Create New App -> From scratch -> name it after the fleet (e.g. `ac-example-fleet`) -> pick your workspace.
 2. Grant scopes and install: OAuth & Permissions -> Bot Token Scopes -> add `channels:history`, `groups:history`, `chat:write`, `reactions:write` (the seen-receipt ack) -> Install to Workspace -> copy the bot token (`xoxb-...`).
 3. Control channel: create or pick one (private works - that is what `groups:history` covers) and invite the bot: `/invite @<app-name>`.
 4. Collect two ids:
@@ -30,7 +30,7 @@ Wire one fleet at a time - config lives per home, so two fleets use two channels
 5. Write the config (the token stays out of git - `.env` is gitignored):
 
 ```bash
-cd ~/Work/ac-homes/drydock
+cd ~/Work/ac-homes/example-fleet
 printf 'SLACK_BOT_TOKEN=xoxb-...\n' >> .env && chmod 600 .env
 printf 'C0XXXXXXX\n' > config/slack-channel
 printf 'U0XXXXXXX\n' > config/slack-captain-id           # one id per line; add more lines for co-captains
@@ -41,9 +41,9 @@ printf 'U0XXXXXXX\n' > config/slack-captain-id           # one id per line; add 
 ```bash
 cd ~/Work/agent-crew
 cp docs/examples/slack-remote/remote-poll docs/examples/slack-remote/remote-reply \
-   docs/examples/slack-remote/remote-ack ~/Work/ac-homes/drydock/config/
-chmod +x ~/Work/ac-homes/drydock/config/remote-poll ~/Work/ac-homes/drydock/config/remote-reply \
-         ~/Work/ac-homes/drydock/config/remote-ack
+   docs/examples/slack-remote/remote-ack ~/Work/ac-homes/example-fleet/config/
+chmod +x ~/Work/ac-homes/example-fleet/config/remote-poll ~/Work/ac-homes/example-fleet/config/remote-reply \
+         ~/Work/ac-homes/example-fleet/config/remote-ack
 ```
 
 `remote-ack` is optional - skip the cp (or delete the file) and orders simply ingest without the reaction lifecycle.
@@ -51,7 +51,7 @@ chmod +x ~/Work/ac-homes/drydock/config/remote-poll ~/Work/ac-homes/drydock/conf
 7. Verify end to end: post a test message in the channel (from a listed captain account), then:
 
 ```bash
-cd ~/Work/agent-crew && AC_HOME=~/Work/ac-homes/drydock bin/ac-remote.sh poll
+cd ~/Work/agent-crew && AC_HOME=~/Work/ac-homes/example-fleet bin/ac-remote.sh poll
 ```
 
 One `remote-order sl-C...-...` line means the pipe is live.

@@ -184,7 +184,7 @@ rm -f "$AC_HOME/config/codereview-agent" "$AC_HOME/config/codereview-model" \
 
 # A fleet pinning NONE of them leaves the launch line free of every per-role
 # rung - the byte-identical no-change property for a fleet that configures
-# nothing (both real fleets today: neither key set on drydock or lab).
+# nothing (both real fleets today set neither key).
 "$BIN/ac-brief.sh" tmr0 proj --mode local-only >/dev/null
 "$BIN/ac-spawn.sh" tmr0 "$repo" --harness claude >/dev/null 2>&1
 case "$(cat "$(fake_orca_buf tmr0)")" in

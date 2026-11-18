@@ -85,8 +85,9 @@ orca_resolve_group() {
 }
 
 # The entries sharing one path, and among them the one whose displayName ends
-# with the fleet name as a token of its own ("ac lab" for lab, "ac lab/ops" for
-# the deputy ops): PIN <id> <name> when exactly one, AMBIG <all> <hits>
+# with the fleet name as a token of its own ("ac example-fleet" for
+# example-fleet, "ac example-fleet/ops" for the deputy ops): PIN <id> <name>
+# when exactly one, AMBIG <all> <hits>
 # <candidates> when several entries share the path and no single one is the
 # fleet's, NONE otherwise. Shared with the src/lib.ts twin verbatim.
 orca_node_jq='[.result.worktrees[]? | select(.path == $p)] as $all

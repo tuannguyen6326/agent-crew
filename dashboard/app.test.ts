@@ -594,13 +594,13 @@ test("reviewableArtifact rejects a non-reviewable kind, an extensionless path, a
 // --- per-fleet learning cadence: the ONE label both render sites share ---
 
 test("cadenceLabel reads the counters below threshold and does not warn", () => {
-  // lab, live on this container: 2 debriefs of 5, curate untouched
+  // live on this container: 2 debriefs of 5, curate untouched
   expect(cadenceLabel({ learn: { count: 2, every: 5, due: false }, curate: { count: 0, every: 2, due: false } }))
     .toEqual({ text: "learn 2/5 · curate 0/2", due: false });
 });
 
 test("cadenceLabel warns on the DUE flag bash computed, never on its own >=", () => {
-  // drydock, live on this container: learn is due, curate is not - one warn line
+  // live on this container: learn is due, curate is not - one warn line
   expect(cadenceLabel({ learn: { count: 35, every: 5, due: true, last_run: 1784426868 }, curate: { count: 1, every: 2, due: false } }))
     .toEqual({ text: "learn 35/5 · curate 1/2", due: true });
   // curate alone is enough to warn
@@ -3783,7 +3783,7 @@ import { fleetAttnItems, inboxUnknown } from "./app.ts";
 const ATTN_SNAP = {
   homes: [
     {
-      name: "drydock",
+      name: "example-fleet",
       watcher: { state: "armed" },
       inbox: { entries: [
         { status: "PENDING-CAPTAIN(1)", family: "payments", last: "GATE: plan awaiting captain" },
@@ -3794,7 +3794,7 @@ const ATTN_SNAP = {
       ],
     },
     {
-      name: "lab",
+      name: "sample-fleet",
       watcher: { state: "down", detail: "no beacon" },
       inbox: { entries: [{ status: "PENDING-CAPTAIN(2)+HANDBACK", family: "fx", last: "combined" }] },
     },
@@ -3804,17 +3804,17 @@ const ATTN_SNAP = {
 test("fleetAttnItems: pending, then handback, then watcher-down", () => {
   const items = fleetAttnItems(ATTN_SNAP);
   expect(items.map((i) => i.kind)).toEqual(["pending", "pending", "handback", "handback", "watcher", "watcher"]);
-  expect(items[0]).toMatchObject({ fleet: "drydock", family: "payments" });
+  expect(items[0]).toMatchObject({ fleet: "example-fleet", family: "payments" });
 });
 
 test("fleetAttnItems: a combined PENDING+HANDBACK entry lands in both bands", () => {
-  const items = fleetAttnItems(ATTN_SNAP).filter((i) => i.fleet === "lab" && i.family === "fx");
+  const items = fleetAttnItems(ATTN_SNAP).filter((i) => i.fleet === "sample-fleet" && i.family === "fx");
   expect(items.map((i) => i.kind).sort()).toEqual(["handback", "pending"]);
 });
 
 test("fleetAttnItems: walks one level of crewdeputies (demo's dead watcher shows)", () => {
   const w = fleetAttnItems(ATTN_SNAP).filter((i) => i.kind === "watcher").map((i) => i.fleet);
-  expect(w).toEqual(["demo", "lab"]);
+  expect(w).toEqual(["demo", "sample-fleet"]);
 });
 
 test("fleetAttnItems: an unreadable inbox is a first-band item, never silence", () => {

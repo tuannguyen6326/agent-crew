@@ -47,7 +47,7 @@ function withHome(stage: (home: string) => void, body: (home: string) => void): 
 }
 
 test("shellDefault spells a home that bash, sh and zsh read back verbatim, and keep a launch line's", () => {
-  expect(shellDefault("/home/me/ac-homes/lab")).toBe('AC_HOME="${AC_HOME:-"/home/me/ac-homes/lab"}"');
+  expect(shellDefault("/home/me/ac-homes/example-fleet")).toBe('AC_HOME="${AC_HOME:-"/home/me/ac-homes/example-fleet"}"');
   // The expansion's own delimiter is the one a double-quoted word does not
   // protect; the rest are the characters a double-quoted word still reads.
   const odd = '/tmp/a}b "c" $d `e` \\f';

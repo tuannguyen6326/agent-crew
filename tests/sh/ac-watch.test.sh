@@ -564,7 +564,7 @@ assert_fails re_match "$re" '# done: comment leader'
 assert_fails re_match "$re" 'AC_RE=done:|blocked:'
 # Retired: bare "merged"-in-prose no longer wakes (merged is now anchored merged:).
 assert_fails re_match "$re" 'PR #12 was merged'
-# The 4 observed false wakes (drydock, 1h) must all STOP matching.
+# The 4 observed false wakes (measured, 1h) must all STOP matching.
 # shellcheck disable=SC2016  # literal $id/$default in a displayed code line
 assert_fails re_match "$re" '      121 +Mode local-only: leave the work committed and merged-ready on'
 # shellcheck disable=SC2016
@@ -863,7 +863,7 @@ rm -f "$state"/*.meta "$state"/.pane-* "$state"/.unobservable-* "$state"/.hash-*
 rm -rf "$state"/.wake-spool*
 
 # --- external kills: TERM/INT trap, stale-lock reclaim, arm attribution -----
-# Observed on drydock: external SIGTERMs land on the watcher's poll wait. An
+# Observed live: external SIGTERMs land on the watcher's poll wait. An
 # untrapped SIGTERM kills bash by its DEFAULT disposition, so the EXIT trap
 # never runs and the lock dir LEAKS - and a leaked dir whose pid file never
 # got published made every later re-arm false-positive `already running`
@@ -884,7 +884,7 @@ lock_try() {
   printf '%s\n' "$rc"
 }
 
-# (1) The CONFIRMED drydock shape: lock dir present, pid file never published
+# (1) The CONFIRMED live shape: lock dir present, pid file never published
 # (killed between `mkdir` and the `printf` that writes it). Aged past the
 # grace with a FIXED past stamp - deterministic, no sleep.
 mkdir -p "$lockd"
@@ -1003,7 +1003,7 @@ sp1="$(in_poll_wait "$wpid" "$state/.last-watcher-beat")" \
 [ -d "$lockd" ] || fail "an armed watcher holds the lock"
 
 # (6a) A kill aimed at the poll `sleep` CHILD alone is ABSORBED - the loop
-# just polls again. This is the drydock shape: bash outlives the kill (it is
+# just polls again. This is the observed shape: bash outlives the kill (it is
 # what prints `Terminated: 15  sleep`), and under a FOREGROUND sleep `set -e`
 # takes the child's 143 and silently exits the watcher. Absorbing it is only
 # possible because the wait is `sleep &` + `wait || true`.
@@ -1603,8 +1603,8 @@ rm -f "$state/.session-lock" "$state/.watcher-owner" "$state"/.last-watcher-beat
 # shell it tracks (`chain=<watcher>(bash) < <wrapper>(zsh) < ...`), so a release
 # aimed at the WRAPPER pid slipped past (8e)'s guard: the wrapper died, the real
 # watcher lived on reparented to PPID=1, still polling but with an exit that
-# wakes no one - the orphan AGENTS.md section 7 forbids. Observed live on
-# drydock 2026-07-21: wrapper 67124 released while scoped watcher 67150 was
+# wakes no one - the orphan AGENTS.md section 7 forbids. Observed live
+# 2026-07-21: wrapper 67124 released while scoped watcher 67150 was
 # refused, leaving 67150 orphaned. Wrapper and watcher are ONE unit to --release.
 lock_pid_within() {
   # lock_pid_within <lock-dir> - the pid recorded under <lock-dir> once the
@@ -2850,7 +2850,7 @@ assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "check:quiet" \
   "... nor under live background agents"
 assert_no_file "$state/.wake-spool" "a background-running pane publishes no wake"
 # Whatever kind of work claude lists as still running defers alike - the line
-# below is lab's live p2-e2e-ci-fast tail (a Monitor), which no shell/agent
+# below is a live p2-e2e-ci-fast tail (a Monitor), which no shell/agent
 # wording matched.
 printf '⏺ paused: waiting on CI\n✻ Baked for 2s · done 5:01 PM · 1 monitor still running\n' >>"$(fake_orca_buf mrb)"
 assert_contains "$(bash "$BIN/ac-watch.sh" --once)" "check:quiet" \
@@ -2915,7 +2915,7 @@ assert_no_file "$state/.captain-wait-elw2" "a merely-quiet working pane is never
 assert_contains "$(fleet_spool)" "quiet for" "the stale wake payload is unchanged"
 
 # USAGE LIMIT: a claude pane that ended its turn on the provider's usage-limit
-# error (the exact line a drydock agent got on 2026-09-20) is waiting on the
+# error (the exact line an agent got on 2026-09-20) is waiting on the
 # reset, not on the chief - `limited:` with the reset text, never `ended:`. The
 # same words in the agent's own prose are no limit.
 printf 'window=crew:lim\nbackend=orca\n' >"$state/lim.meta"
@@ -3084,7 +3084,7 @@ rm -rf "$AC_HOME/data/dbu"
 # anchor on, so claude's own idle auto-compaction redraw ("Compacted while
 # idle, before the prompt cache expired", and/or a "recap:" line) kept
 # clearing .stale-<id> like any other redraw and the loud ended: wake fired
-# again every quiet window forever (the lab order this closes: ~10 identical
+# again every quiet window forever (the order this closes: ~10 identical
 # wakes on one roomchief pane in 23h, 4 on one crewmate pane, 2026-10-16).
 mkdir -p "$AC_HOME/data/ebl"
 printf 'window=crew:ebl\nbackend=orca\n' >"$state/ebl.meta"
@@ -3106,7 +3106,7 @@ rm -rf "$state"/.wake-spool*
 # The loud fire stamps the pane BLOCKED (CAPTAIN-WAIT STAMP, ac-backend.sh) -
 # masking agent_status until a real state transition reasserts it. Releasing
 # the stamp here stands in for that transition, so the next poll's idle read
-# is genuine, the same precondition the lab's redraw-only panes met for real.
+# is genuine, the same precondition those redraw-only panes met for real.
 rm -f "$state/.captain-wait-ebl"
 
 # (B) claude's own idle auto-compaction redraw - the EXACT tail this closes -

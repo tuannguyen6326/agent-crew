@@ -217,10 +217,11 @@
 // AC_WATCH_SKIP entry is also validated to name a family of THIS home (a
 // data/<fam>/ dir or a <fam>*/state meta); a foreign/unknown family is refused
 // LOUDLY (exit 2), since it blinds nothing real while masking a real misconfig
-// (2026-07-18: a drydock family named on the LAB singleton's skip).
+// (2026-07-18: a family belonging to one fleet was named on another fleet's
+// own AC_WATCH_SKIP list).
 //
 // EXTERNAL KILLS. Something outside the fleet SIGTERMs long-idle watchers
-// (10 observed on drydock 2026-07-15/16, ~10-20min apart, landing on the poll
+// (10 observed 2026-07-15/16, ~10-20min apart, landing on the poll
 // `sleep`); nothing in this distro sends them - a TERM that reads `killed
 // externally` is one no owner marked. Two guarantees answer that:
 //  - TERM/INT are HANDLED: the watcher prints ONE `signal:<NAME> pid=<n>
@@ -616,7 +617,7 @@
 //
 // USAGE LIMIT. An ended turn whose pane tail carries claude's provider
 // usage-limit line (`You've hit your weekly limit · resets 10pm (<tz>)`, the
-// exact line a drydock agent stopped on 2026-09-20) is not waiting on the
+// exact line an agent stopped on 2026-09-20) is not waiting on the
 // chief: steering it only spends another refused turn, and it can do nothing
 // until the reset. It exits `limited:<id>` with that line as the payload
 // instead of `ended:`, under the same dedup and suppressions. The match is the

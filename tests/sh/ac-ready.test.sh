@@ -63,7 +63,7 @@ assert_contains "$out" "READY  report (epic:payv2)" "raised cap releases the sto
 rm -f "$AC_HOME/config/epic-parallel"
 
 # Marker POSITION, not prose - docs/backlog.md puts the terminal marker
-# immediately after the id. A live incident (2026-07-22, drydock) showed an
+# immediately after the id. A live incident (2026-07-22) showed an
 # in-flight epic story documenting its own two terminal states in prose
 # (SETTLED-FAIL->[failed] - a convention every two-terminal-state story
 # hits) misread as if it carried the marker, stranding its dependents STUCK.
@@ -236,7 +236,7 @@ assert_contains "$out" "MISSING story line for 1" "validate never takes row 01 f
 # well-formed token placed in a SECOND `[...]` group after that existing tag
 # both read READY. Fixed by scanning every group, not just rp[2].
 # ROUND 3 (roomchief verify probe on 8843ecf): scanning every group on the
-# bare word "held"/"hold" REGRESSED a real, live, unheld drydock row -
+# bare word "held"/"hold" REGRESSED a real, live, unheld row -
 # dash-review-polish - because this grammar's OTHER bracket tags
 # (`[SLICE ...]`, `[CAPTAIN ORDER LANDED ...]`) carry free-text prose that
 # uses "held"/"hold" as an ordinary English verb ("the guardrail held").

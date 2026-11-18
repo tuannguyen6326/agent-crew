@@ -277,7 +277,7 @@ rm -f "$STATE/remote-threads/sl-mention-test.thread" "$STATE/remote-threads/sl-m
 # (deleted message, or a channel switch left it behind) must not wedge the
 # whole poll: thread_not_found drops THAT registration and the poll still
 # exits 0; every other API error stays fatal (live incident 2026-07-18:
-# a leftover registration blocked every drydock poll after the channel
+# a leftover registration blocked every poll after the channel
 # switch).
 printf 'thread_ts=1700009999.000999\n' >"$STATE/remote-threads/stale-fam.thread"
 printf '{"ok":true,"messages":[]}\n' >"$FAKE_RESPONSES/history.json"

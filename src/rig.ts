@@ -417,7 +417,7 @@ function cmdDrift(): number {
 
   // HOME BINDING FIRST, and it refuses rather than measuring. ac-home-seed.sh
   // copies a parent's config into a crewdeputy home, so a manifest can
-  // physically arrive in the wrong one - and grading drydock's manifest
+  // physically arrive in the wrong one - and grading example-fleet's manifest
   // against another home's reality would print a wall of drift that is really
   // one mistake.
   const declaredHome = jq(["-r", ".home.path // empty"], manifest) ?? "";

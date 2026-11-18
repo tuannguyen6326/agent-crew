@@ -70,8 +70,8 @@
 //                 `terminal` is: on a live ledger row that token is usually
 //                 ALREADY another bracket tag (`[CAPTAIN-ORDERED ...]`,
 //                 `[MONITOR ...]`, `[EPIC]`), so `[@held]` has no legal slot
-//                 there on most rows (measured: 3 of 4 open rows on the
-//                 drydock ledger) - the WHOLE leading run is checked, not
+//                 there on most rows (measured: 3 of 4 open rows on a live
+//                 fleet ledger) - the WHOLE leading run is checked, not
 //                 just its first group.
 //                 THE TOKEN CARRIES A SENTINEL (`@`) FOR A MEASURED REASON:
 //                 an earlier `[held]` (bare word, no sentinel) design was

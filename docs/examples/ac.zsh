@@ -1,14 +1,14 @@
 # agent-crew fleet launcher: `ac <fleet>[/<deputy>] [--backend=<b>] [--harness=<h>] [--solo]`
 #   ac                  -> list fleets (subdirs with state/)
-#   ac lab              -> launch the chief on the lab fleet (harness claude)
-#   ac lab/mobile         -> launch on the nested CREWDEPUTY home
+#   ac example-fleet    -> launch the chief on example-fleet (harness claude)
+#   ac example-fleet/mobile -> launch on the nested CREWDEPUTY home
 #                          (crewdeputies/<name> under the fleet); NOTE this opens
 #                          a plain chief session on that home - no deputy kickoff,
 #                          no parent meta, so the registry still reads NOT-RUNNING
 #   ac mobile             -> bare deputy name: resolved when exactly ONE fleet
 #                          carries it; several fleets -> refused with the list
 #   --harness=<h>       -> harness to run (default claude); the bare 2nd word
-#                          form `ac lab codex` still works
+#                          form `ac example-fleet codex` still works
 #   --solo              -> a SOLO session beside the chief (AC_SOLO=1): runs
 #                          inline in the CURRENT terminal, never takes the chief
 #                          lock, codes one slice at a time via bin/ac-self-task.sh;

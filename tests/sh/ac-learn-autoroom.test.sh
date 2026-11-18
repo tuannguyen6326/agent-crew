@@ -736,7 +736,7 @@ suite_task_clear
 rm -f "$suite_rec"
 
 # -- (a) NO FALSE POSITIVE: today's real live ledger (trimmed, exact rows) ---
-# Verbatim canonical pointer rows from drydock's records/learnings.md as of
+# Verbatim canonical pointer rows from a real fleet's records/learnings.md as of
 # 2026-08-03 (post evidence-link repair, 0 dangling links) - the same real
 # shape this order was raised against.
 cat >"$ledger" <<'LEDGER'

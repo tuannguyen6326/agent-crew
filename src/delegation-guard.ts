@@ -59,7 +59,7 @@
 // test tells the two apart.
 // (3) AC_HOME ABSENT. Arms 1 and 2 both need a home - arm 1 to compare against,
 // arm 2 because the fleet home it misses is not a git checkout at all - so a
-// chief that LOST its home fell through both and was allowed: a drydock chief
+// chief that LOST its home fell through both and was allowed: a chief
 // ran three days like that with the fence down. This arm owns that whole case,
 // and no home is resolved, named or guessed for it (bin/ac-lib.sh: "A fleet
 // home is NAMED, never guessed"). The discriminator is ac-sessionstart-nudge.sh's,
