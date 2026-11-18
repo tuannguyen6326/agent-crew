@@ -255,7 +255,11 @@
 // and --family <family> unquoted, and the record (knowledgeFile, src/lib.ts),
 // then the ask to record a root cause that shipped in landed code as a fact at
 // the line it lived in, since codereview hands such facts to the next diff
-// touching that file (src/verify.ts);
+// touching that file (src/verify.ts); in the execution (Crew) brief only, when
+// the project's home yaml declares commands.smoke (projectConfigFile, the file
+// commands.install is read from), a `## Smoke - run the change` block right
+// after it, asking the crewmate to run that command after its last change and
+// quote its tail, the command baked as `    smoke: <cmd>`;
 // the design report contract (<root>/docs/staged-design-flow-spec.md - spec,
 // architecture, plan and design only); the FLEET STANDING RULES - first the
 // distro's own hard rules, every `- HARD RULE - ` line of <root>/AGENTS.md
@@ -353,12 +357,14 @@ import {
   type Ledger,
   ledgerRead,
   physicalDir,
+  projectConfigFile,
   projectDir,
   rowContractForId,
   shellStatus,
   spawnShellSync,
   stageDirForId,
   writeAll,
+  yamlGet,
 } from "./lib.ts";
 
 // Byte strings (latin1) carry what the bash held as bytes; argv and the lib's
@@ -830,6 +836,23 @@ A bug whose root cause shipped in landed code is a fact too: record it with
 there must answer - a code review of a diff touching that file is handed it.`;
   };
 
+  const smoke = (): string => {
+    const dir = projDir(project);
+    const cf = dir === null ? null : projectConfigFile(u8(dir), true);
+    const cmd = cf === null ? "" : yamlGet(cf, "commands.smoke", true).out.replace(/\n+$/, "");
+    if (cmd === "") return "";
+    return `
+
+## Smoke - run the change
+
+Tests are not the change running. After your last change and before you hand
+back, run the project's smoke command in your worktree and quote its last lines
+in your report. A red smoke is a defect in your change until you show the base
+is red too.
+
+    smoke: ${cmd}`;
+  };
+
   const designContract = (): string => `
 ## Report contract
 
@@ -1202,7 +1225,7 @@ charter, so without this line the call can only answer
 \`QA_PROFILE_STATUS=needs-profile\`. Fill the placeholders; copy the flag as-is:
 \`${root}/bin/ac-qa.sh agent --home ${home} --target <delivered-sha> --task ${fam}-qa --brief <qa-charter> --evidence <dir> [--scope <name> --app <name>] [--ship-run <ship run id>] [--qa-rule <number|default>]\`
 
-${knowledge()}
+${knowledge()}${smoke()}
 ${standingRules()}
 ${signals(signalsSuffix)}
 `;

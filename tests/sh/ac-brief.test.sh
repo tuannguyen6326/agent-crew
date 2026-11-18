@@ -405,6 +405,18 @@ assert_contains "$kb" "$ROOT/bin/ac-know.sh add --home $AC_HOME --repo \"\$(git 
 assert_contains "$kb" "A bug whose root cause shipped in landed code is a fact too" \
   "the brief asks for an escaped defect as a repo fact anchored where it lived"
 
+# A smoke command lives in the captain-owned home yaml beside commands.install,
+# so only an execution brief - the one brief that changes code - asks for it.
+case "$kb" in *"## Smoke"*) fail "no commands.smoke declared means no smoke block" ;; esac
+printf 'commands:\n  smoke: "./run-smoke --quick"\n' >"$AC_HOME/projects/kproj.yaml"
+"$BIN/ac-brief.sh" stask kproj --mode local-only >/dev/null
+sb="$(cat "$AC_HOME/data/stask/brief.md")"
+assert_contains "$sb" "## Smoke - run the change" "an execution brief carries the smoke block"
+assert_contains "$sb" "    smoke: ./run-smoke --quick" "...with the declared command verbatim"
+"$BIN/ac-brief.sh" sscout kproj --scout >/dev/null
+case "$(cat "$AC_HOME/data/sscout/brief.md")" in *"## Smoke"*) fail "a scout changes no code and gets no smoke block" ;; esac
+rm -f "$AC_HOME/projects/kproj.yaml"
+
 # (brief-recall) The PULL verb leads the block: the chief's intake recall is a
 # discipline link, so the worker gets the same tiered read baked - ranked and
 # budgeted, with --home it cannot resolve itself - and the cite hand-over that

@@ -233,6 +233,7 @@ qa:
 | Key | Controls |
 | --- | --- |
 | `commands.install` | Optional dependency install run as `sh -c` in every fresh crew and self-task lease (not a scout's or a verifier's), before the agent starts, with `AC_LEASE_PRIMARY` naming the primary checkout so it can reuse the primary's caches. A non-zero exit, a timeout (`AC_LEASE_INSTALL_TIMEOUT`) or a dirty `git status` after it never refuses the lease: it is WARNed, recorded as `deps=failed` in the task meta and named in the crewmate's kickoff; success records `deps=ok`. A command that touches tracked files (e.g. `.yarn/install-state.gz`) must restore them itself. |
+| `commands.smoke` | Optional command that boots and drives the real deliverable. Every execution brief bakes it in a `## Smoke - run the change` block: the crewmate runs it after its last change and quotes its tail in the report. Nothing runs it for the crewmate and nothing gates on it. Owner: the `src/brief.ts` header. |
 
 ### QA keys
 
