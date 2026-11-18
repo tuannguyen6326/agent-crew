@@ -117,17 +117,24 @@ ac_harness_pane_arm() {
 }
 
 ac_harness_startup_key() {
-  # ac_harness_startup_key <harness> - the ONE bare key that answers the
-  # harness's startup dialog before any text is typed, empty when there is no
-  # dialog. codex: a bare Enter takes "1. Yes, continue"; an `n` or a `2`
-  # anywhere in typed text would pick "2. No, quit" (harness-facts.md, codex
-  # STARTUP TRUST DIALOG). Both senders - src/spawn.ts deliverKickoff and
-  # ac-pane-agent.sh's crewmate arm - read this instead of each keeping its
-  # own codex conditional; the SPAWN side additionally suppresses the key for
-  # a custom launch-codex template, whose TUI is unknown (that guard is the
+  # ac_harness_startup_key <harness> - the key(s) that answer the harness's
+  # startup dialog before any text is typed, space-separated when more than
+  # one press is needed, empty when there is no dialog. codex: a bare Enter
+  # takes "1. Yes, continue"; an `n` or a `2` anywhere in typed text would
+  # pick "2. No, quit" (harness-facts.md, codex STARTUP TRUST DIALOG). claude:
+  # a brand-new project's own trust dialog ("Quick safety check...") defaults
+  # to the WRONG option ("No, exit" - it quits the process), so the registry
+  # answers Down then Enter to reach "Yes, I trust this folder" instead
+  # (harness-facts.md, claude STARTUP TRUST DIALOG; probe evidence:
+  # data/claude-spawn-trust-dialog-new-folder/probe-evidence.md). Both
+  # senders - src/spawn.ts deliverKickoff and ac-pane-agent.sh's crewmate arm
+  # - read this instead of each keeping its own per-harness conditional; the
+  # SPAWN side additionally suppresses the key for a custom
+  # config/launch-<harness> template, whose TUI is unknown (that guard is the
   # caller's, not the registry's).
   case "$1" in
     codex) printf 'Enter\n' ;;
+    claude) printf 'Down Enter\n' ;;
     *) printf '' ;;
   esac
 }

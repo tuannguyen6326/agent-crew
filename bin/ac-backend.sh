@@ -33,7 +33,7 @@
 #                                     to the composer and garble it). Same
 #                                     three-state status: 0 accepted, 1
 #                                     strand, 2 unobservable
-#   backend_send_key <id> <Enter|Escape|C-c>
+#   backend_send_key <id> <Enter|Escape|Down|C-c>
 #                                     focus the tab, then press the key -
 #                                     delivery is UNVERIFIED (see below): a
 #                                     bare key has no guaranteed observable
@@ -60,7 +60,7 @@
 #                                     and the status is how it tells the two
 #                                     failures apart. Fails closed on an empty
 #                                     pane id.
-#   backend_send_key_pane <pane-id> <Enter|Escape|C-c>
+#   backend_send_key_pane <pane-id> <Enter|Escape|Down|C-c>
 #                                     send_key in that same raw-pane addressing
 #                                     (the pane agent's crewmate arm answers a
 #                                     codex startup dialog with it, exactly as
@@ -566,17 +566,18 @@ ac_startup_dialogs() {
   # composer-ready wait. Observation-driven where the backend observes:
   # a named dialog is answered and the loop looks again at once (codex's
   # update prompt is followed by its hooks-review prompt); an unnamed one
-  # gets the registry's blind key exactly once (ac_harness_startup_key -
-  # codex's trust dialog wants Enter); nothing pending ends the sequence as
+  # gets the registry's blind key(s) exactly once (ac_harness_startup_key -
+  # codex's trust dialog wants Enter, claude's wants Down then Enter since
+  # its default is the wrong option); nothing pending ends the sequence as
   # soon as the harness is observed UP or SHELL (the came-up and ready gates
   # own what follows). A pane neither backend can classify answers 3 on the
-  # first call: the blind key, once, and out.
+  # first call: the blind key(s), once, and out.
   # EVERY waiting arm spends the SAME budget, answered included: a dialog the
   # driver answers but that does not clear (a key the screen ignores, a prompt
   # that redraws) is not progress, and an unbounded answered arm would press
   # that key once a second for the life of the spawn.
   local answer="$1" send="$2" upfn="$3" h="$4" harness="$5"
-  local key rc up i=0 pressed=0 budget="${AC_STARTUP_DIALOG_BUDGET:-15}"
+  local key rc up i=0 pressed=0 tok budget="${AC_STARTUP_DIALOG_BUDGET:-15}"
   key="$(ac_harness_startup_key "$harness")"
   while :; do
     rc=0; "$answer" "$h" || rc=$?
@@ -586,11 +587,11 @@ ac_startup_dialogs() {
       1) up=0; "$upfn" "$h" || up=$?
          [ "$up" = 2 ] || return 0 ;;
       2) if [ -n "$key" ] && [ "$pressed" = 0 ]; then
-           "$send" "$h" "$key" || true
+           for tok in $key; do "$send" "$h" "$tok" || true; done
            pressed=1; sleep 1; continue
          fi
          return 0 ;;
-      *) [ -z "$key" ] || "$send" "$h" "$key" || true
+      *) for tok in $key; do "$send" "$h" "$tok" || true; done
          return 0 ;;
     esac
     [ "$i" -lt "$budget" ] || return 0

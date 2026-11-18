@@ -2543,8 +2543,8 @@ const IDLE_GLYPH = lat("✳");
 const SPINNERS = ["◐", "◓", "◑", "◒", "✻", "✽", "✢", "✶", "·", "⏺"].map(lat).concat(["\xe2\xa0", "\xe2\xa1", "\xe2\xa2", "\xe2\xa3"]);
 export const spins = (title: string): boolean => SPINNERS.some((g) => title.startsWith(g));
 // The key spellings orca_send_key_pane cases on.
-export const keyNamed = (k: string): "enter" | "escape" | "ctrl+c" | null =>
-  ["Enter", "enter"].includes(k) ? "enter" : ["Escape", "escape", "Esc", "esc"].includes(k) ? "escape" : ["C-c", "c-c", "ctrl+c", "Ctrl+C"].includes(k) ? "ctrl+c" : null;
+export const keyNamed = (k: string): "enter" | "escape" | "down" | "ctrl+c" | null =>
+  ["Enter", "enter"].includes(k) ? "enter" : ["Escape", "escape", "Esc", "esc"].includes(k) ? "escape" : ["Down", "down"].includes(k) ? "down" : ["C-c", "c-c", "ctrl+c", "Ctrl+C"].includes(k) ? "ctrl+c" : null;
 const RULE_RUN = new RegExp(`(?:${lat("─")}){8,}`);
 // The locale bash counts a string's length and offsets in, by its name:
 // LC_ALL, else LC_CTYPE, else LANG. A UTF-8 name the host has no locale for
@@ -2637,7 +2637,7 @@ export function orcaVerb(fn: BackendFn, args: string[], io: VerbIo, say: (b: Buf
     case "send_key": {
       const k = args[1] ?? "";
       const named = keyNamed(k);
-      const how = named === "enter" ? ["--enter"] : named === "escape" ? ["--text", "\x1b"] : named === "ctrl+c" ? ["--interrupt"] : ["--text", k];
+      const how = named === "enter" ? ["--enter"] : named === "escape" ? ["--text", "\x1b"] : named === "down" ? ["--text", "\x1b[B"] : named === "ctrl+c" ? ["--interrupt"] : ["--text", k];
       return orcaJson(["terminal", "send", "--terminal", argvOf(handle()), ...how], stdin) !== null ? 0 : 1;
     }
     case "send_line": {
@@ -3582,7 +3582,7 @@ function died(msg: string | Uint8Array): Ended {
 
 // ac_harness_startup_key's twin.
 export function harnessStartupKey(h: string): string {
-  return h === "codex" ? "Enter" : "";
+  return h === "codex" ? "Enter" : h === "claude" ? "Down Enter" : "";
 }
 
 // orca_resolve_group's twin: the nearest ancestor of <path> (itself first)
@@ -3815,15 +3815,28 @@ export function backendAgentIdle(id: string, io: SpawnIo): Ended {
   return b === null ? { status: 1, exited: true } : { status: agentIdlePane(argvOf(paneField(id, 1, io.stderr === "inherit")), io), exited: false };
 }
 
+// The registry's key(s) are space-separated when more than one press is
+// needed (claude's Down then Enter, codex's bare Enter); each is sent in
+// order as its own call, the first exited verb ending the sequence early.
+function sendKeys(send: (h: string, key: string) => Ended, h: string, key: string): Ended {
+  let r: Ended = { status: 0, exited: false };
+  for (const tok of key.split(" ")) {
+    if (tok === "") continue;
+    r = send(h, tok);
+    if (r.exited) return r;
+  }
+  return r;
+}
+
 // ac_startup_dialogs' twin, over the caller's three verbs - <answer> (a
 // dialog-answer verdict), <send> (a key press, its status ignored) and <up>
 // (harness_up) - each addressing <h> as the caller's layer does (a task id
 // or a raw pane), as deliverKickoff (src/spawn.ts) runs it: per round the
 // answer's verdict - 0 answered (a PATH `sleep 1`, a round of the budget, look
 // again), 1 nothing pending (done once <up> reads up or a shell; unreadable
-// spends a round), 2 unnamed (the harness's startup key pressed once, a
-// `sleep 1` that spends nothing; the second time done), else the key pressed
-// and done. The budget is AC_STARTUP_DIALOG_BUDGET (15); one `[ -lt ]`
+// spends a round), 2 unnamed (the harness's startup key(s) pressed once, a
+// `sleep 1` that spends nothing; the second time done), else the key(s)
+// pressed and done. The budget is AC_STARTUP_DIALOG_BUDGET (15); one `[ -lt ]`
 // cannot read ends the sequence (its own line not reproduced - W13). A verb
 // that exited (a refused backend name) ends it so; a sleep that failed ends
 // it exited with sleep's status under <errexit>, and is passed over without
@@ -3849,14 +3862,14 @@ export function startupDialogs(answer: (h: string) => Ended, send: (h: string, k
       }
       case 2: {
         if (key === "" || pressed) return done;
-        const k = send(h, key);
+        const k = sendKeys(send, h, key);
         if (k.exited) return k;
         pressed = true;
         spend = false;
         break;
       }
       default: {
-        const k = key === "" ? done : send(h, key);
+        const k = key === "" ? done : sendKeys(send, h, key);
         return k.exited ? k : done;
       }
     }
@@ -4004,7 +4017,7 @@ export function backendSendKeyPane(pane: string, key: string, io: SpawnIo): Ende
   if (pane === "") return { status: 1, exited: false };
   const top = io.stdin ?? "inherit";
   const named = keyNamed(key);
-  const how = named === "enter" ? ["--enter"] : named === "escape" ? ["--text", "\x1b"] : named === "ctrl+c" ? ["--interrupt"] : ["--text", key];
+  const how = named === "enter" ? ["--enter"] : named === "escape" ? ["--text", "\x1b"] : named === "down" ? ["--text", "\x1b[B"] : named === "ctrl+c" ? ["--interrupt"] : ["--text", key];
   return { status: orcaJson(["terminal", "send", "--terminal", pane, ...how], top) !== null ? 0 : 1, exited: false };
 }
 

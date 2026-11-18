@@ -416,10 +416,41 @@
 // consequences the fleet
 // owns: answering PERSISTS `[projects."<repo-root>"] trust_level = "trusted"`
 // into the host's ~/.codex/config.toml (so the fleet auto-trusts the repo it
-// spawned into - the same posture as claude's --permission-mode auto), and a
-// green codex spawn on a host that already carries that entry proves nothing
-// about a fresh one. `-c projects."<root>".trust_level="trusted"` was tried
-// first and REFUTED: codex's trust gate does not consult -c in either direction
+// spawned into), and a green codex spawn on a host that already carries that
+// entry proves nothing about a fresh one. `-c projects."<root>".trust_level="trusted"`
+// was tried first and REFUTED: codex's trust gate does not consult -c in
+// either direction (evidence: .agents/skills/harness-operations/references/harness-facts.md).
+//
+// THE CLAUDE STARTUP-DIALOG ANSWER (the authoritative contract). A
+// never-before-trusted project's first BUILT-IN claude launch opens on a
+// WORKSPACE TRUST dialog before its composer exists - the same hazard class
+// as codex's own trust dialog above, but with the OPPOSITE default: the
+// highlighted option is the one that quits, so a bare Enter is the WRONG
+// answer here. `ac_harness_startup_key("claude")` answers TWO presses, `Down`
+// then `Enter`, taking "Yes, I trust this folder" instead; `ac_startup_
+// dialogs`/`startupDialogs` send a registry key's space-separated tokens in
+// order, each its own call. This dialog's `agentWait` under the orca backend
+// carries no `.reason` (unlike codex's named prompts), so `backend_dialog_
+// answer_pane_orca` already classifies it as the SAME "a dialog the driver
+// cannot name" case codex's own unnamed dialogs take - no new classification
+// was added, only `claude`'s registry answer and a raw down-arrow-escape case
+// in `orca_send_key_pane`. TRUST PERSISTS PER REPOSITORY, not per worktree
+// like codex's exact-path keying - every worktree (and the main checkout) of
+// a once-trusted repository inherits the SAME answer forever, so this is a
+// one-time hazard per brand-new PROJECT, never a recurring one per worktree.
+// `ac_startup_dialogs` presses the registry's key(s) only when something is
+// actually observed pending, same as codex - an already-trusted project gets
+// NEITHER key. A CUSTOM config/launch-claude template also gets NEITHER key,
+// the same rule codex's Enter and '/effort ultracode' already follow. One
+// cost this extends from codex unchanged: deliverKickoff's extra
+// `sleepFor(settle)` right after `backendStartupDialogs` (just below) is
+// gated on `harnessStartupKey(h) !== ""` alone, so it now runs on every
+// built-in claude spawn regardless of whether a key was pressed, exactly as
+// it already did for codex. RESIDUAL, stated not solved (the same class
+// codex's own composer-ready gate carries): an unnamed `agentWait` is read as
+// THIS dialog with no way to tell it apart from some OTHER unnamed claude
+// prompt, and a second one right behind the first gets no answer at all,
+// since the registry presses once per spawn by design
 // (evidence: .agents/skills/harness-operations/references/harness-facts.md).
 //
 // THE COMPOSER-READY OBSERVATION (the authoritative contract). Between the
