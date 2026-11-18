@@ -247,7 +247,7 @@ test("backendHarnessUpPane probes a raw pane's came-up states as the drivers did
 
 test("backendSendKeyPane presses one key at a raw pane as the drivers did", () => {
   const key = verb("backend_send_key_pane", `L.backendSendKeyPane(A[0], A[1], ${IO})`, ["p1", "Enter"]);
-  for (const k of ["Enter", "Esc", "C-c", "y"]) same(`orca: ${k}`, { ...key, args: ["h1", k], env: ORCA_ });
+  for (const k of ["Enter", "Esc", "Down", "down", "C-c", "y"]) same(`orca: ${k}`, { ...key, args: ["h1", k], env: ORCA_ });
   same("orca: the send fails", { ...key, args: ["h1", "Enter"], env: ORCA_, seed: (s) => put(s, "stub/terminal-send.rc", "1\n") });
   same("orca: no pane", { ...key, args: ["", "Enter"], env: ORCA_ });
   same("an unsupported backend", tmuxAtCall(key));

@@ -33,7 +33,7 @@
 #                                     to the composer and garble it). Same
 #                                     three-state status: 0 accepted, 1
 #                                     strand, 2 unobservable
-#   backend_send_key <id> <Enter|Escape|C-c>
+#   backend_send_key <id> <Enter|Escape|Down|C-c>
 #                                     focus the tab, then press the key -
 #                                     delivery is UNVERIFIED (see below): a
 #                                     bare key has no guaranteed observable
@@ -60,7 +60,7 @@
 #                                     and the status is how it tells the two
 #                                     failures apart. Fails closed on an empty
 #                                     pane id.
-#   backend_send_key_pane <pane-id> <Enter|Escape|C-c>
+#   backend_send_key_pane <pane-id> <Enter|Escape|Down|C-c>
 #                                     send_key in that same raw-pane addressing
 #                                     (the pane agent's crewmate arm answers a
 #                                     codex startup dialog with it, exactly as

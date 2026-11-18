@@ -5,7 +5,7 @@
 // contract test.
 //
 // Usage: ac-send.sh <id> [--force] '<text>'
-//        ac-send.sh <id> [--force] --key <Enter|Escape|C-c>
+//        ac-send.sh <id> [--force] --key <Enter|Escape|Down|C-c>
 // --force counts only as the argument right after <id> (`--force --key` is
 // legal, the force unused); one argument past <text> or <key> is never read
 // (W6); stdin is never read here, only by the backend children below. Every

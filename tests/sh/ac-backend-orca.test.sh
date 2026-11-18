@@ -502,7 +502,9 @@ case "$(cat "$FAKE_ORCA/log")" in
 esac
 assert_eq "$(grep -c -- '--enter' "$FAKE_ORCA/log")" "1" "...and only one Enter, not a second blind press"
 rm -f "$FAKE_ORCA/terminals/term1.agentwait"
-# A harness with no registry key and nothing pending types nothing.
+# A harness WITH a registry key still types nothing when nothing is pending
+# (rc 1 - the key is consulted only on an answered-but-unclear or unnamed
+# dialog, never blind).
 : >"$FAKE_ORCA/log"
 run_backend orca 'backend_startup_dialogs o1 claude'
 case "$(cat "$FAKE_ORCA/log")" in *"terminal send"*) fail "claude with nothing pending must receive no keystroke" ;; esac

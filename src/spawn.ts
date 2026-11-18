@@ -452,13 +452,30 @@
 // main checkout) of that repository inherits the same answer forever once any
 // ONE of them answers it - this dialog is a one-time hazard per brand-new
 // PROJECT, not a recurring one per worktree, which is exactly why pooled or
-// previously-spawned-into projects never hit it. Sending the two keys
-// unconditionally on every built-in claude launch is still correct (mirrors
-// the codex precedent): on an already-trusted project they land on an empty,
-// already-ready composer and are a no-op (measured - neither key types a
-// character nor submits a blank line). A CUSTOM config/launch-claude template
-// gets NEITHER key: its TUI is unknown, the same rule codex's Enter and the
-// '/effort ultracode' line already follow.
+// previously-spawned-into projects never hit it. `ac_startup_dialogs` only
+// EVER presses the registry's key(s) when it actually observes something
+// pending (an answered-but-still-unclear round, or a dialog it cannot name) -
+// on an already-trusted project, where nothing is pending from the first
+// poll, NEITHER key is sent at all (this is unchanged from codex's own
+// mechanism, mirrored here, not a claude-specific guard). A CUSTOM
+// config/launch-claude template gets NEITHER key regardless: its TUI is
+// unknown, the same rule codex's Enter and the '/effort ultracode' line
+// already follow. One measured, accepted cost this extends from codex to
+// claude unchanged: deliverKickoff's own extra `sleepFor(settle)` right after
+// `backendStartupDialogs` (just below) is gated on `harnessStartupKey(h) !==
+// ""` alone, a static registry check - so it now runs on EVERY built-in
+// claude spawn, trusted project or not, exactly as it already did for every
+// built-in codex spawn; it is not conditioned on whether a key was actually
+// pressed this run. RESIDUAL, stated not solved (the same class the composer-
+// ready gate's own comment already carries for codex): an `agentWait` with no
+// `.reason` is read as THIS dialog by `ac_harness_startup_key`'s blind
+// Down-Enter answer, with no way to tell it apart from some OTHER unnamed
+// claude dialog (a different approval prompt entirely) that might show at the
+// same point - pressing Down+Enter into an unrelated one is unproven, and a
+// SECOND unnamed dialog right behind the first gets no answer at all (the
+// registry presses once per spawn, by design - the same bound the composer-
+// ready gate's "no blind Enter past the trust dialog" budget already holds
+// codex to).
 //
 // THE COMPOSER-READY OBSERVATION (the authoritative contract). Between the
 // came-up gate above and the FIRST thing typed after it (the '/effort
