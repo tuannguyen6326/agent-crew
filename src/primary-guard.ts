@@ -12,7 +12,7 @@
 // WHY IT EXISTS. @da5a33c closed the COMMIT door (the pre-commit guard
 // src/tree.ts installs); the EDIT door stayed open and @ad60acb covered it in
 // PROSE only (the execution brief seed makes a primary edit a STOP+REPORT).
-// On 2026-07-27 that prose failed for the first MEASURED time: a crewmate
+// That prose failed for the first MEASURED time: a crewmate
 // Edited the primary's AGENTS.md by absolute path while running its checks in
 // its own worktree, saw an empty diff there, and spent minutes on a false "my
 // Read was cached" diagnosis - it was writing one tree and verifying another.

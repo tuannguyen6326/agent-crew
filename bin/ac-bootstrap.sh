@@ -102,7 +102,7 @@ ac_path_copies() {
 #
 # Bounded with the same background+poll+kill watchdog shape as
 # ac-sync.sh's fetch_bounded: a wedged daemon binary (docker's own
-# incident, 2026-07-28 - `docker ps -a` hung 6m27s) must not block the
+# incident - `docker ps -a` hung 6m27s) must not block the
 # whole toolchain doctor, and by extension session start, just to learn
 # one version string.
 ac_tool_version() {

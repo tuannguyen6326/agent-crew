@@ -68,7 +68,7 @@
 // Promotion is CAPPED, fail-closed: at most config/room-parallel (default 5,
 // captain-pinned) roomchiefs in flight at once. Five concurrent chiefs hit
 // session limits, stalled, and let their scoped watchers die un-re-armed
-// (2026-07-16) - the cap is the backstop. The population counted is the state
+// - the cap is the backstop. The population counted is the state
 // metas named <family>-chief whose kind is roomchief (a crewdeputy never holds
 // a room slot); PRESENCE of the meta is what holds one, matching how the rest
 // of the fleet defines in flight, so a chief stops counting exactly when
@@ -255,7 +255,7 @@
 // consumer maps it for its own surface). A crewmate gets no AC_HOME, so the pane
 // agents it later starts (ac-pane-agent.sh: the codereview reviewer, ac-qa.sh
 // agent) cannot read config/ at all and used to judge on claude's own default
-// while the fleet was pinned elsewhere (live 2026-07-15: an opus-pinned fleet
+// while the fleet was pinned elsewhere (live: an opus-pinned fleet
 // reviewed on claude-fable-5). Narrow scalars carry exactly that knowledge and
 // nothing more - handing over AC_HOME instead would give every crewmate the whole
 // fleet home, which ac-qa.sh's "the path travels in the brief, not the environment"
@@ -281,7 +281,7 @@
 // UserPromptSubmit front-load hook up-walks up to 6 levels for an index, so every
 // fleet cwd under a container-wide index queries that whole graph; a roomchief
 // kickoff mandate trips codegraph's structural gate and measured 161.72s against
-// Claude Code's 30s hook budget (diagnosis 2026-07-21), while a crewmate prompt
+// Claude Code's 30s hook budget, while a crewmate prompt
 // short-circuits at the gate in 0.08s. The var makes the hook a 0.07s no-op. It
 // disarms the front-load NUDGE only - the codegraph_explore MCP tool a pane calls
 // deliberately stays available - and is scoped to the panes this module launches,
@@ -360,7 +360,7 @@
 // The CAME-UP GATE sits between those two, and it is FAIL CLOSED. A harness can
 // die at launch - a --resume-from whose session id claude did not recognise
 // printed "No conversation found with session ID ..." and EXITED, dropping the
-// pane back to zsh (live incident 2026-07-21) - and the kickoff prompt was then
+// pane back to zsh (live incident) - and the kickoff prompt was then
 // typed into that SHELL: `zsh: command not found: You...`, after which the dead
 // pane sat silent until a stale wake minutes later. So deliverKickoff first
 // asks backend_harness_up (its three states and their evidence are
@@ -383,7 +383,7 @@
 // same fail-closed way (status `failed:`, die, trap reaps the window) and
 // warning-only on an UNOBSERVABLE 2. It exists because a spawn once reported
 // SUCCESS - and ac-crew-state.sh said `working: spawned` - over a codex that was
-// already dead at a zsh prompt (live incident 2026-07-21, the codex-crewmate
+// already dead at a zsh prompt (live incident, the codex-crewmate
 // probe): the pre-kickoff gate saw a healthy pane because the death came after
 // it, and backend_send_line's render-change probe read the kickoff as ACCEPTED
 // because the render changed - by the app DYING. A render-change probe cannot
@@ -500,7 +500,7 @@
 // false-green class the came-up gate already carries.
 //
 // Delivery is ACKNOWLEDGED,
-// never blind (the 2026-07-16 eaten-kickoff incident: a booting TUI dropped the
+// never blind (the eaten-kickoff incident: a booting TUI dropped the
 // first Enter, the next send-text APPENDED to the stranded line and garbled
 // both into one bad /effort argument): backend_send_line verifies its own
 // submit (Orca's delivery receipt, else the composer-pending check and its
@@ -579,8 +579,8 @@
 // fleet's primary key across meta, status, room, backlog AND branch; the
 // duplicate-meta checks validate four of those five, and the one they skip is
 // the only one that carries CODE. ac-teardown.sh deletes a crew branch only when
-// it is MERGED, so a dead or --force'd task leaves crew/<family> behind (live
-// 2026-07-27: crew/learning held 160 commits of pre-scrub history while
+// it is MERGED, so a dead or --force'd task leaves crew/<family> behind (live:
+// crew/learning held 160 commits of pre-scrub history while
 // `learning` is the id ac-learn.sh autoroom spawns on its own) - and spawn used
 // to take that id anyway, putting the next crewmate's commits on a foreign
 // history and making its landing diff nonsense. So the CREW PATH refuses when

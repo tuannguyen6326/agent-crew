@@ -93,7 +93,7 @@
 // whole ladder is that an independent judge is never quietly a weaker model, or
 // a shallower thinking tier, than the fleet pinned - it was, measurably: with a
 // fleet pinned to config/model=opus its reviewer panes ran on claude-fable-5
-// (pool-worktree transcripts, 2026-07-15). The config rung alone could not fix
+// (pool-worktree transcripts). The config rung alone could not fix
 // that, because it resolves through the home: only a chief-run caller
 // (ac-learn.sh's scout) has AC_HOME, while the reviewer and ac-qa.sh agent run
 // from crewmate panes that have none. Hence the env rung, fed by ac-spawn.sh's
@@ -148,7 +148,7 @@
 //     agent_status:idle is proven insufficient on its own - codex-cli 0.144.6
 //     blocked on its own interactive TRUST DIALOG while the then-current
 //     driver reported `idle`, the SAME value it reports for a finished turn
-//     (probe 2026-07-21, two throwaway panes). For claude the ambiguity is
+//     (probe, two throwaway panes). For claude the ambiguity is
 //     broken by a second, claude-specific observable (the
 //     transcript's mtime idling past 120s); a harness with no transcript has
 //     nothing to break it with, and would harvest the dialog as its verdict.
@@ -160,8 +160,7 @@
 // announces its own completion, so file exists = turn ended and file contents
 // = the final message. Both codex and opencode are VERIFIED to do exactly that
 // on the brief alone, with no harness-specific mechanism (harness-facts.md,
-// `codex` and `opencode` Completion bullets; the observations are in
-// `data/codex-crewmate/room.md` and `data/opencode-crewmate/room.md`). What the
+// `codex` and `opencode` Completion bullets, each citing its own observations). What the
 // crewmate arm gives up is the session: no resume, no session id, and no live
 // composer to steer into, and neither harness pins a caller-minted session id
 // (harness-facts.md Resume bullets), so `--resume` is REFUSED here exactly as
@@ -172,7 +171,7 @@
 //      argv. The positional-prompt convention the other two arms use is
 //      claude/codex-shaped, not universal: opencode 1.18.4's positional argument
 //      is a project DIRECTORY, so an appended prompt became a cd target and the
-//      pane fell back to a shell (probe 2026-07-21). The typed line is the
+//      pane fell back to a shell (probe). The typed line is the
 //      delivery every crewmate already uses, verified for both harnesses.
 //      The harness must read idle AND show a non-empty pane render stable
 //      across three one-second observations before any text is typed.
@@ -187,7 +186,7 @@
 //      harness-facts.md, codex STARTUP TRUST DIALOG). NOT SAFE IN GENERAL, and
 //      stated rather than hidden: on a pane showing some OTHER unnamed startup
 //      dialog that Enter selects that dialog's default. That residual is
-//      accepted on the crewmate path (`data/codex-pane-tui-arm/room.md`); this
+//      accepted on the crewmate path (`room.md`); this
 //      arm inherits the acceptance because it inherits the step, and
 //      classifying dialogs here would rebuild the machinery that was deleted.
 //   3. FLAG-VS-PROFILE MODEL COHERENCE - an explicit --model (carrying the
@@ -347,7 +346,7 @@
 // turn's last message included. That is how a learning scout which hit the org
 // monthly spend limit after 23 Reads reported status ok having written no
 // report, and its caller then consumed the retro window on it
-// (data/learning/room.md 13:36:13Z). So a caller MAY DECLARE the artifact its
+// (observed live). So a caller MAY DECLARE the artifact its
 // prompt demanded, with --deliverable <path>, and this exit then refuses a pane
 // that idled without it - status error, carrying the pane so the caller can
 // still reap the agent, rather than burning the caller's whole timeout. Absent
@@ -1066,7 +1065,7 @@ function helper(args: string[], atCaller: boolean): void | Promise<void> {
 // tools (the judge must READ context paths) and write-restraint is the judge
 // prompt's law; cursor-agent -p --trust unlocks headless reads, and --yolo is
 // deliberately ABSENT, so unapproved mutations deny by default.
-// agy (Antigravity CLI), MEASURED 2026-09-12, differs in every clause:
+// agy (Antigravity CLI), MEASURED empirically, differs in every clause:
 //   - `-p` takes the NEXT token as its prompt, so it comes LAST (the prompt is
 //     appended positionally; `-p --model x` read "--model" as the prompt);
 //   - the model NAME carries spaces and its own effort tier ("Gemini 3.8 Flash
@@ -1078,7 +1077,7 @@ function helper(args: string[], atCaller: boolean): void | Promise<void> {
 //     anything at all - headless auto-DENIES the tool permission it cannot
 //     prompt for; it removes the prompt, not the plan-mode boundary;
 //   - `--print-timeout` is agy's OWN wait ceiling in print mode, default 5m0s
-//     (`agy --help`, 2026-09-15), past which it exits 0 with an EMPTY stdout
+//     (`agy --help`), past which it exits 0 with an EMPTY stdout
 //     ("printed nothing" here) - 11 of 36 agy scout lanes in one home died that
 //     way under a 900s budget - so the run's --timeout text is handed over in
 //     the Go duration form the CLI reads.

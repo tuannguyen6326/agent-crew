@@ -12,15 +12,15 @@
 // WHY IT EXISTS - three failures this fleet already recorded, all with the same
 // root (records/learnings.md):
 //   - a second arm exits `already running`, so when the FIRST watcher
-//     heartbeat-exits the chief is left blind with no notification (2026-07-16);
+//     heartbeat-exits the chief is left blind with no notification;
 //   - `already running` is not proof of coverage: an externally-killed watcher
-//     leaves a stale lock that false-positives every re-arm (2026-07-16);
+//     leaves a stale lock that false-positives every re-arm;
 //   - a watcher can be killed externally, and the recorded remedy is "after ANY
-//     watcher task ends, check the exit reason and re-arm" (2026-07-16).
+//     watcher task ends, check the exit reason and re-arm".
 // Every one of them ends in "and then the chief must remember". This hook is
 // what remembers.
 //
-// MEASURED CONTRACT (Claude Code 2.1.220, probed directly 2026-07-26 in an
+// MEASURED CONTRACT (Claude Code 2.1.220, probed directly in an
 // isolated sandbox - these are observations, not documentation claims, and the
 // published docs DISAGREE with two of them):
 //   1. Stop hooks fire in headless (`claude -p`) runs too, payload carries
@@ -68,14 +68,14 @@
 // EVERY ARM THIS HOOK MAKES IS MARKED BOUNDED (AC_AUTOARM=1, recorded by
 // ac-watch.sh in its lock dir). The watcher dies with this firing, so a CHIEF
 // arming by hand must not be told `already running` and stand its own - durable -
-// arm aside for it: measured 2026-08-06, the chief's arm reported coverage at T+0
+// arm aside for it: measured, the chief's arm reported coverage at T+0
 // and that same watcher was retired by the budget handback 2.5s later, leaving the
 // turn-end guard to block on a stood-down beacon. ac-watch.sh's Singleton block
 // owns the refusal; the flag is only how it can tell the two owners apart, and it
 // does not change what THIS hook reads (a firing standing aside from a
 // predecessor's watcher still gets the `already running` prefix it globs on).
 //
-// AN ORPHANED FIRING (autoarm-orphan-holds-watcher-lock, 2026-10): Claude Code
+// AN ORPHANED FIRING (autoarm-orphan-holds-watcher-lock): Claude Code
 // reparents a Stop hook outliving its session to pid 1 (research/firstmate
 // origin/main bin/fm-wake-lib.sh:1810-1814) with its watcher child still alive
 // and the lock still held - a corpse the exit-2 nudge can never reach, because

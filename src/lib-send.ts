@@ -42,7 +42,7 @@ const LAST_TYPED_TURN = `
   `;
 
 // A message typed while claude is mid-turn is never a typed turn at all: a
-// live transcript (2026-11-16) shows it ONLY as a queue-operation pair
+// live transcript shows it ONLY as a queue-operation pair
 // (enqueue, then remove reason="absorbed_mid_turn") - claude folds it into the
 // turn already running instead of starting a new one. ORDER matters, not just
 // presence: the content of the chronologically LAST entry that is either a

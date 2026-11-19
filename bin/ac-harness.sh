@@ -68,12 +68,12 @@ ac_harness_instruction_file() {
   local h="${1:-claude}"
   case "$h" in
     # pi joins the AGENTS.md group on its own CLI's word: pi 0.84.2 --help
-    # (verified live on this host, 2026-08-14) names the discovery switch
+    # (verified live on this host) names the discovery switch
     # "--no-context-files  Disable AGENTS.md and CLAUDE.md discovery and
     # loading" - so a bare pi launch discovers the worktree AGENTS.md itself;
     # the repo-shipped-wins rule is unchanged.
     codex | opencode | pi) printf 'AGENTS.md\n' ;;
-    # cursor: LIVE-PROBED 2026-08-14 on cursor-agent 2026.05.05 (headless
+    # cursor: LIVE-PROBED on cursor-agent 2026.05.05 (headless
     # -p --trust, all-tokens probe + swapped-marker control leg -
     # harness-facts.md cursor section owns the evidence): loads the worktree
     # AGENTS.md AND root CLAUDE.md, does NOT load .claude/CLAUDE.md, and the
@@ -125,8 +125,8 @@ ac_harness_startup_key() {
   # a brand-new project's own trust dialog ("Quick safety check...") defaults
   # to the WRONG option ("No, exit" - it quits the process), so the registry
   # answers Down then Enter to reach "Yes, I trust this folder" instead
-  # (harness-facts.md, claude STARTUP TRUST DIALOG; probe evidence:
-  # data/claude-spawn-trust-dialog-new-folder/probe-evidence.md). Both
+  # (harness-facts.md, claude STARTUP TRUST DIALOG; probe evidence in
+  # probe-evidence.md). Both
   # senders - src/spawn.ts deliverKickoff and ac-pane-agent.sh's crewmate arm
   # - read this instead of each keeping its own per-harness conditional; the
   # SPAWN side additionally suppresses the key for a custom

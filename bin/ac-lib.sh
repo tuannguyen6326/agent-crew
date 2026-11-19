@@ -17,7 +17,7 @@
 # ac_home_resolve), the orphaned shell-snapshot detector, and
 # small logging/error helpers.
 #
-# SPLIT (audit-f3, codebase-audit-2026-07-29 finding 3): the ac_qa_*
+# SPLIT (audit-f3, codebase-audit finding 3): the ac_qa_*
 # validation block, the wake/spool/room/chief-quiet block, and the
 # Learning/Curate cadence + maintenance-transaction block moved out to
 # ac-qa-lib.sh (retired since its last live caller was ported),
@@ -84,7 +84,7 @@ ac_records_dir() {
   # migration (data/records/<f> or data/<f> moved in on first resolve) that
   # used to run here cost 10 stats + an rmdir on EVERY call across 47 call
   # sites; retired by audit-f7 after every fleet home was verified clean of
-  # the interim layout (gone since 2026-07-17).
+  # the interim layout.
   # The home is bound on its OWN statement, never concatenated into the path.
   # Measured (bash 3.2): in the command-substitution context every caller uses,
   # `r="$(ac_home)/records"` carries exit status 0 even when the substitution
@@ -1382,7 +1382,7 @@ ac_claude_transcript_path() {
   # ac_claude_transcript_path <session-id> - the transcript file for that
   # session, found by GLOBBING THE SESSION ID (a UUID) rather than deriving a
   # cwd slug - the id is unique, so this is strictly more robust (verified
-  # against a live transcript, 2026-09-11). Empty and rc 1 unless EXACTLY one
+  # against a live transcript). Empty and rc 1 unless EXACTLY one
   # file matches.
   local sid="$1" root f hit="" hits=0
   [ -n "$sid" ] || return 1
@@ -1397,7 +1397,7 @@ ac_claude_transcript_path() {
 
 ac_claude_last_typed_turn() {
   # ac_claude_last_typed_turn <transcript-file> - the LAST typed human turn's
-  # literal text (shape verified against a live transcript, 2026-09-11):
+  # literal text (shape verified against a live transcript):
   # type=user, promptSource=typed, origin.kind=human, and message.content a
   # STRING - a tool-result turn's content is an ARRAY and must never
   # false-match. A --resume session's prior turns are why this is the LAST
@@ -2219,7 +2219,7 @@ ac_seed_crewmate_md() {
   # distinct tokens, only the AGENTS.md token reached the prompt, and a nested
   # .claude/AGENTS.md / .codex/AGENTS.md / sub/AGENTS.md was loaded neither
   # additively nor as a fallback. opencode reads <worktree>/AGENTS.md too and
-  # does NOT load .claude/CLAUDE.md - verified on 2026-07-27 on a live opencode
+  # does NOT load .claude/CLAUDE.md - verified on a live opencode
   # 1.18.5 pane holding both candidate files at once, each ordering a distinct
   # marker, with a control leg that SWAPPED the markers between the two files
   # and saw the surviving marker follow the PATH (harness-operations
@@ -2406,7 +2406,7 @@ ac_seed_crew_skills() {
   # before this ensure existed.
   # DESTINATION, by harness: mirrors ac_seed_crewmate_md's per-harness target
   # (bin/ac-harness.sh's registry doesn't cover this - deliberately kept local
-  # to this function per the caller's scope). Verified 2026-07-31 with two
+  # to this function per the caller's scope). Verified with two
   # local renderers (codex debug prompt-input, opencode debug skill; repo-
   # knowledge multica-research): codex scans .agents/skills ONLY, never
   # .claude/skills; opencode and claude both scan .claude/skills (opencode

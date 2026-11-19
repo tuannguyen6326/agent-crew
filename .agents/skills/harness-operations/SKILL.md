@@ -15,8 +15,8 @@ Covers only the harnesses Agent Crew currently supports through `bin/ac-spawn.sh
 - `claude`;
 - `codex`;
 - `opencode`;
-- `pi` (registered 2026-08-14, launch/effort/instruction facts verified from its own CLI; behavioural contract unproven - the references file owns the boundary);
-- `cursor` (registered 2026-08-14; the agent CLI is `cursor-agent`, never bare `cursor`; instruction file LIVE-PROBED: AGENTS.md + root CLAUDE.md, never .claude/CLAUDE.md - the references file owns the boundary);
+- `pi` (registered, launch/effort/instruction facts verified from its own CLI; behavioural contract unproven - the references file owns the boundary);
+- `cursor` (registered; the agent CLI is `cursor-agent`, never bare `cursor`; instruction file LIVE-PROBED: AGENTS.md + root CLAUDE.md, never .claude/CLAUDE.md - the references file owns the boundary);
 - a captain-provided custom launch command (`config/launch-<harness>`), which stays unverified unless separately validated.
 
 `orca` is the fleet's one session backend. The per-harness facts below describe each harness's own behavior; a pane mechanic not marked as verified on orca is unverified there (`references/harness-facts.md` owns each fact's own provenance).

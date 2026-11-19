@@ -392,7 +392,7 @@ printf -- '-- crewdomains (routing table) --\n'
 # Knowledge layers (L1 repo-knowledge + L2 scenes): the two durable stores a
 # chief reads at intake, reported as COUNTS only. Both are O(1) in entries, and
 # that bound is why neither re-derives anything here: `ac-know.sh verify` is an
-# 8-second git walk over 487 entries (measured 2026-08-09), so the digest reads
+# 8-second git walk over 487 entries (measured), so the digest reads
 # the STAMP that run left instead - and says plainly when there is none, or when
 # the tree has moved past the one it graded. A verb nobody runs is a verb that
 # does not exist; a count nobody can see is rot nobody fixes.

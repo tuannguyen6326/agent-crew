@@ -1,7 +1,6 @@
 # Staged Design Flow Specification
 
 Status: Accepted  
-Date: 2026-08-10
 
 ## Problem
 

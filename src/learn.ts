@@ -33,7 +33,7 @@
 // exist, each force every per-candidate plan to bundle a ledger-wide repair
 // that the maintenance gate then correctly refuses as over-broad - spending the
 // whole DISTILL cycle on candidates it was always going to lose (measured
-// twice: 2026-07-28 7/7 revise, 2026-08-03 5/5 revise). Neither shape is
+// twice, each losing most of that cycle's revise budget). Neither shape is
 // auto-repaired; the gate HOLDS and prints the one line naming the defect and
 // its remedy, same contract as the suite gate.
 //
@@ -963,7 +963,7 @@ ONE BULLET BACKS ONE CANDIDATE - by CONTENT, not just by citation. Decide
 which candidate each source bullet BELONGS to BEFORE you write any body, and
 let only that one use it. Citing a bullet twice is already impossible (the land
 consumes each one once); USING ITS CONTENT in a second candidate's body without
-citing it is not, and that is the shape that killed a whole pair on 2026-08-16.
+citing it is not, and that is the shape that killed a whole pair.
 One candidate cited the "a modelled non-zero status is already a refusal"
 bullet and was refused as OVER-BROAD (it consumed a source its own lesson does
 not need); a second restated that same bullet's content inside \`===patch===\`
@@ -2326,7 +2326,7 @@ function shapeGate(n: string, every: string): { ok: boolean; out: string } {
   if (legacy > 0)
     return {
       ok: false,
-      out: `learning DUE (${n}/${every}) HELD: records/learnings.md carries ${legacy} legacy rung-qualified pointer row(s) (e.g. "- <date> [distilled -> <name> @fleet|@container] ...") that predate the ## Pending/## Distilled frame - every per-candidate plan would bundle their canonicalization and the maintenance gate would refuse it as over-broad (2026-07-28, 7/7 revise); hand-canonicalize the ledger once before the next DISTILL\n`,
+      out: `learning DUE (${n}/${every}) HELD: records/learnings.md carries ${legacy} legacy rung-qualified pointer row(s) (e.g. "- <date> [distilled -> <name> @fleet|@container] ...") that predate the ## Pending/## Distilled frame - every per-candidate plan would bundle their canonicalization and the maintenance gate would refuse it as over-broad; hand-canonicalize the ledger once before the next DISTILL\n`,
     };
   const archdir = `${dirname(ledger)}/learnings-archive`;
   for (const line of lines.filter((l) => l.startsWith("- [distilled -> "))) {
@@ -2335,7 +2335,7 @@ function shapeGate(n: string, every: string): { ok: boolean; out: string } {
     if (isFile(`${archdir}/${m[1]}.md`)) continue;
     return {
       ok: false,
-      out: `learning DUE (${n}/${every}) HELD: records/learnings.md links [evidence](learnings-archive/${m[1]}.md) but that file does not exist - learn_ledger_stage emits the link only when its target exists, so every per-candidate plan would strip it and the maintenance gate would refuse it as over-broad (2026-08-03, 5/5 revise); hand-repair the dangling link before the next DISTILL\n`,
+      out: `learning DUE (${n}/${every}) HELD: records/learnings.md links [evidence](learnings-archive/${m[1]}.md) but that file does not exist - learn_ledger_stage emits the link only when its target exists, so every per-candidate plan would strip it and the maintenance gate would refuse it as over-broad; hand-repair the dangling link before the next DISTILL\n`,
     };
   }
   return { ok: true, out: "" };
