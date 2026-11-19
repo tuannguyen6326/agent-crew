@@ -3808,7 +3808,7 @@ document.getElementById("wbf-keep-mine").addEventListener("click", () => { doSav
 }
 
 // ---------------------------------------------------------------------------
-// Review (dash-review: the native annotate loop, spec data/dash-review/spec)
+// Review (dash-review: the native annotate loop)
 // ---------------------------------------------------------------------------
 // The captain opens an artifact at GET /review?path&file (own page, like
 // /whiteboard, themed to the SPA palette), pins comments to elements through

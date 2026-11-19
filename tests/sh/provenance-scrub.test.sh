@@ -75,21 +75,32 @@ scan() {
 hits="$(scan "$ROOT")"
 assert_eq "$hits" "" "published text states rules as design facts, never with a dated ruling"
 
-# A concrete family citation as evidence, e.g. `data/codex-crewmate/room.md`.
+# A concrete family citation as evidence, e.g. `data/codex-crewmate/room.md`,
+# `data/dash-review/spec` (extensionless - a bare family/subdir citation) or
+# `data/research-jev-model/{spec,report}.md` (a brace group of file names).
 # `[a-z]` as the first char refuses both the generic `<family>` placeholder
-# (starts with `<`) and a glob like `data/*/*/gate.json`.
-PROVENANCE_PATH_RE='data/[a-z][a-z0-9-]*/[A-Za-z0-9._/-]*\.(md|json|log)'
+# (starts with `<`) and a glob like `data/*/*/gate.json`; requiring at least
+# one char after the family segment refuses a bare `data/<family>` mention
+# with nothing after it (never seen as residue - every real citation names a
+# file or subdir).
+PROVENANCE_PATH_RE='data/[a-z][a-z0-9-]*/[A-Za-z0-9,{}._/-]+'
 DATE_RE='20[0-9]{2}-[0-9]{2}-[0-9]{2}'
 
 # Exempt substrings, same strip-then-retest shape as PARITY_HELD above: a
 # structural (non-family) data/ path this distro's own code/docs name
-# generically, and the dated examples this scrub proved FUNCTIONAL - a
+# generically, a generic example family name this distro's own prose already
+# uses the way other docs use `<family>` (never a real citation), one
+# genuine false match (a home-layout word list that happens to contain
+# "data/config/..."), and the dated examples this scrub proved FUNCTIONAL - a
 # documented format spec, a measured tool+version with no date left to drop,
 # or (the last one) PARITY_HELD itself, read here too since it also matches
 # DATE_RE.
 FUNCTIONAL_KEEP=(
-  'data/external/hermes-dashboard-uiux-guide.md'
   'data/curate/room.md'
+  'data/qa-store/'
+  'data/fam/spec/'
+  'data/c1/ship/'
+  'state/data/config/projects/records'
   'gh version 2.51.0 (2024-06-13)'
   'migration lands, 2026-09-01'
   '(added 2026-09-25)'
@@ -126,21 +137,29 @@ scan_residue() {
 residue_hits="$(scan_residue "$ROOT")"
 assert_eq "$residue_hits" "" "tracked non-test files carry no data/<family> provenance citation and no bare calendar date outside the functional-keep allowlist"
 
-# The residue guard itself: a concrete family citation and a bare date are
-# caught; the generic data/<id> placeholder and a functional-keep date are
-# not, and a test file's own comment is never read by this scan at all.
+# The residue guard itself: a concrete family citation (extension, brace
+# group and bare extensionless subdir forms alike) and a bare date are
+# caught; the generic <family> placeholder, the distro's own generic
+# example family names, a structural data/ path, and a functional-keep date
+# are not, and a test file's own comment is never read by this scan at all.
 rfx="$TMP/residue-fixture"
-mkdir -p "$rfx/bin" "$rfx/docs" "$rfx/tests/sh"
+mkdir -p "$rfx/bin" "$rfx/docs" "$rfx/src" "$rfx/tests/sh"
 printf '# verified against data/some-real-family/report.md\n' >"$rfx/bin/x.sh"
+printf '// spec data/another-real-family/spec\n' >"$rfx/src/p.ts"
 {
   printf 'measured on %s\n' '2026-01-02'
+  printf 'design and evidence: data/third-family/{spec,report}.md\n'
   printf 'the generic layout is data/<family>/brief.md, never a real one\n'
+  printf 'the generic examples data/fam/spec/ and data/c1/ship/ are fine\n'
+  printf 'the structural data/qa-store/ dir is fine too\n'
   printf 'kept: gh version 2.51.0 (2024-06-13)\n'
 } >"$rfx/docs/d.md"
 printf '# a dated residue in a test comment: %s\n' '2026-03-04' >"$rfx/tests/sh/t.test.sh"
 git -C "$rfx" init -q && git -C "$rfx" add -A
 assert_eq "$(scan_residue "$rfx" | cut -d: -f1,2)" "bin/x.sh:1
-docs/d.md:1" "a concrete family citation and a bare date are caught; the generic placeholder, a functional-keep date and a test file's own comment are not"
+docs/d.md:1
+docs/d.md:2
+src/p.ts:1" "a concrete family citation - extension, brace group and bare subdir forms - and a bare date are caught; the generic placeholder, the generic example family names, a structural data/ path, a functional-keep date and a test file's own comment are not"
 
 # The guard itself: a dated ruling in a script, a doc and a suite comment is
 # caught, while a suite's data lines, a heredoc body, an undated mention and the
