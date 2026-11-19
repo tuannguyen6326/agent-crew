@@ -119,18 +119,21 @@ function claudeLastQueuedIfNewest(path: string): string | null {
 export function arrivalWait(sid: string, text: string): { status: number; last: string } {
   const expected = lat(text).replace(/\n+$/, "");
   if (sid === "") return { status: 2, last: "" };
-  const path = claudeTranscriptPath(sid);
-  if (path === null) return { status: 2, last: "" };
   let last = "";
   let queued = false;
   for (let reads = 1; ; reads++) {
-    const cur = claudeLastTypedTurn(path);
-    if (cur !== null) {
-      last = cur;
-      if (last === expected) return { status: 0, last: "" };
+    // claude creates the transcript file at the session's first submitted
+    // turn, which can land after the send that this wait follows returned.
+    const path = claudeTranscriptPath(sid);
+    if (path !== null) {
+      const cur = claudeLastTypedTurn(path);
+      if (cur !== null) {
+        last = cur;
+        if (last === expected) return { status: 0, last: "" };
+      }
+      const q = claudeLastQueuedIfNewest(path);
+      if (q !== null) queued = q === expected;
     }
-    const q = claudeLastQueuedIfNewest(path);
-    if (q !== null) queued = q === expected;
     if (reads >= 7) break;
     settle("inherit");
   }

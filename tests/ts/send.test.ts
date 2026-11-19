@@ -161,6 +161,25 @@ test("arrivalWait is ac_arrival_wait: its verdict, the arrived text it hands bac
   expect(twin('const a = L.arrivalWait("s-cut", "the head and the tail"); say(a.status + "|" + a.last)', { AC_CLAUDE_TRANSCRIPT_ROOT: root, AC_SEND_SETTLE: "0", SLEEP_LOG: join(W, "x") }).out).toBe("1| the tail");
 }, 30000);
 
+test("arrivalWait confirms a transcript file that first exists after the wait began, as ac_arrival_wait does", () => {
+  const root = dir("late-root");
+  mkdirSync(join(root, "proj"));
+  const src = join(W, "late-src.jsonl");
+  writeFileSync(src, turn("late text"));
+  const late = join(W, "late-stub");
+  mkdirSync(late);
+  writeFileSync(join(late, "sleep"), '#!/bin/sh\n[ -e "$LATE_FILE" ] || cp "$LATE_SRC" "$LATE_FILE"\n', { mode: 0o755 });
+  const env = (sid: string): Record<string, string> => ({
+    PATH: `${late}:${process.env.PATH!}`,
+    AC_CLAUDE_TRANSCRIPT_ROOT: root,
+    AC_SEND_SETTLE: "0",
+    LATE_SRC: src,
+    LATE_FILE: join(root, "proj", `${sid}.jsonl`),
+  });
+  expect(bash('rc=0; ac_arrival_wait "$1" "$2" || rc=$?; printf "%s|%s" "$rc" "$AC_ARRIVAL_LAST"', env("s-late-b"), ["s-late-b", "late text"]).out).toBe("0|");
+  expect(twin('const a = L.arrivalWait("s-late-t", "late text"); say(a.status + "|" + a.last)', env("s-late-t")).out).toBe("0|");
+});
+
 test("arrivalWait's transcript root: AC_CLAUDE_TRANSCRIPT_ROOT, else CLAUDE_CONFIG_DIR/projects, else HOME/.claude/projects, as ac_claude_transcript_root's ladder", () => {
   const h = dir("home");
   const cfg = dir("cfg");

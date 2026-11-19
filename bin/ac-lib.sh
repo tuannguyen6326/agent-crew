@@ -1444,9 +1444,10 @@ ac_arrival_wait() {
   expected="$(printf '%s' "$expected")"
   AC_ARRIVAL_LAST=""
   [ -n "$sid" ] || return 2
-  path="$(ac_claude_transcript_path "$sid")" || return 2
   while :; do
-    if cur="$(ac_claude_last_typed_turn "$path")"; then
+    # claude creates the transcript file at the session's first submitted
+    # turn, which can land after the send that this wait follows returned.
+    if path="$(ac_claude_transcript_path "$sid")" && cur="$(ac_claude_last_typed_turn "$path")"; then
       last="$cur"
       [ "$last" = "$expected" ] && return 0
     fi
