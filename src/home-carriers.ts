@@ -11,8 +11,8 @@
 // `claude --resume`, a harness reopened from its own session list, a pane
 // relaunched by the backend: none of them carry it, and ac_home (bin/ac-lib.sh)
 // refuses to guess - so every ac- hook of such a session exits 0 without a
-// word, and nothing supervises it (the 2026-09-14 and 2026-11-02 incidents in
-// the fleet's repo-knowledge). The name is not guessed here either: the seed
+// word, and nothing supervises it (observed more than once in production).
+// The name is not guessed here either: the seed
 // below WRITES it into a file the home itself owns, which each harness reads
 // from its project dir (cwd = home), so the hooks find the home from the
 // home's own files whatever the launch line forgot.

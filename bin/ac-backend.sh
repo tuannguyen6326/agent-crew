@@ -191,7 +191,7 @@
 #
 # Delivery verification: send_line hands the text and its Enter to Orca as
 # ONE prompt (`terminal send --text --enter --wait-submit 3`; probe
-# 2026-11-17, Orca 1.4.259): a recognized agent gets it bracket-pasted - a
+# on Orca 1.4.259): a recognized agent gets it bracket-pasted - a
 # 4871-byte, 62-line message arrived whole on claude, codex, opencode, pi and
 # cursor - and the receipt's observation "supported" (claude, codex) is the
 # acknowledgement, at input_accepted alone too, since a busy agent queues the
@@ -302,7 +302,7 @@ ac_backend >/dev/null
 #   VERIFIED for the headless judge (src/pane-agent.ts ONESHOT, `codex exec`). The
 #   INTERACTIVE TUI reading - against a config default of xhigh, launching
 #   with `-c model_reasoning_effort=low` rendered `low` in the TUI header
-#   (2026-07-21, clean CODEX_HOME) - is the fix probe's reported result, NOT
+#   (clean CODEX_HOME) - is the fix probe's reported result, NOT
 #   REPLAYABLE (contract:
 #   .agents/skills/harness-operations/references/harness-facts.md); every
 #   fleet effort token low|medium|high|xhigh|max is passed through
@@ -311,8 +311,8 @@ ac_backend >/dev/null
 #   opencode takes `-m <model>` like codex (`-m, --model` in `opencode --help`,
 #   opencode 1.18.4, VERIFIED honored: against a config default of one model,
 #   launching the TUI with `--model <other>` rendered the other in the TUI
-#   footer - 2026-07-22, clean temp HOME with a fake provider; command bodies in
-#   the opencode-crewmate-probe report, contract:
+#   footer - clean temp HOME with a fake provider; command bodies in
+#   the probe's own report, contract:
 #   .agents/skills/harness-operations/references/harness-facts.md). Its EFFORT
 #   is dropped, and that is a GAP, not an omission: the interactive TUI a
 #   crewmate is launched with has no `--variant` - the flag exists on the

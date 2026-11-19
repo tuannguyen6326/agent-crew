@@ -189,7 +189,7 @@
 //     all, only as that queue-operation pair (claude folds it into the turn
 //     already running), so the last typed turn stays whatever it was before
 //     the send through the whole budget - 2 `delivered (arrival unverified)
-//     to`, never 1, for that shape (measured 2026-11-16). Any other harness,
+//     to`, never 1, for that shape (measured). Any other harness,
 //     or a slash command: `delivered (arrival unverified) to`. A transcript
 //     with one malformed line in its last 200 makes jq fail every read:
 //     unobservable after the whole budget (W8).

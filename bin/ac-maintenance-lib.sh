@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ac-maintenance-lib.sh - the Learning/Curate cadence readers and the
 # maintenance-transaction status reader, split out of ac-lib.sh (audit-f3,
-# codebase-audit-2026-07-29 finding 3). Not an entrypoint; sourced after
+# codebase-audit finding 3). Not an entrypoint; sourced after
 # ac-lib.sh by any script that needs it - ac-lib.sh does NOT source this file
 # (the CALLER sources both).
 #
@@ -38,7 +38,7 @@
 # opens the cap-exempt learning room off it at the next fleet drain.
 #
 # Key history: the counter key was `stows` until the skill rename (stow ->
-# debrief, 2026-07-18). Live fleets carry .learn.meta files with the old key,
+# debrief). Live fleets carry .learn.meta files with the old key,
 # so the WRITERS migrate on first touch (learnMigrate) and the pure reader
 # falls back to the legacy key - a fleet that never ticks again still reports
 # its true count.

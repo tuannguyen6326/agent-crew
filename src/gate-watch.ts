@@ -28,7 +28,7 @@
 // once printed `reasoning effort: high` then `reasoning summaries: none` in its
 // own banner, and its transcript carried exactly ONE event (the final answer) -
 // the harness emitted no reasoning bytes to follow, by codex's own default. A
-// knob to ask for them was verified LIVE (2026-07-26): `codex exec -c
+// knob to ask for them was verified LIVE: `codex exec -c
 // model_reasoning_summary=<auto|concise|detailed>` (enum confirmed via
 // --strict-config; `detailed` measurably changed the banner and produced an
 // actual reasoning-summary line before the final answer, on a prompt that

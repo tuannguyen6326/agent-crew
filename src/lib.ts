@@ -3676,7 +3676,7 @@ function firstNewLine(before: string, after: string): string {
 // or the node orcaHomeNode derives, its tab recorded. An explicit command
 // rides create/split --command; without one the pane is moved to <dir> by a
 // `cd '<dir>'` TYPED and submitted through the send queue, because Orca types
-// --command only once the shell prompt is up (measured 2026-10-30, 1.4.244)
+// --command only once the shell prompt is up (measured on Orca 1.4.244)
 // and the caller's launch line, sent right after placement, landed in front
 // of it on one shell line - the typed cd shares the launch line's queue, so
 // it runs first. The id (family ladder and title) defaults to `agent`.

@@ -4281,7 +4281,7 @@ boot();
 </body>
 </html>`;
 
-// "guide" (§4/§8/§9/§12/§13 cited above): the dash-uiux guide is real and
-// lives OUTSIDE this repository, at data/external/hermes-dashboard-uiux-guide.md
-// under the fleet home - verified by matching every cited section number
-// against that document's own headings, not invented.
+// "guide" (§4/§8/§9/§12/§13 cited above): the dash-uiux guide is a real
+// external UI/UX guide, not shipped with this repo - verified by matching
+// every cited section number against that document's own headings, not
+// invented.

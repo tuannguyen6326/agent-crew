@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ac-wake-lib.sh - the wake/spool/room concern, split out of ac-lib.sh
-# (audit-f3, codebase-audit-2026-07-29 finding 3). Not an entrypoint; sourced
+# (audit-f3, codebase-audit finding 3). Not an entrypoint; sourced
 # after ac-lib.sh by any script that needs it - ac-lib.sh does NOT source this
 # file (the CALLER sources both, and every
 # function here fails closed on a missing CORE sibling rather than assuming
@@ -130,8 +130,8 @@ ac_watcher_beat_read() {
   #   UNREADABLE  - present but empty, non-numeric, or zero-padded. An empty read
   #                 is what a reader sees when it catches a truncate-then-write
   #                 mid-flight (ac-watch.sh publishes by rename now, so this is a
-  #                 real anomaly rather than the routine race it was until
-  #                 2026-07-27). No ac_now epoch starts with 0, and bash
+  #                 real anomaly rather than the routine race it once was
+  #                 before that fix). No ac_now epoch starts with 0, and bash
   #                 arithmetic reads a leading 0 as octal, so 0009 is an error.
   #   STOOD DOWN  - the 0 a watcher's exit cleanup writes on every exit: the
   #                 COMMON state, "a watcher just heartbeat-exited, drain and
@@ -153,14 +153,14 @@ ac_watcher_beat_read() {
   #   ac-guard.sh - age as a BOOLEAN ("WATCHER-DOWN");
   #     it prints no number, so no figure can be nonsense.
   #   src/watch.ts skipCoverageLive - age as a boolean too, deciding whether a
-  #     family's scoped coverage is still live; reads through this helper since
-  #     2026-08-05. It was left inline on the "prints no number" criterion above,
+  #     family's scoped coverage is still live; reads through this helper too.
+  #     It was left inline on the "prints no number" criterion above,
   #     and that criterion is not the whole test: a boolean caller renders no
   #     nonsense figure, but it still feeds the value to `$(( now - beat ))`, and
   #     bash evaluates a non-numeric VALUE as an arithmetic expression - looking
   #     its first identifier up as a variable and, under set -u, killing the
   #     process. That is how an unreadable beacon stopped fleet supervision
-  #     silently on 2026-08-05 (pid 66812, "line 957: signal: unbound variable" -
+  #     silently (pid 66812, "line 957: signal: unbound variable" -
   #     a variable present in no version of ac-watch.sh). So the test for a new
   #     reader is whether the raw value can reach ARITHMETIC, not whether an age
   #     gets printed.
@@ -622,7 +622,7 @@ ac_watcher_nudge() {
 # counts unresolved captain items. ac_room_review_rulings selects the compact
 # accepted/captain context an exact-ref code reviewer reads; it deliberately
 # omits GATE-LOOPED because those are rejected-draft receipts, not accepted
-# behavior. ac-gate.sh projects NOTHING: since 2026-07-26 its second chief reads
+# behavior. ac-gate.sh projects NOTHING: its second chief reads
 # room.md whole, from disk, for full parity with the owning chief - so no verb
 # set here is authoritative for it, and none should be borrowed for it again.
 #

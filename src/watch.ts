@@ -80,7 +80,7 @@
 // which made the crewchief's own config-swap release (read the live pid, TERM
 // it, `sleep 1`, re-arm a different AC_WATCH_SKIP - exactly what the refusal
 // below prescribes) indistinguishable from a hostile kill, and cost two
-// families four days of false investigation (2026-07-19/20).
+// families four days of false investigation.
 // The marker is COOPERATIVE, not authenticated: it separates this distro's own
 // release from everything else and claims nothing stronger. Three bounds keep
 // it from becoming a SILENCER: it is keyed by TARGET pid (it can quiet only the
@@ -91,7 +91,7 @@
 // byte. A release
 // whose TERM cannot be delivered withdraws its own marker. Releaser and target
 // share one AC_HOME by construction (the marker lives in state/).
-// SCOPED TARGETS (watcher-release-scope, 2026-07-21): only the FLEET watcher is
+// SCOPED TARGETS (watcher-release-scope): only the FLEET watcher is
 // releasable this way. A SCOPED watcher (AC_WATCH_ONLY, armed by a roomchief)
 // BELONGS to that roomchief - releasing it leaves its family with no real-time
 // crash/blocked detection until the roomchief notices and re-arms. So a target
@@ -103,12 +103,12 @@
 // declined to touch. This is the code half of a behavior the crewchief already
 // corrected: its config-swap loop read every ac-watch pid and released each,
 // reaping roomchiefs' scoped watchers with the fleet one - seven re-arms in a
-// single session (2026-07-21). No wake was lost (ac-done.sh publishes durably),
+// single session. No wake was lost (ac-done.sh publishes durably),
 // but the real-time gap was real. There is no override knob: nothing in this
 // distro releases a scoped watcher - teardown/demote let it exit on its own
 // heartbeat - and a knob nobody needs is just the mistake with one more step.
 // The refusal covers the whole UNIT, not just the watcher pid
-// (watcher-release-wrapper-orphan, 2026-07-21): the harness arms a watcher
+// (watcher-release-wrapper-orphan): the harness arms a watcher
 // inside a WRAPPER shell it tracks (`chain=<watcher>(bun) < <wrapper>(zsh) <
 // ...`), and a release aimed at that wrapper TERM'd the tracked parent while
 // the guard spared the watcher - which survived reparented to PPID=1, still
@@ -117,7 +117,7 @@
 // 67150 refused and orphaned). So a target pid that is the DIRECT PARENT of a
 // pid under a scoped lock is refused the same way, with the same no-trace rule.
 // The fleet watcher and its wrapper stay releasable.
-// HOME-CROSSING TARGETS (watcher-release-crosses-home-boundaries, 2026-08-05):
+// HOME-CROSSING TARGETS (watcher-release-crosses-home-boundaries):
 // the scoped guard above stops nothing outside the caller's OWN home - a pid
 // recorded under NO lock in this home's state dir fell straight through to
 // `kill -TERM`, so --release could TERM a pid belonging to a DIFFERENT
@@ -179,9 +179,9 @@
 // the turn-end guard's own bound). A GONE roomchief (meta/window) REVOKES the
 // skip that poll: the fleet watcher covers the family's panes directly and logs
 // the takeover once, until the scoped watcher (or teardown) is back. This is the
-// watcher-skip-staleness fix (2026-07-18: a scoped watcher died, its family
+// watcher-skip-staleness fix (a scoped watcher died, its family
 // went ZERO-covered because the fleet trusted the skip forever). RE-ARM GRACE
-// (roomchief-scoped-watcher-blindness, 2026-07-19): a LIVE roomchief with a
+// (roomchief-scoped-watcher-blindness): a LIVE roomchief with a
 // merely-stale beacon is almost always mid re-arm - its scoped watcher
 // heartbeat-exits every AC_HEARTBEAT and STANDS ITS BEACON DOWN (below), and the
 // roomchief re-arms it a turn or two later. So the fleet holds the skip through
@@ -192,8 +192,8 @@
 // revoked during the NORMAL re-arm gap and stole the family's done wake to the
 // fleet spool (the per-id dedup marker is shared, so a stolen marker never
 // re-emits to the family spool) - the roomchief went blind to its own crewmate.
-// BUSY DECLARATION (skip-grace-too-short-for-a-chief-inside-a-long-synchronous-gate,
-// 2026-07-26): that grace is sized for a chief MID RE-ARM - a turn or two. A chief
+// BUSY DECLARATION (skip-grace-too-short-for-a-chief-inside-a-long-synchronous-gate):
+// that grace is sized for a chief MID RE-ARM - a turn or two. A chief
 // blocked inside ONE synchronous call cannot take a turn AT ALL, so it cannot
 // re-arm and its beacon stays down for the whole call: ac-gate.sh waits up to
 // AC_GATE_TIMEOUT (600s) against a 300s grace, so a HEALTHY chief lost its skip
@@ -208,7 +208,7 @@
 // asserts something else to five other consumers) and the fleet holds the skip
 // while it is unexpired. This teaches the fleet to tell BUSY from DEAD; it does NOT
 // widen into "a live roomchief always keeps its skip" (that is the fail-OPEN,
-// unbounded shape of the 2026-07-18 defect above). REVOCATION IS UNCHANGED
+// unbounded shape of the watcher-skip-staleness defect above). REVOCATION IS UNCHANGED
 // OTHERWISE and stays the safety behaviour: a GONE roomchief still revokes
 // IMMEDIATELY whatever it declared, and an ABSENT or EXPIRED declaration plus a
 // beacon stale past the grace still revokes exactly as before - so a family whose
@@ -217,11 +217,11 @@
 // AC_WATCH_SKIP entry is also validated to name a family of THIS home (a
 // data/<fam>/ dir or a <fam>*/state meta); a foreign/unknown family is refused
 // LOUDLY (exit 2), since it blinds nothing real while masking a real misconfig
-// (2026-07-18: a family belonging to one fleet was named on another fleet's
+// (a family belonging to one fleet was named on another fleet's
 // own AC_WATCH_SKIP list).
 //
 // EXTERNAL KILLS. Something outside the fleet SIGTERMs long-idle watchers
-// (10 observed 2026-07-15/16, ~10-20min apart, landing on the poll
+// (10 observed, ~10-20min apart, landing on the poll
 // `sleep`); nothing in this distro sends them - a TERM that reads `killed
 // externally` is one no owner marked. Two guarantees answer that:
 //  - TERM/INT are HANDLED: the watcher prints ONE `signal:<NAME> pid=<n>
@@ -268,7 +268,7 @@
 // lock STALE and reclaimable; both shapes an external kill leaves - a dead
 // owner pid, and a dir whose pid file was never published - are reclaimed, so
 // a killed watcher can never wedge the re-arm at `already running` while
-// NOTHING watches the fleet (the confirmed 2026-07-16 failure). A LIVE owner
+// NOTHING watches the fleet (the confirmed failure). A LIVE owner
 // refuses an IDENTICAL second arm (exit 0 `already running`, idempotent) - with
 // ONE exception, because `already running` is a statement about NOW and a chief
 // arming by hand is asking about its next TURN END. An arm ac-watch-autoarm.sh
@@ -281,7 +281,7 @@
 // incumbent, a SCOPED arm (--release is fleet-only, and a family's panes are
 // re-covered by the fleet watcher's skip revalidation), and any arm over an
 // unmarked (durable) incumbent all stay idempotent `already running`.
-// Measured 2026-08-06 with per-process stamps: hand arm `already running` at T+0
+// Measured with per-process stamps: hand arm `already running` at T+0
 // with the incumbent live -> its beacon stand-down at T+2.513s -> the hook's
 // budget handback at T+2.536s -> the turn-end guard blocking at T+2.602s. The
 // discriminator is OWNERSHIP, never a beacon state: the incumbent is beating
@@ -300,13 +300,13 @@
 // remedy and the log that release produces agree), and states that a pattern
 // kill is never the mechanic. A remedy naming no target and no command is what
 // drove operators to improvise `pkill -f ac-watch`
-// (observed 2026-07-14/15, one of them self-reported as having reaped ANOTHER
+// (observed, one of them self-reported as having reaped ANOTHER
 // session's scoped watcher) - and because every home on a box runs the same
 // command line, such a kill crosses home boundaries and reaps every fleet's
 // watcher at once. ac-watch-policy-hook.sh denies those patterns for sessions
 // rooted in THIS repo; sessions rooted elsewhere are unguarded, so this message
 // is the only barrier they get.
-// AN ORPHANED AUTOARM INCUMBENT (autoarm-orphan-holds-watcher-lock, 2026-10):
+// AN ORPHANED AUTOARM INCUMBENT (autoarm-orphan-holds-watcher-lock):
 // the Stop hook that marks an arm BOUNDED (AC_AUTOARM) can itself outlive its
 // session (reparented to pid 1, src/watch-autoarm.ts's header owns that
 // evidence), leaving the marked watcher alive and the lock held with no
@@ -335,11 +335,11 @@
 // armed watcher's exit always wakes the chief, and without the stand-down a
 // just-exited heartbeat left a deceptively-fresh beacon that let the turn-end
 // guard read "covered" and allowed the chief to PARK - after which no turn
-// boundary recurs and the fleet goes deaf (idle-chief-deaf, 2026-07-18). Stood
+// boundary recurs and the fleet goes deaf (idle-chief-deaf). Stood
 // down, the guard blocks that post-exit turn and forces a re-arm. BOTH writes go
 // through publishBeacon (tmp + rename): a truncate-in-place write is readable as
 // an EMPTY file mid-flight, and every consumer computes `now - beat`, so an empty
-// read renders the raw epoch as an age - observed live 2026-07-27 with this
+// read renders the raw epoch as an age - observed live with this
 // watcher beating 1s earlier. ac_watcher_beat_read (ac-wake-lib.sh) is the reader half
 // and owns what each no-beat state means.
 //
@@ -406,7 +406,7 @@
 // BEFORE this change has neither the loop-top check nor markerSeen. Such a
 // watcher exits `report:<id>` off the pane and, comparing markers byte-exactly,
 // files its own record beside the pushed one - two records for one completion,
-// and .seen-<id> overwritten with the captured line (observed live 2026-07-20,
+// and .seen-<id> overwritten with the captured line (observed live,
 // and expected: nothing was wrong with the push, the process simply predates
 // it). Nothing is LOST in that state; re-arming the watcher on this code is the
 // whole remedy.
@@ -474,7 +474,7 @@
 // frame changes the tail hash exactly like new work does, so it re-fired
 // `report:<id>` for the SAME already-delivered marker on every poll the
 // redraw kept animating (observed live: an already-delivered `paused:` line,
-// ~every 30s, 2026-10-16; an ack never settled it). Rather than pattern-
+// re-fired ~every 30s; an ack never settled it). Rather than pattern-
 // matching claude's redraw prose (less general, and the fallback ENDED BUSY
 // LATCH itself rejected), this reuses that latch's exact shape: a one-shot
 // per-id stamp, state/.rewake-<id>. UNLIKE its sibling, it does not start
@@ -617,7 +617,7 @@
 //
 // USAGE LIMIT. An ended turn whose pane tail carries claude's provider
 // usage-limit line (`You've hit your weekly limit · resets 10pm (<tz>)`, the
-// exact line an agent stopped on 2026-09-20) is not waiting on the
+// exact line an agent stopped on) is not waiting on the
 // chief: steering it only spends another refused turn, and it can do nothing
 // until the reset. It exits `limited:<id>` with that line as the payload
 // instead of `ended:`, under the same dedup and suppressions. The match is the
@@ -657,7 +657,7 @@
 // or its recap line ("recap:") kept clearing .stale-<id> like any other
 // redraw and the loud wake fired again every AC_STALE window forever
 // (observed live: ~10 identical ended: wakes on one roomchief pane in 23h, 4
-// on one crewmate pane - 2026-10-16). Closing it does not touch .stale-<id>'s
+// on one crewmate pane). Closing it does not touch .stale-<id>'s
 // own clearing (STALE DEFERRAL and the soft stale: arm still want every
 // redraw to restart THEIR clock): a separate one-shot latch, .ended-<id>,
 // survives a redraw untouched and is cleared by any poll that reads the pane

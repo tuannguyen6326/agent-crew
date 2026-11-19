@@ -287,7 +287,7 @@ orca_place_pane() {
   # pane's --command so the agent starts WITH the pane; without one the pane
   # is moved to <dir> by a `cd '<dir>'` TYPED and submitted through the send
   # queue (orca_type_cd), never by --command: Orca types --command only once
-  # the shell prompt is up (measured 2026-10-30, 1.4.244), and the caller's
+  # the shell prompt is up (measured on Orca 1.4.244), and the caller's
   # launch line, typed right after placement, landed in FRONT of it on one
   # shell line. The typed cd shares that queue, so it runs first. <id> feeds
   # the family ladder and the creation title. Returns 1 on failure (prints
@@ -503,7 +503,7 @@ backend_submit_verified_orca() { orca_submit_verified_pane "$(orca_pane "$1")" "
 orca_focus_pane() { orca_json terminal switch --terminal "$1" >/dev/null 2>&1; }
 
 orca_prompt_send_pane() {
-  # One Orca prompt delivery (probe 2026-11-17, Orca 1.4.259): a recognized
+  # One Orca prompt delivery (probe on Orca 1.4.259): a recognized
   # agent gets the text bracket-pasted with Enter and a receipt saying
   # whether Orca OBSERVED the submit; anything else gets the text and Enter
   # raw. 0 sent, 1 stranded, 2 no receipt (never resent - a resend could
@@ -523,7 +523,7 @@ orca_prompt_send_pane() {
     *) return 2 ;;
   esac
   # "seen" holds at input_accepted alone: mid-turn, Orca queues the prompt
-  # and delivers it after the turn (probe 2026-11-17). Only an unobserved
+  # and delivers it after the turn (probe above). Only an unobserved
   # send is checked here, and only a text PROVEN pending buys a retry Enter -
   # never a retype.
   while orca_composer_pending "$pane" "$text"; do
@@ -639,7 +639,7 @@ backend_agent_blocked_orca() {
 
 orca_turn_state() {
   # orca_turn_state <show-json> - the turn state Orca's agent hooks record
-  # for this pane, empty when it has none (probe 2026-11-17, orca 1.4.259):
+  # for this pane, empty when it has none (probe on orca 1.4.259):
   # `worktree ps` rows are keyed by the paneKey `terminal show` reports as
   # recordedPaneKey - never `terminal list`'s tabId/leafId, which differ for
   # a headless pane. mainAgent is the TURN: a claude whose turn ended under

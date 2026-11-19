@@ -1,7 +1,6 @@
 # SDLC Flow Specification
 
 Status: Accepted
-Date: 2026-10-29
 
 ## Problem
 
