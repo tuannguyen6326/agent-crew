@@ -3,8 +3,7 @@
 // The entry is bin/ac-jev.sh (a shim that starts this file through
 // bin/ac-bun.sh); THIS header is the authoritative spec for the knob, the
 // provider table, the wire, the shadow log and the fail direction, and
-// tests/sh/ac-jev.test.sh its contract test. Design and evidence live in
-// this family's own spec and report.
+// tests/sh/ac-jev.test.sh its contract test.
 //
 // Usage:
 //   ac-jev.sh ask --site <name> --state-file <f>
