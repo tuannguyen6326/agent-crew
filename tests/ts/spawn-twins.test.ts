@@ -710,3 +710,11 @@ test("backendStartupDialogs runs ac_startup_dialogs' sequence over the id-keyed 
   });
   same("an unsupported backend", { ...sd, env: { AC_BACKEND: "tmux" }, seed: H });
 }, 180000);
+
+test("backendStartupDialogs tells its caller of each key it pressed, and of none when nothing was pending", () => {
+  const keys: Row = { bash: ":", twin: `let n = 0; L.backendStartupDialogs(A[0], A[1], ${IO}, () => void n++); say("keys=" + n); return 0;`, args: ["c1", "claude"], env: ORCA_ };
+  const dialog = pair({ ...keys, seed: (s) => (O(s), put(s, "stub/terminal-show.1.out", OSHOW('{"connected":true,"agentWait":{"source":"hook"}}')), put(s, "stub/terminal-show.out", OSHOW('{"connected":true,"agentIdentity":"claude"}'))) });
+  expect(dialog.t.out).toBe("keys=2|rc=0");
+  const quiet = pair({ ...keys, seed: (s) => (O(s), put(s, "stub/terminal-show.out", OSHOW('{"connected":true,"agentIdentity":"claude"}'))) });
+  expect(quiet.t.out).toBe("keys=0|rc=0");
+}, 60000);

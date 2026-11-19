@@ -441,12 +441,12 @@
 // `ac_startup_dialogs` presses the registry's key(s) only when something is
 // actually observed pending, same as codex - an already-trusted project gets
 // NEITHER key. A CUSTOM config/launch-claude template also gets NEITHER key,
-// the same rule codex's Enter and '/effort ultracode' already follow. One
-// cost this extends from codex unchanged: deliverKickoff's extra
-// `sleepFor(settle)` right after `backendStartupDialogs` (just below) is
-// gated on `harnessStartupKey(h) !== ""` alone, so it now runs on every
-// built-in claude spawn regardless of whether a key was pressed, exactly as
-// it already did for codex. RESIDUAL, stated not solved (the same class
+// the same rule codex's Enter and '/effort ultracode' already follow.
+// deliverKickoff's second `sleepFor(settle)`, right after
+// `backendStartupDialogs`, is the redraw time a pressed key needs: it runs
+// only when that block sent one, for claude and codex alike, so a spawn into
+// an already-trusted project pays the launch settle alone. RESIDUAL, stated
+// not solved (the same class
 // codex's own composer-ready gate carries): an unnamed `agentWait` is read as
 // THIS dialog with no way to tell it apart from some OTHER unnamed claude
 // prompt, and a second one right behind the first gets no answer at all,
@@ -755,7 +755,6 @@ import {
   fileMtime,
   fleetName,
   harnessKnown,
-  harnessStartupKey,
   iso,
   ledgerRead,
   metaGet,
@@ -1240,8 +1239,9 @@ async function deliverKickoff(id: string, h: string, prompt: string): Promise<vo
   unverifiedWaked = false;
   ee(await sleepFor(settle));
   if (!isFile(`${configDir()}/launch-${h}`)) {
-    ended(backendStartupDialogs(id, h, { stderr: "inherit" }));
-    if (harnessStartupKey(h) !== "") ee(await sleepFor(settle));
+    let keyed = false;
+    ended(backendStartupDialogs(id, h, { stderr: "inherit" }, () => void (keyed = true)));
+    if (keyed) ee(await sleepFor(settle));
   }
   let up = harnessUp(id);
   if (up === 1) {

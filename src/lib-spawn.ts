@@ -602,12 +602,16 @@ function keyPress(id: string, key: string, io: SpawnIo): Ended {
 // backend_startup_dialogs' twin: the sequence over the id-keyed verbs - the
 // task's handle answered, keyed and probed (the raw-pane sequence is
 // backendStartupDialogsPane's).
-export function backendStartupDialogs(id: string, harness: string, io: SpawnIo): Ended {
+export function backendStartupDialogs(id: string, harness: string, io: SpawnIo, onKey: () => void = () => {}): Ended {
   const up = (h: string): Ended => {
     const r = backendCall("harness_up", [h], { stdin: io.stdin, stdout: "ignore", stderr: io.stderr });
     return { status: r.status, exited: r.exited };
   };
-  return startupDialogs((h) => backendDialogAnswer(h, io), (h, k) => keyPress(h, k, io), up, id, harness);
+  const press = (h: string, k: string): Ended => {
+    onKey();
+    return keyPress(h, k, io);
+  };
+  return startupDialogs((h) => backendDialogAnswer(h, io), press, up, id, harness);
 }
 
 // The lease install, shared by the crew spawn and the self task: the

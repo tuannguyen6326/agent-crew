@@ -128,6 +128,20 @@ assert_eq "$(enters_before_kickoff)" "2" \
   "no other harness gets the codex dialog answer either - the same cd and launch-line submits precede its kickoff"
 "$BIN/ac-teardown.sh" cl1 --force >/dev/null 2>&1
 
+# The settle after the startup-dialog block gives a TUI time to redraw after
+# a key; with nothing pending no key is sent, so only the launch settle runs.
+SETTLE_STUB="$TMP/settle-stub"; mkdir -p "$SETTLE_STUB"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >>"$SETTLE_LOG"\n' >"$SETTLE_STUB/sleep"; chmod +x "$SETTLE_STUB/sleep"
+for h in claude codex; do
+  "$BIN/ac-brief.sh" "st-$h" proj --mode local-only >/dev/null
+  : >"$TMP/settle.log"
+  PATH="$SETTLE_STUB:$PATH" SETTLE_LOG="$TMP/settle.log" AC_SPAWN_SETTLE=0.07 \
+    "$BIN/ac-spawn.sh" "st-$h" "$repo" --harness "$h" --mode local-only >/dev/null 2>&1
+  assert_eq "$(grep -c '^0\.07$' "$TMP/settle.log")" "1" \
+    "$h with no dialog pending settles once, at launch"
+  "$BIN/ac-teardown.sh" "st-$h" --force >/dev/null 2>&1
+done
+
 # make_fake_orca has no dynamic death-trigger knob, so a pane cannot be made
 # to die the instant a bare Enter lands on an empty composer in this fixture.
 
