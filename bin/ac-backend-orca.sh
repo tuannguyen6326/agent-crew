@@ -9,7 +9,12 @@
 #   FAMILY TAB per room (AC_WINDOW_FAMILY, the same family-resolution ladder
 #   used fleet-wide; the tab clears with its last pane); crewmate and
 #   verifier panes (cwd = a project/lease worktree) sit under THAT worktree's
-#   own node, one tab each.
+#   own node, one tab each - except a dir strictly inside the home with
+#   nothing registered between it and the home, which borrows the HOME node
+#   too (same selector, still its own tab): a bare `path:` selector there
+#   would otherwise be the home itself or its shared container, failing
+#   create the same way `worktree show` fails when several entries share
+#   that path (selector_ambiguous).
 # - No agent-report API: the captain-wait stamp is the FILE alone; Orca's own
 #   agentWait detection keeps surfacing waits in its UI (see backend_mark_wait_orca).
 # - No process-info verb: the came-up probe reads Orca's OWN agent detection
@@ -292,7 +297,7 @@ orca_place_pane() {
   # shell line. The typed cd shares that queue, so it runs first. <id> feeds
   # the family ladder and the creation title. Returns 1 on failure (prints
   # nothing, warns) so callers own their own death message.
-  local dir="$1" cmd="${2:-}" id="${3:-agent}" out handle tab fam famf base before lockdir i dir_p home_p node_sel
+  local dir="$1" cmd="${2:-}" id="${3:-agent}" out handle tab fam famf base before lockdir i dir_p home_p node_sel grp
   local -a cmd_args=()
   [ -z "$cmd" ] || cmd_args=(--command "$cmd")
   orca_type_cd() {
@@ -308,7 +313,12 @@ orca_place_pane() {
   # GROUPING RULE: chief-kind panes (cwd = the HOME) group under the home's
   # sidebar node with one FAMILY TAB per room; crewmate and verifier panes
   # (cwd = a project/lease worktree) group under THAT worktree's own node,
-  # one tab each - the Orca-native shape, sessions beside their diffs.
+  # one tab each - the Orca-native shape, sessions beside their diffs. A dir
+  # strictly inside the home with nothing registered between it and the home
+  # groups under the HOME's node instead (still its own tab, no family
+  # split): the walk's own group there lands AT OR ABOVE the home, so a bare
+  # `path:` selector would be the home itself or its shared container -
+  # possibly ambiguous, failing create the same way it fails `worktree show`.
   dir_p="$(cd "$dir" 2>/dev/null && pwd -P || printf '%s' "$dir")"
   # A homeless caller (a crewmate-invoked verifier) has no AC_HOME and never
   # places a chief-kind pane - resolve to empty so it takes the worker arm
@@ -316,7 +326,19 @@ orca_place_pane() {
   home_p=""
   [ -z "${AC_HOME:-}" ] || home_p="$(cd "$AC_HOME" 2>/dev/null && pwd -P || true)"
   if [ "$dir_p" != "$home_p" ]; then
-    out="$(orca_json terminal create --worktree "path:$(orca_resolve_group "$dir_p")" --title "crew:$(ac_fleet_name)/$id" \
+    grp="$(orca_resolve_group "$dir_p")"
+    node_sel="path:$grp"
+    if [ -n "$home_p" ]; then
+      case "$dir_p" in
+        "$home_p"/*)
+          case "$home_p" in
+            "$grp"|"$grp"/*)
+              node_sel="$(ac_config_read orca-node '')"
+              [ -n "$node_sel" ] || node_sel="$(orca_home_node "$home_p")" ;;
+          esac ;;
+      esac
+    fi
+    out="$(orca_json terminal create --worktree "$node_sel" --title "crew:$(ac_fleet_name)/$id" \
         ${cmd_args[@]+"${cmd_args[@]}"})" || {
       ac_warn "orca terminal create failed for $dir (is the Orca runtime running - orca open / orca serve - and the repo registered: orca repo add --path <repo>?)"
       return 1

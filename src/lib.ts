@@ -3667,7 +3667,14 @@ function firstNewLine(before: string, after: string): string {
 // orca_place_pane's twin as `$(...)` ran it (errexit asleep), bytes (latin1)
 // out: `<handle> <tab>`, or null once the WARN is printed. A pane whose
 // physical cwd is not the home is a terminal created under its nearest
-// resolvable worktree node; a home pane (a chief) joins its family TAB -
+// resolvable worktree node - unless the dir is strictly inside the home and
+// nothing resolves between it and the home, when the walk's own group lands
+// AT OR ABOVE the home: a `path:` selector there is the home itself or its
+// shared (and here possibly ambiguous) container, so it borrows the HOME
+// node instead (config/orca-node, else orcaHomeNode) - same selector a home
+// pane would get, but no family tab, since this is still a one-tab-per-pane
+// placement.
+// A home pane (a chief) joins its family TAB -
 // AC_WINDOW_FAMILY when set (empty: `_root`), else windowFamily - splitting
 // the tab state/.orca-fam-<fam> records once a handle there is live, under
 // state/.orca-split.lock (41 tries 0.25 s of PATH sleep apart, then unlocked;
@@ -3707,7 +3714,10 @@ export function orcaPlacePane(dir: string, cmd = "", agent = ""): string | null 
     return { handle, tab };
   };
   if (dirP !== homeP) {
-    const c = create(`path:${orcaResolveGroup(dirP)}`);
+    const group = orcaResolveGroup(dirP);
+    const nothingBetween = homeP !== "" && dirP.startsWith(`${homeP}/`) && (group === homeP || homeP.startsWith(`${group}/`));
+    const node = nothingBetween ? configReadSoft("orca-node", "") || orcaHomeNode(homeP) : `path:${group}`;
+    const c = create(node);
     return c === null ? null : `${c.handle} ${c.tab}`;
   }
   const famEnv = process.env.AC_WINDOW_FAMILY;

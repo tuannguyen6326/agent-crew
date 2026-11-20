@@ -678,6 +678,47 @@ assert_contains "$(cat "$FAKE_ORCA/log")" "terminal create --worktree id:r::$hom
 run_backend orca 'backend_kill_window fd-chief'
 rm -f "$AC_HOME/config/orca-node" "$FAKE_ORCA/worktree-list.json" "$FAKE_ORCA/worktree-show-ambiguous"
 
+# A non-home dir with nothing registered between it and the home borrows the
+# HOME node when the home's own CONTAINER (not the home itself) is the
+# ambiguous ancestor: a bare path:<container> selector would fail create the
+# same way it fails worktree show (orca_place_pane's own GROUPING RULE
+# comment names this; the real-world trigger was a Learning scout's pane
+# dying "could not place orca pane" at exactly this shape).
+dir_x="$home_p/x"
+cont="$(dirname "$home_p")"
+printf '%s\n%s\n' "$dir_x" "$home_p" >"$FAKE_ORCA/worktree-show-fails"
+printf '%s\n' "$cont" >"$FAKE_ORCA/worktree-show-ambiguous"
+printf 'id:test-node\n' >"$AC_HOME/config/orca-node"
+: >"$FAKE_ORCA/log"
+out="$(run_backend orca "orca_place_pane '$dir_x' '' pane-pin")"
+case "$out" in term*\ tab*) ;; *) fail "a pinned home node must still place the dir pane (got: $out)" ;; esac
+assert_contains "$(cat "$FAKE_ORCA/log")" "terminal create --worktree id:test-node --title crew:home/pane-pin" \
+  "config/orca-node pins the dir pane's node too - not path:<the ambiguous container>"
+assert_contains "$(cat "$FAKE_ORCA/log")" "--text cd '$dir_x'" \
+  "the pane still starts in the requested dir, not the home"
+rm -f "$AC_HOME/config/orca-node"
+
+printf '{"ok":true,"result":{"worktrees":[{"id":"r::%s","path":"%s","displayName":"ac other"},{"id":"r::%s::workspace:w2","path":"%s","displayName":"ac other/home"}]}}\n' \
+  "$cont" "$cont" "$cont" "$cont" >"$FAKE_ORCA/worktree-list.json"
+: >"$FAKE_ORCA/log"
+out="$(run_backend orca "orca_place_pane '$dir_x' '' pane-auto")"
+case "$out" in term*\ tab*) ;; *) fail "the autopin path must still place the dir pane (got: $out)" ;; esac
+assert_eq "$(cat "$AC_HOME/config/orca-node" 2>/dev/null)" "id:r::$cont::workspace:w2" \
+  "unpinned, the dir pane autopins the fleet-named entry at the CONTAINER, same as a home pane would"
+assert_contains "$(cat "$FAKE_ORCA/log")" "terminal create --worktree id:r::$cont::workspace:w2 --title crew:home/pane-auto" \
+  "the autopinned node places the dir pane, not path:<container>"
+rm -f "$AC_HOME/config/orca-node" "$FAKE_ORCA/worktree-list.json" "$FAKE_ORCA/worktree-show-ambiguous" "$FAKE_ORCA/worktree-show-fails"
+
+# The exclusion half of the same rule: a dir under the home whose OWN node
+# resolves (nothing ambiguous in the way) keeps path:<group> unchanged - a
+# registered project or pooled crew worktree nested under the home must
+# never be swapped for the home's node.
+: >"$FAKE_ORCA/log"
+out="$(run_backend orca "orca_place_pane '$dir_x' '' pane-below")"
+case "$out" in term*\ tab*) ;; *) fail "a dir resolving below the home must still place (got: $out)" ;; esac
+assert_contains "$(cat "$FAKE_ORCA/log")" "terminal create --worktree path:$dir_x --title crew:home/pane-below" \
+  "the dir's own node places it - a node resolving strictly below the home is never swapped for the home's"
+
 # A second same-family pane AT THE HOME splits into the room tab.
 run_backend orca '
   export AC_WINDOW_FAMILY=famx

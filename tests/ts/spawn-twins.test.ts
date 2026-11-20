@@ -59,7 +59,11 @@ symlinkSync(process.execPath, join(BUN, "bun"));
 // orca, a file-backed shape; `worktree create` cuts a REAL linked
 // worktree at <stub>/wt/<name> on tester/<name> from the base ref (the CLI's
 // own minted branch) unless a sentinel answers for it; `worktree show`
-// resolves nothing by default; a terminal create mints h<n>/tab<n>.
+// resolves nothing by default; a terminal create mints h<n>/tab<n> - unless
+// its own --worktree names a `path:<p>` listed in stub/worktree-ambiguous,
+// which fails selector_ambiguous the same way `worktree show` does on <p>:
+// one resolver underlies both verbs on the real CLI (measured; this is the
+// failure a placement actually hits, not just the probe).
 const ORCA = String.raw`#!/bin/sh
 d="$STUB_DIR"
 { printf orca; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'; } >>"$d/log"
@@ -89,7 +93,17 @@ case "$v" in
     git -C "$repo" worktree add -q -b "tester/$name" "$p" "$base" >/dev/null 2>&1 || { echo '{"ok":false}'; exit 1; }
     printf '{"ok":true,"result":{"worktree":{"id":"wt-%s","path":"%s","branch":"refs/heads/tester/%s"}}}\n' "$name" "$p" "$name" ;;
   worktree-show) echo '{"ok":false}'; exit 1 ;;
-  terminal-create) printf '{"ok":true,"result":{"terminal":{"handle":"h%s","tabId":"tab%s"}}}\n' "$n" "$n" ;;
+  terminal-create)
+    wt="" prev=""
+    for a in "$@"; do
+      [ "$prev" = "--worktree" ] && wt="$a"
+      prev="$a"
+    done
+    wpath=$(printf '%s' "$wt" | sed 's/^path://')
+    if [ "$wt" != "$wpath" ] && [ -n "$wpath" ] && [ -f "$d/worktree-ambiguous" ] && grep -qxF "$wpath" "$d/worktree-ambiguous" 2>/dev/null; then
+      printf '{"ok":false,"error":{"code":"selector_ambiguous","message":"selector_ambiguous"}}\n'; exit 1
+    fi
+    printf '{"ok":true,"result":{"terminal":{"handle":"h%s","tabId":"tab%s"}}}\n' "$n" "$n" ;;
   terminal-list) printf '{"ok":true,"result":{"terminals":[]}}\n' ;;
   terminal-show) printf '{"ok":true,"result":{"terminal":{"connected":true}}}\n' ;;
   *) printf '{"ok":true,"result":{}}\n' ;;
@@ -604,6 +618,47 @@ test("backendWindowNew orca: worktree panes under their node, home panes in thei
   });
   expect(ambigAnc.o.err).toContain("orca-node: pinned id:r::S::workspace:w2 (ac other/home)\n");
   expect(ambigAnc.o.world).toContain('home/config/orca-node 644 = "id:r::S::workspace:w2\\n"');
+  // A non-home dir with nothing registered between it and the home (here
+  // one hop: dir -> home) borrows the HOME's own node when the home's
+  // CONTAINER - not the home itself - is the ambiguous ancestor: a bare
+  // path:<container> selector would fail create the same way it fails
+  // worktree show (the real-world trigger: a Learning scout's pane dying
+  // "could not place orca pane" at exactly this shape).
+  const DIRX: Row = { ...WN, args: ["t1", "@S/home/x"], env: ORCA_ };
+  const pinnedDir = same("a non-home dir under the home, pinned config/orca-node: the pin's node, not path:<the ambiguous container>", {
+    ...DIRX,
+    seed: (s) => (
+      put(s, "stub/worktree-show.3.out", '{"ok":false,"error":{"code":"selector_ambiguous","message":"selector_ambiguous"}}\n'),
+      put(s, "stub/worktree-show.3.rc", "1\n"),
+      put(s, "stub/worktree-ambiguous", "@S\n"),
+      put(s, "home/config/orca-node", "id:test-node\n")
+    ),
+  });
+  expect(pinnedDir.o.log).toContain("[--worktree] [id:test-node]");
+  expect(pinnedDir.o.log).toContain("[--text] [cd 'S/home/x']");
+  const autopinDir = same("a non-home dir under the home, UNPINNED: the ambiguous container still autopins the fleet-named node, not path:<container>", {
+    ...DIRX,
+    seed: (s) => (
+      put(s, "stub/worktree-show.3.out", '{"ok":false,"error":{"code":"selector_ambiguous","message":"selector_ambiguous"}}\n'),
+      put(s, "stub/worktree-show.3.rc", "1\n"),
+      put(s, "stub/worktree-show.5.out", '{"ok":false,"error":{"code":"selector_ambiguous","message":"selector_ambiguous"}}\n'),
+      put(s, "stub/worktree-show.5.rc", "1\n"),
+      put(s, "stub/worktree-ambiguous", "@S\n"),
+      put(s, "stub/worktree-list.out", '{"ok":true,"result":{"worktrees":[{"id":"r::@S","path":"@S","displayName":"ac other"},{"id":"r::@S::workspace:w2","path":"@S","displayName":"ac other/home"}]}}\n')
+    ),
+  });
+  expect(autopinDir.o.err).toContain("orca-node: pinned id:r::S::workspace:w2 (ac other/home)\n");
+  expect(autopinDir.o.world).toContain('home/config/orca-node 644 = "id:r::S::workspace:w2\\n"');
+  expect(autopinDir.o.log).toContain("[--worktree] [id:r::S::workspace:w2]");
+  // The exclusion half of the same rule: a dir under the home whose OWN
+  // node resolves (nothing ambiguous in the way) keeps path:<group>
+  // unchanged - a registered project or pooled crew worktree nested under
+  // the home must never be swapped for the home's node.
+  const belowDir = same("a non-home dir under the home whose OWN node resolves: path:<group> unchanged, never swapped for the home's", {
+    ...DIRX,
+    seed: (s) => put(s, "stub/worktree-show.1.out", '{"ok":true,"result":{}}\n'),
+  });
+  expect(belowDir.o.log).toContain("[--worktree] [path:S/home/x]");
   same("a home pane joins its family tab by split", { ...HOMEPANE, seed: famTab });
   same("a family tab with no live handle is created afresh", { ...HOMEPANE, seed: (s) => put(s, "home/state/.orca-fam-fam", "tabGone\n") });
   same("a split that fails", { ...HOMEPANE, seed: (s) => (famTab(s), put(s, "stub/terminal-split.rc", "1\n")) });

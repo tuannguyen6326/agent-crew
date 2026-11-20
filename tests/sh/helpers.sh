@@ -573,7 +573,13 @@ make_fake_orca() {
   # worktree-list.json (the envelope `worktree list` serves; absent = no entries).
   # .ps-fails (`worktree ps` fails with an error envelope).
   # worktree-show-ambiguous (paths, one per line, whose `worktree show`
-  # fails selector_ambiguous instead of resolving).
+  # fails selector_ambiguous instead of resolving - and whose `terminal
+  # create --worktree path:<p>` fails the SAME way, measured on the real
+  # CLI: one resolver underlies both verbs).
+  # worktree-show-fails (paths, one per line, whose `worktree show` fails
+  # a plain selector_not_found instead of resolving - lets a resolve-group
+  # walk pass OVER a path on its way to an ambiguous ancestor further up,
+  # modeling an unregistered dir between it and a registered one).
   # Every call appends one line to $FAKE_ORCA/log.
   export FAKE_ORCA="$TMP/fake-orca"
   mkdir -p "$FAKE_ORCA/terminals" "$TMP/stubbin"
@@ -651,6 +657,9 @@ case "${1:-}" in
         wpath="${wt#path:}"
         if [ -n "$wpath" ] && [ -f "$d/worktree-show-ambiguous" ] && grep -qxF "$wpath" "$d/worktree-show-ambiguous" 2>/dev/null; then
           printf '{"ok":false,"error":{"code":"selector_ambiguous","message":"selector_ambiguous"}}\n'; exit 1
+        fi
+        if [ -n "$wpath" ] && [ -f "$d/worktree-show-fails" ] && grep -qxF "$wpath" "$d/worktree-show-fails" 2>/dev/null; then
+          printf '{"ok":false,"error":{"message":"selector_not_found"}}\n'; exit 1
         fi
         printf '{"ok":true,"result":{"worktree":{}}}\n'; exit 0 ;;
       create)
@@ -746,6 +755,14 @@ case "${1:-}" in
 esac
 case "${2:-}" in
   create)
+    # terminal create --worktree path:<p> fails the same selector_ambiguous
+    # as worktree show on an ambiguous <p> - one resolver underlies both
+    # verbs on the real CLI (measured: this is the actual failure a
+    # placement hits, not just the probe).
+    wpath="${wt#path:}"
+    if [ "$wt" != "$wpath" ] && [ -n "$wpath" ] && [ -f "$d/worktree-show-ambiguous" ] && grep -qxF "$wpath" "$d/worktree-show-ambiguous" 2>/dev/null; then
+      printf '{"ok":false,"error":{"code":"selector_ambiguous","message":"selector_ambiguous"}}\n'; exit 1
+    fi
     n="$(next)"
     : >"$d/terminals/term$n.buf"; : >"$d/terminals/term$n.in"
     printf 'tab%s\n' "$n" >"$d/terminals/term$n.tab"
