@@ -1413,6 +1413,18 @@ assert_contains "$(wout)" "WATCHER-DOWN: 2 crewmate(s)" "row 9b: step 8 still ru
 assert_contains "$(werr)" "WARN: unsupported backend 'herdr' (valid backend: orca): skipping herdr1" \
   "row 9b: the refusal names the task id and the pin, on stderr"
 
+# 9c: an UNREADABLE meta (mode 000, never a refused pin) warns exactly once
+# per drain (W20) - the refused-pin pre-check must not re-read what the
+# backend it resolves afterward already read.
+fresh
+idle u9
+beat "$((WT - 1))"
+chmod 000 "$H/home/state/u9.meta"
+wd
+chmod 644 "$H/home/state/u9.meta"
+assert_eq "$(werr | grep -c 'cannot read meta file HOME/home/state/u9.meta' || true)" "1" \
+  "row 9c: an unreadable meta warns exactly once per drain, not twice"
+
 # 10. WATCHER-DOWN: the in-flight set (verifier and self out, a chief and a
 #     directory named x.meta in), AC_GUARD_GRACE, an expression clock.
 fresh

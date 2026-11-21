@@ -28,7 +28,10 @@
 // events are published durably (ac_wake_publish: one record per file, atomic
 // ln) to the wake spool OF THIS WATCHER'S SCOPE and the watcher EXITS with a
 // one-line reason on stdout, so a harness running it as a background task
-// gets woken exactly once per actionable event batch.
+// gets woken exactly once per actionable event batch. A meta whose backend
+// pin is refused (non-orca) is skipped instead, WARNed on every poll for as
+// long as the meta stays in state/ - that per-poll WARN is the intended nag
+// to tear the leftover meta down, never a wake of its own.
 //
 // Exit reasons: `report:<id>` (a pane marker, or the artifact channel below -
 // the payload says which), `push:<id>` (the PUSH CHANNEL below - an agent
@@ -1172,7 +1175,6 @@ import {
   stateDir,
   statusAppend,
   strictDecimal,
-  taskBackend,
   taskDir,
   taskStatus,
   testInt,
@@ -2343,9 +2345,13 @@ async function checkPane(meta: string): Promise<string | null> {
   // metaBackend dies on a refused pin; checking first lets one stale meta
   // skip itself instead of ending the sweep.
   if (warnBackendRefused(meta, id)) return null;
-  // Exported, as the original exported it: later children (jev, the
-  // adviser, the remote poll) inherit the last pane's backend.
-  process.env.AC_BACKEND = u8(taskBackend(id));
+  // warnBackendRefused already read this meta once: false means the pin
+  // read as absent or orca (metaBackend's only other valid answer), so
+  // resolving it again through taskBackend would re-read an unreadable meta
+  // and double its WARN, once per poll. Exported, as the original exported
+  // it: later children (jev, the adviser, the remote poll) inherit the
+  // last pane's backend.
+  process.env.AC_BACKEND = u8("orca");
 
   const target = (): string => cap(backendCall("target", [id], { stdin: "inherit", stdout: "pipe", stderr: "inherit" }).out.toString("latin1"));
   const alive = routed(backendCall("window_alive", [id], { stdin: "inherit", stdout: "inherit", stderr: "inherit" }));

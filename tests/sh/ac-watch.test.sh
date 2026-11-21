@@ -880,6 +880,20 @@ rm -f "$state"/*.meta "$state"/.pane-* "$state"/.unobservable-* "$state"/.hash-*
   "$state"/.change-* "$state"/.last-watcher-beat*
 rm -rf "$state"/.wake-spool*
 
+# --- an UNREADABLE meta (never a refused pin) warns once per poll, not twice
+# the refused-pin pre-check and the backend it resolves afterward must share
+# one read of an id's meta (W20: an unreadable meta warns once).
+printf 'window=crew:w3\nbackend=orca\n' >"$state/w3.meta"
+seed_pane w3 pW3 tW3
+chmod 000 "$state/w3.meta"
+out="$(AC_LOCK_PID=$$ AC_REMOTE_POLL=0 bash "$BIN/ac-watch.sh" --once 2>"$TMP/wedge3.err")"
+chmod 644 "$state/w3.meta"
+assert_eq "$(grep -c 'cannot read meta file' "$TMP/wedge3.err" || true)" "1" \
+  "an unreadable meta warns exactly once per poll, not twice"
+rm -f "$state"/*.meta "$state"/.pane-* "$state"/.unobservable-* "$state"/.hash-* \
+  "$state"/.change-* "$state"/.last-watcher-beat*
+rm -rf "$state"/.wake-spool*
+
 # --- external kills: TERM/INT trap, stale-lock reclaim, arm attribution -----
 # Observed live: external SIGTERMs land on the watcher's poll wait. An
 # untrapped SIGTERM kills bash by its DEFAULT disposition, so the EXIT trap
