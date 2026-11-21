@@ -932,13 +932,13 @@ assert_contains "$(serr)" "ERROR: arrival REFUTED for csticky - " "8h: ...the ea
 sid_paste="22222222-2222-2222-2222-222222222222"
 sclaude cpaste pCPASTE "$sid_paste"
 paste_body=$'line one of a pasted steer\n\nline two of a pasted steer'
-wrapped=$'\n\n<pasted_content id="ab12">\n'"$paste_body"$'</pasted_content id="ab12">\n\n'
+wrapped=$'\n\n<pasted_content id="ab12">\n'"$paste_body"$'\n</pasted_content id="ab12">\n\n'
 printf '{"type":"user","promptSource":"typed","origin":{"kind":"human"},"message":{"role":"user","content":%s}}\n' \
   "$(printf '%s' "$wrapped" | jq -Rs .)" >"$H/claude/proj/$sid_paste.jsonl"
 srun cpaste "$paste_body"
 assert_eq "$SN_RC:$(sout)" "0:sent to orca:pCPASTE" "8i: a pasted steer wrapped in claude's own <pasted_content> tags still CONFIRMS"
 
-wrapped_other=$'\n\n<pasted_content id="ab12">\nsomething else entirely</pasted_content id="ab12">\n\n'
+wrapped_other=$'\n\n<pasted_content id="ab12">\nsomething else entirely\n</pasted_content id="ab12">\n\n'
 printf '{"type":"user","promptSource":"typed","origin":{"kind":"human"},"message":{"role":"user","content":%s}}\n' \
   "$(printf '%s' "$wrapped_other" | jq -Rs .)" >"$H/claude/proj/$sid_paste.jsonl"
 srun cpaste "$paste_body"
@@ -954,7 +954,7 @@ assert_contains "$(serr)" "ERROR: arrival REFUTED for cpaste - " "8i: ...wrappin
 sid_pasteq="11111111-1111-1111-1111-111111111111"
 sclaude cpasteq pCPASTEQ "$sid_pasteq"
 pasteq_body=$'line one of a pasted mid-turn steer\n\nline two of it'
-wrappedq=$'\n\n<pasted_content id="cd34">\n'"$pasteq_body"$'</pasted_content id="cd34">\n\n'
+wrappedq=$'\n\n<pasted_content id="cd34">\n'"$pasteq_body"$'\n</pasted_content id="cd34">\n\n'
 {
   printf '{"type":"user","promptSource":"typed","origin":{"kind":"human"},"message":{"role":"user","content":"an older watcher nudge"}}\n'
   printf '{"type":"queue-operation","operation":"enqueue","content":%s}\n' "$(printf '%s' "$wrappedq" | jq -Rs .)"

@@ -128,15 +128,17 @@ function claudeLastTypedTurnTimestamp(path: string): string | null {
 // character by character, and the transcript shows its content - whether it
 // landed as a typed turn or was absorbed into a queue-operation pair, the
 // SAME capture-time wrapping either way - inside `<pasted_content id="...">`
-// tags with a blank line on each side: the same content, a different byte
-// sequence from what was sent. The TRAILING blank line is already gone by
-// the time either caller reads this far (capturedText strips trailing LFs,
-// same as `$(...)`), so only the leading one still needs matching. Only
-// that exact shape, around the WHOLE field and nothing else (both tags
-// carrying the SAME id), is stripped before comparison; anything looser
-// would let a genuinely different pasted text stand down a real
-// refutation.
-const PASTE_WRAP_RE = /^\n+<pasted_content id="([^"]*)">\n([\s\S]*)<\/pasted_content id="\1">\n*$/;
+// tags, each on its OWN line, with a blank line outside both (verified
+// against a real captured incident): the closing tag's own leading LF is
+// wrapper formatting, never part of the sent text, so it is consumed
+// separately and not left in the captured group. The TRAILING blank line
+// is already gone by the time either caller reads this far (capturedText
+// strips trailing LFs, same as `$(...)`), so only the leading one still
+// needs matching. Only that exact shape, around the WHOLE field and
+// nothing else (both tags carrying the SAME id), is stripped before
+// comparison; anything looser would let a genuinely different pasted text
+// stand down a real refutation.
+const PASTE_WRAP_RE = /^\n+<pasted_content id="([^"]*)">\n([\s\S]*)\n<\/pasted_content id="\1">\n*$/;
 
 function stripPasteWrap(s: string): string {
   const m = PASTE_WRAP_RE.exec(s);
