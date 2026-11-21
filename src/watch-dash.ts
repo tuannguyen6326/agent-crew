@@ -3,8 +3,8 @@
 // rendering, paint, and the idle/refresh main loop. A module only, never an
 // entry: the two entries bin/ac-ship-watch.sh and bin/ac-qa-watch.sh stay real
 // paths (shims) because the tests embed them, and each entry's header states
-// its role's auto-open/auto-close contract. THIS header is the authoritative
-// spec of the shared body;
+// its role's own idle-exit contract (nothing opens it automatically; it never
+// closes a pane). THIS header is the authoritative spec of the shared body;
 // tests/sh/ac-watch-dash.test.sh, ac-ship-watch.test.sh and ac-qa-watch.test.sh
 // hold it through the two boards.
 //
@@ -111,8 +111,6 @@
 //   operand, a non-integer idle limit, or a missing `sleep`.
 // - An interval that is a whole expression (`1+1`) or names a variable holding
 //   a number ends the board at its first no-run tick.
-// - An AC_HOME that cannot be entered is the session default with nothing
-//   printed; a relative --repo is resolved without CDPATH.
 // - argv arrives decoded, so a --repo or interval byte that is no UTF-8 is
 //   U+FFFD.
 // - The board's pane runs bun; without it the shim's `ERROR: required tool not

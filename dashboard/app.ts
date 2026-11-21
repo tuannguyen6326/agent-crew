@@ -3128,99 +3128,6 @@ export function orcaWindowOf(metaText: string): string | null {
   return m ? m[1] : null;
 }
 
-/** Minimal ANSI-SGR -> HTML for the pane view: 16/bright colors, 256-color
- * (38;5/48;5), bold/dim/italic/underline/inverse, reset. Every other escape
- * (cursor moves, OSC titles) is STRIPPED - the capture is a finished frame,
- * not a stream to replay. Text nodes are esc()-escaped, so pane bytes can
- * never become markup. */
-export function ansiToHtml(text: string): string {
-  // TOKENS, not hex: this runs on the SERVER and cannot know the viewer's theme,
-  // so it emits the slot and the page resolves it (ANSI_DARK/ANSI_LIGHT in
-  // THEME_VARS). Switching theme therefore recolours pane history already in the
-  // DOM, with no re-fetch and no second palette to keep in step.
-  const PAL = Array.from({ length: 16 }, (_, i) => `var(--ansi-${i})`);
-  const c256 = (n: number): string => {
-    if (n < 16) return PAL[n] ?? PAL[7];
-    if (n < 232) { // 6x6x6 cube
-      const v = (i: number) => (i === 0 ? 0 : 55 + i * 40);
-      const i = n - 16;
-      return `rgb(${v(Math.floor(i / 36))},${v(Math.floor(i / 6) % 6)},${v(i % 6)})`;
-    }
-    const g = 8 + (n - 232) * 10;
-    return `rgb(${g},${g},${g})`;
-  };
-  let out = "";
-  let open = false;
-  const st = { fg: "", bg: "", b: false, d: false, i: false, u: false, inv: false };
-  const flush = () => { if (open) { out += "</span>"; open = false; } };
-  const apply = () => {
-    flush();
-    const css: string[] = [];
-    let fg = st.fg, bg = st.bg;
-    if (st.inv) { const t = fg || "#c9d1d9"; fg = bg || "#0b0f14"; bg = t; }
-    if (fg) css.push(`color:${fg}`);
-    if (bg) css.push(`background:${bg}`);
-    if (st.b) css.push("font-weight:700");
-    if (st.d) css.push("opacity:.6");
-    if (st.i) css.push("font-style:italic");
-    if (st.u) css.push("text-decoration:underline");
-    if (css.length) { out += `<span style="${css.join(";")}">`; open = true; }
-  };
-  // Linkify AFTER escaping, on the escaped text only: http(s) runs become
-  // anchors, trailing punctuation/entities stay prose, and no other scheme
-  // ever links - pane bytes are untrusted, so the href is always the escaped
-  // text itself, never decoded markup.
-  const trailRe = /(?:&(?:quot|gt|lt|#39);|[.,;:!?)\]}>'"])+$/;
-  const emitText = (raw: string): string =>
-    escapeHtml(raw).replace(/https?:\/\/[^\s]+/g, (u0) => {
-      let u = u0, trail = "";
-      const t = u.match(trailRe);
-      if (t) { trail = t[0]; u = u.slice(0, u.length - trail.length); }
-      return `<a href="${u}" target="_blank" rel="noopener">${u}</a>${trail}`;
-    });
-  // Tokenize: SGR sequences we honor, all other ESC sequences dropped.
-  const re = /\x1b\[([0-9;]*)m|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[\[()][0-9;?]*[A-Za-z]|\x1b./g;
-  let last = 0;
-  for (let m = re.exec(text); m; m = re.exec(text)) {
-    if (m.index > last) out += emitText(text.slice(last, m.index));
-    last = m.index + m[0].length;
-    if (m[1] === undefined) continue; // non-SGR escape: stripped
-    const codes = (m[1] === "" ? "0" : m[1]).split(";").map(Number);
-    for (let k = 0; k < codes.length; k++) {
-      const n = codes[k];
-      if (n === 0) { st.fg = ""; st.bg = ""; st.b = st.d = st.i = st.u = st.inv = false; }
-      else if (n === 1) st.b = true;
-      else if (n === 2) st.d = true;
-      else if (n === 3) st.i = true;
-      else if (n === 4) st.u = true;
-      else if (n === 7) st.inv = true;
-      else if (n === 22) { st.b = false; st.d = false; }
-      else if (n === 23) st.i = false;
-      else if (n === 24) st.u = false;
-      else if (n === 27) st.inv = false;
-      else if (n >= 30 && n <= 37) st.fg = PAL[n - 30];
-      else if (n === 39) st.fg = "";
-      else if (n >= 40 && n <= 47) st.bg = PAL[n - 40];
-      else if (n === 49) st.bg = "";
-      else if (n >= 90 && n <= 97) st.fg = PAL[n - 90 + 8];
-      else if (n >= 100 && n <= 107) st.bg = PAL[n - 100 + 8];
-      else if ((n === 38 || n === 48) && codes[k + 1] === 5) {
-        const col = c256(codes[k + 2] ?? 7);
-        if (n === 38) st.fg = col; else st.bg = col;
-        k += 2;
-      } else if ((n === 38 || n === 48) && codes[k + 1] === 2) {
-        const col = `rgb(${codes[k + 2] ?? 0},${codes[k + 3] ?? 0},${codes[k + 4] ?? 0})`;
-        if (n === 38) st.fg = col; else st.bg = col;
-        k += 4;
-      }
-    }
-    apply();
-  }
-  if (last < text.length) out += emitText(text.slice(last));
-  flush();
-  return out;
-}
-
 /** Wake payload for the fleet spool: id derived from the scene's basename
  * (mirrors reviewWakeParts' charset squeeze), payload the scene path plus the
  * captain's message folded to one line. Pure - publishWhiteboardWake shells
@@ -5938,7 +5845,8 @@ setInterval(pushAnnotate, 2000);
 /** Reachability gate (browser-borne attacks): a WebSocket is not subject to
  * the same-origin policy and a cross-site POST needs no preflight, so any
  * website the captain's browser has open could otherwise reach this server -
- * and /api/term/ws is a full shell. Host must be a local name (rejecting DNS
+ * and /api/config and /api/dispatch are a write path, not merely a read.
+ * Host must be a local name (rejecting DNS
  * rebinding, where a hostile hostname resolves to 127.0.0.1), and Origin,
  * when a browser sends one, must be this server itself. Non-browser clients
  * (curl, the fleet's own tooling) send no Origin and pass. A sandboxed

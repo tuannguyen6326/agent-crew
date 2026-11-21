@@ -127,10 +127,9 @@
 //   every locale.
 // - THE ORPHAN SCAN stops at the answering orphan: no probe runs past it or
 //   outlives the run.
-// - THE PROBE'S STDIN: orca reads the controlling terminal directly rather
-//   than the pipe Bun spawns it with (backendCall's comment, src/lib.ts), so
-//   a probe never swallows the caller's stdin, whatever order the orphan
-//   scan runs its families in.
+// - THE PROBE'S STDIN: dropped (ignore) at the call site, so it can never
+//   swallow the caller's stdin, whatever order the orphan scan runs its
+//   families in.
 // - W13: an unreadable stamp is printed past and left as it is (metaSet
 //   refuses to rewrite what it cannot read), so it prints on every run.
 // - No line of a shell's own is printed for a grace, a quiet window, a clock

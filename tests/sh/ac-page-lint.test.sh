@@ -7,7 +7,7 @@
 # Runs against a FIXTURE dashboard (a copy of ac-page-lint.sh, with
 # bin/ac-bun.sh beside it and src/ linked, in a throwaway repo whose own tiny
 # dashboard/app.ts it boots - never the real dashboard, so the test pins the
-# lint and not the pages). The fixture serves all 5
+# lint and not the pages). The fixture serves all 4
 # fixed-list paths with one external <script src>, one inline <script>, and
 # one inline <script type="module"> per page; PAGE_LINT_TEST_BAD=1 swaps the
 # module script's body on "/" for one with a syntax error.
@@ -47,7 +47,6 @@ function page(secondScript: string): string {
 
 const PAGES: Record<string, string> = {
   "/": page(bad ? BAD_B : GOOD_B),
-  "/term": page(GOOD_B),
   "/whiteboard": page(GOOD_B),
   "/whiteboard-frame": page(GOOD_B),
   "/review": page(GOOD_B),
@@ -77,7 +76,6 @@ out="$(lint 2>&1)"; rc=0; lint >"$TMP/clean.out" 2>&1 || rc=$?
 assert_eq "$rc" 0 "a clean fixture dashboard exits 0"
 out="$(cat "$TMP/clean.out")"
 assert_contains "$out" "OK / (2 scripts)" "root page reports 2 checked scripts (the src= one is skipped)"
-assert_contains "$out" "OK /term" "the /term page is checked too"
 assert_contains "$out" "OK /whiteboard" "the /whiteboard page is checked too"
 assert_contains "$out" "OK /whiteboard-frame" "the /whiteboard-frame page is checked too"
 assert_contains "$out" "OK /review" "the /review page is checked too"
@@ -87,7 +85,7 @@ rc=0; PAGE_LINT_TEST_BAD=1 lint >"$TMP/bad.out" 2>&1 || rc=$?
 assert_eq "$rc" 1 "a page with a syntax error exits 1"
 out="$(cat "$TMP/bad.out")"
 assert_contains "$out" "SYNTAX ERROR / script 2" "names the page and the failing script's index"
-assert_contains "$out" "OK /term" "an unaffected page still reports OK - failure is per-page, not global"
+assert_contains "$out" "OK /whiteboard" "an unaffected page still reports OK - failure is per-page, not global"
 
 # --- bun missing from PATH: the shim's required-tool refusal -----------------
 emptybin="$TMP/emptybin"
@@ -147,7 +145,6 @@ const page = (...scripts: string[]): string =>
 const std = (b: string): string => page(`<script>${GOOD_A}</script>`, `<script type="module">${b}</script>`);
 const PAGES: Record<string, string> = {
   "/": std(env.PAGE_LINT_TEST_BAD === "1" ? BAD_B : GOOD_B),
-  "/term": std(GOOD_B),
   "/whiteboard": std(GOOD_B),
   "/whiteboard-frame": std(GOOD_B),
   "/review": std(GOOD_B),
@@ -159,7 +156,7 @@ if (env.PL_ODD === "1")
     `<script type="module">${GOOD_B}</script>`,
     "<script>this is not valid js (((",
   );
-if (env.PL_NONE === "1") PAGES["/term"] = page();
+if (env.PL_NONE === "1") PAGES["/review"] = page();
 if (env.PL_TWOBAD === "1") PAGES["/whiteboard"] = page(`<script>${BAD_B}</script>`, `<script>${GOOD_A}</script>`, "<script>let = ;</script>");
 if (env.PL_404) delete PAGES[env.PL_404];
 Bun.serve({
@@ -168,7 +165,7 @@ Bun.serve({
   async fetch(req) {
     const path = new URL(req.url).pathname;
     if (path === "/" && env.PL_ROOT500 === "1") return new Response("down", { status: 500 });
-    if (env.PL_HOLD && path === "/term") {
+    if (env.PL_HOLD && path === "/whiteboard") {
       writeFileSync(env.PL_HOLD, "");
       await new Promise(() => {});
     }
@@ -203,12 +200,11 @@ prun() {  # prun <args...> - one run from $PN, swept; sets P_RC, stdout and stde
 pout() { cat "$TMP/pn.out"; }
 perr() { cat "$TMP/pn.err"; }
 ALL_OK="OK / (2 scripts)
-OK /term (2 scripts)
 OK /whiteboard (2 scripts)
 OK /whiteboard-frame (2 scripts)
 OK /review (2 scripts)"
 
-# 1. a clean fixture: five OK lines, exit 0
+# 1. a clean fixture: four OK lines, exit 0
 prun
 assert_eq "$P_RC $(pout)" "0 $ALL_OK" "row 1: clean"
 assert_eq "$(perr)" "" "row 1: nothing on stderr"
@@ -269,11 +265,10 @@ assert_eq "$(pout | grep '^OK ')" "$(printf '%s\n' "$ALL_OK" | sed -e 1d -e '$d'
 PENV=(PL_ODD=1 PL_NONE=1 PL_TWOBAD=1); prun; PENV=()
 assert_eq "$P_RC" 1 "row 5: a broken page exits 1"
 assert_eq "$(pout | grep -E '^(OK|SYNTAX ERROR) ' | cut -c1-34)" "OK / (2 scripts)
-OK /term (0 scripts)
 SYNTAX ERROR /whiteboard script 1:
 SYNTAX ERROR /whiteboard script 3:
 OK /whiteboard-frame (2 scripts)
-OK /review (2 scripts)" "row 5: counts and blocks"
+OK /review (0 scripts)" "row 5: counts and blocks"
 
 # 6. a dashboard that dies at start: the polls stop once it is gone (a
 #    logging wrapper around the real sleep counts them), the log follows the
@@ -307,7 +302,7 @@ assert_eq "$P_RC $(perr)" "3 mktemp: stub refused
 ac-page-lint.sh: mktemp failed" "row 8: mktemp failed"
 
 # 9. a PATH perl that is not executable is FOUND and every extraction fails:
-#    five TOOLING ERROR lines with nothing captured, exit 3
+#    four TOOLING ERROR lines with nothing captured, exit 3
 plnx="$TMP/pl-nxperl"
 ptools "$plnx" bash dirname bun curl seq sleep sed cat rm mkdir awk
 printf '#!/bin/sh\nexit 0\n' >"$plnx/perl"; chmod 644 "$plnx/perl"
@@ -315,7 +310,6 @@ PPATH="$plstub:$plnx"; prun; PPATH="$plstub:$PATH"
 assert_eq "$P_RC" 3 "row 9: exit 3"
 assert_eq "$(pout)" "" "row 9: no page passes"
 assert_eq "$(perr)" "TOOLING ERROR /: script extraction failed ()
-TOOLING ERROR /term: script extraction failed ()
 TOOLING ERROR /whiteboard: script extraction failed ()
 TOOLING ERROR /whiteboard-frame: script extraction failed ()
 TOOLING ERROR /review: script extraction failed ()" "row 9: one line per page"
@@ -323,12 +317,12 @@ TOOLING ERROR /review: script extraction failed ()" "row 9: one line per page"
 # 10. a signal while a page fetch hangs: the run ends 128+<signal>, no tmpdir
 #     is left and the dashboard is gone. Started as an async job of this
 #     non-interactive shell the run inherits SIGINT ignored, and still ends on it.
-psignal() {  # psignal <signal> - a run held on /term, signalled; its status in P_RC
+psignal() {  # psignal <signal> - a run held on /whiteboard, signalled; its status in P_RC
   local hold="$TMP/pl-hold" n=0 pid
   rm -f "$hold"
   (cd "$PN" && exec env LC_ALL=C PATH="$PPATH" PL_TMP="$PLT" PL_PIDS="$PLP" PL_HOLD="$hold" ./bin/ac-page-lint.sh) </dev/null >"$TMP/pn.out" 2>"$TMP/pn.raw" &
   pid=$!
-  until [ -e "$hold" ]; do n=$((n + 1)); [ "$n" -lt 200 ] || { kill -TERM "$pid"; fail "row 10: the run never reached /term"; }; sleep 0.05; done
+  until [ -e "$hold" ]; do n=$((n + 1)); [ "$n" -lt 200 ] || { kill -TERM "$pid"; fail "row 10: the run never reached /whiteboard"; }; sleep 0.05; done
   kill "-$1" "$pid"
   n=0
   while kill -0 "$pid" 2>/dev/null; do

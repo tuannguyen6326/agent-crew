@@ -332,9 +332,9 @@ export function clampBgDim(stored: string | null): number {
 // Warp's answer is the one taken here - remap the whole palette per theme - so
 // the light set inverts the two ends (7/15 become dark) and darkens every hue
 // enough to hold on #f3f5f7, while the dark set is the palette that was already
-// hardcoded in ansiToHtml. One source, read by BOTH terminal surfaces: the
-// snapshot pane emits var(--ansi-N), and the web terminal is handed the
-// resolved values for xterm's own theme object.
+// hardcoded before the dashboard stopped rendering pane text; the one
+// remaining reader is the worktree lane graph (graphHtml's laneColor,
+// `var(--ansi-N)`).
 export const ANSI_DARK =
   "--ansi-0:#616161; --ansi-1:#ff8272; --ansi-2:#b4fa72; --ansi-3:#fefdc2; --ansi-4:#a5d5fe; --ansi-5:#ff8ffd; --ansi-6:#d0d1fe; --ansi-7:#f1f1f1;\n" +
   "    --ansi-8:#8e8e8e; --ansi-9:#ffc4bd; --ansi-10:#d6fcb9; --ansi-11:#fefdd5; --ansi-12:#c1e3fe; --ansi-13:#ffb1fe; --ansi-14:#e5e6fe; --ansi-15:#feffff;";

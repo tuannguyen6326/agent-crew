@@ -37,7 +37,6 @@ AC_QA_ATTESTATION_ERROR  out-param: qa attestation validator error carrier
 AC_QA_BUNDLE_ERROR       out-param: qa bundle validator error carrier
 AC_QA_MANIFEST_ERROR     out-param: qa manifest validator error carrier
 AC_QA_RECEIPT_ERROR      out-param: qa receipt validator error carrier
-AC_SEND_UNPROVEN    intra-run wire: a caller of backend_send_line (ac-backend.sh) sets it to type a line whose composer cannot be proven first - shell and launch lines, ac-send.sh --force
 AC_AUTOARM          intra-run wire: ac-watch-autoarm.sh exports it (=1) so the watcher it
                     starts records the arm as BOUNDED; never set by a human
 AC_FINDINGS_ROUND   intra-run wire: ac-ship.sh -> ac_findings_normalize (review round)

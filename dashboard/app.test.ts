@@ -11,7 +11,7 @@
 import { test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, realpathSync, statSync, chmodSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { reviewWakeParts, reviewWakeText, reviewWakeFamily, reviewWakeTask, orcaWindowOf, ansiToHtml, familyPaneIds, localHostOk, originOk, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, reviewBound, reviewLoad, reviewSave, REVIEW_SESSION_MAX_BYTES, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, warmMemo, homePathsIn, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, domainTallies, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted, pastedPngFile, composerEscapeCloses, imeOwnsKey, unreachableNotice, noteReceipt, annotatePassThrough, reviewPage, reviewFrameHeaders, roomList, termStatusBody } from "./app.ts";
+import { reviewWakeParts, reviewWakeText, reviewWakeFamily, reviewWakeTask, orcaWindowOf, familyPaneIds, localHostOk, originOk, extractMermaidSources, diagramSceneName, emptyReviewSession, reviewApply, pollSlice, reviewBound, reviewLoad, reviewSave, REVIEW_SESSION_MAX_BYTES, mintShareToken, shareLinkUrl, sanitizeGuestName, shareViewersView, SHARE_VIEWER_FRESH_MS, hashSharePassword, basicAuthPassword, shareHashEq, normalizeAnnotation, isSceneName, normalizeScene, parseBacklog, parseRoomList, parseArtifactPath, artifactKind, groupArtifacts, isHtmlArtifact, reviewableArtifact, cadenceLabel, chiefFitPx, renderMarkdown, RECORD_LEDGERS, isRecordLedger, matchBacklog, EDITABLE_CONFIG, CONFIG_KNOB_META, isEditableConfig, applyConfigWrite, applyDispatchWrite, readDispatch, verifyProcessRows, boardSystemPanes, parseLearningLedger, collectLearning, ttlMemo, warmMemo, homePathsIn, HOME_PATHS_TTL_MS, wbfSceneSignature, wbfShouldSave, reviewSessionSummary, parseCrewdomains, domainProjectLinks, domainTallies, resolveAnnotationSnapshot, reviewSnapshotPath, decodePngSnapshot, whiteboardWakeParts, whiteboardWakeKey, redrawMessage, redrawReceipt, whiteboardWrite, whiteboardShow, parseBacklogLine, contractTokens, backlogFamilyIds, storyState, familyOfTaskId, taskFamilyOf, collectFamilyTasks, familyRepos, isRepoKnowledge, learningsCiteFamily, deriveProgress, composeFamily, familyStages, parseTimeline, stemRegroup, parseEpicBranches, resolveTheme, nextTheme, resolvePalette, nextPalette, normalizeBgColor, clampBgDim, reviewShouldRemount, collectArtifacts, readRoomEntries, crossHomeReviewRows, readerCss, buildReviewSrcdoc, mermaidDropParticipantBoxes, mermaidImportWithFallback, mermaidPass, artifactPainted, pastedPngFile, composerEscapeCloses, imeOwnsKey, unreachableNotice, noteReceipt, annotatePassThrough, reviewPage, reviewFrameHeaders, roomList, termStatusBody } from "./app.ts";
 
 test("review chrome is framable only by its own origin", () => {
   // The SPA embeds /review in its own #toolview iframe (same origin), so the
@@ -3229,38 +3229,6 @@ test("familyPaneIds: own tasks + verify panes in, chief/self/other families out"
   ];
   const ids = familyPaneIds(metas, "greet2").map((x) => x.id);
   expect(ids).toEqual(["greet2", "greet2-design", "greet2-frontend", "greet2-verify-codereview", "verify-qa-x"]);
-});
-
-test("ansiToHtml renders SGR colors, strips other escapes, and escapes markup", () => {
-  const h = ansiToHtml("\x1b[31mred\x1b[0m plain \x1b[1;92mbold-green\x1b[m");
-  expect(h).toContain(">red</span>");
-  expect(h).toContain("plain");
-  expect(h).toContain("font-weight:700");
-  // cursor-move and OSC escapes vanish, content survives
-  const s2 = ansiToHtml("\x1b[2Jclear\x1b]0;title\x07after");
-  expect(s2).toBe("clearafter");
-  // pane bytes can never become markup
-  expect(ansiToHtml("<script>x</script>")).not.toContain("<script>");
-  // 256-color foreground
-  expect(ansiToHtml("\x1b[38;5;196mX\x1b[0m")).toContain("rgb(255,0,0)");
-});
-
-test("ansiToHtml linkifies http(s) URLs - and only them - as safe anchors", () => {
-  const h = ansiToHtml("see https://github.com/x/y/pull/12 for the PR");
-  expect(h).toContain('<a href="https://github.com/x/y/pull/12" target="_blank" rel="noopener">https://github.com/x/y/pull/12</a>');
-  // trailing punctuation stays prose, not part of the link
-  expect(ansiToHtml("done (https://a.io/p).")).toContain('href="https://a.io/p"');
-  expect(ansiToHtml("done (https://a.io/p).")).not.toContain('href="https://a.io/p).');
-  // query strings survive escaped - the entity stays inside href and text
-  const q = ansiToHtml("https://a.io/?x=1&y=2");
-  expect(q).toContain('href="https://a.io/?x=1&amp;y=2"');
-  // a URL inside a colored span still links
-  expect(ansiToHtml("\x1b[34mhttps://a.io/b\x1b[0m")).toContain('<a href="https://a.io/b"');
-  // markup around a URL can never smuggle attributes or tags
-  const evil = ansiToHtml('x https://a.io/"><script>1</script> y');
-  expect(evil).not.toContain("<script>");
-  // non-http schemes are never linkified
-  expect(ansiToHtml("open file:///etc/passwd or javascript:alert(1)")).not.toContain("<a ");
 });
 
 test("reviewWakeFamily: data/<family> names the scope; pooled, archived, and off-home paths do not", () => {

@@ -30,10 +30,10 @@
 // - TEXT delivery is VERIFIED (contract: ac-backend.sh delivery verification):
 //   a submit never acknowledged exits non-zero naming WHICH failure it was -
 //   text STRANDED in the composer is resubmitted, a pane that could not be
-//   READ is peeked at first. A claude composer is proven BEFORE the
-//   Enter: one showing only part of the message (a long send lands as its
-//   tail), holding a draft, or not on screen is REFUSED with nothing submitted
-//   - send a short pointer to a file instead; --force types without the proof.
+//   READ is peeked at first. Orca hands the whole message and its Enter to a
+//   recognized agent (claude included) as ONE bracket-pasted prompt, with no
+//   pre-Enter composer proof - a long send can still land TRUNCATED (see
+//   ARRIVAL below; the fix is a file plus a short pointer, never --force).
 //   ARRIVAL is verified on top (contract: ac-lib.sh's claude transcript
 //   arrival check, twinned as arrivalWait): a confirmed submit only proves the
 //   composer reacted to Enter, never that the text that ARRIVED is the text
@@ -157,10 +157,9 @@
 //     is, nor a path-leading steer (/tmp/x ...). claude runs it locally and
 //     records no typed turn, so its arrival has nothing to compare, and it
 //     answers no captain-wait.
-// 13. backendCall("send_line") with AC_SEND_UNPROVEN set to `1` under --force,
-//     else `0`, for that one call and restored after - orca's driver does not
-//     read it, so --force skips only the refusals above, never the arrival
-//     proof itself. A route refusal is its line, exit 1 (V12); 0 goes on;
+// 13. backendCall("send_line") - --force (step 9) skips only the
+//     BLOCKED/bare-shell refusals above, never the arrival proof below. A
+//     route refusal is its line, exit 1 (V12); 0 goes on;
 //     2 is `ERROR: delivery UNVERIFIED for <id> - the backend gave no delivery
 //     receipt, so the submit was neither confirmed nor refuted (see stderr
 //     above)`;
@@ -419,19 +418,14 @@ if (rest[0] === "--key") {
     marked = true;
   }
   slash = /^\/[a-z][a-z0-9_-]*(:[a-z0-9_-]+)?( |$)/.test(text);
-  const unproven = process.env.AC_SEND_UNPROVEN;
-  process.env.AC_SEND_UNPROVEN = force ? "1" : "0";
   // Taken BEFORE the submit (arrivalWait's own header): claude can write a
   // WRONG turn in the instant right after the Enter, before this function
   // even gets to call arrivalWait - a baseline taken any later would already
   // be past that write and misread it as pre-existing.
   const arrivalStart = Date.now();
   const sent = backendCall("send_line", [id, text], IO);
-  if (unproven === undefined) delete process.env.AC_SEND_UNPROVEN;
-  else process.env.AC_SEND_UNPROVEN = unproven;
   if (sent.exited) process.exit(sent.status);
   if (sent.status === 2) die(`delivery UNVERIFIED for ${id} - the backend gave no delivery receipt, so the submit was neither confirmed nor refuted (see stderr above)`);
-  if (sent.status === 3) die(`delivery REFUSED for ${id} - nothing was submitted (see stderr above)`);
   if (sent.status !== 0) die(`delivery NOT confirmed for ${id} - the text likely sits stranded in the composer (see stderr above)`);
   verb = "delivered (arrival unverified) to";
   if (metaKey(meta, "harness") === "claude" && !slash) {

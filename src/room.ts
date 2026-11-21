@@ -296,8 +296,9 @@
 // bin/ac-backend.sh's orca driver: backend_window_alive <fam>-chief (the
 // guard, AC_BACKEND the meta's for that call only, as the original's `( )`;
 // open), backend_mark_wait / backend_clear_wait (the stamp), backend_focus
-// and backend_target (open). orca always reads the caller's stdin regardless
-// of what any call site passes it, the guard included.
+// and backend_target (open). None of these calls sets stdin (the guard sets
+// it explicitly to inherit; the rest default to it, src/lib.ts orcaVerb), so
+// orca gets the caller's own stdin here.
 //
 // EXIT: 0; 1 on every refusal; 2 for usage and an unreadable room's pending;
 // a child's status where its failure ends the run (128+signal for a signal,
