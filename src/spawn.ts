@@ -1175,12 +1175,15 @@ function kickoffUnverified(id: string, what: string): void {
 
 // ARRIVAL beyond kickoffAcked's submit-only evidence: claude's transcript, the
 // pinned session's last typed turn; every other harness unverifiable.
-function kickoffArrivalCheck(id: string, h: string, sid: string, expected: string): void {
+// <started>: the caller's wall-clock moment taken BEFORE kickoffAcked's
+// submit (arrivalWait's own header) - never captured in here, which would
+// already be past a wrong turn claude wrote right after the Enter.
+function kickoffArrivalCheck(id: string, h: string, sid: string, expected: string, started: number): void {
   if (h !== "claude") {
     kickoffUnverified(id, `arrival unverifiable (${h} writes no session transcript this fleet can read)`);
     return;
   }
-  const arc = arrivalWait(b8(sid), expected).status;
+  const arc = arrivalWait(b8(sid), expected, started).status;
   if (arc === 0) return;
   if (arc === 1) {
     warn(`the kickoff prompt ARRIVED WRONG at ${target(id)} - the session transcript's last typed turn does not match what was sent (peek it: bin/ac-peek.sh ${id})`);
@@ -1269,7 +1272,8 @@ async function deliverKickoff(id: string, h: string, prompt: string): Promise<vo
     fatal(1);
   }
   const pointer = `Read and follow your kickoff order at ${kfile} NOW - it is this session's contract. Start by reading that file in full.`;
-  if (await kickoffAcked(id, pointer)) kickoffArrivalCheck(id, h, launchSessionId(launch).out, pointer);
+  const arrivalStart = Date.now();
+  if (await kickoffAcked(id, pointer)) kickoffArrivalCheck(id, h, launchSessionId(launch).out, pointer, arrivalStart);
   else {
     tell(`WARNING: kickoff pointer NOT acknowledged by ${target(id)} - it may sit unsubmitted in the composer; peek (bin/ac-peek.sh ${id}), then resubmit manually with bin/ac-send.sh ${id} --key Enter (the kickoff itself is durable at ${kfile})\n`);
     kickoffUnverified(id, "pointer not acknowledged (may sit unsubmitted in the composer)");

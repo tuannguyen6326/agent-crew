@@ -102,6 +102,28 @@ function claudeLastQueuedIfNewest(path: string): string | null {
   return out === "" ? null : out;
 }
 
+// A mismatched last typed turn and a not-yet-replied-to one read identically
+// from content alone (both static for arrivalWait's whole budget) - only the
+// turn's OWN transcript timestamp can tell "this predates the send, nothing
+// has happened in reply yet" from "this is a finished, genuine reply that
+// just isn't ours". Null (missing or unparseable, as every fixture with no
+// timestamp field keeps) on any failure - that turn cannot be proven stale,
+// so it refutes as it always did.
+const LAST_TYPED_TURN_TIMESTAMP = `
+    [.[] | select(.type == "user" and .promptSource == "typed"
+                  and .origin.kind == "human"
+                  and (.message.content | type) == "string")]
+    | last | .timestamp // empty
+  `;
+
+function claudeLastTypedTurnTimestamp(path: string): string | null {
+  const tail = stage(["tail", "-n", "200", argvOf(path)], "ignore", "pipe", "ignore");
+  const ts = stage(["jq", "-rs", LAST_TYPED_TURN_TIMESTAMP], tail.out, "pipe", "ignore");
+  if (tail.status !== 0 || ts.status !== 0) return null;
+  const out = capturedText(ts.out);
+  return out === "" ? null : out;
+}
+
 // ac_arrival_wait's twin (ac-lib.sh's claude transcript arrival check): did
 // <text>, its trailing LFs cut as the transcript reader cuts the arrived
 // turn's, ARRIVE as the session's last typed human turn? Up to seven reads a
@@ -110,16 +132,30 @@ function claudeLastQueuedIfNewest(path: string): string | null {
 // the last one read (the bash's AC_ARRIVAL_LAST), UNLESS <text> is the newest
 // queue-operation entry's content with no typed turn superseding it
 // (LAST_QUEUED_IF_NEWEST's header: a mid-turn queued steer, never a typed
-// turn - that reads 2 UNOBSERVABLE, not a refutation); 2 UNOBSERVABLE - no
-// <sid> (bytes, latin1), no single transcript, or no turn read at all. This
-// carve-out has NO bash twin: ac_arrival_wait/ac_claude_last_typed_turn in
-// bin/ac-lib.sh have no live caller any more (only their own and the
-// differential tests) - every live caller, ac-send.sh's steer AND
-// ac-spawn.sh's kickoff alike, already runs this one function.
-export function arrivalWait(sid: string, text: string): { status: number; last: string } {
+// turn - that reads 2 UNOBSERVABLE, not a refutation), OR the mismatched
+// `last` turn's OWN transcript timestamp predates <started> (the caller's
+// wall-clock moment, taken BEFORE the submit it is verifying the arrival
+// of - never inside this function: claude can write a WRONG turn in the
+// instant right after the submit's Enter, before this call even begins, and
+// a started taken in here would already be past that write, misreading a
+// genuine wrong arrival as merely pre-existing). A turn timestamped before
+// <started> provably predates this send's submit - the budget closed before
+// claude wrote anything AT ALL in reply (measured on a live incident: 36s
+// between the pre-send turn and the real one, against a 2.4s default
+// budget) - what we read is provably the turn that was already there, not a
+// verdict on this send; a turn with no parseable timestamp, as every
+// fixture lacking that field keeps, cannot be proven stale this way and
+// still refutes; 2 UNOBSERVABLE - no <sid> (bytes, latin1), no single
+// transcript, or no turn read at all. Neither carve-out has a bash twin:
+// ac_arrival_wait/ac_claude_last_typed_turn in bin/ac-lib.sh have no live
+// caller any more (only their own and the differential tests) - every live
+// caller, ac-send.sh's steer AND ac-spawn.sh's kickoff alike, already runs
+// this one function.
+export function arrivalWait(sid: string, text: string, started: number = Date.now()): { status: number; last: string } {
   const expected = lat(text).replace(/\n+$/, "");
   if (sid === "") return { status: 2, last: "" };
   let last = "";
+  let lastPath: string | null = null;
   let queued = false;
   for (let reads = 1; ; reads++) {
     // claude creates the transcript file at the session's first submitted
@@ -129,6 +165,7 @@ export function arrivalWait(sid: string, text: string): { status: number; last: 
       const cur = claudeLastTypedTurn(path);
       if (cur !== null) {
         last = cur;
+        lastPath = path;
         if (last === expected) return { status: 0, last: "" };
       }
       const q = claudeLastQueuedIfNewest(path);
@@ -139,5 +176,10 @@ export function arrivalWait(sid: string, text: string): { status: number; last: 
   }
   if (last === "") return { status: 2, last: "" };
   if (queued) return { status: 2, last: "" };
+  if (lastPath !== null) {
+    const ts = claudeLastTypedTurnTimestamp(lastPath);
+    const at = ts === null ? NaN : Date.parse(ts);
+    if (!Number.isNaN(at) && at < started) return { status: 2, last: "" };
+  }
   return { status: 1, last };
 }
