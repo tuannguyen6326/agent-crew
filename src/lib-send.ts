@@ -1,9 +1,11 @@
 // lib-send.ts - the send twins src/lib.ts's fanout rule keeps beside their port
 // (its header): the TypeScript twins at most two ports import, each keeping its
 // bash original's observable contract as every twin in src/lib.ts does - except
-// arrivalWait's mid-turn queue-operation carve-out (its own header), which has
-// no bash twin to keep contract with: ac_arrival_wait/ac_claude_last_typed_turn
-// in bin/ac-lib.sh have no live caller left.
+// arrivalWait's three TS-only verdicts (its own header): the mid-turn
+// queue-operation carve-out, the stale pre-send turn carve-out, and the
+// paste-wrap unwrap - none has a bash twin to keep contract with:
+// ac_arrival_wait/ac_claude_last_typed_turn in bin/ac-lib.sh have no live
+// caller left.
 
 import { existsSync, readdirSync } from "node:fs";
 import {
