@@ -1228,7 +1228,7 @@ function knowledgeBlock(fleetHome: string, baseSha: string, sha: string): string
   const record = `${fleetHome}/records/repo-knowledge/${b8(name)}.md`;
   const text = readText(record);
   if (text === null) return "";
-  const diff = run(["git", "-C", S.mainRepo, "diff", "-z", "--name-only", baseSha, sha, "--"], { stdout: "pipe", stderr: "ignore" });
+  const diff = run(["git", "-C", S.mainRepo, "diff", "-z", "--no-renames", "--name-only", baseSha, sha, "--"], { stdout: "pipe", stderr: "ignore" });
   if (diff.status !== 0) return "";
   const changed = new Set(diff.out.toString("latin1").split("\0"));
   const all = text.split("\n");
