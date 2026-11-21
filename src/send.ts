@@ -171,7 +171,9 @@
 // 14. ARRIVAL: the meta's harness= (cut at a NUL) read; an unreadable meta
 //     WARNs and ends the run with 1 - the text has landed, nothing is
 //     recorded (W1). harness=claude and no slash command: arrivalWait(the
-//     meta's session_id=, the delivered text) - 0 `sent to`; 2 `delivered
+//     meta's session_id=, the delivered text) - 0 `sent to` (byte-exact, or
+//     the delivered text wrapped verbatim in claude's own bracket-paste
+//     tags - stripPasteWrap, src/lib-send.ts); 2 `delivered
 //     (arrival unverified) to`; 1 is
 //       ERROR: arrival REFUTED for <id> - sent <N> chars, arrived <M>: <shape>
 //     <N>/<M> spawned `wc -m` counts (characters under a UTF-8 locale, bytes

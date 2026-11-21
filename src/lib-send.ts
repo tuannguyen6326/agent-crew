@@ -124,13 +124,37 @@ function claudeLastTypedTurnTimestamp(path: string): string | null {
   return out === "" ? null : out;
 }
 
+// claude bracket-pastes a long, multi-paragraph steer instead of typing it
+// character by character, and the transcript shows its content - whether it
+// landed as a typed turn or was absorbed into a queue-operation pair, the
+// SAME capture-time wrapping either way - inside `<pasted_content id="...">`
+// tags, each on its OWN line, with a blank line outside both (verified
+// against a real captured incident): the closing tag's own leading LF is
+// wrapper formatting, never part of the sent text, so it is consumed
+// separately and not left in the captured group. The TRAILING blank line
+// is already gone by the time either caller reads this far (capturedText
+// strips trailing LFs, same as `$(...)`), so only the leading one still
+// needs matching. Only that exact shape, around the WHOLE field and
+// nothing else (both tags carrying the SAME id), is stripped before
+// comparison; anything looser would let a genuinely different pasted text
+// stand down a real refutation.
+const PASTE_WRAP_RE = /^\n+<pasted_content id="([^"]*)">\n([\s\S]*)\n<\/pasted_content id="\1">\n*$/;
+
+function stripPasteWrap(s: string): string {
+  const m = PASTE_WRAP_RE.exec(s);
+  return m === null ? s : m[2];
+}
+
 // ac_arrival_wait's twin (ac-lib.sh's claude transcript arrival check): did
 // <text>, its trailing LFs cut as the transcript reader cuts the arrived
-// turn's, ARRIVE as the session's last typed human turn? Up to seven reads a
-// settle apart (PATH's sleep, as the bash ran it), returning at the first
+// turn's, ARRIVE as the session's last typed human turn - byte-exact, or
+// wrapped verbatim in claude's own bracket-paste tags (stripPasteWrap)? Up
+// to seven reads a settle apart (PATH's sleep, as the bash ran it), returning
+// at the first
 // match: 0 CONFIRMED; 1 REFUTED - some turn was read and none matched, `last`
-// the last one read (the bash's AC_ARRIVAL_LAST), UNLESS <text> is the newest
-// queue-operation entry's content with no typed turn superseding it
+// the last one read (the bash's AC_ARRIVAL_LAST), UNLESS <text> is (again,
+// byte-exact or wrapped) the newest queue-operation entry's content as of
+// the LATEST read, with no typed turn superseding it since
 // (LAST_QUEUED_IF_NEWEST's header: a mid-turn queued steer, never a typed
 // turn - that reads 2 UNOBSERVABLE, not a refutation), OR the mismatched
 // `last` turn's OWN transcript timestamp predates <started> (the caller's
@@ -166,10 +190,10 @@ export function arrivalWait(sid: string, text: string, started: number = Date.no
       if (cur !== null) {
         last = cur;
         lastPath = path;
-        if (last === expected) return { status: 0, last: "" };
+        if (last === expected || stripPasteWrap(last) === expected) return { status: 0, last: "" };
       }
       const q = claudeLastQueuedIfNewest(path);
-      if (q !== null) queued = q === expected;
+      queued = q !== null && (q === expected || stripPasteWrap(q) === expected);
     }
     if (reads >= 7) break;
     settle("inherit");
