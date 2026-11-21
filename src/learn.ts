@@ -277,10 +277,11 @@
 // DEFINITELY reports gone is reclaimed (its snapshot, meta, status and
 // handle removed), as is one whose pane the backend reports ALIVE but whose
 // recorded boot_id (bin/ac-host-boot.sh, a boot-session TOKEN, never a
-// timestamp - its header explains why) differs from the CURRENT one - a
-// reboot restores a pane as a bare shell with no runner inside it, so
-// "alive" alone is not proof the run still goes; an unobservable pane, or
-// either token unreadable, keeps holding. `suite` runs as its
+// timestamp - its header explains why) differs from the CURRENT one -
+// defensive against a reboot restoring a pane as a bare shell with no runner
+// inside it (no authority says Orca does this; the check costs nothing if it
+// never happens), so "alive" alone is never trusted across a boot change; an
+// unobservable pane, or either token unreadable, keeps holding. `suite` runs as its
 // own paned task (kind=verify-suite, supervised, outside crew accounting)
 // from an immutable detached worktree at the pinned sha under
 // <root>/.crew/learn-suite-snapshots/<id>, removed on every exit;
@@ -3216,9 +3217,10 @@ function hostBootToken(root: string): string | null {
 // having reclaimed every one whose pane the backend DEFINITELY reports gone,
 // and every one whose pane the backend reports ALIVE but whose own recorded
 // boot_id (stamped at suiteLaunch) differs from the CURRENT boot token:
-// a backend can restore a pane across a reboot as a bare login shell with no
-// runner inside it, so "alive" alone cannot tell that apart from a run
-// genuinely still going - only a boot-session change can, and only when
+// defensive, not a measured Orca behaviour: if a backend ever restored a
+// pane across a reboot as a bare login shell with no runner inside it,
+// "alive" alone could not tell that apart from a run genuinely still going
+// - only a boot-session change can, and only when
 // BOTH tokens are readable (unobservable, or either token unreadable, keeps
 // holding; a run recorded against the CURRENT boot is never reclaimed by
 // this path, whatever its pane answers).
