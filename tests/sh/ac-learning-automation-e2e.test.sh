@@ -183,4 +183,38 @@ assert_eq "$(cat "$AC_HOME/records/captain.md")" "$cap_before" \
 assert_eq "$(ac_meta_get "$AC_HOME/state/.curate.meta" runs_since)" "1" \
   "a gate-unjudged run must not tick or reset the Curate cadence"
 
+# An examined run (complete scout, candidate applied) whose learnReset then
+# fails - cadence lock held by a live peer - still preserves the retro window
+# (debriefs/generation untouched, no last_run), so it is the THIRD
+# window-preserving path and must withhold Curate too, even though the scout
+# itself was examined.
+rm -rf "$AC_HOME/data"/learning-* "$AC_HOME/data/learning" "$AC_HOME/skills/auto-skill" \
+  "$AC_HOME/records/learnings-archive" "$AC_HOME/records/captain-archive.md"
+printf '## 2026-07-26 - family (chief)\n- LESSON: automate this recurring fleet procedure.\n' \
+  >"$AC_HOME/records/learnings.md"
+printf '%s\n' '- 2026-07-20: one-time fleet cleanup. [COMPLETED 2026-07-21]' \
+  >"$AC_HOME/records/captain.md"
+printf 'debriefs=8\ngeneration=5\n' >"$AC_HOME/state/.learn.meta"
+printf 'runs_since=1\n' >"$AC_HOME/state/.curate.meta"
+cap_before="$(cat "$AC_HOME/records/captain.md")"
+mkdir -p "$TMP/fastbin"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$TMP/fastbin/sleep"
+chmod +x "$TMP/fastbin/sleep"
+mkdir -p "$AC_HOME/state/.learn-cadence.lock" \
+  && printf '%s\n' "$$" >"$AC_HOME/state/.learn-cadence.lock/pid"
+out="$(PATH="$TMP/fastbin:$PATH" AC_PANE_AGENT="$stub" "$BIN/ac-learn.sh" run 2>&1)"
+ac_lock_release "$AC_HOME/state/.learn-cadence.lock"
+assert_contains "$out" "cadence lock was busy" \
+  "an examined run whose reset lost the lock reports the lock failure"
+assert_contains "$out" "Curate is due" \
+  "an examined run whose reset fails warns that a due Curate is withheld"
+assert_no_file "$AC_HOME/records/captain-archive.md" \
+  "an examined run whose reset fails must not let automatic Curate archive captain.md"
+assert_eq "$(cat "$AC_HOME/records/captain.md")" "$cap_before" \
+  "an examined run whose reset fails leaves captain.md byte-identical"
+assert_eq "$(ac_meta_get "$AC_HOME/state/.curate.meta" runs_since)" "1" \
+  "an examined run whose reset fails must not tick or reset the Curate cadence"
+assert_eq "$(ac_meta_get "$AC_HOME/state/.learn.meta" debriefs)" "8" \
+  "an examined run whose reset fails leaves the debrief counter untouched"
+
 pass

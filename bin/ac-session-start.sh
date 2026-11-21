@@ -485,8 +485,9 @@ if [ "$curate_n" -ge "$curate_x" ]; then
   printf 'CURATE DUE: %s/%s\n' "$curate_n" "$curate_x"
   # NAME WHAT WILL FIRE IT, because nothing here will. Curate has no firing path
   # of its own: it runs only as a side-effect of a Learning DISTILL run that
-  # EXAMINES - consumes the retro window (bin/ac-learn.sh), and this counter
-  # counts EXAMINED DISTILL RUNS, not landings - so the threshold is reached
+  # EXAMINES and whose reset succeeds - consumes the retro window
+  # (bin/ac-learn.sh), and this counter counts DISTILL RUNS that do, not
+  # landings - so the threshold is reached
   # long before the next DISTILL is, and the flag then stands up for the rest
   # of that interval. Measured on this fleet: `CURATE DUE: 3/2` printed while
   # the landing counter stood at 23/60, i.e. 37 landings from the only event

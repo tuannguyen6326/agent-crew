@@ -116,10 +116,11 @@
 // delta and nothing else reconciles it. It is a code invariant, not a data
 // repair - an archive that does not exist yet simply declares 0, and a pointer
 // with no archive is still written without an `[evidence]` link.
-// The transaction resets only the generation it captured. Only an EXAMINED run
-// (one that just consumed the retro window) then ticks Curate and runs
-// automatic Curate when its own cadence is due; a preserving run (an
-// incomplete scout, or a complete scout a maintenance gate left unjudged)
+// The transaction resets only the generation it captured. Only once that
+// reset actually advances the window does Curate tick and run automatic
+// Curate when its own cadence is due; a preserving run (an incomplete scout,
+// a complete scout a maintenance gate left unjudged, or an examined run
+// whose own reset failed - cadence lock busy or a newer generation)
 // withholds both the tick and the run, so a retry at the same anchor never
 // double-counts or mutates records the window is resolved from - it warns
 // instead when Curate was already due.
@@ -1592,7 +1593,16 @@ async function cmdRun(): Promise<void> {
   if (scoutComplete) mintEnforceRows(rundir);
 
   await checkpoint();
+  let resetOk = false;
   if (examined) {
+    const r = cadenceCall(() => learnReset(learnGen));
+    if (r === 0) resetOk = true;
+    else if (r === 2) warnB("Learning completed, but its cadence lock was busy - the DISTILL cycle is NOT consumed and the retro window is NOT advanced");
+    else warnB("Learning completed, but a newer cadence generation exists; late debriefs remain due instead of being erased");
+  } else if (scoutComplete) warnB(`a maintenance gate could not judge one or more subjects - the DISTILL cycle is NOT consumed and the retro window is PRESERVED (still due; re-run after inspecting ${rundir})`);
+  else warnB(`the scout did not produce a complete ok report + retro - the DISTILL cycle is NOT consumed and the retro window is PRESERVED (still due; re-run after inspecting ${rundir})`);
+
+  if (resetOk) {
     curateTick();
     const [curateN, curateEvery] = curateDue();
     if (BigInt(curateN) >= BigInt(curateEvery)) {
@@ -1605,15 +1615,8 @@ async function cmdRun(): Promise<void> {
   } else {
     const [curateN, curateEvery] = curateDue();
     if (BigInt(curateN) >= BigInt(curateEvery))
-      warnB(`Curate is due (${curateN}/${curateEvery}) but withheld - this Learning run did not consume the retro window; the flag stays due and the retry runs it`);
+      warnB(`Curate is due (${curateN}/${curateEvery}) but withheld - this Learning run did not advance the retro window; the flag stays due and the retry runs it`);
   }
-
-  if (examined) {
-    const r = cadenceCall(() => learnReset(learnGen));
-    if (r === 2) warnB("Learning completed, but its cadence lock was busy - the DISTILL cycle is NOT consumed and the retro window is NOT advanced");
-    else if (r !== 0) warnB("Learning completed, but a newer cadence generation exists; late debriefs remain due instead of being erased");
-  } else if (scoutComplete) warnB(`a maintenance gate could not judge one or more subjects - the DISTILL cycle is NOT consumed and the retro window is PRESERVED (still due; re-run after inspecting ${rundir})`);
-  else warnB(`the scout did not produce a complete ok report + retro - the DISTILL cycle is NOT consumed and the retro window is PRESERVED (still due; re-run after inspecting ${rundir})`);
 }
 
 function mintEnforceRows(rundir: string): void {
