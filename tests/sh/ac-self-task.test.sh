@@ -559,8 +559,8 @@ rm -rf "$state/.wake-spool"
 # off, unless a row names others; cwd $XW/cwd unless a row names the home;
 # stdin /dev/null; LC_ALL=C unless a row names en_US.UTF-8; PATH stubs - date
 # answering one instant for every format (holding at a meta's spawned_at
-# stamp where a row says), sleep logging each call and returning at once
-# (holding where a row says), od answering /dev/urandom from a per-world
+# stamp where a row says), sleep logging each call and returning at once,
+# od answering /dev/urandom from a per-world
 # counter (holding where a row says) - ahead of the fake orca. The transcript
 # and the world
 # read the bin root ROOT and a temp pid PID; the world is every path under $XW
@@ -583,15 +583,9 @@ if [ -e "$XSTUB/hold-date" ] && [ "$*" = "-u +%Y-%m-%dT%H:%M:%SZ" ] \
 fi
 exec /bin/date -r 1767225600 "$@"
 STUB
-# sleep: a call whose argument is the world's stub/hold-sleep holds until
-# stub/release (stub/held marks it), so a signal row can land inside it.
 cat >"$XSTUBS/sleep" <<'STUB'
 #!/bin/sh
 printf '%s\n' "$*" >>"$XSTUB/sleep.log"
-if [ -n "$*" ] && [ "$*" = "$(cat "$XSTUB/hold-sleep" 2>/dev/null)" ]; then
-  : >"$XSTUB/held"
-  i=0; while [ ! -e "$XSTUB/release" ] && [ "$i" -lt 300 ]; do /bin/sleep 0.1; i=$((i + 1)); done
-fi
 case "$*" in *[0-9]*) case "$*" in *[!0-9.]*) ;; *) exit 0 ;; esac ;; esac
 exec /bin/sleep "$@"
 STUB
@@ -666,14 +660,14 @@ xsig() {  # xsig <signal> <args...> - one call in the background; once the world
     pid=$!
     set +m
     while [ ! -e "$XW/stub/held" ] && [ "$i" -lt 600 ]; do /bin/sleep 0.05; i=$((i + 1)); done
-    [ -e "$XW/stub/held" ] || fail "self-task at line $(xrow): the run never reached its hold"
+    [ -e "$XW/stub/held" ] || fail "self-task at line $(xrow): the run never reached its hold" 2>&3
     kill -"$sig" "$pid"
     /bin/sleep 0.5
     : >"$XW/stub/release"
     wait "$pid" || rc=$?
-  } 2>/dev/null
+  } 3>&2 2>/dev/null
   /bin/sleep 0.3
-  rm -f "$XW/stub/held" "$XW/stub/release" "$XW/stub/hold-sleep" "$XW/stub/hold-od" "$XW/stub/hold-date"
+  rm -f "$XW/stub/held" "$XW/stub/release" "$XW/stub/hold-od" "$XW/stub/hold-date"
   { printf '== %s %s\nrc=%s\n-- out\n' "$sig" "$*" "$rc"; cat "$TMP/x.out"; printf '%s\n' '-- err'; cat "$TMP/x.err"; } >>"$TMP/xt"
 }
 xnorm() {  # xnorm <file> - the bin root ROOT, a temp pid PID, bash's `child setpgid` noise dropped
@@ -1003,13 +997,8 @@ xstamporca() { xorca; printf '%s\n' "$XW/home/state/s1.meta" >"$XW/stub/hold-dat
 xgo xstamporca x11b
 xhas $'== TERM start s1 proj\nrc=143'
 xwhas 'worktree rm'
-# INT during the tail's send: the send finishes, then the run ends 130 with
-# the rollback.
-xsettle() { xworld; printf '7\n' >"$XW/stub/hold-sleep"; }
-x11g() { XENV=(AC_SEND_SETTLE=7); xsig INT start s1 proj; }
-xgo xsettle x11g
-xhas $'== INT start s1 proj\nrc=130'
-xwlacks '== home/state/s1.meta '
+# No "INT during the tail's send" row: the orca tail rides --command at
+# terminal create, so a start sends nothing for a signal to land inside.
 # Held through the final meta rewrite's mv: the rewrite lands, then the whole
 # start is rolled back. xmvdone waits that mv out before the world is read.
 xmvhold() {
