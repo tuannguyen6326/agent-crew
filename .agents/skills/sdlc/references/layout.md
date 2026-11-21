@@ -21,7 +21,7 @@ Tokens: `<feature>`, `<change>`, `<live>` (the resolved `live` value), and in `c
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `change` | `<date>-<slug>` | The change id: the name of the snapshot directory and the `change:` line of every artifact. It is independent of the backlog family id. |
-| `record` | `any, optional` | The external record `<record>` stands for: its form (e.g. `SHP-<n>`) and whether it is `required`. A required record that is missing is an open question of the SDLC clarify, never a guess. |
+| `record` | `any, optional` | The external record `<record>` stands for: its form (e.g. `ABC-<n>`) and whether it is `required`. A required record that is missing is an open question of the SDLC clarify, never a guess. |
 | `slug` | `kebab-case` | The rule a slug follows. |
 
 ### Repository paths
@@ -67,14 +67,14 @@ To start one, copy the lines you need from this file and change the values.
 
 ## Layout
 
-- live: docs/<feature>
-- snapshot: <live>/changes/tech/<change>
+- live: docs/product/<feature>
+- snapshot: <live>/snapshots/<change>
 - change: <record>-<slug>
-- record: SHP-<n>, required
+- record: ABC-<n>, required
 - slug: 2-5 lowercase words
-- repo_plan: docs/changes/<change>/plan.md
-- qa_report: qa/test-report.md
-- requirements: brd-*.md, prd-*.md
+- repo_plan: plans/<change>.md
+- qa_report: qa/report-<change>.md
+- requirements: req-*.md, design-*.md
 
 ## Gotchas
 

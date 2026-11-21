@@ -77,7 +77,7 @@ Each participating code repository that is not the main repository:
 docs/features/<feature>/changes/<change>/plan.md
 ```
 
-Every name above is a layout key's default: a fleet's `sdlc.md` may move the live directory, the snapshot directory and the repository plan, rename any artifact or live document, and take requirement documents by glob (e.g. `brd-*.md, prd-*.md`).
+Every name above is a layout key's default: a fleet's `sdlc.md` may move the live directory, the snapshot directory and the repository plan, rename any artifact or live document, and take requirement documents by glob (e.g. `req-*.md, design-*.md`).
 The set of artifacts and the order of the chain never change.
 Every `flow:sdlc` brief names the fleet's `sdlc.md` when it exists.
 
