@@ -77,8 +77,9 @@
 // seconds for the pane to go idle (backendAgentIdle, polled each `sleep 1`),
 // then types /compact through bin/ac-send.sh; a pane still busy is left alone,
 // and the message keeps the hint for that case. orca's own idle check never
-// consults the captain-wait stamp (backend_agent_idle_pane_orca reads only
-// the render), so a roomchief stamped captain-wait while its own turn has
+// consults the captain-wait stamp (backend_agent_idle_pane_orca reads Orca's
+// hook-backed turn state first, falling back to the render heuristics when
+// that is absent), so a roomchief stamped captain-wait while its own turn has
 // genuinely ended still reads idle and gets /compact sent; one still
 // rendering busy (spinner or dialog) keeps getting the hint regardless of
 // the stamp. The crewchief and a solo session own no
