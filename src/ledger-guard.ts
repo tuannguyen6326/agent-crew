@@ -13,9 +13,9 @@
 // only ("it never touches the backlog/registry - the crewchief keeps those"):
 // nothing mechanically held it. A roomchief with no fleet-wide context can
 // renumber an epic rollup or move a line while the crewchief is mid-decision,
-// and nothing would detect it - lived (gate-via-pane-agent
-// roomchief edited records/backlog.md and ran crewchief-owned landing verbs
-// itself; only its own self-declared handback caught it). A WARN-only receipt
+// and nothing would detect it - lived (a roomchief edited records/backlog.md
+// and ran crewchief-owned landing verbs itself; only its own self-declared
+// handback caught it). A WARN-only receipt
 // was considered and rejected: it needs a baseline-snapshot mechanism that
 // does not exist, and a guard running inside the roomchief's own session
 // cannot tell a crewchief's legitimate edit from its own - a real refusal

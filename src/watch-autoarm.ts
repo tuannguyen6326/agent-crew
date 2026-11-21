@@ -75,7 +75,7 @@
 // does not change what THIS hook reads (a firing standing aside from a
 // predecessor's watcher still gets the `already running` prefix it globs on).
 //
-// AN ORPHANED FIRING (autoarm-orphan-holds-watcher-lock): Claude Code
+// AN ORPHANED FIRING: Claude Code
 // reparents a Stop hook outliving its session to pid 1, with its watcher
 // child still alive and the lock still held - a corpse the exit-2 nudge can
 // never reach, because its owning session is gone. Two halves close the
