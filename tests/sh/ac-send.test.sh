@@ -467,7 +467,7 @@ err="$("$BIN/ac-send.sh" cpath '/tmp/brief.md holds the next step' 2>&1)" \
 assert_contains "$err" "arrival REFUTED" "only a command-shaped first word skips the arrival check"
 
 # herdr's composer-proof-before-Enter mechanism (keep-tail/draft/nbsp/
-# read-fails knobs, AC_SEND_UNPROVEN) has no orca equivalent: ac-backend-orca.sh's
+# read-fails knobs) has no orca equivalent: ac-backend-orca.sh's
 # backend_send_line_orca/orca_prompt_send_pane carries no keep-tail, draft
 # or composer-visibility check before submitting. This whole cluster is a
 # herdr-only gap with no orca-shaped test to migrate it to.
@@ -583,7 +583,7 @@ srun() {  # srun <args...> - the shim at the side root; sets SN_RC
   rm -f "$H"/home/state/.guard-stamp*
   SN_RC=0
   (cd "$H" && env -u AC_HOME -u AC_BACKEND -u AC_FLEET_STATE -u AC_HERDR_SESSION -u AC_HERDR_RPC_TIMEOUT -u AC_GUARD_QUIET \
-    -u AC_GUARD_GRACE -u LANG -u LC_CTYPE -u AC_SOLO -u AC_SEND_UNPROVEN -u AC_CAPTAIN_RE -u CLAUDE_CONFIG_DIR \
+    -u AC_GUARD_GRACE -u LANG -u LC_CTYPE -u AC_SOLO -u AC_CAPTAIN_RE -u CLAUDE_CONFIG_DIR \
     "${e[@]}" "$S_BIN/ac-send.sh" ${a[@]+"${a[@]}"}) <"$SSTDIN" >"$TMP/n.raw" 2>"$TMP/n.err" || SN_RC=$?
   snorm "$TMP/n.raw" >"$TMP/n.out"; snorm "$TMP/n.err" >"$TMP/n.err2"
 }
@@ -761,11 +761,9 @@ for st in /Compact '/tmp/x y' '/a:B x'; do
   assert_contains "$(serr)" "ERROR: arrival REFUTED for cs - " "6: '$st' ... and refuted"
 done
 
-# 7. AC_SEND_UNPROVEN and AC_HERDR_SESSION are both herdr-only, with no orca
-#    counterpart: the claude composer proof (AC_SEND_UNPROVEN gates it) does
-#    not exist for orca at all (the gap noted earlier, above section 1), and
-#    orca_json (bin/ac-backend-orca.sh) carries no session concept for
-#    AC_HERDR_SESSION to ride - not ported.
+# 7. AC_HERDR_SESSION is herdr-only, with no orca counterpart: orca_json
+#    (bin/ac-backend-orca.sh) carries no session concept for it to ride -
+#    not ported.
 
 # 8. arrival on a claude pane: REFUTED with a DIFFERENT text; sizes in
 #    characters under UTF-8, bytes under C, never recorded; an intact `x\n\n`

@@ -442,10 +442,12 @@
 // like codex's exact-path keying - every worktree (and the main checkout) of
 // a once-trusted repository inherits the SAME answer forever, so this is a
 // one-time hazard per brand-new PROJECT, never a recurring one per worktree.
-// `ac_startup_dialogs` skips the registry key(s) only when the dialog read
-// resolves cleanly to nothing pending and the harness is then observed up or
-// a shell; an unobservable read (one failed `terminal show`) presses the
-// blind key(s) once regardless of trust, same as an unnamed dialog. A CUSTOM
+// `ac_startup_dialogs` skips the registry key(s) whenever the dialog read
+// resolves cleanly to nothing pending - whether the harness is then observed
+// up or a shell right away, or only once the up-probe exhausts its own
+// budget still unobservable; an unobservable read (one failed `terminal
+// show`) presses the blind key(s) once regardless of trust, same as an
+// unnamed dialog. A CUSTOM
 // config/launch-claude template also gets NEITHER key, the same rule codex's
 // Enter and '/effort ultracode' already follow.
 // deliverKickoff's second `sleepFor(settle)`, right after

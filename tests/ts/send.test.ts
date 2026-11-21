@@ -101,7 +101,7 @@ test("arrivalWait spawns ac_claude_last_typed_turn's jq program byte for byte", 
 const turn = (content: unknown): string =>
   `${JSON.stringify({ type: "user", promptSource: "typed", origin: { kind: "human" }, message: { role: "user", content } })}\n`;
 
-test("arrivalWait is ac_arrival_wait: its verdict, the arrived text it hands back, and the reads it paces, on every transcript shape this row set exercises (the mid-turn queue-operation carve-out has no bash twin to differ against - tests/sh/ac-send.test.sh's own section 8b owns it)", () => {
+test("arrivalWait is ac_arrival_wait: its verdict, the arrived text it hands back, and the reads it paces, on every transcript shape this row set exercises (three TS-only verdicts have no bash twin to differ against: the mid-turn queue-operation carve-out - tests/sh/ac-send.test.sh's own section 8b owns it - the stale pre-send turn carve-out owned by its 8e-8g, and the paste-wrap unwrap owned by its 8i-8j)", () => {
   const root = dir("root");
   const at = (p: string, body: string): void => {
     mkdirSync(join(root, p, ".."), { recursive: true });

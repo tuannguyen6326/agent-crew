@@ -309,7 +309,7 @@
 // watcher at once. ac-watch-policy-hook.sh denies those patterns for sessions
 // rooted in THIS repo; sessions rooted elsewhere are unguarded, so this message
 // is the only barrier they get.
-// AN ORPHANED AUTOARM INCUMBENT (autoarm-orphan-holds-watcher-lock):
+// AN ORPHANED AUTOARM INCUMBENT:
 // the Stop hook that marks an arm BOUNDED (AC_AUTOARM) can itself outlive its
 // session (reparented to pid 1, src/watch-autoarm.ts's header owns that
 // evidence), leaving the marked watcher alive and the lock held with no

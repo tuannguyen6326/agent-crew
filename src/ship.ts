@@ -541,7 +541,7 @@
 // hand; tests/sh/ac-ship.test.sh. No `set -e` script runs it. What it WRITES is
 // read by src/ship-watch.ts and src/watch-dash.ts (run.meta, steps.tsv,
 // findings, override, logs/run.log, `current`), src/crew-state.ts (steps.tsv),
-// src/teardown.ts (run.meta's branch=, review.pane), bin/ac-watch.sh
+// src/teardown.ts (run.meta's branch=), bin/ac-watch.sh
 // (findings/review.json), src/qa.ts (test/receipt.env through
 // qaShipReceiptStatus) and the watcher and wake drain (the `checks-passed:`
 // marker through AC_CAPTAIN_RE).

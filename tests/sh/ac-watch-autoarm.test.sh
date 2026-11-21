@@ -566,7 +566,7 @@ aa_run() {  # aa_run [env words...] - one firing, the call and backend logs fres
   (cd "$s/${AA_CWD:-home}" && printf '{"hook_event_name":"Stop","stop_hook_active":false}' \
     | env -u AC_SOLO -u AC_SCOPE -u AC_HOME -u AC_FLEET_STATE -u AC_BACKEND -u AC_AUTOARM -u AC_AUTOARM_BUDGET \
         -u AC_HEARTBEAT -u AC_STOPHOOK_LOG_KEEP -u AC_WATCH_SKIP -u AC_WATCH_ONLY -u AC_HERDR_SESSION \
-        -u AC_HERDR_RPC_TIMEOUT -u AC_SEND_UNPROVEN -u AC_LOCK_PID "${e[@]}" \
+        -u AC_HERDR_RPC_TIMEOUT -u AC_LOCK_PID "${e[@]}" \
         perl -e 'alarm 60; exec @ARGV' "$s/root/bin/ac-watch-autoarm.sh" ${AA_ARGS[@]+"${AA_ARGS[@]}"}) \
     >"$TMP/aa.n.out" 2>"$TMP/aa.n.err" || AA_RC=$?
 }
