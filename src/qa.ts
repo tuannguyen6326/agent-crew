@@ -752,9 +752,8 @@
 // and the passed marker), src/lib.ts's qa gate, src/merge-local.ts,
 // src/pr-merge.ts, src/feature.ts and src/epic-ship.ts (the passed markers),
 // bin/ac-qa-watch.sh and src/watch-dash.ts (run.meta, cases.tsv, steps.tsv,
-// findings, logs, current), src/teardown.ts (the agent pane file, run.meta's
-// task, serve.pid, current) and src/tree.ts (which removes
-// <wt>/.crew/qa on a slot reset).
+// findings, logs, current), src/teardown.ts (run.meta's task, serve.pid,
+// current) and src/tree.ts (which removes <wt>/.crew/qa on a slot reset).
 
 import { accessSync, appendFileSync, closeSync, lstatSync, openSync, readFileSync, readSync, readdirSync, readlinkSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
