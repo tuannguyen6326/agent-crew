@@ -246,15 +246,15 @@
 # reaching backend_window_alive against their own budget (the Stop hooks'
 # ac_wake_orphan_pending, 30s) rely on that, not on a ceiling here.
 #
-# FAMILY GROUPING: every pane of one task family lands in ONE place - the
-# family's chief, its crewmates, its verification panes and its ship/qa watch
-# tabs all group together, mirroring the dashboard's home -> family -> panes
-# tree. AC_WINDOW_FAMILY names the family (set non-empty = that family's
-# group; set EMPTY = deliberately the fleet's root group; UNSET =
-# backend_window_new derives it with ac_window_family, ac-lib.sh: AC_SCOPE >
-# AC_FLEET_SCOPE > ac_family_of_id). The orca driver's own grouping mechanism
-# (one FAMILY TAB per room under the home's sidebar node, split rather than a
-# new tab per pane) is documented at orca_place_pane (ac-backend-orca.sh).
+# FAMILY GROUPING: chief-kind panes (cwd = the home) group under the home's
+# sidebar node, one FAMILY TAB per room; crewmate and verifier panes
+# (cwd = a project/lease worktree) group under THAT worktree's own node,
+# one tab each. AC_WINDOW_FAMILY names the room for a chief-kind pane (set
+# non-empty = that family's group; set EMPTY = deliberately the fleet's
+# root group; UNSET = backend_window_new derives it with ac_window_family,
+# ac-lib.sh: AC_SCOPE > AC_FLEET_SCOPE > ac_family_of_id) - a worktree-cwd
+# pane ignores it. The full placement rule is documented at orca_place_pane
+# (ac-backend-orca.sh:5-16,313-321).
 #
 # Tests drive this file through a fake `orca` CLI on PATH
 # (tests/sh/helpers.sh ships it) - no live server needed.

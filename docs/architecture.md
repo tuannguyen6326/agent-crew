@@ -77,8 +77,8 @@ The `AC_FLEET_STATE` rung exists because a crewmate pane carries no `AC_HOME`, o
 The `bin/ac-backend.sh` header owns these contracts:
 - WINDOW LIVENESS - alive, gone or unobservable, and only a definite answer from a reachable backend may become `gone`.
 - HARNESS CAME-UP PROBE - did a harness take the pane's foreground, or did it fall back to a shell.
-- CAPTAIN-WAIT STAMP, KILL OWNERSHIP PROOF, LAST-TAB FALLBACK and HUNG RPC.
-- FAMILY WORKSPACE GROUPING - a family's panes share one Orca sidebar node `<fleet> · <family>`, fleet-level panes the root `<fleet>` one.
+- CAPTAIN-WAIT STAMP, KILL OWNERSHIP PROOF and HUNG RPC.
+- FAMILY GROUPING - chief-kind panes (cwd = the home) group under the home's node, one FAMILY TAB per room; crewmate and verifier panes (cwd = a worktree) group under THAT worktree's own node, one tab each.
 
 The orca driver (`bin/ac-backend-orca.sh` header) implements each: panes group under Orca sidebar nodes, the captain-wait stamp is the file alone, the came-up probe reads Orca's own agent detection and the terminal title, startup dialogs are answered by name, and liveness comes from `terminal show`'s `.connected` because a closed terminal still serves scrollback.
 

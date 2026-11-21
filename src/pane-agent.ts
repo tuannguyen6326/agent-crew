@@ -374,11 +374,13 @@
 // truncated-review defect that floor exists to prevent.
 //
 // Trust: the worktree is pre-seeded as trusted in ~/.claude.json so the session
-// starts undialoged. Placement: the pane lands in its FAMILY's workspace
-// (ac-backend.sh FAMILY WORKSPACE GROUPING) - the caller (ac-verify.sh, the
-// gate) exports AC_WINDOW_FAMILY, and the "<fleet> · <family>" workspace is
-// resolved from it; absent/empty = the fleet ROOT workspace (the ac-self-task
-// case).
+// starts undialoged. Placement follows orca_place_pane's GROUPING RULE
+// (ac-backend.sh FAMILY GROUPING, implemented in ac-backend-orca.sh): a pane
+// whose cwd is the home groups under the home's node, one FAMILY TAB per room
+// (AC_WINDOW_FAMILY resolves the room; absent/empty = the fleet ROOT tab, the
+// ac-self-task case) - every verification pane the callers above lease
+// (ac-verify.sh, the gate) has cwd = its own worktree, so it groups under
+// THAT worktree's own node instead, one tab each.
 //
 // MECHANICS, in code order. Every verb first: an invalid backend
 // (AC_BACKEND > config/backend > the AC_FLEET_STATE/../config/backend rung)
