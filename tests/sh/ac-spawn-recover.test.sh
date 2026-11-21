@@ -170,7 +170,7 @@ assert_contains "$(cat "$(fake_orca_buf t1)")" "orca claude-teams --permission-m
   "recovery resumes through orca claude-teams"
 
 # --- claude-teams + a CUSTOM template the rewrite cannot apply to: spawn ----------
-# refuses before any pane opens or any meta is written (decision R6).
+# refuses before any pane opens or any meta is written.
 # teamsLaunch's regex is a prefix match on "claude " - a custom config/launch-
 # claude whose rendered line does not start with that (e.g. a template built
 # for a different frontend) makes the rewrite a no-op, so the pane would

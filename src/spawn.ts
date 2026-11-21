@@ -1091,11 +1091,6 @@ function launchSessionId(line: string): { status: number; out: string } {
 
 const teamsLaunch = (claudeLine: string): string => claudeLine.replace(/^claude /, "orca claude-teams ");
 
-// teamsLaunch's rewrite is a prefix match: a custom config/launch-claude
-// whose rendered line does not start with "claude " makes it a no-op, which
-// would silently launch plain claude while the meta still records
-// launch=claude-teams (decision R6) - refuse before any pane opens or meta
-// is written, on the ordinary spawn path and on --recover alike.
 function teamsLaunchOrDie(l: string): string {
   if (!/^claude /.test(l)) die(`--harness claude-teams cannot apply its "orca claude-teams" rewrite to the rendered launch line from ${configDir()}/launch-claude (does not start with "claude ") - refusing rather than silently launch plain claude under a claude-teams record`);
   return teamsLaunch(l);
