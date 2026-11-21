@@ -3278,15 +3278,7 @@ function suiteLaunch(): string | null {
     );
   statusAppend(u8(id), "started the full-suite gate run");
   if (t !== null) run(["mv", b8(t.path), meta]);
-  const saved = process.env.AC_SEND_UNPROVEN;
-  process.env.AC_SEND_UNPROVEN = "1";
-  let sent: number;
-  try {
-    sent = backendCall("send_line", [u8(id), u8(`AC_HOME=${shellQuote(home())} ${shellQuote(`${root}/bin/ac-learn.sh`)} suite ${id}`)], { stdin: "inherit", stdout: "inherit", stderr: "inherit" }).status;
-  } finally {
-    if (saved === undefined) delete process.env.AC_SEND_UNPROVEN;
-    else process.env.AC_SEND_UNPROVEN = saved;
-  }
+  const sent = backendCall("send_line", [u8(id), u8(`AC_HOME=${shellQuote(home())} ${shellQuote(`${root}/bin/ac-learn.sh`)} suite ${id}`)], { stdin: "inherit", stdout: "inherit", stderr: "inherit" }).status;
   if (sent !== 0) {
     try {
       backendKillWindow(u8(id));

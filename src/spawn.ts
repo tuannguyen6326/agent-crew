@@ -972,18 +972,8 @@ const target = (id: string): string => cap(bc("target", [id], { ...IO, stdout: "
 const capture = (id: string, n: string, stderr: "inherit" | "ignore" = "inherit"): string => cap(bc("capture", [id, n], { stdin: "inherit", stdout: "pipe", stderr }).out.toString("utf8"));
 const alive = (id: string): number => bc("window_alive", [id]).status;
 const harnessUp = (id: string): number => bc("harness_up", [id]).status;
-// `[AC_SEND_UNPROVEN=1] backend_send_line <id> <text>`.
-function sendLine(id: string, text: string, unproven = false): number {
-  const saved = process.env.AC_SEND_UNPROVEN;
-  if (unproven) process.env.AC_SEND_UNPROVEN = "1";
-  try {
-    return bc("send_line", [id, text]).status;
-  } finally {
-    if (unproven) {
-      if (saved === undefined) delete process.env.AC_SEND_UNPROVEN;
-      else process.env.AC_SEND_UNPROVEN = saved;
-    }
-  }
+function sendLine(id: string, text: string): number {
+  return bc("send_line", [id, text]).status;
 }
 const killWindow = (id: string): void => void ended(backendKillWindow(id));
 
@@ -1637,7 +1627,7 @@ async function main(argv: string[]): Promise<void> {
     ended(backendWindowNew(id, recDir));
     delete process.env.AC_WINDOW_FAMILY;
     S.window = target(id);
-    if (sendLine(id, `${u8(claudeConfigEnv())}${CODEGRAPH_ENV}${envPrefix}${launch}`, true) !== 0) {
+    if (sendLine(id, `${u8(claudeConfigEnv())}${CODEGRAPH_ENV}${envPrefix}${launch}`) !== 0) {
       killWindow(id);
       die(`--recover: resume line NOT delivered to ${id} (see stderr above) - the fresh pane was closed again; recover again once the backend answers`);
     }
@@ -1840,7 +1830,7 @@ REVIEW IS MANDATORY: nobody else reads your code, so every slice gets ONE indepe
 LANDING: land per the slice's mode (bin/ac-merge-local.sh, or a PR the captain merges), then post LANDED: ${fam}-<slug> - <outcome> to this room BEFORE bin/ac-teardown.sh ${fam}-<slug>: you may not write records/backlog.md (the ledger guard fences it), so that receipt is what the teardown gate reads where a Done row would be; the crewchief moves the family row at your hand-back. IF THE SLICE CANNOT LAND - main moved under it is the cheap way there, and ac-merge-local.sh withholds --no-ff from every scoped session on purpose - do NOT rebase to force it (a rebase changes the sha a review receipt binds by, so a clean one costs a whole extra review round): post UNLANDABLE: ${fam}-<slug> - <why>; crewchief to land (its OWN verb - HANDBACK: is this family's tenure-ending receipt and would flip the whole family), leave the slice IN FLIGHT, and tell the crewchief in your hand-back; the crewchief lands crew/${fam}-<slug> --no-ff, and only THEN does bin/ac-teardown.sh ${fam}-<slug> pass, reading UNLANDABLE where LANDED would be. The gate still owes a lesson (bin/ac-learn.sh note) and a verified repo fact (bin/ac-know.sh add), or --no-lesson/--no-fact '<why>'; the lesson is read by its (by: ${fam}-<slug>, first-hand) attribution, so file it under whichever heading your family uses.
 HANDS, NOT SUBAGENTS: the delegation guard still fences harness subagents from this session - edit with your own hands, or spawn a real crewmate when a slice outgrows you; never both on one slice.`;
     }
-    ee(sendLine(id, `${launchPromptEnv(harness, prompt)}${u8(claudeConfigEnv())}${CODEGRAPH_ENV}AC_HOME=${q(envHome())} AC_SCOPE=${q(fam)} ${domEnv}${soloEnv}${compactPctEnv()}${launch}`, true));
+    ee(sendLine(id, `${launchPromptEnv(harness, prompt)}${u8(claudeConfigEnv())}${CODEGRAPH_ENV}AC_HOME=${q(envHome())} AC_SCOPE=${q(fam)} ${domEnv}${soloEnv}${compactPctEnv()}${launch}`));
     await deliverKickoff(id, harness, prompt);
 
     metaSetHard(S.meta, "backend", backend);
@@ -1936,7 +1926,7 @@ HANDS, NOT SUBAGENTS: the delegation guard still fences harness subagents from t
     S.window = target(id);
     S.trap = spawnOrphanCleanup;
     const prompt = `You are agent-crew crewdeputy ${id}. Your home is ${homeDir} (AC_HOME). Read and follow the brief at ${brief}; run bin/ac-session-start.sh in your current directory first. You are IDLE BY DEFAULT: act only on work routed to you or already recorded in your own home, then WAIT - an empty queue is healthy, and you never invent work (no self-directed survey, audit or refactor sweep). Answer every routed order (a pane line prefixed [chief-order ...]) on the DURABLE return channel with bin/ac-deputy.sh report '<text>' [--doc <abs-path>], never only in chat, and return only phase changes the parent must act on - done, blocked, needs-decision, failed, paused - never your home's routine churn.`;
-    ee(sendLine(id, `${launchPromptEnv(harness, prompt)}${u8(claudeConfigEnv())}${CODEGRAPH_ENV}AC_HOME=${q(homeDir)} ${launch}`, true));
+    ee(sendLine(id, `${launchPromptEnv(harness, prompt)}${u8(claudeConfigEnv())}${CODEGRAPH_ENV}AC_HOME=${q(homeDir)} ${launch}`));
     await deliverKickoff(id, harness, prompt);
     metaSetHard(S.meta, "backend", backend);
     metaSetHard(S.meta, "window", S.window);
@@ -2063,7 +2053,7 @@ then spawn again`);
   }
   if (deps === "failed") prompt += " DEPENDENCIES: the project's commands.install failed in this worktree - install the project's dependencies yourself before running any test or build, so a missing module is not read as a regression.";
   const fleetEnv = crewEnv({ projectDir: projectDirC });
-  ee(sendLine(id, `${launchPromptEnv(harness, prompt)}${u8(claudeConfigEnv())}${CODEGRAPH_ENV}${fleetEnv}${launch}`, true));
+  ee(sendLine(id, `${launchPromptEnv(harness, prompt)}${u8(claudeConfigEnv())}${CODEGRAPH_ENV}${fleetEnv}${launch}`));
   await deliverKickoff(id, harness, prompt);
 
   metaSetHard(S.meta, "backend", backend);
