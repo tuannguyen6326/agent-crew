@@ -1897,7 +1897,7 @@ export function metaBackend(metaFile: string): string {
 
 // metaBackend's non-dying twin for a multi-meta sweep (wake-drain step 7,
 // watch's checkPane) that must SKIP one refused pin and keep going, never
-// die mid-pass on it (B1): "" when the pin is absent or orca, else the bad
+// die mid-pass on it: "" when the pin is absent or orca, else the bad
 // pin's raw bytes metaBackend would die on.
 export function metaBackendRefusal(metaFile: string): string {
   let b = "";

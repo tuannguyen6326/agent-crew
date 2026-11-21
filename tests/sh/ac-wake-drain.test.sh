@@ -1400,7 +1400,7 @@ case "$(wout)" in *"YOU: sv-chief"*) fail "row 9 (stdin): a live member keeps it
 assert_contains "$(wlog)" "orca terminal show --terminal pw6-chief" "row 9 (stdin): ...the completion scope's"
 assert_contains "$(wlog)" "orca terminal show --terminal psv-spec" "row 9 (stdin): ...chiefChildLive's"
 
-# 9b (B1): a leftover pre-cutover meta (backend=herdr) must SKIP itself,
+# 9b: a leftover pre-cutover meta (backend=herdr) must SKIP itself,
 # named on stderr, never end the sweep before the ids after it are read -
 # the other idle id's line and step 8's WATCHER-DOWN check must still run.
 fresh

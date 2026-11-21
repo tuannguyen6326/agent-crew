@@ -849,7 +849,7 @@ rm -rf "$state"/.wake-spool*; mkdir -p "$state/.wake-spool"
 
 # No orca RPC timeout exists to model an RPC-wedge scenario against
 # (ac-backend.sh's HUNG RPC note); a refused backend=herdr pin SKIPS before
-# the pane pass ever reaches a dispatch call (B1 - it used to die() there
+# the pane pass ever reaches a dispatch call (it used to die() there
 # instead, named the same way but ending the whole --once run), so this
 # proves the skip fires there, named, before any pane is even touched (no
 # pane fixture is needed either, for the same reason).
@@ -864,7 +864,7 @@ rm -f "$state"/*.meta "$state"/.pane-* "$state"/.unobservable-* "$state"/.hash-*
   "$state"/.change-* "$state"/.last-watcher-beat*
 rm -rf "$state"/.wake-spool*
 
-# --- B1: a refused meta no longer blinds the pass to the OTHER panes --------
+# --- a refused meta no longer blinds the pass to the OTHER panes -----------
 # metaPaths/crewMetas walk in byte order, so a refused pin sorting first
 # (refused1 < w2) must not stop the die() it used to raise from reaching w2's
 # own actionable report - the whole point of a sweep that skips one id.

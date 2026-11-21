@@ -144,7 +144,7 @@
 //    skipped - the watcher declined that wake, and acking it would settle
 //    nothing (bin/ac-wake-lib.sh's CHIEF-QUIET block owns why); AC_BACKEND becomes the task's backend (taskBackend cut at a
 //    NUL, orca when absent - an unreadable meta warns once - W20; a REFUSED pin (non-orca) SKIPS this id instead, named on
-//    stderr, rather than ending the sweep before the ids after it are read - W26) and STAYS EXPORTED for
+//    stderr, rather than ending the sweep before the ids after it are read) and STAYS EXPORTED for
 //    every later child, the ride-alongs included (W19); the pane through
 //    backendCall (below) `backend_capture <id> 40` - any failure skips it; its
 //    text through spawned `sed '/^$/d' | tail -n 25` - a failing sed or tail
@@ -563,9 +563,8 @@ topLevel(() => {
     const stale = BigInt(strictDecimal(process.env.AC_STALE || "240") ?? 240);
     if (idle < stale) continue;
     if (chiefGateParked(id) || chiefChildLive(sd, id, PROBE_IO)) continue;
-    // taskBackend's metaBackend die()s on a refused pin; checked first so
-    // ONE leftover pre-cutover meta (backend=herdr/tmux) skips itself, named,
-    // instead of ending the sweep before the ids after it are even read (B1).
+    // metaBackend dies on a refused pin; checking first lets one stale meta
+    // skip itself instead of ending the sweep.
     if (warnBackendRefused(meta, id)) continue;
     // taskBackend answers bytes; AC_BACKEND carries the text they spell, as
     // the shell's export did.

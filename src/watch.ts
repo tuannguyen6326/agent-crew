@@ -2340,9 +2340,8 @@ async function checkPane(meta: string): Promise<string | null> {
       }
     }
   }
-  // taskBackend's metaBackend die()s on a refused pin; checked first so ONE
-  // leftover pre-cutover meta (backend=herdr/tmux) skips itself, named,
-  // instead of ending the whole fleet pass on the panes after it (B1).
+  // metaBackend dies on a refused pin; checking first lets one stale meta
+  // skip itself instead of ending the sweep.
   if (warnBackendRefused(meta, id)) return null;
   // Exported, as the original exported it: later children (jev, the
   // adviser, the remote poll) inherit the last pane's backend.
