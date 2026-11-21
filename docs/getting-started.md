@@ -169,7 +169,7 @@ To pin a flow yourself, use `/order-direct`, `/order-staged`, or `/order-design`
 | Where | What you see |
 |---|---|
 | Your chief thread | Receipts, questions, and outcomes in chat. |
-| The Orca sidebar | One tab per task family, labelled `<fleet> · <family>`, holding its chief, crewmates, and verifier panes. |
+| The Orca sidebar | One tab per family room under the home's node, holding the chief; each crewmate and verifier pane gets its own node, under its own worktree. |
 | `bin/ac-room.sh list` | Every room; `PENDING` rooms hold a gate or ask waiting on you. |
 | `bin/ac-room.sh show <family>` | The family's full narrative. |
 | `bin/ac-fleets.sh` | A read-only survey of every fleet under the homes container. |

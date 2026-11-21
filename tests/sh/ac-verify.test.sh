@@ -234,10 +234,11 @@ cat >"$fake_pane" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$VERIFY_PANE_LOG"
-# Placement record (FAMILY WORKSPACE GROUPING): the workspace family the
-# caller resolved for this pane - through ac_window_family's ladder, so a
-# scoped session's reviewer sits beside its crew tab, never in a sibling
-# workspace of the raw task id.
+# Placement record (FAMILY GROUPING, ac-backend.sh header): the family the
+# caller resolved for this pane through ac_window_family's ladder - checked
+# here as the value passed, not as orca placement (a cwd=lease pane like
+# this one always groups under its own worktree node; only a home-cwd pane
+# groups by family).
 printf 'wsfam=%s\n' "${AC_WINDOW_FAMILY:-}" >>"$VERIFY_PANE_LOG"
 if [ "${1:-}" = reap-pane ]; then
   printf '{"event":"reap-pane-done","pane":"%s","closed":%s}\n' "${3:-}" "${VERIFY_REAP_CLOSED:-true}"
