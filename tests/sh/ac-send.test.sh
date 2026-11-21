@@ -526,6 +526,19 @@ if [ -e "\$STUB_DIR/stdin-\$1-\$2" ]; then
   i="\$(cat)"
   printf 'orca %s %s stdin=[%s]\n' "\$1" "\$2" "\$i" >>"\$STUB_DIR/stdin.log"
 fi
+if [ "\$1 \$2" = "terminal send" ] && [ -n "\${WRONG_TURN_ON_SUBMIT:-}" ]; then
+  case " \$* " in
+    *" --enter "*)
+      # A REAL delay, then a REAL (unstubbed) timestamp: models claude
+      # writing a wrong turn in the instant right after the Enter, so the
+      # test can tell a baseline taken before the submit from one taken
+      # after it - a static fixture written up front cannot.
+      /bin/sleep 1.1
+      ts="\$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)"
+      printf '{"type":"user","promptSource":"typed","origin":{"kind":"human"},"timestamp":"%s","message":{"role":"user","content":"a wrong reply written right after this very submit"}}\n' "\$ts" >>"\$WRONG_TURN_ON_SUBMIT"
+      ;;
+  esac
+fi
 exec "$TMP/stubbin/orca" "\$@"
 STUB
 chmod +x "$TMP/sstub/date" "$TMP/sstub/sleep" "$TMP/sstub/orca"
@@ -835,10 +848,11 @@ srun cdiffq 'the queued steer text'
 assert_eq "$SN_RC:$(sout)" "1:" "8d: a queue entry for a DIFFERENT text does not stand down a genuine refutation"
 assert_contains "$(serr)" "ERROR: arrival REFUTED for cdiffq - " "8d: ...it still refutes"
 
-# 8e. a STALE typed turn - this family's own incident (the brief): the last
-# typed turn is the one that already existed before this send, and nothing
-# else gets written for the whole read budget (claude is still mid-reply,
-# far past arrivalWait's seven reads). From content alone this is identical
+# 8e. a STALE typed turn: the last typed turn is the one that already
+# existed before this send, and nothing else gets written for the whole
+# read budget (claude has not written the new turn yet within the budget -
+# the pane can sit idle between turns for far longer than arrivalWait's
+# seven reads). From content alone this is identical
 # to 8c/8d's "genuinely wrong, final" fixtures - the one signal that tells
 # them apart is the turn's OWN transcript timestamp: it predates this call,
 # so it is provably the pre-send turn, not a verdict on this send. UNOBSERVABLE,
@@ -866,6 +880,21 @@ JSONL
 srun cfresh 'the text this send actually types'
 assert_eq "$SN_RC:$(sout)" "1:" "8f: a fresh, genuinely wrong typed turn still refutes"
 assert_contains "$(serr)" "ERROR: arrival REFUTED for cfresh - " "8f: ...the verdict is unchanged"
+
+# 8g. the baseline 8e's carve-out compares against must be taken BEFORE the
+# submit, never inside arrivalWait itself: claude can write a WRONG turn in
+# the instant right after the Enter, before arrivalWait is even called, and a
+# baseline taken any later would already be past that write, misreading a
+# genuine wrong arrival as merely pre-existing. The fake backend writes the
+# wrong turn itself - with a real, dynamically-captured timestamp - the
+# moment the Enter lands, which a fixture written up front cannot model.
+sid_race="44444444-4444-4444-4444-444444444444"
+sclaude crace pCRACE "$sid_race"
+SENV=("WRONG_TURN_ON_SUBMIT=@H/claude/proj/$sid_race.jsonl")
+srun crace 'the text this send actually types'
+SENV=()
+assert_eq "$SN_RC:$(sout)" "1:" "8g: a wrong turn written right at submit time still refutes"
+assert_contains "$(serr)" "ERROR: arrival REFUTED for crace - " "8g: ...the baseline predates the write, so it is not read as pre-existing"
 
 # 9. the status record: `steered: <text, LFs as spaces>`, stamped by date(1)
 #    and mirrored to the task's timeline.

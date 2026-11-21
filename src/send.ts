@@ -190,12 +190,15 @@
 //     already running), so the last typed turn stays whatever it was before
 //     the send through the whole budget - 2 `delivered (arrival unverified)
 //     to`, never 1, for that shape (measured) - NOR when the mismatched last
-//     typed turn's own transcript timestamp predates this arrivalWait call: a
-//     turn already written before this send started is the pre-send turn,
-//     not a verdict on it - claude simply has not replied at all yet within
-//     the budget (measured: a 36s gap against a 2.4s default budget) - also
-//     2, never 1; a turn with no parseable timestamp cannot be proven stale
-//     this way and still refutes. Any other harness,
+//     typed turn's own transcript timestamp predates the SUBMIT this send
+//     made (a baseline taken before it, never inside arrivalWait itself - a
+//     turn claude writes in the instant right after the Enter must still be
+//     measured against it, or it reads as pre-existing): a turn timestamped
+//     before that moment is the pre-send turn, not a verdict on it - claude
+//     simply has not replied at all yet within the budget (measured: a 36s
+//     gap against a 2.4s default budget) - also 2, never 1; a turn with no
+//     parseable timestamp cannot be proven stale this way and still
+//     refutes. Any other harness,
 //     or a slash command: `delivered (arrival unverified) to`. A transcript
 //     with one malformed line in its last 200 makes jq fail every read:
 //     unobservable after the whole budget (W8).
@@ -416,6 +419,11 @@ if (rest[0] === "--key") {
   slash = /^\/[a-z][a-z0-9_-]*(:[a-z0-9_-]+)?( |$)/.test(text);
   const unproven = process.env.AC_SEND_UNPROVEN;
   process.env.AC_SEND_UNPROVEN = force ? "1" : "0";
+  // Taken BEFORE the submit (arrivalWait's own header): claude can write a
+  // WRONG turn in the instant right after the Enter, before this function
+  // even gets to call arrivalWait - a baseline taken any later would already
+  // be past that write and misread it as pre-existing.
+  const arrivalStart = Date.now();
   const sent = backendCall("send_line", [id, text], IO);
   if (unproven === undefined) delete process.env.AC_SEND_UNPROVEN;
   else process.env.AC_SEND_UNPROVEN = unproven;
@@ -425,7 +433,7 @@ if (rest[0] === "--key") {
   if (sent.status !== 0) die(`delivery NOT confirmed for ${id} - the text likely sits stranded in the composer (see stderr above)`);
   verb = "delivered (arrival unverified) to";
   if (metaKey(meta, "harness") === "claude" && !slash) {
-    const arrival = arrivalWait(metaKey(meta, "session_id"), text);
+    const arrival = arrivalWait(metaKey(meta, "session_id"), text, arrivalStart);
     if (arrival.status === 1) refuted(id, text, arrival.last);
     if (arrival.status === 0) verb = "sent to";
   }

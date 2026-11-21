@@ -133,22 +133,27 @@ function claudeLastTypedTurnTimestamp(path: string): string | null {
 // queue-operation entry's content with no typed turn superseding it
 // (LAST_QUEUED_IF_NEWEST's header: a mid-turn queued steer, never a typed
 // turn - that reads 2 UNOBSERVABLE, not a refutation), OR the mismatched
-// `last` turn's OWN transcript timestamp predates this call's start (the
-// budget closed before claude wrote anything AT ALL in reply - measured on a
-// live incident: 36s between the pre-send turn and the real one, against a
-// 2.4s default budget - what we read is provably the turn that was already
-// there, not a verdict on this send; a turn with no parseable timestamp, as
-// every fixture lacking that field keeps, cannot be proven stale this way and
-// still refutes); 2 UNOBSERVABLE - no <sid> (bytes, latin1), no single
+// `last` turn's OWN transcript timestamp predates <started> (the caller's
+// wall-clock moment, taken BEFORE the submit it is verifying the arrival
+// of - never inside this function: claude can write a WRONG turn in the
+// instant right after the submit's Enter, before this call even begins, and
+// a started taken in here would already be past that write, misreading a
+// genuine wrong arrival as merely pre-existing). A turn timestamped before
+// <started> provably predates this send's submit - the budget closed before
+// claude wrote anything AT ALL in reply (measured on a live incident: 36s
+// between the pre-send turn and the real one, against a 2.4s default
+// budget) - what we read is provably the turn that was already there, not a
+// verdict on this send; a turn with no parseable timestamp, as every
+// fixture lacking that field keeps, cannot be proven stale this way and
+// still refutes; 2 UNOBSERVABLE - no <sid> (bytes, latin1), no single
 // transcript, or no turn read at all. Neither carve-out has a bash twin:
 // ac_arrival_wait/ac_claude_last_typed_turn in bin/ac-lib.sh have no live
 // caller any more (only their own and the differential tests) - every live
 // caller, ac-send.sh's steer AND ac-spawn.sh's kickoff alike, already runs
 // this one function.
-export function arrivalWait(sid: string, text: string): { status: number; last: string } {
+export function arrivalWait(sid: string, text: string, started: number = Date.now()): { status: number; last: string } {
   const expected = lat(text).replace(/\n+$/, "");
   if (sid === "") return { status: 2, last: "" };
-  const started = Date.now();
   let last = "";
   let lastPath: string | null = null;
   let queued = false;
