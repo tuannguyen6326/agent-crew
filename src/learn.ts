@@ -278,11 +278,12 @@
 // handle removed), as is one whose pane the backend reports ALIVE but whose
 // recorded boot_id (bin/ac-host-boot.sh, a boot-session TOKEN, never a
 // timestamp - its header explains why) differs from the CURRENT one -
-// defensive against a reboot restoring a pane as a bare shell with no runner
-// inside it (no authority says Orca does this; the check costs nothing if it
-// never happens), so "alive" alone is never trusted across a boot change; an
-// unobservable pane, or either token unreadable, keeps holding. `suite` runs as its
-// own paned task (kind=verify-suite, supervised, outside crew accounting)
+// defensive against a reboot restoring a pane as a bare shell with no
+// runner inside it (no authority says Orca does this; the check costs
+// nothing if it never happens), so "alive" alone is never trusted across a
+// boot change; an unobservable pane, or either token unreadable, keeps
+// holding. `suite` runs as its own paned task (kind=verify-suite,
+// supervised, outside crew accounting)
 // from an immutable detached worktree at the pinned sha under
 // <root>/.crew/learn-suite-snapshots/<id>, removed on every exit;
 // AC_LEARN_SUITE_BIN replaces the runner and AC_LEARN_SUITE_TIMEOUT the
