@@ -206,6 +206,10 @@
 // teammates in the crewmate's own worktree. The meta records harness=claude
 // and launch=claude-teams, so every later step - seeding, kickoff, ultracode,
 // --recover - is claude's, and the recovered pane resumes the same way.
+// The `orca claude-teams ` rewrite is a prefix match on the rendered launch
+// line: a custom config/launch-claude whose output does not start with
+// "claude " cannot take it, so the spawn REFUSES rather than silently fall
+// back to plain claude under a claude-teams record.
 // Teammates inherit no AC_* env and the watcher reads only the leader's pane
 // (harness-facts.md), so it fits read-only fan-out inside one task.
 // Model and effort are fleet-wide defaults: absent --model/--effort fall back
@@ -1087,6 +1091,11 @@ function launchSessionId(line: string): { status: number; out: string } {
 
 const teamsLaunch = (claudeLine: string): string => claudeLine.replace(/^claude /, "orca claude-teams ");
 
+function teamsLaunchOrDie(l: string): string {
+  if (!/^claude /.test(l)) die(`--harness claude-teams cannot apply its "orca claude-teams" rewrite to the rendered launch line from ${configDir()}/launch-claude (does not start with "claude ") - refusing rather than silently launch plain claude under a claude-teams record`);
+  return teamsLaunch(l);
+}
+
 // A random RFC 4122 v4 id for a host without uuidgen, from od's 16 bytes.
 function uuidV4(): string {
   const h = run(["od", "-An", "-N16", "-tx1", "/dev/urandom"]).out.replace(/[ \n]/g, "");
@@ -1601,7 +1610,7 @@ async function main(argv: string[]): Promise<void> {
     resumeSid = recSid;
     const l = spawnLaunch("claude", model, effortFlag, brief, id);
     ee(l.status);
-    launch = metaGetSoft(S.meta, "launch") === CLAUDE_TEAMS ? teamsLaunch(l.out) : l.out;
+    launch = metaGetSoft(S.meta, "launch") === CLAUDE_TEAMS ? teamsLaunchOrDie(l.out) : l.out;
     if (!commandV("claude")) die("harness binary not found: claude");
     let notice = "Notice: your pane was destroyed and has been RECOVERED - same session, same worktree, uncommitted work untouched. A command running when the pane died was killed mid-way: before continuing, check what it left (git status and log, the remote branch, any PR you were opening) and re-run it only if it did not finish.";
     let envPrefix: string;
@@ -2007,7 +2016,7 @@ then spawn again`);
   const kind = scout ? "scout" : "ship";
   const l = spawnLaunch(harness, model, effortFlag, brief, id);
   ee(l.status);
-  launch = teams ? teamsLaunch(l.out) : l.out;
+  launch = teams ? teamsLaunchOrDie(l.out) : l.out;
   const first = launch.split(" ")[0]!;
   if (!launchable(first)) die(`harness binary not found: ${first}`);
 
