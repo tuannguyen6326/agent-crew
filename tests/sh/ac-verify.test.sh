@@ -2257,6 +2257,29 @@ assert_contains "$kn_prompt" "(+1 cut at the cap of 12 - the full set is in $kn_
 case "$kn_prompt" in *"file.txt is read by nothing"*) fail "a fact about an unchanged file stays out of the prompt" ;; esac
 case "$kn_prompt" in *"opens channel.txt first"*) fail "a command-provenance fact names no file to match the diff against" ;; esac
 case "$kn_prompt" in *"was once JSON"*) fail "superseded history is never offered as knowledge" ;; esac
+
+# A rename-with-edit pairs rename-src.txt -> rename-dst.txt under git's
+# default rename detection, so plain `git diff --name-only` lists only the
+# NEW path. A live fact citing the OLD path must still reach the reviewer,
+# exactly as a plain deletion's would.
+seq 1 40 >"$kn_repo/rename-src.txt"
+git -C "$kn_repo" add rename-src.txt
+git -C "$kn_repo" commit -qm pre-rename
+kn_rename_base="$(git -C "$kn_repo" rev-parse HEAD)"
+git -C "$kn_repo" mv rename-src.txt rename-dst.txt
+echo 41 >>"$kn_repo/rename-dst.txt"
+git -C "$kn_repo" commit -qam rename
+kn_rename_target="$(git -C "$kn_repo" rev-parse HEAD)"
+kn_rename_lease="$TMP/kn-rename-lease"
+git clone -q "$kn_repo" "$kn_rename_lease"
+printf -- '- fact rename-src.txt lists the sequence the loader walks | src: file:rename-src.txt:1 | at: %s 2026-11-03 | heat: 9 | by: kn-rename\n' \
+  "$kn_rename_base" >"$kn_record"
+kn_rename_caller=kn-rename-family-implement
+VERIFY_EXPECT_ID="$kn_rename_caller-verify-codereview" VERIFY_WORKTREE="$kn_rename_lease" VERIFY_REF="$kn_rename_target" \
+  "$BIN/ac-verify.sh" codereview --repo "$kn_repo" --ref "$kn_rename_target" --base "$kn_rename_base" \
+  --family kn-rename-family --caller "$kn_rename_caller" --intent "$intent" --output "$TMP/kn-rename-review.json" >/dev/null
+assert_contains "$(cat "$VERIFY_PROMPT_CAPTURE")" "rename-src.txt lists the sequence the loader walks" \
+  "a fact citing a renamed file's OLD path reaches the reviewer exactly as a plain deletion's would"
 rm -f "$kn_record"
 
 # --- Story 3: dual-ref (separate E2E repo) lease + cleanup -------------------
