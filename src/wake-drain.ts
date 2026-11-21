@@ -142,9 +142,11 @@
 //    an UNREADABLE room is grep's line and NOT parked - W25) or supervising a
 //    live member (chiefChildLive with this run's stdin and stdout) is
 //    skipped - the watcher declined that wake, and acking it would settle
-//    nothing (bin/ac-wake-lib.sh's CHIEF-QUIET block owns why); AC_BACKEND becomes the task's backend (taskBackend cut at a
-//    NUL, orca when absent - an unreadable meta warns once - W20; a REFUSED pin (non-orca) SKIPS this id instead, named on
-//    stderr, rather than ending the sweep before the ids after it are read) and STAYS EXPORTED for
+//    nothing (bin/ac-wake-lib.sh's CHIEF-QUIET block owns why); a REFUSED pin
+//    (non-orca) first SKIPS this id instead, named on stderr, rather than
+//    ending the sweep before the ids after it are read - an unreadable meta
+//    warns once there, never twice (W20) - else AC_BACKEND becomes orca
+//    (the only other valid answer) and STAYS EXPORTED for
 //    every later child, the ride-alongs included (W19); the pane through
 //    backendCall (below) `backend_capture <id> 40` - any failure skips it; its
 //    text through spawned `sed '/^$/d' | tail -n 25` - a failing sed or tail
@@ -258,7 +260,6 @@ import {
   spawnShellSync,
   STARTED_BIN,
   strictDecimal,
-  taskBackend,
   taskDir,
   wakeFamilySpools,
   wakeScopeOk,
@@ -564,9 +565,11 @@ topLevel(() => {
     // metaBackend dies on a refused pin; checking first lets one stale meta
     // skip itself instead of ending the sweep.
     if (warnBackendRefused(meta, id)) continue;
-    // taskBackend answers bytes; AC_BACKEND carries the text they spell, as
-    // the shell's export did.
-    process.env.AC_BACKEND = u8(cutNul(taskBackend(id)));
+    // warnBackendRefused already read this meta once: false means the pin
+    // read as absent or orca (metaBackend's only other valid answer), so
+    // resolving it again through taskBackend would re-read an unreadable
+    // meta and double its WARN (W20: once per drain).
+    process.env.AC_BACKEND = u8("orca");
     const cap = backendCall("capture", [id, "40"], { stdin: "inherit", stdout: "pipe", stderr: "ignore" });
     if (cap.exited || cap.status !== 0) continue;
     const sed = run(["sed", "/^$/d"], "pipe", "inherit", Buffer.from(`${subst(cap.out)}\n`, "latin1"));
