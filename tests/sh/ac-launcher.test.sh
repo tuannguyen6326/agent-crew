@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
 # ac-launcher.test.sh - the `ac` zsh launcher (docs/examples/ac.zsh): the
-# ORCA chief path only. docs/ is out of scope for this suite, so the
-# launcher's herdr branch - which sources bin/ac-backend.sh and calls
-# herdr_resolve_workspace/herdr_close_default_tabs, neither of which that
-# file defines - is dead on arrival (bash's 127 under `set -e`) and left
-# unfixed and unproven here.
+# ORCA chief path only, the launcher's sole backend.
 
 # Fail-closed sourcing: unsourced (suite run outside tests/sh/), errexit is never
 # armed and $AC_HOME is the operator's REAL fleet home - abort instead.

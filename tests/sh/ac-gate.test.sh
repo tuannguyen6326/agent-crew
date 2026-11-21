@@ -139,13 +139,13 @@ stage_short() {
 
 raw_gate() {
   if [ "${1:-}" = maintenance ]; then
-    AC_PANE_AGENT="$stub/pane-agent" AC_GATE_WATCH=off "$BIN/ac-gate.sh" "$@"
+    AC_PANE_AGENT="$stub/pane-agent" "$BIN/ac-gate.sh" "$@"
   else
-    AC_PANE_AGENT="$stub/pane-agent" AC_GATE_WATCH=off "$BIN/ac-gate.sh" "$@" --repo "$gate_repo"
+    AC_PANE_AGENT="$stub/pane-agent" "$BIN/ac-gate.sh" "$@" --repo "$gate_repo"
   fi
 }
 raw_gate_from_brief() {
-  AC_PANE_AGENT="$stub/pane-agent" AC_GATE_WATCH=off "$BIN/ac-gate.sh" "$@"
+  AC_PANE_AGENT="$stub/pane-agent" "$BIN/ac-gate.sh" "$@"
 }
 gate() {
   if [ "${1:-}" != maintenance ]; then
@@ -2110,7 +2110,7 @@ for tool in mv ln; do
 done
 ( set -m
   ( PATH="$TMP/ishim:$PATH" GATE_BODY_FILE="$hold/revise.md" AC_PANE_AGENT="$stub/pane-agent" \
-      AC_GATE_WATCH=off exec "$BIN/ac-gate.sh" "$term" spec --repo "$gate_repo" \
+      exec "$BIN/ac-gate.sh" "$term" spec --repo "$gate_repo" \
       >"$hold/i.out" 2>"$hold/i.err" ) &
   gp=$!
   i=0
@@ -2250,7 +2250,7 @@ assert_no_file "$busy3" "the family's last run clears the busy declaration"
 # file), a clone at home/projects/proj built with fixed author/committer dates
 # and one git config (GIT_CONFIG_GLOBAL, no system config), a row's own seeding
 # on top; AC_HOME, TMPDIR=$XW/tmp, AC_PANE_AGENT = the leg's stub agent,
-# AC_GATE_WATCH off, every AC_GATE_* knob, AC_BACKEND, AC_HERDR_SESSION,
+# every AC_GATE_* knob, AC_BACKEND,
 # AC_SCOPE and EPOCHSECONDS unset unless a row sets one; cwd $XW/cwd, an
 # empty dir, unless a row names another; stdin /dev/null; LC_ALL=C unless a
 # row names en_US.UTF-8; PATH stubs - date answering one instant per format,
@@ -2409,17 +2409,17 @@ xplus() {
   "${XBASE:-xstd}"
   [ -z "${XPLUS:-}" ] || eval "$XPLUS"
 }
-XLC=C; XCWD=cwd; XPRE=""; XPATH=""; XHOMELESS=0; XWATCH=off; XE=""
+XLC=C; XCWD=cwd; XPRE=""; XPATH=""; XHOMELESS=0; XE=""
 xrun_side() {  # xrun_side <args...> - XEXEC=1 execs in place (a caller's background job IS the gate)
   local path x
   path="$XS:$PATH"; [ -z "$XPRE" ] || path="$XPRE:$path"; [ -z "$XPATH" ] || path="$XPATH"
-  local e=("LC_ALL=$XLC" "PATH=$path" "TMPDIR=$XW/tmp" "XW=$XW" "XB=$XB" "AC_PANE_AGENT=$XS/xagent" "AC_GATE_WATCH=$XWATCH"
+  local e=("LC_ALL=$XLC" "PATH=$path" "TMPDIR=$XW/tmp" "XW=$XW" "XB=$XB" "AC_PANE_AGENT=$XS/xagent"
     "XAG_BODY=${XAG_BODY:-}" "XAG_RC=${XAG_RC:-}" "XAG_STATUS=${XAG_STATUS:-}" "XAG_PRE=${XAG_PRE:-}" "XAG_POST=${XAG_POST:-}"
     "XAG_NODONE=${XAG_NODONE:-}" "XAG_TRANSCRIPT=${XAG_TRANSCRIPT:-}" "XAG_DO=${XAG_DO:-}" "XAG_HOLD=${XAG_HOLD:-}" "XPLANTS=${XPLANTS:-}")
   [ "$XHOMELESS" = 1 ] || e+=("AC_HOME=$XW/home")
   for x in $XE; do e+=("$x"); done
   local u=(-u AC_HOME -u AC_FLEET_STATE -u AC_SCOPE -u AC_FLEET_SCOPE -u AC_BACKEND -u CDPATH -u AC_GATE_AGENT -u AC_GATE_MODEL
-    -u AC_GATE_EFFORT -u AC_GATE_TIMEOUT -u AC_HERDR_SESSION -u EPOCHSECONDS -u AC_LOCK_STALE_GRACE -u AC_WINDOW_FAMILY)
+    -u AC_GATE_EFFORT -u AC_GATE_TIMEOUT -u EPOCHSECONDS -u AC_LOCK_STALE_GRACE -u AC_WINDOW_FAMILY)
   local w='printf %s "$$" >"$0"; for t in $XPLANTS; do ln -s "$XW/victim" "$t.$$"; done; exec "$@"'
   if [ -n "${XEXEC:-}" ]; then
     cd "$XW/$XCWD" && exec env "${u[@]}" "${e[@]}" /bin/sh -c "$w" "$TMP/xn.pid" "$BIN/ac-gate.sh" ${@+"$@"} </dev/null >"$TMP/xn.raw" 2>"$TMP/xn.err"

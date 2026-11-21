@@ -1230,7 +1230,6 @@ fi
 # 4. scope: the fleet drains orphans (no chief meta, a dead window, a meta
 #    backend it refuses) and leaves a live family (orca).
 fresh
-cfg herdr-session s1
 rec '' 1.1.000001 '1\treport\tf1\tdone: fleet\n'
 rec famL 1.1.000001 '1\treport\tfamL-t1\tdone: live family\n'; chief famL; win pfamL-chief
 rec famD 1.1.000001 '1\treport\tfamD-t1\tdone: dead window\n'; chief famD

@@ -4,7 +4,7 @@
 // nowRaw against `$(ac_now)`, watcherDown against ac_watcher_down,
 // wakePending / wakeOrphanPending /
 // roomchiefLive against ac-wake-lib.sh with ac-backend.sh sourced and a fake
-// herdr and orca logging every call, repoRoot against ac_repo_root,
+// orca logging every call, repoRoot against ac_repo_root,
 // backendName's soft rung against ac-backend.sh sourced as the guard sources
 // it. The CLI contract itself is
 // tests/sh/ac-guard.test.sh's.
@@ -214,25 +214,10 @@ test("wakePending answers ac_wake_pending: the scope's own spool, a malformed sc
   expect(twin(`say(L.wakePending(${JSON.stringify(sd)}, "a.b") ? "yes" : "no")`, {}).out).toBe("yes");
 }, 30000);
 
-// A herdr standing in for the real one, logging argv and HERDR_SESSION:
-// `pane get <p>` answers while <d>/win-<p> exists, `pane list` fails while
-// <d>/list-fails exists, `status server` reports <d>/stopped.
-function fakeHerdr(): string {
-  const d = dir("herdr");
+// A fake orca standing in for the real one, logging every call.
+function fakeOrca(): string {
+  const d = dir("orca");
   mkdirSync(join(d, "bin"));
-  exe(
-    join(d, "bin", "herdr"),
-    `#!/bin/sh
-d="${d}"
-printf 'herdr %s [%s]\\n' "$*" "\${HERDR_SESSION:-}" >>"$d/log"
-case "$1 $2" in
-  "pane get") [ -e "$d/win-$3" ] ;;
-  "pane list") [ ! -e "$d/list-fails" ] || exit 1; printf '{"result":{"panes":[]}}\\n' ;;
-  "status server") printf '{"running":%s}\\n' "$( [ -e "$d/stopped" ] && echo false || echo true )" ;;
-  *) exit 2 ;;
-esac
-`,
-  );
   exe(
     join(d, "bin", "orca"),
     `#!/bin/sh
@@ -250,7 +235,7 @@ esac
 const WAKE = '. "$0/ac-lib.sh"; . "$0/ac-backend.sh"; . "$0/ac-wake-lib.sh"';
 
 test("roomchiefLive answers ac_roomchief_live through backendCall: no meta no call, the meta's backend for the one call, only rc 0 live", () => {
-  const fh = fakeHerdr();
+  const fh = fakeOrca();
   const home = dir("rl");
   const sd = join(home, "state");
   mkdirSync(sd);
@@ -273,7 +258,7 @@ test("roomchiefLive answers ac_roomchief_live through backendCall: no meta no ca
   writeFileSync(join(fh, "win-horca"), "");
   writeFileSync(join(fh, "win-ptmux"), "");
   writeFileSync(join(fh, "win-hcr"), "");
-  for (const extra of [{}, { AC_HERDR_SESSION: "s1" }, { AC_BACKEND: "orca" }]) {
+  for (const extra of [{}, { AC_BACKEND: "orca" }]) {
     for (const [fam] of fams) {
       rmSync(join(fh, "log"), { force: true });
       const want = bash(`${WAKE}; ac_roomchief_live "$1" "$2" && printf live || printf gone`, { ...env, ...extra }, [sd, fam]).out;
@@ -295,7 +280,7 @@ function readLog(fh: string): string {
 }
 
 test("wakeOrphanPending answers ac_wake_orphan_pending: family spools in byte order, a live family skipped, an orphan's record pending", () => {
-  const fh = fakeHerdr();
+  const fh = fakeOrca();
   const home = dir("op");
   const sd = join(home, "state");
   mkdirSync(sd);

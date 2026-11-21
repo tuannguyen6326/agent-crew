@@ -134,8 +134,10 @@ assert_file "$state/s4-r2.meta" \
 
 # --- teardown is the EXISTING path, plus the knowledge-loop gate -------------
 # kind=self takes the ordinary committing-task landed proof, then answers for
-# its knowledge loop (the gate section below); the leases= key it reads is one
-# this script writes by hand - a typo there would strand the pool slot forever.
+# its knowledge loop (the gate section below); the leases= key it reads must
+# agree with worktree= (both written by hand here) - teardown strips the
+# matching value out before its OTHER-lease sweep, so a mismatch misroutes
+# that sweep instead of releasing the task's own Orca worktree.
 printf '# Backlog\n## Queued\n## Done\n- [x] s1 - the first slice\n' >"$AC_HOME/records/backlog.md"
 "$BIN/ac-teardown.sh" s1 --no-lesson 'fixture' --no-fact 'fixture' >/dev/null 2>&1 \
   || fail "teardown must land a clean self task"
@@ -199,9 +201,8 @@ err="$("$BIN/ac-self-task.sh" start s6 "$repo" --mode bogus 2>&1 1>/dev/null || 
 assert_contains "$err" "invalid --mode" "an unknown mode refuses rather than records nonsense"
 assert_no_file "$state/s6.meta" "the refused start writes no meta"
 
-# --base-branch's positive thread-through (the fleet is orca-backed
-# throughout this suite now) is proven below in the orca section (so2) -
-# there is no herdr fleet left to prove the silent-no-op defect against.
+# --base-branch's positive thread-through is proven below in the orca
+# section (so2).
 
 # --- the lease install: commands.install runs before the slice's first edit ---
 # (contract: src/self-task.ts step 2). No key records no deps= (s1 above).
@@ -321,7 +322,7 @@ rm -f "$state/.pane-or1" "$FAKE_ORCA/terminals/pOR1.buf"
 # Everything from here on exercises self-task/teardown bookkeeping that never
 # forks on which backend leased the worktree (no pool path, lease_ids or
 # .crew/worktrees assertion appears below) - run it on the orca fleet already
-# proven above, so this suite still covers it once fake herdr is gone.
+# proven above.
 printf 'orca\n' >"$AC_HOME/config/backend"
 
 # --- the knowledge-loop gate at landing --------------------------------------
@@ -884,13 +885,10 @@ xgo xorcaro x8b
 xhas 'the BACKEND could not be READ for or2'
 xwlacks "== home/state/or2.status "; xwlacks "== home/state/or2.meta "
 [ ! -d "$XW/orca/orca-wt/crew-or2" ] || fail "an unreadable-backend refusal must not leak the lease"
-# GAP, documented not silently dropped: orca absent from PATH (the 127 case)
-# cannot be scoped to just the pane-open step the way the rc=2 case above
-# can - the lookup failure is per-binary, not per-verb, so it would ALSO take
-# down the earlier lease (the same ordering gap documented above and in
-# ac-spawn-teardown.test.sh's bw1o 127 row). The liveness ladder treats rc=127
-# the same as the rc=2 case just proven, so this is not a distinct contract
-# left unproven, only a distinct TRIGGER left unreproducible under orca.
+# orca absent from PATH (the 127 case) cannot be scoped to just the
+# pane-open step the way the rc=2 case above can - the lookup failure is
+# per-binary, not per-verb, so it would ALSO take down the earlier lease.
+# The liveness ladder treats rc=127 the same as the rc=2 case just proven.
 # A meta write refused after the pane (its lock held by a live pid): the
 # rollback reaps the tab too.
 x8c() { mkdir -p "$XW/home/state/.s1.meta.lock"; printf '%s\n' "$$" >"$XW/home/state/.s1.meta.lock/pid"; xc start s1 proj; }
@@ -900,13 +898,6 @@ xwlacks '== home/state/s1.meta '
 xwlacks '== home/state/.pane-s1 '
 xwlacks '== home/state/s1.status '
 [ ! -d "$XW/orca/orca-wt/crew-s1" ] || fail "a meta-lock refusal must give the orca lease back"
-# GAP: "a tail whose Enter is never acknowledged warns" tested herdr's pane
-# OPEN specifically typing the tail command into a booting shell and racing
-# its own Enter - the exact defect class orca's pane open is built to never
-# have (measured, orca section above: the tail rides --command at terminal
-# create, never typed after boot), so there is no "unacknowledged Enter" to
-# strand under orca in the first place - not a fixture gap, architecturally
-# inapplicable.
 # A meta rewrite whose mv dies by TERM: mv's status is the start's, and the
 # rollback runs.
 xmvterm() {
@@ -928,15 +919,9 @@ xwlacks '== home/state/s1.status '
 # proven below (sofail, x9c's `.unreachable`), so it is not reproven here a
 # second way.
 #
-# GAP, documented not silently dropped: "a lease whose child dies by TERM"
-# relied on ac-tree.sh being a bash script sharing self-task.ts's own process
-# group, so `kill -TERM $$` inside it propagated to the caller (measured
-# rc=143, the SIGTERM handler's own exit code). Measured directly: a thin
-# wrapper doing the same `kill -TERM $$`/`kill -TERM 0` ahead of the real fake
-# orca only kills the wrapper's own subprocess (bun's spawnSync just sees a
-# failed call, rc=1) or the whole test's own process group (unfalsifiable) -
-# the orca CLI call is a plain subprocess, not a shared-group script, so this
-# specific signal-propagation path has no orca equivalent under this fixture.
+# The orca CLI call is a plain subprocess, not a shared-group script, so a
+# child dying by TERM does not propagate to self-task.ts the way it would
+# through a shared process group.
 # The orca lease: an unreachable runtime, and the epic-branch fence refusing
 # a missing integration branch - nothing leased, nothing released.
 x9c() { : >"$XW/orca/.unreachable"; xc start sofail proj; }

@@ -2,7 +2,7 @@
 // ac_family_owned it twins, called in the context the bash self-task entry
 // gave it: inside an `if`. Compares stdout, stderr (less the shell's own
 // `line N:` lines), the status, the stub log and the side's tree.
-// backendWindowNew has no twin here - see the GAP comment below.
+// backendWindowNew has no twin here.
 //
 // DISPUTED: the implementation of ac_family_owned (the live bash vs src/lib.ts)
 // HELD-CONSTANT: one side root per side and row seeded alike (a home at <side>/home with state/ records/ data/ config/, the stubs' sentinels, call counters and log at <side>/stub, TMPDIR at <side>/tmp); argv; env (PATH = refusing claude/codex/opencode/pi/cursor-agent/docker/codegraph/gh/orca stand-ins, then sleep and date stubs, the host's jq and git, bun alone, /bin plus /usr/bin without those names - no row can reach a real backend or harness; LC_ALL=C; HOME an empty dir; STUB_DIR, TMPDIR, AC_HOME, the row's own names); cwd (the distro root, so ac_root and STARTED_BIN name one bin/); stdin (/dev/null).
