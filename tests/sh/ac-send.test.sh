@@ -3,8 +3,8 @@
 # refused (--force overrides; --key stays allowed - it IS the deliberate dialog
 # answer), and a stranded submit surfaces as a visible failure, never "sent".
 # Driven through the fake orca CLI (tests/sh/helpers.sh): its .agentwait knob
-# feeds agent_blocked, its .drop-enters knob strands submits. The cutover
-# (T8) refuses backend=herdr outright - the one herdr-pinned case below
+# feeds agent_blocked, its .drop-enters knob strands submits. The orca
+# cutover refuses backend=herdr outright - the one herdr-pinned case below
 # proves that refusal fires before any send is attempted.
 
 # Fail-closed sourcing: unsourced (suite run outside tests/sh/), errexit is never
@@ -39,7 +39,7 @@ assert_contains "$(cat "$FAKE_ORCA/terminals/pA1.buf")" "hello crew" "text submi
 assert_contains "$(cat "$AC_HOME/state/s1.status")" "steered: hello crew" \
   "a confirmed steer lands on the status record"
 
-# --- cutover (T8): backend=herdr refuses before any send is attempted --------------
+# --- the orca cutover: backend=herdr refuses before any send is attempted ---
 mk_crewmate hv pHV
 sed -i '' 's/^backend=orca$/backend=herdr/' "$AC_HOME/state/hv.meta"
 err="$("$BIN/ac-send.sh" hv 'should never arrive' 2>&1)" \
@@ -356,10 +356,9 @@ mk_claude_crewmate() {
   # harness/session_id make it ARRIVAL-CAPABLE (contract above). The
   # arrival check itself (ac-lib.ts claude transcript arrival check) reads
   # the META's harness=/session_id=, backend-neutral; herdr's own COMPOSER
-  # PROOF (keep-tail/draft/nbsp/read-fails below) is a SEPARATE, herdr-only
+  # PROOF (keep-tail/draft/nbsp/read-fails) was a SEPARATE, herdr-only
   # mechanism with no orca counterpart (orca_prompt_send_pane proves no
-  # composer content before Enter) - this file's own composer-proof section
-  # stays herdr-pinned for that reason, reported as a gap, not ported.
+  # composer content before Enter) - that cluster was not ported (below).
   mk_crewmate "$1" "$2" "$3"
   printf 'harness=claude\nsession_id=%s\n' "$4" >>"$AC_HOME/state/$1.meta"
 }
@@ -471,7 +470,7 @@ assert_contains "$err" "arrival REFUTED" "only a command-shaped first word skips
 # read-fails knobs, AC_SEND_UNPROVEN) has no orca equivalent: ac-backend-orca.sh's
 # backend_send_line_orca/orca_prompt_send_pane carries no keep-tail, draft
 # or composer-visibility check before submitting. This whole cluster is a
-# herdr-only gap with no orca-shaped test to migrate it to; tracked in report.md.
+# herdr-only gap with no orca-shaped test to migrate it to.
 
 # A SOLO session (AC_SOLO=1) never steers a pane - the crew is the chief's.
 err="$(AC_SOLO=1 "$BIN/ac-send.sh" cother 'hello' 2>&1)" \
@@ -766,7 +765,7 @@ done
 #    counterpart: the claude composer proof (AC_SEND_UNPROVEN gates it) does
 #    not exist for orca at all (the gap noted earlier, above section 1), and
 #    orca_json (bin/ac-backend-orca.sh) carries no session concept for
-#    AC_HERDR_SESSION to ride - tracked in report.md, not ported.
+#    AC_HERDR_SESSION to ride - not ported.
 
 # 8. arrival on a claude pane: REFUTED with a DIFFERENT text; sizes in
 #    characters under UTF-8, bytes under C, never recorded; an intact `x\n\n`

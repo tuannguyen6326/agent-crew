@@ -76,14 +76,14 @@
 // predecessor's watcher still gets the `already running` prefix it globs on).
 //
 // AN ORPHANED FIRING (autoarm-orphan-holds-watcher-lock): Claude Code
-// reparents a Stop hook outliving its session to pid 1 (research/firstmate
-// origin/main bin/fm-wake-lib.sh:1810-1814) with its watcher child still alive
-// and the lock still held - a corpse the exit-2 nudge can never reach, because
-// its owning session is gone. Two halves close the gap. The slower one is
-// this hook giving up on its own: stillProvenHolder re-checks, on every pass
-// after the first, THIS firing's own live ancestry against the ONE pid the
-// pre-loop isSessionLockHolder already proved held it - never a fresh read
-// of .session-lock, which a reparented firing's own prior re-arm can have
+// reparents a Stop hook outliving its session to pid 1, with its watcher
+// child still alive and the lock still held - a corpse the exit-2 nudge can
+// never reach, because its owning session is gone. Two halves close the
+// gap. The slower one is this hook giving up on its own: stillProvenHolder
+// re-checks, on every pass after the first, THIS firing's own live ancestry
+// against the ONE pid the pre-loop isSessionLockHolder already proved held
+// it - never a fresh read of .session-lock, which a reparented firing's
+// own prior re-arm can have
 // already overwritten with its own identity (ownerGate's ancestry walk falls
 // to its own stable fallback once nothing in the reparented tree matches a
 // harness) - so an orphaned firing stops re-arming a replacement for itself

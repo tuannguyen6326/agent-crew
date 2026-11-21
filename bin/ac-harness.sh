@@ -125,8 +125,7 @@ ac_harness_startup_key() {
   # a brand-new project's own trust dialog ("Quick safety check...") defaults
   # to the WRONG option ("No, exit" - it quits the process), so the registry
   # answers Down then Enter to reach "Yes, I trust this folder" instead
-  # (harness-facts.md, claude STARTUP TRUST DIALOG; probe evidence in
-  # probe-evidence.md). Both
+  # (harness-facts.md, claude STARTUP TRUST DIALOG). Both
   # senders - src/spawn.ts deliverKickoff and ac-pane-agent.sh's crewmate arm
   # - read this instead of each keeping its own per-harness conditional; the
   # SPAWN side additionally suppresses the key for a custom

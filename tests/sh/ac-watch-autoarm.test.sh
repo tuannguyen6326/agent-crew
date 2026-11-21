@@ -775,7 +775,7 @@ assert_eq "$(aa_calls)" "call skip=[famA,famB] only=[unset] autoarm=[1]
 call skip=[famB] only=[unset] autoarm=[1]" "the arm env, rebuilt each pass"
 
 # 8. the nudge: a scoped handback types the wake into its own chief pane.
-# backend=herdr is refused now (cutover, T8): nudge()'s own per-meta read
+# backend=herdr is refused now (the orca cutover): nudge()'s own per-meta read
 # is best-effort (never a hard exit, so one bad pin never costs the exit-2
 # handback - the "bogus"/unreadable/empty-field rows below still prove
 # that), but backendCall itself silently sends nothing for a refused name,

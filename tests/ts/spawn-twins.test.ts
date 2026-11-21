@@ -754,8 +754,7 @@ test("backendStartupDialogs runs ac_startup_dialogs' sequence over the id-keyed 
     seed: (s) => (O(s), put(s, "stub/terminal-show.1.out", OSHOW('{"connected":true,"agentWait":{"reason":"codex-update-prompt"}}')), put(s, "stub/terminal-show.2.out", OSHOW('{"connected":true,"agentWait":{"reason":"codex-hooks-review-prompt"}}')), put(s, "stub/terminal-show.out", OSHOW('{"connected":true,"agentIdentity":"codex"}'))),
   });
   // claude's own startup trust dialog carries agentWait with NO reason at
-  // all (probe evidence: data/claude-spawn-trust-dialog-new-folder/probe-evidence.md,
-  // leg 6) - the SAME "unnamed" case 2 codex's own unnamed dialog takes, so
+  // all - the SAME "unnamed" case 2 codex's own unnamed dialog takes, so
   // the registry's Down-then-Enter answer must both land, in order, once.
   same("orca: claude's unnamed trust dialog answered (Down, Enter), then up", {
     ...sd,
