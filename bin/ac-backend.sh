@@ -254,7 +254,7 @@
 # root group; UNSET = backend_window_new derives it with ac_window_family,
 # ac-lib.sh: AC_SCOPE > AC_FLEET_SCOPE > ac_family_of_id) - a worktree-cwd
 # pane ignores it. The full placement rule is documented at orca_place_pane
-# (ac-backend-orca.sh:5-16,313-321).
+# (ac-backend-orca.sh).
 #
 # Tests drive this file through a fake `orca` CLI on PATH
 # (tests/sh/helpers.sh ships it) - no live server needed.
