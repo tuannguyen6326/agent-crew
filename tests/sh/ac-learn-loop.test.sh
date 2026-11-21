@@ -1807,9 +1807,14 @@ done
 grep -qF -- '- [distilled -> promise-skill] sources=1 updated=2026-07-19 ([skill](../skills/promise-skill/SKILL.md); [evidence](learnings-archive/promise-skill.md))' \
   "$AC_HOME/records/learnings.md" \
   || fail "the archive this transaction creates keeps its evidence link"
-grep -qF -- '- [distilled -> ghost-skill] sources=4 updated=2026-07-01 ([skill](../skills/ghost-skill/SKILL.md))' \
+grep -qF -- '- [distilled -> ghost-skill] sources=4 updated=2026-07-01' \
   "$AC_HOME/records/learnings.md" \
   || fail "a pointer with no archive on disk is written without an evidence link"
+# ghost-skill never had a skills/ dir or a CREWMATE-learned.md heading minted
+# for it in this suite - it is retired, so it must carry no [skill] link either.
+if grep -qF '[distilled -> ghost-skill] sources=4 updated=2026-07-01 (' "$AC_HOME/records/learnings.md"; then
+  fail "a retired pointer with no skill, lesson or archive renders with no link segment at all"
+fi
 while IFS= read -r promised; do
   assert_file "$AC_HOME/records/$promised" "the index only links evidence that exists"
 done < <(grep -o 'learnings-archive/[a-z0-9-]*\.md' "$AC_HOME/records/learnings.md")
@@ -2152,5 +2157,53 @@ cp "$TMP/ledger-noarch2" "$AC_HOME/records/learnings.md"
 "$BIN/ac-learn.sh" land "$TMP/cand-noarch2.md"
 grep -qF -- '- [distilled -> noarch-skill] sources=7 updated=2026-07-20' "$AC_HOME/records/learnings.md" \
   || fail "a pointer whose first land minted an inherited offset still takes its next patch"
+
+# --- a retired subject never links a [skill] file that does not exist -------
+
+# A RETIRED subject has neither a live skills/<name>/SKILL.md nor a live
+# `## <name>` heading in CREWMATE-learned.md - its lesson/skill is gone, only
+# the archive evidence remains. Alongside it, a live-lesson pointer and a
+# live-skill pointer must keep rendering exactly as before.
+rm -rf "$AC_HOME/skills/retired-topic" "$AC_HOME/skills/skill-topic"
+mkdir -p "$AC_HOME/skills/skill-topic" "$AC_HOME/records/learnings-archive"
+printf -- '---\nname: skill-topic\ndescription: a live learned skill.\nmetadata:\n  origin: learned\n  landed: "1"\n---\n# skill-topic\n\nbody.\n' \
+  >"$AC_HOME/skills/skill-topic/SKILL.md"
+printf '# Fleet-learned crewmate lessons\n<!-- written only by ac-learn.sh transactions; captains edit CREWMATE.md instead -->\n## lesson-topic\n\nAlready-learned method lesson.\n\n(learned 2026-07-01)\n' \
+  >"$AC_HOME/CREWMATE-learned.md"
+printf '# Learning Evidence: retired-topic\n\n## 2026-07-01T00:00:00Z - tx0\n\nsource-count: 2\n' \
+  >"$AC_HOME/records/learnings-archive/retired-topic.md"
+{
+  printf '# Learning Ledger\n\n## Pending\n\n'
+  printf '### 2026-07-22 - fam (chief)\n'
+  printf -- '- LESSON: three-shapes bullet, compact me.\n'
+  printf '\n## Distilled\n\n'
+  printf -- '- [distilled -> retired-topic] sources=2 updated=2026-07-20 ([skill](../skills/retired-topic/SKILL.md); [evidence](learnings-archive/retired-topic.md))\n'
+  printf -- '- [distilled -> lesson-topic] sources=1 updated=2026-07-01 ([lesson](../CREWMATE-learned.md))\n'
+  printf -- '- [distilled -> skill-topic] sources=1 updated=2026-07-01 ([skill](../skills/skill-topic/SKILL.md))\n'
+} >"$AC_HOME/records/learnings.md"
+{
+  printf 'kind: skill\n'
+  printf 'name: three-shapes-target\n'
+  printf 'description: Prove a retired subject never links a skill that does not exist.\n'
+  printf 'trigger: the case this fixture lands\n'
+  printf 'approved: 1700000000\n'
+  printf '===sources===\n'
+  printf '2026-07-22\tthree-shapes\t- LESSON: three-shapes bullet, compact me.\n'
+  printf '===skill===\n'
+  printf '# three-shapes-target\n\nbody.\n'
+} >"$TMP/cand-three-shapes.md"
+"$BIN/ac-learn.sh" land "$TMP/cand-three-shapes.md"
+grep -qF -- '- [distilled -> retired-topic] sources=2 updated=2026-07-20 ([evidence](learnings-archive/retired-topic.md))' \
+  "$AC_HOME/records/learnings.md" \
+  || fail "a retired subject (no skill dir, no learned heading) renders without a dead [skill] link"
+if grep -qF '[distilled -> retired-topic] sources=2 updated=2026-07-20 ([skill]' "$AC_HOME/records/learnings.md"; then
+  fail "a retired subject must never link a skill file that does not exist"
+fi
+grep -qF -- '- [distilled -> lesson-topic] sources=1 updated=2026-07-01 ([lesson](../CREWMATE-learned.md))' \
+  "$AC_HOME/records/learnings.md" \
+  || fail "a live learned-lesson pointer renders unchanged"
+grep -qF -- '- [distilled -> skill-topic] sources=1 updated=2026-07-01 ([skill](../skills/skill-topic/SKILL.md))' \
+  "$AC_HOME/records/learnings.md" \
+  || fail "a live skill pointer renders unchanged"
 
 pass
