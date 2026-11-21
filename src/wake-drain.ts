@@ -209,10 +209,8 @@
 //                                       stdout this run's
 //   backend_capture <id> 40           - step 7, stdout captured
 // each window probe under AC_BACKEND = the probed meta's backend= (orca when
-// none) for that call alone, as the original's `( )` - orca always reads the
-// caller's stdin, regardless of what the call site passes it (backendCall's
-// comment, src/lib.ts); only status 0 is live, so a refused backend name
-// reads gone and that family's spool drains.
+// none) for that call alone, as the original's `( )`; only status 0 is live,
+// so a refused backend name reads gone and that family's spool drains.
 //
 // ALSO:
 // - W8, THE CLAIM MATCH: the sweep keeps a live claimer whose command names

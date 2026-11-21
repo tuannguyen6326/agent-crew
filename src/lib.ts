@@ -2586,9 +2586,9 @@ const utf8Locale = (): boolean => /utf-?8/i.test(process.env.LC_ALL || process.e
 // status); harness_up 0 up, 1 a bare shell, 2 unreadable (HARNESS CAME-UP
 // PROBE); send_key is one send, 0 or 1. send_line sends its arguments joined
 // by a space as one Orca prompt (orcaPromptSend): 0 sent, 1 stranded or a
-// dialog owns the pane, 2 no delivery receipt, the reason on stderr. orca, a
-// foreground command, always reads the caller's stdin. stdout and stderr are
-// where the call site sent them
+// dialog owns the pane, 2 no delivery receipt, the reason on stderr. orca's
+// stdin is whatever the call passed as io.stdin, defaulting to inherit when
+// unset. stdout and stderr are where the call site sent them
 // ("pipe" returns the bytes); the jqs whose stderr the bash left open
 // (harness_up's title reads) write jq's error there.
 export function backendCall(
