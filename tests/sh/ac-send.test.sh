@@ -509,6 +509,12 @@ STUB
 cat >"$TMP/sstub/sleep" <<'STUB'
 #!/bin/sh
 printf 'sleep %s\n' "$*" >>"$STUB_DIR/sleep.log"
+if [ -n "${QUEUED_RACE_FILE:-}" ] && [ ! -e "$STUB_DIR/.queued-race-done" ]; then
+  # models a typed turn landing BETWEEN arrivalWait's reads - a static
+  # fixture (unchanging across the whole read budget) cannot exercise that.
+  touch "$STUB_DIR/.queued-race-done"
+  printf '{"type":"user","promptSource":"typed","origin":{"kind":"human"},"message":{"role":"user","content":"a mangled reply"}}\n' >>"$QUEUED_RACE_FILE"
+fi
 exec /bin/sleep "$@"
 STUB
 cat >"$TMP/sstub/orca" <<STUB
@@ -895,6 +901,68 @@ srun crace 'the text this send actually types'
 SENV=()
 assert_eq "$SN_RC:$(sout)" "1:" "8g: a wrong turn written right at submit time still refutes"
 assert_contains "$(serr)" "ERROR: arrival REFUTED for crace - " "8g: ...the baseline predates the write, so it is not read as pre-existing"
+
+# 8h. the queued carve-out must not STICK across reads: a queue-op match seen
+# at an EARLY read must not go on masking a typed turn that supersedes it at
+# a LATER read, within the same wait - 8c already proves this ordering when
+# the whole transcript is static from read 1; this is the same rule read
+# live, across the budget (a static fixture cannot exercise the stickiness
+# bug at all, since q never flips from matching to not-matching read over
+# read).
+sid_sticky="33333333-3333-3333-3333-333333333333"
+sclaude csticky pCSTICKY "$sid_sticky"
+cat >"$H/claude/proj/$sid_sticky.jsonl" <<JSONL
+{"type":"user","promptSource":"typed","origin":{"kind":"human"},"message":{"role":"user","content":"old"}}
+{"type":"queue-operation","operation":"enqueue","content":"the queued steer text"}
+{"type":"queue-operation","operation":"remove","content":"the queued steer text","reason":"absorbed_mid_turn"}
+JSONL
+rm -f "$H/.queued-race-done"
+SENV=("QUEUED_RACE_FILE=@H/claude/proj/$sid_sticky.jsonl")
+srun csticky 'the queued steer text'
+SENV=()
+assert_eq "$SN_RC:$(sout)" "1:" "8h: a typed turn landing AFTER the absorbed queue entry, mid-wait, still refutes on its own"
+assert_contains "$(serr)" "ERROR: arrival REFUTED for csticky - " "8h: ...the earlier read's queued match must not go on masking it"
+
+# 8i. claude bracket-pastes a long steer instead of typing it character by
+# character, so the live transcript shows it wrapped in
+# `<pasted_content id="...">` tags with a blank line on each side - the same
+# content, a different byte sequence. Must still CONFIRM; a genuinely
+# different wrapped text must still refute (synthetic fixture - never the
+# content of a real captured incident).
+sid_paste="22222222-2222-2222-2222-222222222222"
+sclaude cpaste pCPASTE "$sid_paste"
+paste_body=$'line one of a pasted steer\n\nline two of a pasted steer'
+wrapped=$'\n\n<pasted_content id="ab12">\n'"$paste_body"$'</pasted_content id="ab12">\n\n'
+printf '{"type":"user","promptSource":"typed","origin":{"kind":"human"},"message":{"role":"user","content":%s}}\n' \
+  "$(printf '%s' "$wrapped" | jq -Rs .)" >"$H/claude/proj/$sid_paste.jsonl"
+srun cpaste "$paste_body"
+assert_eq "$SN_RC:$(sout)" "0:sent to orca:pCPASTE" "8i: a pasted steer wrapped in claude's own <pasted_content> tags still CONFIRMS"
+
+wrapped_other=$'\n\n<pasted_content id="ab12">\nsomething else entirely</pasted_content id="ab12">\n\n'
+printf '{"type":"user","promptSource":"typed","origin":{"kind":"human"},"message":{"role":"user","content":%s}}\n' \
+  "$(printf '%s' "$wrapped_other" | jq -Rs .)" >"$H/claude/proj/$sid_paste.jsonl"
+srun cpaste "$paste_body"
+assert_eq "$SN_RC:$(sout)" "1:" "8i: ...but a genuinely different wrapped text still REFUTES"
+assert_contains "$(serr)" "ERROR: arrival REFUTED for cpaste - " "8i: ...wrapping is not a free pass"
+
+# 8j. the same bracket-paste wrapping (8i) lands on a MID-TURN absorbed
+# steer's queue-operation content too, since claude wraps pasted input at
+# capture time, before it decides typed-turn vs absorbed - the queued
+# carve-out (8b) must unwrap it the same way as the typed-turn side, or a
+# pasted steer absorbed mid-turn falsely REFUTES through this other
+# comparison site instead.
+sid_pasteq="11111111-1111-1111-1111-111111111111"
+sclaude cpasteq pCPASTEQ "$sid_pasteq"
+pasteq_body=$'line one of a pasted mid-turn steer\n\nline two of it'
+wrappedq=$'\n\n<pasted_content id="cd34">\n'"$pasteq_body"$'</pasted_content id="cd34">\n\n'
+{
+  printf '{"type":"user","promptSource":"typed","origin":{"kind":"human"},"message":{"role":"user","content":"an older watcher nudge"}}\n'
+  printf '{"type":"queue-operation","operation":"enqueue","content":%s}\n' "$(printf '%s' "$wrappedq" | jq -Rs .)"
+  printf '{"type":"queue-operation","operation":"remove","content":%s,"reason":"absorbed_mid_turn"}\n' "$(printf '%s' "$wrappedq" | jq -Rs .)"
+} >"$H/claude/proj/$sid_pasteq.jsonl"
+srun cpasteq "$pasteq_body"
+assert_eq "$SN_RC:$(sout)" "0:delivered (arrival unverified) to orca:pCPASTEQ" "8j: a pasted mid-turn steer, wrapped in the queue-op's own content, still reads unverified, never REFUTED"
+case "$(serr)" in *REFUTED*) fail "8j: a wrapped, absorbed mid-turn steer must never print REFUTED: $(serr)" ;; esac
 
 # 9. the status record: `steered: <text, LFs as spaces>`, stamped by date(1)
 #    and mirrored to the task's timeline.
