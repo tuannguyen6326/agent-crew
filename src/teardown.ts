@@ -249,8 +249,8 @@
 //    `resolved: teardown[ (forced)]` appended; meta and status `mv`ed in; the
 //    watcher stamps removed. A status append that cannot be written ends the
 //    run, exit 1, nothing moved.
-// 2. PANE KILL (backendKillWindow, src/lib.ts), the handle read first: a
-//    task backend the route refuses ends the run here, exit 1 (W6). A
+// 2. PANE KILL (backendKillWindow, src/lib.ts), the handle read first (the
+//    task backend was already validated at the top, before archiving). A
 //    failure is `WARN: pane close FAILED for <id> - a live pane may survive
 //    this teardown (handle: <handle|none>); close it by hand: <cmd>` -
 //    `orca terminal close --terminal <field 1>` (unreachable, W19) - and
@@ -380,8 +380,7 @@
 //
 // KNOWN WARTS, kept as they are: W1 (the id is always the first word),
 // W3 (--force --pr-ready records
-// both), W6 (the task backend validated only at the pane kill, after the
-// archive), W16 (the named member is the first in byte order), W19 (the
+// both), W16 (the named member is the first in byte order), W19 (the
 // orca close never fails), W20 (a held registry lock leaves the row,
 // silently), W21 (an ambiguous task dir prints taskDir's ERROR and refuses).
 //
