@@ -378,9 +378,10 @@
 // (ac-backend.sh FAMILY GROUPING, implemented in ac-backend-orca.sh): a pane
 // whose cwd is the home groups under the home's node, one FAMILY TAB per room
 // (AC_WINDOW_FAMILY resolves the room; absent/empty = the fleet ROOT tab, the
-// ac-self-task case) - every verification pane the callers above lease
-// (ac-verify.sh, the gate) has cwd = its own worktree, so it groups under
-// THAT worktree's own node instead, one tab each.
+// ac-self-task case) - ac-verify.sh's panes lease a worktree and pass that
+// as cwd, so they group under THAT worktree's own node, one tab each; the
+// gate passes cwd = the home instead (src/gate.ts), so its pane groups under
+// the home's node in its family's FAMILY TAB, same as the ac-self-task case.
 //
 // MECHANICS, in code order. Every verb first: an invalid backend
 // (AC_BACKEND > config/backend > the AC_FLEET_STATE/../config/backend rung)
