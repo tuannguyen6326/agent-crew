@@ -106,14 +106,15 @@ A crewmate the crewchief spawns instead carries no family scope for its whole li
    spawn claim, firing predicate, scout, canonical ledger/archive, gate,
    transaction, and migration contracts are owned by the
    `src/learn.ts`/`bin/ac-lib.sh` headers.
-   Each DISTILL run that EXAMINES - consumes the retro window, per the
-   `src/learn.ts` header - is also the records-wide CURATE "tick" (session-start
-   flags `CURATE DUE: <n>/<X>` at/over `config/curate-every`). On CURATE DUE the
-   Learning runs `bin/ac-curate.sh run` automatically; its `--dry-run` is fully
-   read-only and project clones are never deleted. A run that PRESERVES the
-   window (an incomplete scout, or a complete scout a maintenance gate left
-   unjudged) withholds the tick too, so a retry at the same anchor never
-   double-counts; it warns instead when Curate was already due.
+   Each DISTILL run that EXAMINES and whose reset succeeds - consumes the
+   retro window, per the `src/learn.ts` header - is also the records-wide
+   CURATE "tick" (session-start flags `CURATE DUE: <n>/<X>` at/over
+   `config/curate-every`). On CURATE DUE the Learning runs `bin/ac-curate.sh
+   run` automatically; its `--dry-run` is fully read-only and project clones
+   are never deleted. A run that PRESERVES the window (an incomplete scout, a
+   complete scout a maintenance gate left unjudged, or an examined run whose
+   own reset failed) withholds the tick too, so a retry at the same anchor
+   never double-counts; it warns instead when Curate was already due.
    CURATE HAS NO FIRING PATH OF ITS OWN, and the counter above counts EXAMINED
    DISTILL RUNS, not landings - so with `curate-every` materially smaller than
    `learn-every` the threshold is reached long before the next DISTILL is, and
