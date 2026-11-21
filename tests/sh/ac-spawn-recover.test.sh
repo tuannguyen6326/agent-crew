@@ -169,4 +169,41 @@ kill_pane t1
 assert_contains "$(cat "$(fake_orca_buf t1)")" "orca claude-teams --permission-mode auto --resume $tsid" \
   "recovery resumes through orca claude-teams"
 
+# --- claude-teams + a CUSTOM template the rewrite cannot apply to: spawn ----------
+# refuses before any pane opens or any meta is written (decision R6).
+# teamsLaunch's regex is a prefix match on "claude " - a custom config/launch-
+# claude whose rendered line does not start with that (e.g. a template built
+# for a different frontend) makes the rewrite a no-op, so the pane would
+# silently launch plain claude while the meta still claimed claude-teams.
+
+printf 'sleep 300\n' >"$AC_HOME/config/launch-claude"
+"$BIN/ac-brief.sh" tc1 proj --mode local-only >/dev/null
+: >"$FAKE_ORCA/log"
+err="$("$BIN/ac-spawn.sh" tc1 "$repo" --harness claude-teams --mode local-only 2>&1)" \
+  && fail "claude-teams over a custom template the rewrite cannot apply to must refuse"
+assert_contains "$err" "claude-teams" "the refusal names the harness"
+assert_contains "$err" "launch-claude" "the refusal names the template"
+[ ! -f "$AC_HOME/state/tc1.meta" ] || fail "the refused spawn must not write a meta"
+case "$(cat "$FAKE_ORCA/log")" in *"terminal create"*) fail "the refused spawn must not open a pane" ;; esac
+
+# --recover is UNAFFECTED by a bad custom template: spawnLaunch's resumeSid
+# branch renders the built-in "claude --resume ..." line unconditionally,
+# never reaching config/launch-claude, so a bad template left in place (or
+# installed after the original spawn, while the pane was down) cannot hit
+# the no-op - recovery still rewrites through orca claude-teams.
+rm -f "$AC_HOME/config/launch-claude"
+"$BIN/ac-brief.sh" tc2 proj --mode local-only >/dev/null
+"$BIN/ac-spawn.sh" tc2 "$repo" --harness claude-teams --mode local-only >/dev/null 2>&1 \
+  || fail "fixture: a default-template claude-teams crewmate must spawn"
+tc2meta="$AC_HOME/state/tc2.meta"
+tc2sid="$(meta_field "$tc2meta" session_id)"
+[ -n "$tc2sid" ] || fail "fixture: the claude-teams spawn must record a session_id"
+kill_pane tc2
+printf 'sleep 300\n' >"$AC_HOME/config/launch-claude"
+"$BIN/ac-spawn.sh" tc2 "$repo" --recover >/dev/null 2>&1 \
+  || fail "--recover must still succeed with a bad template present (resumeSid skips it)"
+assert_contains "$(cat "$(fake_orca_buf tc2)")" "orca claude-teams --permission-mode auto --resume $tc2sid" \
+  "recovery still rewrites through orca claude-teams, ignoring the unrelated bad template"
+rm -f "$AC_HOME/config/launch-claude"
+
 pass
