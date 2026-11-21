@@ -89,7 +89,7 @@ printf '%s\n' '- 2026-07-20: one-time fleet cleanup. [COMPLETED 2026-07-21]' \
 printf 'debriefs=8\ngeneration=0\n' >"$AC_HOME/state/.learn.meta"
 printf '1\n' >"$AC_HOME/config/curate-every"
 
-out="$(AC_PANE_AGENT="$stub" AC_GATE_WATCH=off "$BIN/ac-learn.sh" run)"
+out="$(AC_PANE_AGENT="$stub" "$BIN/ac-learn.sh" run)"
 assert_contains "$out" "auto-applied: auto-skill" "continue automatically applies the candidate"
 assert_file "$AC_HOME/skills/auto-skill/SKILL.md" "automatic Learning writes the fleet-local skill"
 grep -q '^approved:' "$AC_HOME"/data/learning-*/candidates/auto-skill.md \
@@ -120,7 +120,7 @@ rm -rf "$AC_HOME/data"/learning-* "$AC_HOME/skills/auto-skill" \
 printf '## 2026-07-26 - family (chief)\n- LESSON: automate this recurring fleet procedure.\n' \
   >"$AC_HOME/records/learnings.md"
 printf 'debriefs=8\ngeneration=1\n' >"$AC_HOME/state/.learn.meta"
-GATE_DECISION=revise AC_PANE_AGENT="$stub" AC_GATE_WATCH=off \
+GATE_DECISION=revise AC_PANE_AGENT="$stub" \
   "$BIN/ac-learn.sh" run >/dev/null
 assert_no_file "$AC_HOME/skills/auto-skill/SKILL.md" "revise applies no candidate"
 grep -qF -- '- LESSON: automate this recurring fleet procedure.' \
@@ -132,7 +132,7 @@ grep -qF -- '- LESSON: automate this recurring fleet procedure.' \
 # rule subject of its own, so a path rebuilt from the caller's subject misses.
 rm -rf "$AC_HOME/data"/learning-* "$AC_HOME/data/learning"
 printf 'debriefs=8\ngeneration=2\n' >"$AC_HOME/state/.learn.meta"
-out="$(RULE_CANDIDATE=1 AC_PANE_AGENT="$stub" AC_GATE_WATCH=off "$BIN/ac-learn.sh" run)"
+out="$(RULE_CANDIDATE=1 AC_PANE_AGENT="$stub" "$BIN/ac-learn.sh" run)"
 assert_contains "$out" "ask-captain:" "a standing-rule candidate never auto-applies"
 room="$AC_HOME/data/learning/room.md"
 assert_file "$room" "the rule escalation is durable in the learning room"
@@ -152,7 +152,7 @@ printf '%s\n' '- 2026-07-20: one-time fleet cleanup. [COMPLETED 2026-07-21]' \
 printf 'debriefs=8\ngeneration=3\n' >"$AC_HOME/state/.learn.meta"
 printf 'runs_since=1\n' >"$AC_HOME/state/.curate.meta"
 cap_before="$(cat "$AC_HOME/records/captain.md")"
-out="$(OMIT_RETRO=1 AC_PANE_AGENT="$stub" AC_GATE_WATCH=off "$BIN/ac-learn.sh" run 2>&1)"
+out="$(OMIT_RETRO=1 AC_PANE_AGENT="$stub" "$BIN/ac-learn.sh" run 2>&1)"
 assert_contains "$out" "Curate is due" "an incomplete scout warns that a due Curate is withheld"
 assert_no_file "$AC_HOME/records/captain-archive.md" \
   "an incomplete scout must not let automatic Curate archive captain.md"
@@ -173,7 +173,7 @@ printf '%s\n' '- 2026-07-20: one-time fleet cleanup. [COMPLETED 2026-07-21]' \
 printf 'debriefs=8\ngeneration=4\n' >"$AC_HOME/state/.learn.meta"
 printf 'runs_since=1\n' >"$AC_HOME/state/.curate.meta"
 cap_before="$(cat "$AC_HOME/records/captain.md")"
-out="$(GATE_UNAVAILABLE=1 AC_PANE_AGENT="$stub" AC_GATE_WATCH=off "$BIN/ac-learn.sh" run 2>&1)"
+out="$(GATE_UNAVAILABLE=1 AC_PANE_AGENT="$stub" "$BIN/ac-learn.sh" run 2>&1)"
 assert_contains "$out" "ask-captain:" "an unavailable gate escalates instead of silently continuing"
 assert_contains "$out" "Curate is due" "a gate-unjudged run warns that a due Curate is withheld"
 assert_no_file "$AC_HOME/records/captain-archive.md" \

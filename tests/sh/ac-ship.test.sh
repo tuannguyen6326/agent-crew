@@ -2570,7 +2570,7 @@ cd "$repo" || fail "cd back from barepo"
 # One world path ($XW), rebuilt by the row's own setup before each row: a home
 # (projects/repo.yaml, config/), a repo at $XW/repo made under one git identity
 # and one commit date, a bare origin at $XW/origin.git for a row that pushes.
-# The env: AC_HOME=$XW/home, AC_SHIP_WATCH=off, AC_VERIFY_BIN and AC_PANE_AGENT
+# The env: AC_HOME=$XW/home, AC_VERIFY_BIN and AC_PANE_AGENT
 # the leg's stubs, TMPDIR=$XW/tmp, XSTUB=$XW/stub, unless a row names others;
 # cwd $XW/repo unless a row names another; stdin /dev/null unless a call names
 # a file; LC_ALL=C unless a row names en_US.UTF-8; PATH stubs - date answering
@@ -3571,7 +3571,7 @@ xhas 'checks-passed: RUN2 PR raised, awaiting the captain'"'"'s merge - passed-w
 # -- leg 13: signals and continuation ------------------------------------------------
 xsig() {  # xsig <signal> <marker> <args...> - one ship call in the background; once the world holds <marker>, <signal> to its pid alone
   local sig="$1" mark="$2" rc=0 pid i=0 x; shift 2
-  local e=("LC_ALL=$XLC" "PATH=$XSTUBS:$PATH" "TMPDIR=$XW/tmp" "XSTUB=$XW/stub" "AC_SHIP_WATCH=off" "AC_VERIFY_BIN=$XSTUBS/verify" "AC_PANE_AGENT=$XSTUBS/pane" "AC_HOME=$XW/home")
+  local e=("LC_ALL=$XLC" "PATH=$XSTUBS:$PATH" "TMPDIR=$XW/tmp" "XSTUB=$XW/stub" "AC_VERIFY_BIN=$XSTUBS/verify" "AC_PANE_AGENT=$XSTUBS/pane" "AC_HOME=$XW/home")
   for x in ${XENV[@]+"${XENV[@]}"}; do e+=("$x"); done
   # Job control gives the job its own group with SIGINT at its default - a
   # plain `&` job of a non-interactive shell starts with SIGINT ignored.

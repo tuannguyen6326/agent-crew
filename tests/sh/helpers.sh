@@ -46,7 +46,6 @@ trap cleanup EXIT
 mkdir -p "$TMP/home/state" "$TMP/home/data" "$TMP/home/records" "$TMP/home/config" "$TMP/home/projects"
 printf 'off\n' >"$TMP/home/config/wedge-alarm"
 export AC_HOME="$TMP/home"
-export AC_SHIP_WATCH=off
 # Verified sends (ac-backend.sh) settle AC_SEND_SETTLE seconds around each
 # Enter before probing; the fake orca is synchronous, so the suite skips them.
 export AC_SEND_SETTLE=0

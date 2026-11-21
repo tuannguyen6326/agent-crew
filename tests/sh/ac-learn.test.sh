@@ -1449,7 +1449,7 @@ lrun() {  # lrun <args...> - one run of the entry; @H in an argument or an LENV 
   LN_RC=0
   { (cd "$H/cwd" && exec env -u AC_HOME -u AC_FLEET_STATE -u AC_SCOPE -u AC_SOLO -u CDPATH -u AC_LOCK_STALE_GRACE -u EPOCHSECONDS \
     -u AC_BACKEND -u AC_PANE_AGENT -u AC_GATE -u AC_CURATE -u AC_WINDOW_FAMILY -u AC_LEARN_TIMEOUT -u AC_LEARN_START_TIMEOUT \
-    -u AC_LEARN_SUITE_BIN -u AC_LEARN_SUITE_TIMEOUT -u AC_SEND_UNPROVEN "${e[@]}" \
+    -u AC_LEARN_SUITE_BIN -u AC_LEARN_SUITE_TIMEOUT "${e[@]}" \
     /bin/sh -c 'printf %s "$$" >"$0"; [ -z "$1" ] || ln -s "$2" "$1.$$"; shift 2; exec "$@"' \
     "$TMP/l.pid" "${LPLANT:+$H/$LPLANT}" "$H/victim" "$lnbin/ac-learn.sh" ${a[@]+"${a[@]}"}) </dev/null >"$TMP/l.raw" 2>"$TMP/l.rawerr"; } 2>/dev/null || LN_RC=$?
   lnorm "$TMP/l.raw" >"$TMP/l.out"; lnorm "$TMP/l.rawerr" >"$TMP/l.err"

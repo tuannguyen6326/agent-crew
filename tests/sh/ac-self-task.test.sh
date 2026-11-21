@@ -632,7 +632,7 @@ xe() {  # xe - the call environment into XE: the stubs ahead of the fakes and th
   local path="$XSTUBS:$PATH" x
   [ -z "$XPATH" ] || path="$XPATH"
   XE=(env -u AC_HOME -u AC_FLEET_STATE -u AC_SCOPE -u AC_SOLO -u AC_CHIEF_SOLO -u AC_FLEET_SCOPE -u AC_CREW_ID -u AC_DOMAIN
-    -u AC_BACKEND -u AC_HERDR_SESSION -u AC_WINDOW_FAMILY -u AC_SEND_UNPROVEN -u AC_MAX_TREES -u AC_PORT_BASE
+    -u AC_BACKEND -u AC_HERDR_SESSION -u AC_WINDOW_FAMILY -u AC_MAX_TREES -u AC_PORT_BASE
     -u AC_CREW_SKILLS -u AC_PROMPT_RECALL_LIMIT -u AC_BRAIN_SYNC_IV -u CDPATH
     "LC_ALL=$XLC" "PATH=$path" "HOME=$XW/hh" "TMPDIR=$XW/tmp" "XSTUB=$XW/stub" "FAKE_ORCA=$XW/orca"
     "AC_SEND_SETTLE=0")
@@ -982,8 +982,6 @@ xstamporca() { xorca; printf '%s\n' "$XW/home/state/s1.meta" >"$XW/stub/hold-dat
 xgo xstamporca x11b
 xhas $'== TERM start s1 proj\nrc=143'
 xwhas 'worktree rm'
-# No "INT during the tail's send" row: the orca tail rides --command at
-# terminal create, so a start sends nothing for a signal to land inside.
 # Held through the final meta rewrite's mv: the rewrite lands, then the whole
 # start is rolled back. xmvdone waits that mv out before the world is read.
 xmvhold() {
