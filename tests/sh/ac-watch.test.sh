@@ -848,16 +848,34 @@ rm -f "$state"/*.meta "$state"/.pane-* "$state"/.hash-* "$state"/.change-* \
 rm -rf "$state"/.wake-spool*; mkdir -p "$state/.wake-spool"
 
 # No orca RPC timeout exists to model an RPC-wedge scenario against
-# (ac-backend.sh's HUNG RPC note); ac_backend refuses backend=herdr before
-# the pane pass ever reaches a dispatch call, so this proves the refusal
-# fires there instead, named, before any pane is even touched (no pane
-# fixture is needed either, for the same reason).
+# (ac-backend.sh's HUNG RPC note); a refused backend=herdr pin SKIPS before
+# the pane pass ever reaches a dispatch call (it used to die() there
+# instead, named the same way but ending the whole --once run), so this
+# proves the skip fires there, named, before any pane is even touched (no
+# pane fixture is needed either, for the same reason).
 printf 'window=crew:w1\nbackend=herdr\n' >"$state/w1.meta"
-AC_LOCK_PID=$$ AC_REMOTE_POLL=0 bash "$BIN/ac-watch.sh" --once >"$TMP/wedge.out" 2>"$TMP/wedge.err" || true
-assert_contains "$(cat "$TMP/wedge.err")" "ERROR: unsupported backend 'herdr' (valid backend: orca)" \
-  "a herdr-pinned task refuses, named, instead of ever reaching the pane"
+out="$(AC_LOCK_PID=$$ AC_REMOTE_POLL=0 bash "$BIN/ac-watch.sh" --once 2>"$TMP/wedge.err")"
+assert_eq "$out" "check:quiet" "a refused meta is no pane the pass can act on - the run ends quiet, not aborted"
+assert_contains "$(cat "$TMP/wedge.err")" "WARN: unsupported backend 'herdr' (valid backend: orca): skipping w1" \
+  "a herdr-pinned task is skipped, named, instead of ever reaching the pane"
 assert_no_file "$state/.gone-w1" "a refusal never stamps a pane gone"
 assert_no_file "$state/.unobservable-w1" "a refusal is never read as unobservable either"
+rm -f "$state"/*.meta "$state"/.pane-* "$state"/.unobservable-* "$state"/.hash-* \
+  "$state"/.change-* "$state"/.last-watcher-beat*
+rm -rf "$state"/.wake-spool*
+
+# --- a refused meta no longer blinds the pass to the OTHER panes -----------
+# metaPaths/crewMetas walk in byte order, so a refused pin sorting first
+# (refused1 < w2) must not stop the die() it used to raise from reaching w2's
+# own actionable report - the whole point of a sweep that skips one id.
+printf 'window=crew:refused1\nbackend=tmux\n' >"$state/refused1.meta"
+printf 'window=crew:w2\nbackend=orca\n' >"$state/w2.meta"
+seed_pane w2 pW2b tW2b
+printf 'done: shipped past the refused meta\n' >>"$(fake_orca_buf w2)"
+out="$(AC_LOCK_PID=$$ AC_REMOTE_POLL=0 bash "$BIN/ac-watch.sh" --once 2>"$TMP/wedge2.err")"
+assert_contains "$out" "report:w2" "a refused pin on one meta does not blind the pass to the next one"
+assert_contains "$(cat "$TMP/wedge2.err")" "WARN: unsupported backend 'tmux' (valid backend: orca): skipping refused1" \
+  "the skipped meta is still named, with its own refused pin"
 rm -f "$state"/*.meta "$state"/.pane-* "$state"/.unobservable-* "$state"/.hash-* \
   "$state"/.change-* "$state"/.last-watcher-beat*
 rm -rf "$state"/.wake-spool*

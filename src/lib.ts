@@ -1895,6 +1895,32 @@ export function metaBackend(metaFile: string): string {
   return b;
 }
 
+// metaBackend's non-dying twin for a multi-meta sweep (wake-drain step 7,
+// watch's checkPane) that must SKIP one refused pin and keep going, never
+// die mid-pass on it: "" when the pin is absent or orca, else the bad
+// pin's raw bytes metaBackend would die on.
+export function metaBackendRefusal(metaFile: string): string {
+  let b = "";
+  try {
+    b = metaGet(metaFile, "backend");
+  } catch {}
+  b = cutNul(b) || "orca";
+  return b === "orca" ? "" : b;
+}
+
+// Both sweep sites' own refusal: true (and WARNs, named) on a refused pin,
+// false otherwise - one wording shared instead of inlined twice.
+export function warnBackendRefused(metaFile: string, id: string): boolean {
+  const b = metaBackendRefusal(metaFile);
+  if (!b) return false;
+  warn(Buffer.concat([
+    Buffer.from("unsupported backend '", "utf8"),
+    Buffer.from(b, "latin1"),
+    Buffer.from(`' (valid backend: orca): skipping ${id}`, "utf8"),
+  ]));
+  return true;
+}
+
 // ac_task_backend's twin: the backend <id> was spawned on (its meta's
 // backend=).
 export function taskBackend(id: string): string {

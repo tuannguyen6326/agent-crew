@@ -1183,6 +1183,7 @@ import {
   wakeScopeOk,
   wakeSpoolPath,
   warn,
+  warnBackendRefused,
   watcherBeatPath,
   watcherBeatRead,
   writeAll,
@@ -2339,6 +2340,9 @@ async function checkPane(meta: string): Promise<string | null> {
       }
     }
   }
+  // metaBackend dies on a refused pin; checking first lets one stale meta
+  // skip itself instead of ending the sweep.
+  if (warnBackendRefused(meta, id)) return null;
   // Exported, as the original exported it: later children (jev, the
   // adviser, the remote poll) inherit the last pane's backend.
   process.env.AC_BACKEND = u8(taskBackend(id));

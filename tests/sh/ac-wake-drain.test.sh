@@ -1400,6 +1400,20 @@ case "$(wout)" in *"YOU: sv-chief"*) fail "row 9 (stdin): a live member keeps it
 assert_contains "$(wlog)" "orca terminal show --terminal pw6-chief" "row 9 (stdin): ...the completion scope's"
 assert_contains "$(wlog)" "orca terminal show --terminal psv-spec" "row 9 (stdin): ...chiefChildLive's"
 
+# 9b: a leftover pre-cutover meta (backend=herdr) must SKIP itself,
+# named on stderr, never end the sweep before the ids after it are read -
+# the other idle id's line and step 8's WATCHER-DOWN check must still run.
+fresh
+m herdr1 'kind=implement\nbackend=herdr\n'; chg herdr1 "$((WT - 999))\n"
+idle i10
+beat "$((WT - 1000))"
+wd
+assert_eq "$WRC" 0 "row 9b: a refused backend pin on one meta never aborts the drain"
+assert_contains "$(wout)" "IDLE-MAY-BE-WAITING-ON-YOU: i10 quiet for 999s" "row 9b: the other idle id is still reported"
+assert_contains "$(wout)" "WATCHER-DOWN: 2 crewmate(s)" "row 9b: step 8 still runs past the refused meta"
+assert_contains "$(werr)" "WARN: unsupported backend 'herdr' (valid backend: orca): skipping herdr1" \
+  "row 9b: the refusal names the task id and the pin, on stderr"
+
 # 10. WATCHER-DOWN: the in-flight set (verifier and self out, a chief and a
 #     directory named x.meta in), AC_GUARD_GRACE, an expression clock.
 fresh
