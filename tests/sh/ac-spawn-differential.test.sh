@@ -101,14 +101,14 @@ xsig() {  # xsig <signal> <args...> - one spawn in the background; once the worl
     wrap=$!
     set +m
     while [ ! -e "$XW/stub/held" ] && [ "$i" -lt 600 ]; do /bin/sleep 0.05; i=$((i + 1)); done
-    [ -e "$XW/stub/held" ] || fail "spawn at line $(xrow): the run never reached its hold"
+    [ -e "$XW/stub/held" ] || fail "spawn at line $(xrow): the run never reached its hold" 2>&3
     pid="$(pgrep -P "$wrap")" || pid=""
-    case "$pid" in '' | *[!0-9]*) fail "spawn at line $(xrow): the run's pid was not found under its job (got '$pid')" ;; esac
+    case "$pid" in '' | *[!0-9]*) fail "spawn at line $(xrow): the run's pid was not found under its job (got '$pid')" 2>&3 ;; esac
     kill -"$sig" "$pid"
     /bin/sleep 0.5
     : >"$XW/stub/release"
     wait "$wrap" || true
-  } 2>/dev/null
+  } 3>&2 2>/dev/null
   rc="$(cat "$TMP/x.rc" 2>/dev/null)"
   case "$rc" in '' | *[!0-9]*) fail "spawn at line $(xrow): the run left no exit status (got '$rc')" ;; esac
   /bin/sleep 0.3
@@ -546,5 +546,39 @@ xhas $'== TERM t1 proj --recover\nrc=143'
 xwlacks 'recovered: pane reopened'
 xwlacks 'window=orca:term3'
 xwlacks '.meta-claims/t1'
+
+# -- 10: xsig's own fail must reach the suite's real stderr ------------------
+
+# xsig's job-control block wraps bash's own job-control noise in
+# `{ ... } 2>/dev/null`; a `fail` reached before a real hold or a real pid
+# lost its FAIL line into that same /dev/null, so a genuinely missed hold or
+# pid died SILENT instead of marking the suite FAIL - same class as bdffc0e5
+# (ac-self-task.test.sh's xsig). Reproduced in a child that sources THIS
+# file's own current xsig text (not a frozen copy), so the fix lands the
+# moment xsig's text changes: the world's cwd is removed so the backgrounded
+# job forks nothing, and stub/held is preseeded so xsig skips straight past
+# the hold-wait to the pid-not-found fail - deterministic and fast.
+awk '
+  BEGIN { skip = 1 }
+  skip && /\(helpers\.sh not found\)/ { skip = 0; next }
+  skip { next }
+  { print }
+  /^xsig\(\) \{/ { p = 1 }
+  p && /^}$/ { exit }
+' "$ROOT/tests/sh/ac-spawn-differential.test.sh" >"$TMP/xsigfail-prelude.sh"
+{
+  printf '#!/usr/bin/env bash\n'
+  printf '. "%s/tests/sh/helpers.sh"\n' "$ROOT"
+  cat "$TMP/xsigfail-prelude.sh"
+  printf 'xworld\n'
+  printf 'rm -rf "$XW/cwd"\n'
+  printf ': >"$XW/stub/held"\n'
+  printf 'xsig TERM dummy\n'
+} >"$TMP/xsigfail-child.sh"
+bash "$TMP/xsigfail-child.sh" >"$TMP/xsigfail.out" 2>"$TMP/xsigfail.err" || true
+assert_contains "$(cat "$TMP/xsigfail.err")" "FAIL: spawn at line" \
+  "a fail() raised inside xsig's job-control block must still reach the suite's real stderr"
+assert_contains "$(cat "$TMP/xsigfail.err")" "the run's pid was not found under its job (got '')" \
+  "the specific missed-pid fail reaches stderr, not just some other FAIL"
 
 pass
