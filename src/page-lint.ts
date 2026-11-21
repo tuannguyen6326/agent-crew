@@ -23,10 +23,8 @@
 //
 // PAGES is a FIXED list, not derived from the route table: every route in
 // dashboard/app.ts that unconditionally serves a full HTML document belongs in
-// it (checked against source - dashboard/app.ts's Bun.serve fetch
-// handler gates /term-frame and /attach-frame behind a ?path=<home> that must
-// pass allowedHomePaths(), so those two are excluded). Adding a new
-// unconditional HTML page route to dashboard/app.ts means adding it here too.
+// it (checked against source). Adding a new unconditional HTML page route to
+// dashboard/app.ts means adding it here too.
 //
 // THE DASHBOARD is <root>/dashboard/app.ts, <root> being the checkout the
 // shim's bin/ sits in physically: bin/ac-bun.sh starts bun there and this
@@ -114,7 +112,7 @@ import { createConnection } from "node:net";
 import { dirname, join } from "node:path";
 import { commandV, enterCaller, spawnShell, spawnShellSync, STARTED_BIN } from "./lib.ts";
 
-const PAGES = ["/", "/term", "/whiteboard", "/whiteboard-frame", "/review"];
+const PAGES = ["/", "/whiteboard", "/whiteboard-frame", "/review"];
 
 const EXTRACT = String.raw`
     my ($html, $outdir) = @ARGV;

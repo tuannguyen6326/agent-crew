@@ -1295,8 +1295,8 @@ function applyRoute(isPop){
   // the dock any more now that the terminal/chat tabs are both retired to it).
   if(typeof tdMode!=='undefined' && tdMode!=='closed' && !tdRouteOk()) tdClose(false);
   // The standing intent reopens the dock on every carrying route - boot after
-  // a reload included - so the terminal is ALWAYS loaded once the captain
-  // opened it, until their own X says otherwise.
+  // a reload included - so the open-Orca link is ALWAYS there once the
+  // captain opened the dock, until their own X says otherwise.
   if(typeof tdMode!=='undefined' && tdMode==='closed' && tdIntent && tdRouteOk()) tdOpen(tdIntent);
   if(typeof tdApply==='function') tdApply(); // pill visibility follows the route
   // (Answering happens IN PLACE on the amber card/detail - the dock never
