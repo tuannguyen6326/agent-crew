@@ -189,7 +189,13 @@
 //     all, only as that queue-operation pair (claude folds it into the turn
 //     already running), so the last typed turn stays whatever it was before
 //     the send through the whole budget - 2 `delivered (arrival unverified)
-//     to`, never 1, for that shape (measured). Any other harness,
+//     to`, never 1, for that shape (measured) - NOR when the mismatched last
+//     typed turn's own transcript timestamp predates this arrivalWait call: a
+//     turn already written before this send started is the pre-send turn,
+//     not a verdict on it - claude simply has not replied at all yet within
+//     the budget (measured: a 36s gap against a 2.4s default budget) - also
+//     2, never 1; a turn with no parseable timestamp cannot be proven stale
+//     this way and still refutes. Any other harness,
 //     or a slash command: `delivered (arrival unverified) to`. A transcript
 //     with one malformed line in its last 200 makes jq fail every read:
 //     unobservable after the whole budget (W8).

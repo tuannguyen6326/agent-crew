@@ -835,6 +835,38 @@ srun cdiffq 'the queued steer text'
 assert_eq "$SN_RC:$(sout)" "1:" "8d: a queue entry for a DIFFERENT text does not stand down a genuine refutation"
 assert_contains "$(serr)" "ERROR: arrival REFUTED for cdiffq - " "8d: ...it still refutes"
 
+# 8e. a STALE typed turn - this family's own incident (the brief): the last
+# typed turn is the one that already existed before this send, and nothing
+# else gets written for the whole read budget (claude is still mid-reply,
+# far past arrivalWait's seven reads). From content alone this is identical
+# to 8c/8d's "genuinely wrong, final" fixtures - the one signal that tells
+# them apart is the turn's OWN transcript timestamp: it predates this call,
+# so it is provably the pre-send turn, not a verdict on this send. UNOBSERVABLE,
+# never REFUTED; 8c/8d's untimestamped turns must keep refuting (asserted
+# above - this case needs the timestamp to flip).
+sid_pre="66666666-6666-6666-6666-666666666666"
+sclaude cpre pCPRE "$sid_pre"
+cat >"$H/claude/proj/$sid_pre.jsonl" <<JSONL
+{"type":"user","promptSource":"typed","origin":{"kind":"human"},"timestamp":"2020-01-01T00:00:00Z","message":{"role":"user","content":"an old typed turn from well before this send"}}
+JSONL
+srun cpre 'the new steer this send actually types'
+assert_eq "$SN_RC:$(sout)" "0:delivered (arrival unverified) to orca:pCPRE" "8e: a stale pre-send typed turn, unchanged through the whole budget, reads unverified - never REFUTED"
+case "$(serr)" in *REFUTED*) fail "8e: a stale pre-send typed turn must never print REFUTED: $(serr)" ;; esac
+
+# 8f. the other direction: a genuinely DIFFERENT typed turn, even one
+# timestamped strictly AFTER this call starts, still refutes - 8e's carve-out
+# reads the mismatched turn's OWN timestamp, never just "it never changed
+# again", so a real, finished, wrong reply (which also never changes again
+# once written) must not be swallowed by it.
+sid_fresh="55555555-5555-5555-5555-555555555555"
+sclaude cfresh pCFRESH "$sid_fresh"
+cat >"$H/claude/proj/$sid_fresh.jsonl" <<JSONL
+{"type":"user","promptSource":"typed","origin":{"kind":"human"},"timestamp":"2099-01-01T00:00:00Z","message":{"role":"user","content":"a wrong reply, freshly timestamped"}}
+JSONL
+srun cfresh 'the text this send actually types'
+assert_eq "$SN_RC:$(sout)" "1:" "8f: a fresh, genuinely wrong typed turn still refutes"
+assert_contains "$(serr)" "ERROR: arrival REFUTED for cfresh - " "8f: ...the verdict is unchanged"
+
 # 9. the status record: `steered: <text, LFs as spaces>`, stamped by date(1)
 #    and mirrored to the task's timeline.
 srun c1 $'two\nlines'; assert_eq "$(tail -n 1 "$H/home/state/c1.status")" "2026-01-02T03:04:05Z steered: two lines" "9: one record per send"
