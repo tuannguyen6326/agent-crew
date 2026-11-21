@@ -2312,12 +2312,17 @@ function ledgerStage(cand: string, name: string, ledger: string, outFile: string
   const learned = `${dirname(ledger)}/../CREWMATE-learned.md`;
   for (const row of readLines(sorted)) {
     const [pname = "", pcount = "", pdate = ""] = tabRead(row, 3);
+    const skillMd = `${dirname(ledger)}/../skills/${pname}/SKILL.md`;
     let plink: string;
-    if (pname === name && selfLink !== "") plink = selfLink;
-    else if (!isFile(`${dirname(ledger)}/../skills/${pname}/SKILL.md`) && grepWhole(learned, `## ${pname}`)) plink = "[lesson](../CREWMATE-learned.md)";
-    else plink = `[skill](../skills/${pname}/SKILL.md)`;
-    if (pname === name || isFile(`${archdir}/${pname}.md`)) body += `- [distilled -> ${pname}] sources=${pcount} updated=${pdate} (${plink}; [evidence](learnings-archive/${pname}.md))\n`;
-    else body += `- [distilled -> ${pname}] sources=${pcount} updated=${pdate} (${plink})\n`;
+    // The subject being staged right now (pname === name) gets a definite link
+    // even though its SKILL.md/CREWMATE-learned.md write is still only staged,
+    // not yet live - selfLink carries the crewmate form, "" means skill/patch.
+    if (pname === name) plink = selfLink !== "" ? selfLink : `[skill](../skills/${pname}/SKILL.md)`;
+    else if (!isFile(skillMd) && grepWhole(learned, `## ${pname}`)) plink = "[lesson](../CREWMATE-learned.md)";
+    else if (isFile(skillMd)) plink = `[skill](../skills/${pname}/SKILL.md)`;
+    else plink = ""; // retired: neither a live skill nor a live learned heading - nothing to link
+    const links = [plink, pname === name || isFile(`${archdir}/${pname}.md`) ? `[evidence](learnings-archive/${pname}.md)` : ""].filter((l) => l !== "");
+    body += `- [distilled -> ${pname}] sources=${pcount} updated=${pdate}${links.length > 0 ? ` (${links.join("; ")})` : ""}\n`;
   }
   if (!put(outFile, body)) step(1);
   else step(sort.status);
