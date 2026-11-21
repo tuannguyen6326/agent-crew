@@ -549,15 +549,10 @@ xwlacks '.meta-claims/t1'
 
 # -- 10: xsig's own fail must reach the suite's real stderr ------------------
 
-# xsig's job-control block wraps bash's own job-control noise in
-# `{ ... } 2>/dev/null`; a `fail` reached before a real hold or a real pid
-# lost its FAIL line into that same /dev/null, so a genuinely missed hold or
-# pid died SILENT instead of marking the suite FAIL - same class as bdffc0e5
-# (ac-self-task.test.sh's xsig). Reproduced in a child that sources THIS
-# file's own current xsig text (not a frozen copy), so the fix lands the
-# moment xsig's text changes: the world's cwd is removed so the backgrounded
-# job forks nothing, and stub/held is preseeded so xsig skips straight past
-# the hold-wait to the pid-not-found fail - deterministic and fast.
+# Removing the world's cwd makes the backgrounded job's `cd && exec` fork
+# nothing, so `pgrep -P` finds no pid - no race, unlike waiting on a real
+# spawn. Preseeding stub/held skips xsig's hold-wait straight to that
+# pid-not-found fail, deterministic and fast.
 awk '
   BEGIN { skip = 1 }
   skip && /\(helpers\.sh not found\)/ { skip = 0; next }
