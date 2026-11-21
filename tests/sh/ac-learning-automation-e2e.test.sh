@@ -30,10 +30,12 @@ case "$kind" in
 # Learning Report
 One candidate is supported by the pending source.
 REPORT
-    cat >"$cwd/retro.md" <<'RETRO'
+    if [ -z "${OMIT_RETRO:-}" ]; then
+      cat >"$cwd/retro.md" <<'RETRO'
 # Retro
 The same procedural lesson recurred.
 RETRO
+    fi
     if [ -n "${RULE_CANDIDATE:-}" ]; then
       cat >"$cwd/candidate-standing-rule.md" <<'RULECAND'
 kind: rule
@@ -57,6 +59,7 @@ CANDIDATE
     printf '{"event":"done","status":"ok","transcript":"/dev/null","pane":"learning-pane"}\n'
     ;;
   gate)
+    [ -z "${GATE_UNAVAILABLE:-}" ] || exit 1
     decision="${GATE_DECISION:-continue}"
     transcript="$cwd/data/gate-transcript-$$.jsonl"
     # An honest judge does exactly this: take the two paths out of the prompt,
@@ -135,5 +138,49 @@ room="$AC_HOME/data/learning/room.md"
 assert_file "$room" "the rule escalation is durable in the learning room"
 link="$(grep -o 'candidate=[^;]*' "$room" | tail -1 | sed 's/^candidate=//')"
 assert_file "$AC_HOME/$link" "the escalation's candidate= link resolves"
+
+# A run whose scout is incomplete (no retro.md) preserves the retro window
+# (examined stays false) and must withhold the automatic Curate too, even
+# while Curate is due - a run that does not consume the window must not
+# mutate the records the window is resolved from.
+rm -rf "$AC_HOME/data"/learning-* "$AC_HOME/data/learning" "$AC_HOME/skills/auto-skill" \
+  "$AC_HOME/records/learnings-archive" "$AC_HOME/records/captain-archive.md"
+printf '## 2026-07-26 - family (chief)\n- LESSON: automate this recurring fleet procedure.\n' \
+  >"$AC_HOME/records/learnings.md"
+printf '%s\n' '- 2026-07-20: one-time fleet cleanup. [COMPLETED 2026-07-21]' \
+  >"$AC_HOME/records/captain.md"
+printf 'debriefs=8\ngeneration=3\n' >"$AC_HOME/state/.learn.meta"
+printf 'runs_since=1\n' >"$AC_HOME/state/.curate.meta"
+cap_before="$(cat "$AC_HOME/records/captain.md")"
+out="$(OMIT_RETRO=1 AC_PANE_AGENT="$stub" AC_GATE_WATCH=off "$BIN/ac-learn.sh" run 2>&1)"
+assert_contains "$out" "Curate is due" "an incomplete scout warns that a due Curate is withheld"
+assert_no_file "$AC_HOME/records/captain-archive.md" \
+  "an incomplete scout must not let automatic Curate archive captain.md"
+assert_eq "$(cat "$AC_HOME/records/captain.md")" "$cap_before" \
+  "an incomplete scout leaves captain.md byte-identical"
+assert_eq "$(ac_meta_get "$AC_HOME/state/.curate.meta" runs_since)" "1" \
+  "an incomplete scout must not tick or reset the Curate cadence"
+
+# A complete scout whose maintenance gate could not judge its one subject
+# (scoutComplete true, examined false - the other preserving path) likewise
+# preserves the retro window and must withhold Curate too.
+rm -rf "$AC_HOME/data"/learning-* "$AC_HOME/data/learning" "$AC_HOME/skills/auto-skill" \
+  "$AC_HOME/records/learnings-archive" "$AC_HOME/records/captain-archive.md"
+printf '## 2026-07-26 - family (chief)\n- LESSON: automate this recurring fleet procedure.\n' \
+  >"$AC_HOME/records/learnings.md"
+printf '%s\n' '- 2026-07-20: one-time fleet cleanup. [COMPLETED 2026-07-21]' \
+  >"$AC_HOME/records/captain.md"
+printf 'debriefs=8\ngeneration=4\n' >"$AC_HOME/state/.learn.meta"
+printf 'runs_since=1\n' >"$AC_HOME/state/.curate.meta"
+cap_before="$(cat "$AC_HOME/records/captain.md")"
+out="$(GATE_UNAVAILABLE=1 AC_PANE_AGENT="$stub" AC_GATE_WATCH=off "$BIN/ac-learn.sh" run 2>&1)"
+assert_contains "$out" "ask-captain:" "an unavailable gate escalates instead of silently continuing"
+assert_contains "$out" "Curate is due" "a gate-unjudged run warns that a due Curate is withheld"
+assert_no_file "$AC_HOME/records/captain-archive.md" \
+  "a gate-unjudged run must not let automatic Curate archive captain.md"
+assert_eq "$(cat "$AC_HOME/records/captain.md")" "$cap_before" \
+  "a gate-unjudged run leaves captain.md byte-identical"
+assert_eq "$(ac_meta_get "$AC_HOME/state/.curate.meta" runs_since)" "1" \
+  "a gate-unjudged run must not tick or reset the Curate cadence"
 
 pass

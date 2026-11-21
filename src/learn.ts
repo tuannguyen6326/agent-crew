@@ -116,8 +116,13 @@
 // delta and nothing else reconciles it. It is a code invariant, not a data
 // repair - an archive that does not exist yet simply declares 0, and a pointer
 // with no archive is still written without an `[evidence]` link.
-// The transaction resets only the generation it captured. It then ticks Curate
-// and runs automatic Curate when its own cadence is due.
+// The transaction resets only the generation it captured. Only an EXAMINED run
+// (one that just consumed the retro window) then ticks Curate and runs
+// automatic Curate when its own cadence is due; a preserving run (an
+// incomplete scout, or a complete scout a maintenance gate left unjudged)
+// withholds both the tick and the run, so a retry at the same anchor never
+// double-counts or mutates records the window is resolved from - it warns
+// instead when Curate was already due.
 //
 // `note` is the ONE placing append onto the ledger, and the reason every
 // instruction site names it instead of describing a hand-edit: it inserts its
@@ -1585,14 +1590,20 @@ async function cmdRun(): Promise<void> {
   if (scoutComplete) mintEnforceRows(rundir);
 
   await checkpoint();
-  curateTick();
-  const [curateN, curateEvery] = curateDue();
-  if (BigInt(curateN) >= BigInt(curateEvery)) {
-    const curateCmd = process.env.AC_CURATE ? b8(process.env.AC_CURATE) : `${b8(STARTED_BIN)}/ac-curate.sh`;
-    const c = captureMerged([curateCmd, "run"]);
-    await checkpoint();
-    if (c.status === 0) out(`  automatic Curate:\n${c.out}\n`);
-    else warnB(`Curate is due (${curateN}/${curateEvery}) but its automatic run failed; Curate cadence remains due`);
+  if (examined) {
+    curateTick();
+    const [curateN, curateEvery] = curateDue();
+    if (BigInt(curateN) >= BigInt(curateEvery)) {
+      const curateCmd = process.env.AC_CURATE ? b8(process.env.AC_CURATE) : `${b8(STARTED_BIN)}/ac-curate.sh`;
+      const c = captureMerged([curateCmd, "run"]);
+      await checkpoint();
+      if (c.status === 0) out(`  automatic Curate:\n${c.out}\n`);
+      else warnB(`Curate is due (${curateN}/${curateEvery}) but its automatic run failed; Curate cadence remains due`);
+    }
+  } else {
+    const [curateN, curateEvery] = curateDue();
+    if (BigInt(curateN) >= BigInt(curateEvery))
+      warnB(`Curate is due (${curateN}/${curateEvery}) but withheld - this Learning run did not consume the retro window; the flag stays due and the retry runs it`);
   }
 
   if (examined) {

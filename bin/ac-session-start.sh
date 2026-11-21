@@ -484,14 +484,15 @@ if [ "$curate_n" -ge "$curate_x" ]; then
   printf -- '-- curate --\n'
   printf 'CURATE DUE: %s/%s\n' "$curate_n" "$curate_x"
   # NAME WHAT WILL FIRE IT, because nothing here will. Curate has no firing path
-  # of its own: it runs only as a side-effect of a Learning DISTILL run
-  # (bin/ac-learn.sh), and this counter counts DISTILL RUNS, not landings - so
-  # the threshold is reached long before the next DISTILL is, and the flag then
-  # stands up for the rest of that interval. Measured on this fleet: `CURATE
-  # DUE: 3/2` printed while the landing counter stood at 23/60, i.e. 37 landings
-  # from the only event that would have discharged it. A due flag nobody can act
-  # on is a flag nobody reads, so the digest says the distance and the manual
-  # command rather than repeating a number that will not move.
+  # of its own: it runs only as a side-effect of a Learning DISTILL run that
+  # EXAMINES - consumes the retro window (bin/ac-learn.sh), and this counter
+  # counts EXAMINED DISTILL RUNS, not landings - so the threshold is reached
+  # long before the next DISTILL is, and the flag then stands up for the rest
+  # of that interval. Measured on this fleet: `CURATE DUE: 3/2` printed while
+  # the landing counter stood at 23/60, i.e. 37 landings from the only event
+  # that would have discharged it. A due flag nobody can act on is a flag
+  # nobody reads, so the digest says the distance and the manual command
+  # rather than repeating a number that will not move.
   if [ "$learn_n" -lt "$learn_x" ]; then
     printf 'its automatic run rides the next Learning DISTILL, %s landing(s) away (%s/%s); to curate now: bin/ac-curate.sh run\n' \
       "$((learn_x - learn_n))" "$learn_n" "$learn_x"
