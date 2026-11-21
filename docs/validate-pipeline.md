@@ -212,7 +212,6 @@ Each writes a row to `<run>/override` (`review-residual` or `tdd-declared`), cle
     ├── review.agent          # exact-ref review receipt
     ├── review.final-round    # the one granted final round
     ├── override              # passed-with-override rows
-    ├── watch.pane            # live dashboard pane id
     └── logs/                 # run.log, review-agent-rN.json, review-invocations.tsv
 ```
 

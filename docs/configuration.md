@@ -116,7 +116,7 @@ Operator cleanup: a fleet home may still carry the config files `config/herdr-wo
 ### Crewdeputy convergence
 
 A crewdeputy home pulls the knobs listed in `AC_INHERITABLE_CONFIG` from its parent at session start, absence included (`ac_config_converge_from_parent`, `bin/ac-lib.sh`).
-Identity and local knobs (`captain`, `launch-*`, `herdr-*`) are never copied.
+Identity and local knobs (`captain`, `launch-*`) are never copied.
 
 ## Dispatch rules (`config/crew-dispatch.json`)
 

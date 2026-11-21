@@ -78,7 +78,7 @@ sdlc:    staged, plus the SDLC artifact chain committed in the main repository
 
 ## 6. Worktrees (in-repo pool)
 
-`bin/ac-tree.sh` owns the pooled worktrees under `<repo>/.crew/worktrees/<n>` (the header of `src/tree.ts`, which it starts, is the spec; orca fleets lease Orca-managed worktrees): reused, never deleted or created by hand, and a dirty slot is never silently reset.
+Every task leases one Orca-managed worktree, created and removed through the Orca CLI; `bin/ac-tree.sh` owns a separate, standalone in-repo worktree pool under `<repo>/.crew/worktrees/<n>` (the header of `src/tree.ts`, which it starts, is the spec) that no task lease uses: reused, never deleted or created by hand, and a dirty slot is never silently reset.
 
 ## 7. Supervision protocol
 
