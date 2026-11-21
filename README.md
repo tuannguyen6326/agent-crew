@@ -56,7 +56,7 @@ The full first-run walk - projects, the first order, watching, landing, and the 
 
 - **One home per fleet.** A home (`state/`, `data/`, `records/`, `config/`, `projects/`) is whatever `AC_HOME` points at; it symlinks the executable core (`bin/`, `AGENTS.md`, `CLAUDE.md`, `.claude/`) back to the checkout, and all persistent truth lives on disk there.
 - **Triage before work.** Every order gets a flow (`direct` or `staged`), a delivery mode (`crew-ship`, `direct-pr`, `feature-pr`, `local-only`), and review/qa obligations, receipted to the family room; heavy choices ask the captain first.
-- **Pooled in-repo worktrees.** `bin/ac-tree.sh` leases detached-HEAD worktrees under `<repo>/.crew/worktrees/<n>` and reuses them, so build caches survive between tasks (orca fleets lease Orca-managed worktrees instead).
+- **Orca-managed worktrees.** Every task leases its own Orca-managed worktree, created and removed through the Orca CLI, so each task tree is its own node in the Orca sidebar; `bin/ac-tree.sh` separately manages a standalone in-repo worktree pool under `<repo>/.crew/worktrees/<n>` that no task lease uses.
 - **Push-first completion, zero-token watcher.** A finished agent announces itself with `bin/ac-done.sh`; `bin/ac-watch.sh` polls panes in bash and wakes the chief only for actionable events, as durable records in a wake spool.
 - **Rooms keep many tasks legible.** Each family has `data/<family>/room.md` holding its triage, gates, asks, and decisions; `bin/ac-room.sh list` is the captain's inbox.
 - **Guarded delivery.** `crew-ship` runs an 8-step hold-and-fix pipeline (intent, rebase, review, test, document, lint, push, pr); reviews are exact-ref pane agents; QA is optional behavioral proof after delivery.

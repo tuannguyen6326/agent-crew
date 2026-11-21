@@ -298,8 +298,6 @@
 //   .<n> past a name taken), so a link planted at a temp is never written
 //   through and a directory planted there is skipped.
 // - W12: --subject is read per its text, [A-Za-z0-9._-] under any locale.
-// - THE WIDENED BOARD MATCH: a board whose cmdline is the bun module
-//   (`bun --no-env-file <root>/src/gate-watch.ts ...`) is live and reused.
 // - HOME RESOLUTION: an AC_HOME cd cannot enter is `ERROR: AC_HOME is not a
 //   readable directory: <h>`, and a relative --run, manifest or plan is
 //   resolved without CDPATH.
@@ -314,9 +312,6 @@
 // - TIMEOUT ARITHMETIC (fixed): strictDecimal refuses a whole expression
 //   (`5*2`) or a bare name (`round`) the same way as any other malformed
 //   form - the documented default, never a skip or an exit 0.
-// - A BACKEND FLIPPED MID-RUN: config/backend is read when the board opens;
-//   turned invalid by then it ends the run 1, and turned orca by the exit the
-//   run's own board is still closed.
 // - LOCK GRACE: a pid-less lock's age is read from the clock.
 // - BYTES: argv arrives decoded, so a family or path byte that is no UTF-8
 //   reaches the files and the children as U+FFFD; a room's own bytes are read
