@@ -707,10 +707,11 @@ async function syncInner(db: Database, t0: number) {
     for (const t of ["pages", "shadows", "chunks", "chunks_fts", "pages_fts", "links", "aliases"]) db.run(`DELETE FROM ${t}`);
   }
   const cfg = loadCfg();
-  // verify: every review round copies the family room and its prompt into
-  // data/<fam>/verify/ - regenerated bulk duplicating the indexed room.md,
-  // which once held most of a home's embedded chunks.
-  const excludes = new Set<string>(cfg.excludes || ["state", "logs", "whiteboards", "skills-archive", "scenes-archive", "node_modules", ".git", ".crew", "verify"]);
+  // verify/shadow/staged: a review round's room copy, a curate run's
+  // pre-transaction snapshot and a maintenance run's apply bundle are all
+  // regenerated bulk duplicating an already-indexed page - verify alone once
+  // held most of a home's embedded chunks.
+  const excludes = new Set<string>(cfg.excludes || ["state", "logs", "whiteboards", "skills-archive", "scenes-archive", "node_modules", ".git", ".crew", "verify", "shadow", "staged"]);
   const files: string[] = [];
   const walk = (dir: string) => {
     let ents; try { ents = readdirSync(dir, { withFileTypes: true }); } catch { return; }

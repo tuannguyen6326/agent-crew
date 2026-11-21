@@ -55,6 +55,11 @@ printf '# Dup\nThe duplicated verify snapshot content block sits here unchanged.
 # a review round's copy of the room is regenerated bulk, never memory
 mkdir -p "$AC_HOME/data/fam-one/verify/codereview/r1"
 printf '# Room snapshot\nA verbatim room copy the verifier reads, about obsidian lantern rulings.\n' >"$AC_HOME/data/fam-one/verify/codereview/r1/room-snapshot.md"
+# a curate run's shadow snapshot and a maintenance run's staged bundle are the
+# same class of regenerated bulk, never memory
+mkdir -p "$AC_HOME/data/curate-20261118-111/shadow/records" "$AC_HOME/data/maintenance-20261118-222/staged/records"
+printf '# Shadow backlog\nA curate shadow snapshot of the backlog ledger, never the live memory page.\n' >"$AC_HOME/data/curate-20261118-111/shadow/records/backlog.md"
+printf '# Staged learnings\nA maintenance staged bundle of the learnings ledger, never the live memory page.\n' >"$AC_HOME/data/maintenance-20261118-222/staged/records/learnings.md"
 
 # --- sync: counts, empty skip, dedup determinism ------------------------------
 s1="$("$BRAIN" sync --home "$AC_HOME" --compact)"
@@ -66,6 +71,8 @@ pages="$(printf '%s' "$s1" | j "['pages']")"
 canon="$("$BRAIN" recall --home "$AC_HOME" --query "duplicated verify snapshot" --limit 2 --compact | j "['results'][0]['slug']")"
 assert_eq "$canon" "data/fam-one/snap" "canonical = fewest path segments"
 assert_eq "$(sqlite3 "$AC_HOME/state/brain.sqlite" "SELECT (SELECT COUNT(*) FROM pages WHERE path LIKE '%/verify/%') + (SELECT COUNT(*) FROM shadows WHERE path LIKE '%/verify/%')")" "0" "a verify round dir is never walked"
+assert_eq "$(sqlite3 "$AC_HOME/state/brain.sqlite" "SELECT (SELECT COUNT(*) FROM pages WHERE path LIKE '%/shadow/%') + (SELECT COUNT(*) FROM shadows WHERE path LIKE '%/shadow/%')")" "0" "a curate run's shadow dir is never walked"
+assert_eq "$(sqlite3 "$AC_HOME/state/brain.sqlite" "SELECT (SELECT COUNT(*) FROM pages WHERE path LIKE '%/staged/%') + (SELECT COUNT(*) FROM shadows WHERE path LIKE '%/staged/%')")" "0" "a maintenance run's staged dir is never walked"
 
 # --- resync: mtime short-circuit covers dup files too -------------------------
 s2="$("$BRAIN" sync --home "$AC_HOME" --compact)"
