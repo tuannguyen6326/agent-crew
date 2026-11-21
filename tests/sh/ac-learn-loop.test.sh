@@ -2206,4 +2206,41 @@ grep -qF -- '- [distilled -> skill-topic] sources=1 updated=2026-07-01 ([skill](
   "$AC_HOME/records/learnings.md" \
   || fail "a live skill pointer renders unchanged"
 
+# --- a crewmate's own retire: cuts the ledger's [lesson] link in the SAME
+#     transaction, not the next unrelated land ------------------------------
+
+# The retire cut lands only in the STAGED CREWMATE-learned.md; a renderer
+# that checks the LIVE file still sees the retired heading and keeps the
+# retired subject's [lesson] link for one extra, unrelated land.
+rm -f "$AC_HOME/CREWMATE-learned.md" "$AC_HOME/records/learnings.md"
+{
+  printf 'kind: crewmate\n'
+  printf 'name: old-method\n'
+  printf 'description: An old method.\n'
+  printf 'approved: yes\n'
+  printf '===crewmate===\n'
+  printf 'Do the old thing.\n'
+} >"$TMP/cand-old-method.md"
+"$BIN/ac-learn.sh" land "$TMP/cand-old-method.md"
+retire_today="$(date -u +%Y-%m-%d)"
+grep -qF -- "- [distilled -> old-method] sources=0 updated=$retire_today ([lesson](../CREWMATE-learned.md); [evidence](learnings-archive/old-method.md))" \
+  "$AC_HOME/records/learnings.md" \
+  || fail "old-method lands its own self-linked row"
+{
+  printf 'kind: crewmate\n'
+  printf 'name: new-method\n'
+  printf 'description: A replacement method.\n'
+  printf 'retire: old-method\n'
+  printf 'approved: yes\n'
+  printf '===crewmate===\n'
+  printf 'Do the new thing instead.\n'
+} >"$TMP/cand-new-method.md"
+"$BIN/ac-learn.sh" land "$TMP/cand-new-method.md"
+grep -qF -- "- [distilled -> old-method] sources=0 updated=$retire_today ([evidence](learnings-archive/old-method.md))" \
+  "$AC_HOME/records/learnings.md" \
+  || fail "the retiring transaction's own ledger rewrite already drops old-method's [lesson] link"
+if grep -qF "[distilled -> old-method] sources=0 updated=$retire_today ([lesson]" "$AC_HOME/records/learnings.md"; then
+  fail "old-method's row must not keep linking a lesson its own retiring transaction just cut"
+fi
+
 pass

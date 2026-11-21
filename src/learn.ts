@@ -2250,11 +2250,15 @@ const CONSUME_AWK = String.raw`NR == FNR { want[$0]++; next }
          { print }`;
 const REDATE_AWK = "$1 == name { $3 = updated } { print }";
 
-// learn_ledger_stage <cand> <name> <ledger> <out> <work> [self-link]: the
-// staged ledger - the frame, the Pending body less one line per declared
-// source, then every pointer row in BYTE order of its name (W13: the bash's
-// sort followed LC_COLLATE), each linked to where its body lives.
-function ledgerStage(cand: string, name: string, ledger: string, outFile: string, work: string, selfLink: string): void {
+// learn_ledger_stage <cand> <name> <ledger> <out> <work> [self-link]
+// [staged-learned]: the staged ledger - the frame, the Pending body less one
+// line per declared source, then every pointer row in BYTE order of its name
+// (W13: the bash's sort followed LC_COLLATE), each linked to where its body
+// lives. <staged-learned>, when given, is this same transaction's own
+// CREWMATE-learned.md rewrite - a crewmate land's retire: cuts a heading only
+// there, so another subject's [lesson] link must read that copy, not the
+// live file the cut has not reached yet.
+function ledgerStage(cand: string, name: string, ledger: string, outFile: string, work: string, selfLink: string, stagedLearned = ""): void {
   const archdir = `${dirname(ledger)}/learnings-archive`;
   const pending = `${work}/pending`;
   const pointers = `${work}/pointers.tsv`;
@@ -2311,7 +2315,7 @@ function ledgerStage(cand: string, name: string, ledger: string, outFile: string
   body += "## Distilled\n\n";
   const sort = run(["/usr/bin/env", "LC_ALL=C", "sort", "-t", "\t", "-k1,1", next], { stdout: "pipe" });
   const sorted = sort.out;
-  const learned = `${dirname(ledger)}/../CREWMATE-learned.md`;
+  const learned = stagedLearned !== "" ? stagedLearned : `${dirname(ledger)}/../CREWMATE-learned.md`;
   for (const row of readLines(sorted)) {
     const [pname = "", pcount = "", pdate = ""] = tabRead(row, 3);
     const skillMd = `${dirname(ledger)}/../skills/${pname}/SKILL.md`;
@@ -2736,7 +2740,8 @@ function prepareCandidatePlan(cand: string, authority: string, owning: string, r
     if (!lock(lk, 30)) dieB(`learnings ledger lock ${lk} could not be acquired within 30s - the plan for ${subject} was not staged`);
     try {
       base = read(learnings);
-      ledgerStage(candidateCopy, name, learnings, `${staged}/records/learnings.md`, `${rundir}/work`, kind === "crewmate" ? "[lesson](../CREWMATE-learned.md)" : "");
+      const crewmateLand = kind === "crewmate";
+      ledgerStage(candidateCopy, name, learnings, `${staged}/records/learnings.md`, `${rundir}/work`, crewmateLand ? "[lesson](../CREWMATE-learned.md)" : "", crewmateLand ? stagedCml : "");
       pointerEvidenceCheck(learnings, `${staged}/records/learnings.md`, archive, `${staged}/records/learnings-archive/${name}.md`, name);
       step(planAction(actions, "append-archive", `records/learnings-archive/${name}.md`, `${stagedPrefix}/records/learnings-archive/${name}.md`, rundir));
       if (kind !== "crewmate") step(planAction(actions, kind === "skill" ? "write-skill" : "patch-skill", `skills/${name}/SKILL.md`, `${stagedPrefix}/skills/${name}/SKILL.md`, rundir));
