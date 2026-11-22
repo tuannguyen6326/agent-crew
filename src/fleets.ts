@@ -149,8 +149,8 @@
 // (/api/snapshot.json, passed through raw); both map a non-zero exit to an
 // empty set / a 502, so no set -e caller depends on this entry; the
 // cross-fleet-monitor standing job's precheck reads `--json` (each home's
-// path, watcher.state, crew.supervised and wakes) and takes a non-zero exit
-// or empty output as a failed survey.
+// path, watcher.state, crew.supervised and wakes) and takes a non-zero exit,
+// empty output or an empty `homes` as a failed survey.
 //
 // BINARIES: `<bin>/ac-room.sh list` per home with data/, `ps -p <pid>` per
 // lock file, `date` through now()/iso() (a PATH stub freezes both sides), and
