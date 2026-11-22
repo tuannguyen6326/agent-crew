@@ -7,7 +7,7 @@ description: How the chief handles a remote-order <rid> wake: read the order fro
 
 A `remote-order <rid>` wake (drained by `ac-wake-drain.sh`, queued by `ac-remote.sh poll`, `ingest`, or `order`) means the captain spoke outside this chat (or, for an `auto:` author, a fleet job handed over a finding - below): through the remote channel, or - a `local-*` rid, thread `local` - through a SOLO session on this host that handed the captain's order over instead of spawning crew itself. A local order is handled exactly like a remote one; its `reply` needs no transport and lands at `state/remote-inbox/<rid>.replies.md`, which the solo session reads.
 Remote captain messages are TIER-1 captain words: they enter the EXACT SAME attribution ladder as chat (`rooms-threads` skill), with the remote thread as the reply transport.
-The one exception is a stash whose `author` starts with `auto:`: a fleet job handed over a machine finding through `ac-remote.sh ingest`, so it is NOT captain words - it never enters the attribution ladder, never binds or answers a gate, and gets no `reply` or `ack` (its thread has no transport behind it).
+The one exception is a stash whose `author` starts with `auto:`: a fleet job handed over a machine finding through `ac-remote.sh ingest`, so it is NOT captain words - it never enters the attribution ladder, never binds or answers a gate, and gets no `reply`, `ack` or `link` (its rid is not `local-*`, so a reply or a landing followup would go to `config/remote-reply` with a thread that names no message).
 Take such a finding through normal intake as a monitor finding (`src:mon`): only a VERIFIED root cause is queued, and nothing is spawned on the finding's word alone.
 Rooms stay the record; the remote thread is only another chat stream.
 
